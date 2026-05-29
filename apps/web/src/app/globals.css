@@ -1,0 +1,419 @@
+/* ─── Google Fonts: Outfit (debe ir ANTES de @import tailwindcss) ──────────── */
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap");
+
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+/* ─── TailAdmin color tokens ───────────────────────────────────────────────── */
+:root {
+  /* Brand */
+  --color-brand-25:  #f5f8ff;
+  --color-brand-50:  #eff4ff;
+  --color-brand-100: #d1e0ff;
+  --color-brand-200: #b2ccff;
+  --color-brand-300: #84adff;
+  --color-brand-400: #528bff;
+  --color-brand-500: #2570eb;
+  --color-brand-600: #1849a9;
+  --color-brand-700: #1849a9;
+  --color-brand-800: #194185;
+  --color-brand-900: #102a56;
+  --color-brand-950: #0a1c38;
+
+  /* Gray scale — light mode */
+  --color-gray-25:  #fcfcfd;
+  --color-gray-50:  #f9fafb;
+  --color-gray-100: #f2f4f7;
+  --color-gray-200: #e4e7ec;
+  --color-gray-300: #d0d5dd;
+  --color-gray-400: #98a2b3;
+  --color-gray-500: #667085;
+  --color-gray-600: #475467;
+  --color-gray-700: #344054;
+  --color-gray-800: #1d2939;
+  --color-gray-900: #101828;
+  --color-gray-950: #0c111d;
+
+  /* Success */
+  --color-success-25:  #f6fef9;
+  --color-success-50:  #ecfdf3;
+  --color-success-100: #dcfae6;
+  --color-success-200: #abefc6;
+  --color-success-300: #75e0a7;
+  --color-success-400: #47cd89;
+  --color-success-500: #17b26a;
+  --color-success-600: #079455;
+  --color-success-700: #067647;
+  --color-success-800: #085d3a;
+  --color-success-900: #074d31;
+
+  /* Error */
+  --color-error-25:  #fffbfa;
+  --color-error-50:  #fef3f2;
+  --color-error-100: #fee4e2;
+  --color-error-200: #fecdca;
+  --color-error-300: #fda29b;
+  --color-error-400: #f97066;
+  --color-error-500: #f04438;
+  --color-error-600: #d92d20;
+  --color-error-700: #b42318;
+  --color-error-800: #912018;
+  --color-error-900: #7a271a;
+
+  /* Warning */
+  --color-warning-25:  #fffcf5;
+  --color-warning-50:  #fffaeb;
+  --color-warning-100: #fef0c7;
+  --color-warning-200: #fedf89;
+  --color-warning-300: #fec84b;
+  --color-warning-400: #fdb022;
+  --color-warning-500: #f79009;
+  --color-warning-600: #dc6803;
+  --color-warning-700: #b54708;
+  --color-warning-800: #93370d;
+  --color-warning-900: #7a2e0e;
+
+  /* Shadows */
+  --shadow-theme-xs:  0px 1px 2px 0px rgba(16, 24, 40, 0.05);
+  --shadow-theme-sm:  0px 1px 3px 0px rgba(16, 24, 40, 0.1), 0px 1px 2px 0px rgba(16, 24, 40, 0.06);
+  --shadow-theme-md:  0px 4px 8px -2px rgba(16, 24, 40, 0.1), 0px 2px 4px -2px rgba(16, 24, 40, 0.06);
+  --shadow-theme-lg:  0px 12px 16px -4px rgba(16, 24, 40, 0.08), 0px 4px 6px -2px rgba(16, 24, 40, 0.03);
+  --shadow-theme-xl:  0px 20px 24px -4px rgba(16, 24, 40, 0.08), 0px 8px 8px -4px rgba(16, 24, 40, 0.03);
+  --shadow-theme-2xl: 0px 24px 48px -12px rgba(16, 24, 40, 0.18);
+  --shadow-theme-3xl: 0px 32px 64px -12px rgba(16, 24, 40, 0.14);
+
+  /* ── Semantic surface tokens (light) ── */
+  --surface-page:   #f9fafb;
+  --surface-card:   #ffffff;
+  --surface-raised: #ffffff;
+  --surface-border: #e4e7ec;
+  --text-primary:   #101828;
+  --text-secondary: #475467;
+  --text-muted:     #98a2b3;
+}
+
+/* ─── Dark mode tokens ──────────────────────────────────────────────────────── */
+.dark,
+html[data-panel-theme="dark"] {
+  /* Gray scale — dark mode (solo para texto, NO usar en fondos) */
+  --color-gray-25:  #1a2535;
+  --color-gray-50:  #1d2939;
+  --color-gray-100: #1d2939;
+  --color-gray-200: #344054;
+  --color-gray-300: #475467;
+  --color-gray-400: #667085;
+  --color-gray-500: #98a2b3;
+  --color-gray-600: #d0d5dd;
+  --color-gray-700: #e4e7ec;
+  --color-gray-800: #f2f4f7;
+  --color-gray-900: #f9fafb;
+  --color-gray-950: #fcfcfd;
+
+  --shadow-theme-xs: 0px 1px 2px 0px rgba(0, 0, 0, 0.3);
+  --shadow-theme-sm: 0px 1px 3px 0px rgba(0, 0, 0, 0.4), 0px 1px 2px 0px rgba(0, 0, 0, 0.3);
+  --shadow-theme-md: 0px 4px 8px -2px rgba(0, 0, 0, 0.4), 0px 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --shadow-theme-lg: 0px 12px 16px -4px rgba(0, 0, 0, 0.4), 0px 4px 6px -2px rgba(0, 0, 0, 0.2);
+  color-scheme: dark;
+
+  /* ── Semantic surface tokens (dark) ── */
+  --surface-page:   #111827;
+  --surface-card:   #111827;
+  --surface-raised: #1a2535;
+  --surface-border: #1f2937;
+  --text-primary:   #f2f4f7;
+  --text-secondary: #d0d5dd;
+  --text-muted:     #98a2b3;
+}
+
+/* ─── Tailwind @theme bridge ────────────────────────────────────────────────── */
+@theme inline {
+  --font-sans: "Outfit", "Inter", "Segoe UI", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "Consolas", monospace;
+
+  --color-brand-25:  var(--color-brand-25);
+  --color-brand-50:  var(--color-brand-50);
+  --color-brand-100: var(--color-brand-100);
+  --color-brand-200: var(--color-brand-200);
+  --color-brand-300: var(--color-brand-300);
+  --color-brand-400: var(--color-brand-400);
+  --color-brand-500: var(--color-brand-500);
+  --color-brand-600: var(--color-brand-600);
+  --color-brand-700: var(--color-brand-700);
+  --color-brand-800: var(--color-brand-800);
+  --color-brand-900: var(--color-brand-900);
+  --color-brand-950: var(--color-brand-950);
+
+  --color-success-25:  var(--color-success-25);
+  --color-success-50:  var(--color-success-50);
+  --color-success-100: var(--color-success-100);
+  --color-success-200: var(--color-success-200);
+  --color-success-300: var(--color-success-300);
+  --color-success-400: var(--color-success-400);
+  --color-success-500: var(--color-success-500);
+  --color-success-600: var(--color-success-600);
+  --color-success-700: var(--color-success-700);
+  --color-success-800: var(--color-success-800);
+  --color-success-900: var(--color-success-900);
+
+  --color-error-25:  var(--color-error-25);
+  --color-error-50:  var(--color-error-50);
+  --color-error-100: var(--color-error-100);
+  --color-error-200: var(--color-error-200);
+  --color-error-300: var(--color-error-300);
+  --color-error-400: var(--color-error-400);
+  --color-error-500: var(--color-error-500);
+  --color-error-600: var(--color-error-600);
+  --color-error-700: var(--color-error-700);
+  --color-error-800: var(--color-error-800);
+  --color-error-900: var(--color-error-900);
+
+  --color-warning-25:  var(--color-warning-25);
+  --color-warning-50:  var(--color-warning-50);
+  --color-warning-100: var(--color-warning-100);
+  --color-warning-200: var(--color-warning-200);
+  --color-warning-300: var(--color-warning-300);
+  --color-warning-400: var(--color-warning-400);
+  --color-warning-500: var(--color-warning-500);
+  --color-warning-600: var(--color-warning-600);
+  --color-warning-700: var(--color-warning-700);
+  --color-warning-800: var(--color-warning-800);
+  --color-warning-900: var(--color-warning-900);
+
+  --shadow-theme-xs:  var(--shadow-theme-xs);
+  --shadow-theme-sm:  var(--shadow-theme-sm);
+  --shadow-theme-md:  var(--shadow-theme-md);
+  --shadow-theme-lg:  var(--shadow-theme-lg);
+  --shadow-theme-xl:  var(--shadow-theme-xl);
+  --shadow-theme-2xl: var(--shadow-theme-2xl);
+  --shadow-theme-3xl: var(--shadow-theme-3xl);
+}
+
+/* ─── Base styles ───────────────────────────────────────────────────────────── */
+body {
+  background-color: var(--surface-page);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Scrollbar utilities ───────────────────────────────────────────────────── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ─── Shell background ──────────────────────────────────────────────────────── */
+.app-panel-shell {
+  background: var(--surface-page);
+  min-height: 100vh;
+}
+
+/* ─── Topbar ────────────────────────────────────────────────────────────────── */
+.app-topbar {
+  background: var(--surface-card);
+  border-bottom: 1px solid var(--surface-border);
+  box-shadow: var(--shadow-theme-xs);
+}
+
+/* ─── Sidebar ───────────────────────────────────────────────────────────────── */
+.app-sidebar {
+  background: var(--surface-card);
+  border-right: 1px solid var(--surface-border);
+  will-change: width;  
+}
+.dark .app-sidebar,
+html.dark .app-sidebar,
+html[data-panel-theme="dark"] .app-sidebar {
+  background: #111827 !important;
+  border-color: #1f2937 !important;
+}
+
+/* ─── Surface / card base ───────────────────────────────────────────────────── */
+.app-surface-card {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  box-shadow: var(--shadow-theme-sm);
+}
+
+/* ─── Module page hero ──────────────────────────────────────────────────────── */
+.module-page-hero {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  box-shadow: var(--shadow-theme-sm);
+  overflow: hidden;
+  position: relative;
+}
+
+.module-page-hero::after {
+  content: "";
+  position: absolute;
+  inset: auto -4rem -7rem auto;
+  width: 18rem;
+  height: 18rem;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(37, 112, 235, 0.08), transparent 64%);
+}
+
+/* ─── Theme toggle button ───────────────────────────────────────────────────── */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-card);
+  color: var(--text-muted);
+  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
+  box-shadow: var(--shadow-theme-xs);
+}
+
+.theme-toggle:hover {
+  border-color: var(--color-brand-300);
+  color: var(--color-brand-600);
+  box-shadow: var(--shadow-theme-sm);
+}
+
+/* ─── Sidebar menu items ────────────────────────────────────────────────────── */
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  cursor: pointer;
+  width: 100%;
+}
+
+.menu-item-inactive { color: var(--text-secondary); }
+.menu-item-inactive:hover {
+  background-color: rgba(0, 0, 0, 0.04);
+  color: var(--text-primary);
+}
+
+.dark .menu-item-inactive:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.menu-item-active {
+  background-color: var(--color-brand-50);
+  color: var(--color-brand-700);
+  font-weight: 600;
+}
+.menu-item-active:hover { background-color: var(--color-brand-100); }
+
+.dark .menu-item-active {
+  background-color: rgba(37, 112, 235, 0.12);
+  color: var(--color-brand-300);
+}
+
+.menu-item-icon-active   { color: var(--color-brand-500); }
+.menu-item-icon-inactive { color: var(--text-muted); }
+
+.dark .menu-item-icon-active   { color: var(--color-brand-400); }
+.dark .menu-item-icon-inactive { color: var(--text-muted); }
+
+.menu-item-text { font-size: 0.875rem; font-weight: 500; }
+
+/* ─── Dropdown / submenu items ──────────────────────────────────────────────── */
+.menu-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.menu-dropdown-item-inactive { color: var(--text-secondary); }
+.menu-dropdown-item-inactive:hover {
+  background-color: rgba(0, 0, 0, 0.04);
+  color: var(--text-primary);
+}
+
+.dark .menu-dropdown-item-inactive:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.menu-dropdown-item-active {
+  color: var(--color-brand-600);
+  font-weight: 600;
+  background-color: var(--color-brand-50);
+}
+
+.dark .menu-dropdown-item-active {
+  color: var(--color-brand-300);
+  background-color: rgba(37, 112, 235, 0.10);
+}
+
+/* ─── Badge in dropdown ─────────────────────────────────────────────────────── */
+.menu-dropdown-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+.menu-dropdown-badge-inactive {
+  background-color: var(--color-brand-50);
+  color: var(--color-brand-600);
+}
+.menu-dropdown-badge-active {
+  background-color: var(--color-brand-500);
+  color: #ffffff;
+}
+
+/* ─── Stat cards (accent left border) ──────────────────────────────────────── */
+.stat-card { overflow: hidden; position: relative; }
+.stat-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  border-radius: 4px 0 0 4px;
+  background: var(--surface-border);
+}
+.stat-card-success::before { background: var(--color-success-500); }
+.stat-card-warning::before { background: var(--color-warning-500); }
+.stat-card-danger::before  { background: var(--color-error-500); }
+.stat-card-info::before    { background: var(--color-brand-500); }
+
+/* ─── Form focus rings ──────────────────────────────────────────────────────── */
+.input-focus-brand {
+  border-color: var(--color-brand-300);
+  box-shadow: 0 0 0 4px var(--color-brand-100);
+}
+
+/* ─── Badge / pill utility ──────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  padding: 0.125rem 0.625rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* ─── Button transitions ────────────────────────────────────────────────────── */
+.ui-button {
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+/* ─── Table row hover ───────────────────────────────────────────────────────── */
+.app-panel-shell table tbody tr:hover {
+  background-color: rgba(0, 0, 0, 0.02) !important;
+}
+.dark .app-panel-shell table tbody tr:hover {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+}

@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Fleet Command Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-secondary-fixed-variant": "#004f54",
+                        "on-secondary": "#00363a",
+                        "primary-fixed": "#c3f400",
+                        "on-surface-variant": "#c4c9ac",
+                        "surface-container-low": "#191c1f",
+                        "background": "#111417",
+                        "inverse-primary": "#506600",
+                        "tertiary-fixed-dim": "#b6c9d8",
+                        "inverse-on-surface": "#2e3134",
+                        "surface-bright": "#37393d",
+                        "secondary-container": "#00eefc",
+                        "on-secondary-fixed": "#002022",
+                        "on-error-container": "#ffdad6",
+                        "on-tertiary-fixed-variant": "#374956",
+                        "secondary-fixed": "#7df4ff",
+                        "surface-dim": "#111417",
+                        "on-tertiary": "#21323e",
+                        "primary-fixed-dim": "#abd600",
+                        "on-surface": "#e1e2e7",
+                        "surface-tint": "#abd600",
+                        "secondary-fixed-dim": "#00dbe9",
+                        "on-primary-fixed-variant": "#3c4d00",
+                        "on-primary-container": "#556d00",
+                        "outline-variant": "#444933",
+                        "tertiary-container": "#d2e5f5",
+                        "on-primary": "#283500",
+                        "tertiary": "#ffffff",
+                        "secondary": "#d3fbff",
+                        "on-tertiary-container": "#556774",
+                        "on-error": "#690005",
+                        "inverse-surface": "#e1e2e7",
+                        "surface-container-lowest": "#0c0e12",
+                        "on-tertiary-fixed": "#0b1d29",
+                        "outline": "#8e9379",
+                        "surface-variant": "#323539",
+                        "primary-container": "#c3f400",
+                        "on-primary-fixed": "#161e00",
+                        "error-container": "#93000a",
+                        "tertiary-fixed": "#d2e5f5",
+                        "surface": "#111417",
+                        "on-background": "#e1e2e7",
+                        "on-secondary-container": "#00686f",
+                        "surface-container": "#1d2023",
+                        "error": "#ffb4ab",
+                        "surface-container-highest": "#323539",
+                        "surface-container-high": "#282a2e",
+                        "primary": "#ffffff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "panel-padding": "1.5rem",
+                        "element-gap": "0.75rem",
+                        "gutter": "1.5rem",
+                        "container-margin": "2rem",
+                        "stack-spacing": "2rem"
+                    },
+                    "fontFamily": {
+                        "body-md": ["Plus Jakarta Sans"],
+                        "telemetry-lg": ["Plus Jakarta Sans"],
+                        "body-lg": ["Plus Jakarta Sans"],
+                        "telemetry-xl": ["Plus Jakarta Sans"],
+                        "label-caps": ["Plus Jakarta Sans"],
+                        "telemetry-xl-mobile": ["Plus Jakarta Sans"],
+                        "headline-md": ["Plus Jakarta Sans"]
+                    },
+                    "fontSize": {
+                        "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                        "telemetry-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                        "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
+                        "telemetry-xl": ["48px", {"lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                        "label-caps": ["12px", {"lineHeight": "16px", "letterSpacing": "0.1em", "fontWeight": "700"}],
+                        "telemetry-xl-mobile": ["36px", {"lineHeight": "44px", "fontWeight": "700"}],
+                        "headline-md": ["24px", {"lineHeight": "32px", "fontWeight": "600"}]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        body { background-color: #05070A; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .neon-glow-lime {
+            box-shadow: 0 0 20px rgba(195, 244, 0, 0.2);
+            border: 1px solid rgba(195, 244, 0, 0.4);
+        }
+        .progress-bar-track { background: rgba(255, 255, 255, 0.05); }
+        .radial-track { stroke: rgba(255, 255, 255, 0.05); fill: none; }
+        .radial-progress { 
+            stroke: #c3f400; 
+            fill: none; 
+            stroke-linecap: round; 
+            transition: stroke-dashoffset 0.5s ease-out;
+            filter: drop-shadow(0 0 4px #c3f400);
+        }
+        .scan-line {
+            background: linear-gradient(to right, transparent, rgba(195, 244, 0, 0.1), transparent);
+            animation: scan 3s linear infinite;
+        }
+        @keyframes scan {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+    </style>
+</head>
+<body class="font-body-md text-on-surface selection:bg-primary-fixed selection:text-on-primary-fixed overflow-hidden">
+<!-- Left Sidebar Shell -->
+<aside class="fixed left-0 top-0 h-screen w-64 bg-background/80 backdrop-blur-xl dark:bg-background/80 border-r border-white/10 shadow-2xl z-50 flex flex-col py-panel-padding">
+<div class="px-6 mb-10">
+<h1 class="text-headline-md font-headline-md font-black tracking-tighter text-primary dark:text-primary">FLEET COMMAND</h1>
+<p class="text-label-caps font-label-caps text-on-surface-variant/60">Vanguard Logistics</p>
+</div>
+<nav class="flex-1 px-4 space-y-2">
+<!-- Active Tab: Dashboard -->
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-primary-fixed dark:text-primary-fixed font-bold border-r-2 border-primary-fixed bg-primary-fixed/5 transition-all duration-200" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">dashboard</span>
+<span class="text-body-md">Dashboard</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-white/5 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">local_shipping</span>
+<span class="text-body-md">Vehicles</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-white/5 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">query_stats</span>
+<span class="text-body-md">Telemetry</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-white/5 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">route</span>
+<span class="text-body-md">Logistics</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-white/5 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">leaderboard</span>
+<span class="text-body-md">Analytics</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-white/5 transition-colors duration-200" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="text-body-md">Settings</span>
+</a>
+</nav>
+<div class="mt-auto px-4 pb-4 space-y-2">
+<button class="w-full bg-primary-fixed text-on-primary-fixed py-3 rounded-lg font-bold text-label-caps hover:brightness-110 transition-all flex items-center justify-center gap-2 mb-6">
+<span class="material-symbols-outlined text-sm">add</span> New Mission
+            </button>
+<a class="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:text-on-surface transition-colors" href="#">
+<span class="material-symbols-outlined">help</span>
+<span class="text-body-md">Help</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-2 text-on-surface-variant hover:text-on-surface transition-colors" href="#">
+<span class="material-symbols-outlined">logout</span>
+<span class="text-body-md">Logout</span>
+</a>
+</div>
+</aside>
+<!-- Main Workspace -->
+<main class="ml-64 min-h-screen flex flex-col relative">
+<!-- Top App Bar -->
+<header class="fixed top-0 right-0 left-64 h-20 bg-background/60 backdrop-blur-md dark:bg-background/60 border-b border-white/5 z-40 flex justify-between items-center px-gutter w-auto">
+<div class="flex items-center gap-8">
+<span class="text-headline-md font-headline-md font-bold tracking-widest text-primary dark:text-primary">NEURAL FLEET</span>
+<div class="relative group">
+<span class="absolute left-3 top-1/2 -translate-y-1/2 material-symbols-outlined text-on-surface-variant text-sm">search</span>
+<input class="bg-white/5 border-0 rounded-full pl-10 pr-4 py-2 text-body-md focus:ring-1 focus:ring-primary-fixed w-64 transition-all" placeholder="Search Assets..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<nav class="hidden md:flex items-center gap-6 text-label-caps font-label-caps">
+<a class="text-primary-fixed border-b-2 border-primary-fixed pb-2" href="#">Live View</a>
+<a class="text-on-surface-variant hover:text-on-surface transition-colors" href="#">Route Map</a>
+<a class="text-on-surface-variant hover:text-on-surface transition-colors" href="#">Network Status</a>
+</nav>
+<div class="flex items-center gap-4 border-l border-white/10 pl-6">
+<span class="material-symbols-outlined text-on-surface-variant hover:text-primary-fixed cursor-pointer transition-all">notifications</span>
+<span class="material-symbols-outlined text-on-surface-variant hover:text-primary-fixed cursor-pointer transition-all">wifi</span>
+<span class="material-symbols-outlined text-on-surface-variant hover:text-primary-fixed cursor-pointer transition-all">battery_charging_full</span>
+<div class="w-10 h-10 rounded-full border border-primary-fixed/30 overflow-hidden ml-2 ring-2 ring-primary-fixed/10">
+<img alt="Chief Controller" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBnS7ArDTczPm2aVCqfUMfGrqFwUbQfab_mnTxNI-rdMUpvzOkBOPqcC6Vmy8WDwEoDDzN5ZmufDB4Rd_lbBLvXZHoVbISiJAPDUcF648SQ3OwXbXjrduDtk8vlo1hr0IolwieLa1SzeZDvRFgfL15HVnOiWViKKK-Byeqx2aBO7cvjJ0Bmo1GtFZd4gDUYeMzXAsd8tb5R3ee7ja3S6jGvnpzBvcGe3z_CzzMwImwJi4GOXHmps8ixOmbNzzkNKFUVfGbmeJ2VzKE4"/>
+</div>
+</div>
+</div>
+</header>
+<!-- Content Canvas -->
+<div class="mt-20 p-8 flex-1 flex flex-col gap-gutter">
+<!-- Hero Section: Cinematic Vehicle Display -->
+<section class="relative rounded-xl overflow-hidden glass-panel h-[420px] group">
+<div class="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent z-10"></div>
+<img alt="Advanced Vehicle" class="w-full h-full object-cover scale-105 transition-transform duration-1000 group-hover:scale-100" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAJzaIAcOR7uEvSg7QSkByk98bRKUp-fJLArNW_zhaiPtdQrD-8nQkDckMz2LhKvpqaoQH0LLAg7pKDOetxIcIs9WunYHpgSpZP_AG5iiYuq9TWkPZivjVyUYDiDu_s6ga0rmzNpJEo0KUP5OKql9JfNCKI8QlaEkO7JF5h_4CeRwZ3Hq5h_jErBkT4xpi52rWvMu2DOrg44sI7lp0fBvAjonWx2suAWLQqP6Gz2aXRmy1YwgNExg0UkOK4C6p0H4ZOb7G1UVK7P5rU"/>
+<div class="absolute inset-0 z-20 p-8 flex flex-col justify-end">
+<div class="flex justify-between items-end">
+<div>
+<span class="inline-block px-3 py-1 bg-primary-fixed/20 border border-primary-fixed/50 rounded-full text-[10px] font-bold tracking-[0.2em] text-primary-fixed uppercase mb-2">Active Surveillance</span>
+<h2 class="text-telemetry-xl font-telemetry-xl text-white drop-shadow-lg">VANGUARD-7 STRATOS</h2>
+<p class="text-body-lg text-on-surface-variant">Last ping: 2.4s ago • North Sector HQ</p>
+</div>
+<div class="flex gap-4">
+<button class="px-6 py-2 bg-white/10 backdrop-blur-md rounded-lg border border-white/20 hover:bg-white/20 transition-all font-bold text-label-caps">INTERCEPT</button>
+<button class="px-6 py-2 bg-primary-fixed text-on-primary-fixed rounded-lg hover:brightness-110 transition-all font-bold text-label-caps">LINK CORE</button>
+</div>
+</div>
+</div>
+<!-- Atmospheric UI overlays -->
+<div class="absolute top-4 right-4 z-20 flex flex-col items-end">
+<div class="text-[10px] font-mono text-primary-fixed/60 mb-1">SYSTEM_UPTIME: 442:21:09</div>
+<div class="text-[10px] font-mono text-primary-fixed/60">NODE_AUTH: SECURE</div>
+</div>
+</section>
+<!-- Grid Layout -->
+<div class="grid grid-cols-12 gap-gutter">
+<!-- Telemetry Glass Panels (Left column) -->
+<div class="col-span-12 lg:col-span-4 grid grid-cols-2 gap-4">
+<div class="glass-panel rounded-xl p-5 flex flex-col justify-between hover:neon-glow-lime transition-all duration-300">
+<div class="flex justify-between items-start">
+<span class="text-label-caps text-on-surface-variant">VELOCITY</span>
+<span class="material-symbols-outlined text-primary-fixed text-sm">speed</span>
+</div>
+<div class="mt-4">
+<span class="text-telemetry-lg font-telemetry-lg text-white">142</span>
+<span class="text-label-caps text-on-surface-variant ml-1">KM/H</span>
+</div>
+</div>
+<div class="glass-panel rounded-xl p-5 flex flex-col justify-between hover:neon-glow-lime transition-all duration-300">
+<div class="flex justify-between items-start">
+<span class="text-label-caps text-on-surface-variant">POWER LOAD</span>
+<span class="material-symbols-outlined text-primary-fixed text-sm">bolt</span>
+</div>
+<div class="mt-4">
+<span class="text-telemetry-lg font-telemetry-lg text-white">6500</span>
+<span class="text-label-caps text-on-surface-variant ml-1">RPM</span>
+</div>
+</div>
+<div class="glass-panel rounded-xl p-5 flex flex-col justify-between hover:neon-glow-lime transition-all duration-300">
+<div class="flex justify-between items-start">
+<span class="text-label-caps text-on-surface-variant">BATTERY CORE</span>
+<span class="material-symbols-outlined text-primary-fixed text-sm">ev_station</span>
+</div>
+<div class="mt-4">
+<span class="text-telemetry-lg font-telemetry-lg text-white">84%</span>
+<div class="h-1 w-full progress-bar-track mt-2 rounded-full overflow-hidden">
+<div class="h-full bg-primary-fixed w-[84%] shadow-[0_0_8px_#c3f400]"></div>
+</div>
+</div>
+</div>
+<div class="glass-panel rounded-xl p-5 flex flex-col justify-between hover:neon-glow-lime transition-all duration-300">
+<div class="flex justify-between items-start">
+<span class="text-label-caps text-on-surface-variant">TYRE PSI</span>
+<span class="material-symbols-outlined text-primary-fixed text-sm">tire_repair</span>
+</div>
+<div class="mt-4">
+<span class="text-telemetry-lg font-telemetry-lg text-white">32</span>
+<span class="text-label-caps text-on-surface-variant ml-1">PSI</span>
+</div>
+</div>
+<!-- Gauges Row -->
+<div class="col-span-2 glass-panel rounded-xl p-6 flex items-center justify-around">
+<div class="flex flex-col items-center">
+<div class="relative w-24 h-24 mb-2">
+<svg class="w-full h-full transform -rotate-90">
+<circle class="radial-track" cx="48" cy="48" r="40" stroke-width="4"></circle>
+<circle class="radial-progress" cx="48" cy="48" r="40" stroke-dasharray="251" stroke-dashoffset="70" stroke-width="4"></circle>
+</svg>
+<div class="absolute inset-0 flex flex-col items-center justify-center">
+<span class="text-headline-md font-bold text-white leading-none">72</span>
+<span class="text-[8px] text-on-surface-variant font-bold">FUEL</span>
+</div>
+</div>
+</div>
+<div class="h-12 w-[1px] bg-white/10"></div>
+<div class="flex flex-col items-center">
+<div class="relative w-24 h-24 mb-2">
+<svg class="w-full h-full transform -rotate-90">
+<circle class="radial-track" cx="48" cy="48" r="40" stroke-width="4"></circle>
+<circle class="radial-progress" cx="48" cy="48" r="40" stroke-dasharray="251" stroke-dashoffset="140" stroke-width="4" style="stroke: #ffb4ab; filter: drop-shadow(0 0 4px #ffb4ab);"></circle>
+</svg>
+<div class="absolute inset-0 flex flex-col items-center justify-center">
+<span class="text-headline-md font-bold text-white leading-none">92°</span>
+<span class="text-[8px] text-on-surface-variant font-bold">OIL TEMP</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- GPS Module (Middle-Right column) -->
+<div class="col-span-12 lg:col-span-5 relative rounded-xl overflow-hidden glass-panel group min-h-[400px]">
+<div class="absolute inset-0 opacity-40 mix-blend-luminosity">
+<img alt="Dark Map" class="w-full h-full object-cover" data-location="Los Angeles" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCSBHCEwjWh48oKiNPDvnAKcNeCGSika0BDEZNs5GIqjF5KEBIHvVaGLwQMsl3EfGBpQ6tRbooMIO3EJpiktCogds7RF5nTTDSziOXpxHZL1Gv0S2tuLL_hGx9gBp01-B5UmrXugpdCJpspIFsf0WQVcPdLAnMWbRFbqIVGFvjAO-sE2Yctd_GKtw5ew1pIPdDjxm-tWm_9ZE1VzPSX7eOlRF1M8taHZQQkcY7b9_HvLgJNB0lUYdNaJOn4vLbz-vwuJY8HSmw3sT6o"/>
+</div>
+<!-- Mock Route Line SVG -->
+<svg class="absolute inset-0 w-full h-full pointer-events-none" viewbox="0 0 400 400">
+<path class="opacity-80" d="M50,300 L150,250 L200,100 L350,50" fill="none" stroke="#c3f400" stroke-dasharray="5,5" stroke-width="2">
+<animate attributename="stroke-dashoffset" dur="5s" from="100" repeatcount="indefinite" to="0"></animate>
+</path>
+<circle cx="350" cy="50" fill="#c3f400" r="4">
+<animate attributename="r" dur="2s" repeatcount="indefinite" values="4;7;4"></animate>
+</circle>
+</svg>
+<div class="absolute inset-0 p-6 flex flex-col">
+<div class="flex justify-between items-start mb-auto">
+<div class="glass-panel bg-black/40 px-4 py-2 rounded-lg border border-white/10">
+<p class="text-[10px] font-bold text-primary-fixed mb-1">CURRENT LOCATION</p>
+<p class="text-body-md text-white font-bold">Interstate 405, Sector 7</p>
+</div>
+<div class="flex flex-col gap-2">
+<button class="w-8 h-8 bg-black/40 backdrop-blur-md rounded-lg flex items-center justify-center border border-white/10 text-white"><span class="material-symbols-outlined text-sm">add</span></button>
+<button class="w-8 h-8 bg-black/40 backdrop-blur-md rounded-lg flex items-center justify-center border border-white/10 text-white"><span class="material-symbols-outlined text-sm">remove</span></button>
+</div>
+</div>
+<div class="glass-panel bg-black/60 p-4 rounded-xl border border-white/10 mt-auto">
+<div class="flex items-center gap-4">
+<div class="p-2 bg-primary-fixed/20 rounded-lg">
+<span class="material-symbols-outlined text-primary-fixed">turn_right</span>
+</div>
+<div>
+<p class="text-label-caps text-on-surface-variant">NEXT MANEUVER IN 1.2 KM</p>
+<p class="text-body-md text-white font-bold">Exit onto Vanguard Boulevard</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Maintenance Module (Far Right column) -->
+<div class="col-span-12 lg:col-span-3 flex flex-col gap-gutter">
+<div class="glass-panel rounded-xl p-6 flex-1 flex flex-col">
+<h3 class="text-label-caps font-bold text-white mb-6 tracking-widest flex items-center gap-2">
+<span class="material-symbols-outlined text-sm text-primary-fixed">build</span> MAINTENANCE LOG
+                        </h3>
+<div class="space-y-6">
+<!-- Critical Item -->
+<div class="relative pl-6 border-l-2 border-error/50">
+<div class="absolute -left-[7px] top-0 w-3 h-3 rounded-full bg-error shadow-[0_0_10px_#ffb4ab]"></div>
+<div class="flex justify-between items-center mb-2">
+<span class="text-body-md font-bold text-white">Brake Service</span>
+<span class="px-2 py-0.5 bg-error/20 text-error text-[10px] font-bold rounded uppercase">Critical</span>
+</div>
+<div class="h-1.5 w-full progress-bar-track rounded-full overflow-hidden">
+<div class="h-full bg-error w-[95%]"></div>
+</div>
+<p class="text-[10px] text-on-surface-variant mt-2">Replace pads within 200km</p>
+</div>
+<!-- Regular Item -->
+<div class="relative pl-6 border-l-2 border-primary-fixed/30">
+<div class="absolute -left-[7px] top-0 w-3 h-3 rounded-full bg-primary-fixed/50"></div>
+<div class="flex justify-between items-center mb-2">
+<span class="text-body-md font-bold text-white">Next Oil Change</span>
+<span class="text-[10px] text-on-surface-variant font-bold">3,500km left</span>
+</div>
+<div class="h-1.5 w-full progress-bar-track rounded-full overflow-hidden">
+<div class="h-full bg-primary-fixed w-[45%]"></div>
+</div>
+<p class="text-[10px] text-on-surface-variant mt-2">Optimal viscosity maintained</p>
+</div>
+<!-- Regular Item -->
+<div class="relative pl-6 border-l-2 border-primary-fixed/30">
+<div class="absolute -left-[7px] top-0 w-3 h-3 rounded-full bg-primary-fixed/50"></div>
+<div class="flex justify-between items-center mb-2">
+<span class="text-body-md font-bold text-white">Sensor Calibration</span>
+<span class="text-[10px] text-on-surface-variant font-bold">OK</span>
+</div>
+<div class="h-1.5 w-full progress-bar-track rounded-full overflow-hidden">
+<div class="h-full bg-primary-fixed w-[10%]"></div>
+</div>
+</div>
+</div>
+<button class="mt-auto w-full py-3 rounded-lg border border-white/10 hover:bg-white/5 transition-all text-label-caps font-bold text-on-surface-variant">VIEW FULL REPORT</button>
+</div>
+</div>
+</div>
+<!-- Footer Meta -->
+<footer class="mt-auto pt-6 flex justify-between items-center border-t border-white/5">
+<div class="flex gap-6">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-primary-fixed animate-pulse"></span>
+<span class="text-[10px] text-on-surface-variant font-bold tracking-widest">ENCRYPTED CHANNEL A-04</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="text-[10px] text-on-surface-variant font-bold tracking-widest">LAT: 34.0522° N</span>
+</div>
+</div>
+<div class="text-[10px] text-on-surface-variant/40">© 2024 VANGUARD TECH • ALL SYSTEMS NOMINAL</div>
+</footer>
+</div>
+</main>
+<script>
+        // Micro-interaction for gauges
+        document.addEventListener('DOMContentLoaded', () => {
+            const paths = document.querySelectorAll('.radial-progress');
+            paths.forEach(path => {
+                const length = path.getTotalLength();
+                path.style.strokeDasharray = length;
+                path.style.strokeDashoffset = length;
+                
+                // Initial animation
+                setTimeout(() => {
+                    const progress = Math.random() * 0.5 + 0.2;
+                    path.style.strokeDashoffset = length * progress;
+                }, 500);
+            });
+
+            // Randomizing telemetry slightly for "live" feel
+            setInterval(() => {
+                const speedElements = document.querySelectorAll('.text-telemetry-lg');
+                speedElements.forEach(el => {
+                    if(el.textContent.includes('142')) {
+                        const base = 142;
+                        el.textContent = (base + (Math.random() > 0.5 ? 1 : -1)).toString();
+                    }
+                });
+            }, 3000);
+        });
+    </script>
+</body></html>

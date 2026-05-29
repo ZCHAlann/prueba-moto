@@ -1,0 +1,555 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useFeedback } from "@/components/providers/feedback-provider";
+import { useMotors } from "@/hooks/useMotors";
+import { useDrivers } from "@/hooks/useDrivers";
+import { useAssignments } from "@/hooks/useAssignments";
+import { X, ChevronRight, ChevronLeft, Loader2 } from "lucide-react";
+import type { AssetFuelType, AssetStatus } from "@/types/activo";
+
+/* ─────────────────────────────────────────────
+   Tipos
+───────────────────────────────────────────── */
+type VehicleFormValues = {
+  code: string;
+  name: string;
+  serial: string;
+  brand: string;
+  model: string;
+  year: string;
+  plate: string;
+  color: string;
+  maxLoad: string;
+  fuelType: AssetFuelType;
+  oilType: string;
+  oilCapacity: string;
+  status: AssetStatus;
+  location: string;
+  driverId: string;
+  observations: string;
+  nextMaintenance: string;
+};
+
+type FormErrors = Partial<Record<keyof VehicleFormValues, string>>;
+
+/* ─────────────────────────────────────────────
+   Valores iniciales
+───────────────────────────────────────────── */
+function getInitialValues(): VehicleFormValues {
+  return {
+    code: "",
+    name: "",
+    serial: "",
+    brand: "",
+    model: "",
+    year: "",
+    plate: "",
+    color: "",
+    maxLoad: "",
+    fuelType: "Diesel",
+    oilType: "",
+    oilCapacity: "",
+    status: "Operativo",
+    location: "",
+    driverId: "",
+    observations: "",
+    nextMaintenance: new Date().toISOString().slice(0, 10),
+  };
+}
+
+/* ─────────────────────────────────────────────
+   Validación
+───────────────────────────────────────────── */
+function validate(v: VehicleFormValues): FormErrors {
+  const e: FormErrors = {};
+
+  // Obligatorios de texto
+  if (!v.code.trim())        e.code        = "El código es obligatorio.";
+  if (!v.name.trim())        e.name        = "El nombre es obligatorio.";
+  if (!v.brand.trim())       e.brand       = "La marca es obligatoria.";
+  if (!v.model.trim())       e.model       = "El modelo es obligatorio.";
+  if (!v.plate.trim())       e.plate       = "La placa es obligatoria.";
+  if (!v.oilType.trim())     e.oilType     = "El tipo de aceite es obligatorio.";
+  if (!v.oilCapacity.trim()) e.oilCapacity = "La capacidad de aceite es obligatoria.";
+
+  // Año — exactamente 4 dígitos numéricos
+  if (v.year.trim() && !/^\d{4}$/.test(v.year.trim()))
+    e.year = "Debe ser un año de 4 dígitos (ej. 2021).";
+
+  // Carga máxima — número opcional seguido de unidad opcional
+  if (v.maxLoad.trim() && !/^\d+(\.\d+)?(\s*(kg|t|lb|ton))?$/i.test(v.maxLoad.trim()))
+    e.maxLoad = "Formato inválido. Ejemplos: 5000, 5000 kg, 5 t.";
+
+  return e;
+}
+
+/* ─────────────────────────────────────────────
+   UI helpers
+───────────────────────────────────────────── */
+function Field({
+  label,
+  error,
+  children,
+}: {
+  label: string;
+  error?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+        {label}
+      </label>
+      {children}
+      {error && <p className="text-xs text-rose-500">{error}</p>}
+    </div>
+  );
+}
+
+const inputCls =
+  "h-10 w-full rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-white/[0.05] px-3 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition";
+const selectCls =
+  "h-10 w-full rounded-xl border border-gray-200 dark:border-gray-600 " +
+  "bg-white dark:bg-gray-900 " +          // ← fondo oscuro real, no translúcido
+  "px-3 text-sm text-gray-800 dark:text-white " +
+  "placeholder:text-gray-400 focus:border-blue-400 focus:outline-none " +
+  "focus:ring-2 focus:ring-blue-500/10 transition cursor-pointer";
+
+/* ─────────────────────────────────────────────
+   Constantes
+───────────────────────────────────────────── */
+const STEPS = ["Identificación", "Técnico", "Operativo"];
+
+// Campos requeridos por step — se validan al presionar "Siguiente"
+const STEP_REQUIRED: Array<Array<keyof VehicleFormValues>> = [
+  ["code", "name", "brand", "model", "plate"],
+  ["oilType", "oilCapacity"],
+  [], // step 2 no bloquea (conductor es opcional)
+];
+
+const STATUS_OPTIONS: AssetStatus[]   = ["Operativo", "En mantenimiento", "Fuera de servicio"];
+const FUEL_OPTIONS:   AssetFuelType[] = ["Diesel", "Gasolina", "Electrico", "Hibrido"];
+
+/* ─────────────────────────────────────────────
+   Componente
+───────────────────────────────────────────── */
+type Props = { onClose: () => void };
+
+export function MotorCreateModal({ onClose }: Props) {
+  const router = useRouter();
+
+  // Hooks de datos
+  const { createMotor }        = useMotors();        // mismo hook, assetType="Vehiculo" en el POST
+  const { drivers, loading: driversLoading } = useDrivers();
+  const { createAssignment }   = useAssignments();
+  const { confirmAction, notifyError } = useFeedback();
+
+  // Estado del formulario
+  const [step,   setStep]   = useState(0);
+  const [values, setValues] = useState<VehicleFormValues>(getInitialValues);
+  const [errors, setErrors] = useState<FormErrors>({});
+  const [saving, setSaving] = useState(false);
+
+  const set = (key: keyof VehicleFormValues, value: string) =>
+    setValues((prev) => ({ ...prev, [key]: value }));
+
+  /* ── Avanzar step ── */
+  const next = () => {
+    const allErrors   = validate(values);
+    const stepErrors  = Object.fromEntries(
+      STEP_REQUIRED[step]
+        .filter((k) => allErrors[k])
+        .map((k) => [k, allErrors[k]])
+    ) as FormErrors;
+
+    if (Object.keys(stepErrors).length > 0) {
+      setErrors(stepErrors);
+      notifyError("Campos incompletos", "Completa los campos requeridos antes de continuar.");
+      return;
+    }
+    setErrors({});
+    setStep((s) => s + 1);
+  };
+
+  /* ── Submit ── */
+  const submit = async () => {
+    const allErrors = validate(values);
+    if (Object.keys(allErrors).length > 0) {
+      setErrors(allErrors);
+      notifyError("Formulario incompleto", "Revisa los campos con error.");
+      return;
+    }
+
+    const selectedDriver = drivers.find((d) => d.id === values.driverId);
+
+    await confirmAction({
+      title:       "Confirmar nuevo vehículo",
+      description: "El vehículo quedará registrado en el inventario de la empresa.",
+      confirmLabel: "Crear vehículo",
+      accent:      "blue",
+      successTitle:       "Vehículo creado",
+      successDescription: "El registro fue guardado correctamente.",
+      summary: [
+        { label: "Código",   value: values.code  },
+        { label: "Placa",    value: values.plate  },
+        { label: "Marca / Modelo", value: `${values.brand} ${values.model}`.trim() },
+        { label: "Estado",   value: values.status },
+        ...(selectedDriver
+          ? [{ label: "Conductor", value: selectedDriver.name }]
+          : []),
+      ],
+      action: async () => {
+        setSaving(true);
+        try {
+          // 1 ── Crear el vehículo
+          const assetId = await createMotor({
+            code:            values.code,
+            name:            values.name,
+            assetType:       "Vehiculo",   // ← clave: no "Motor"
+            serial:          values.serial,
+            brand:           values.brand,
+            model:           values.model,
+            year:            values.year,
+            plate:           values.plate,
+            color:           values.color,
+            maxLoad:         values.maxLoad,
+            fuelType:        values.fuelType,
+            oilType:         values.oilType,
+            oilCapacity:     values.oilCapacity,
+            status:          values.status,
+            location:        values.location,
+            responsible:     selectedDriver?.name ?? "",
+            observations:    values.observations,
+            // campos requeridos por el tipo Asset con valores vacíos
+            tenantId:        "",
+            category:        undefined,
+            site:            "",
+            utilization:     "0%",
+            nextMaintenance: values.nextMaintenance,
+            lastInspection:  "",
+            alerts:          0,
+            availability:    "Disponible",
+            photoUrls:       [],
+          });
+
+          if (!assetId) {
+            notifyError("Error al crear", "No se pudo registrar el vehículo. Intenta de nuevo.");
+            return;
+          }
+
+          // 2 ── Crear asignación si se eligió conductor
+          if (values.driverId && assetId) {
+            try {
+              await createAssignment({
+                assetId,
+                driverId:        values.driverId,
+                startDate:       new Date().toISOString().slice(0, 10),
+                endDate:         null,
+                status:          "Activa",
+                notes:           "",
+                handoverFileName: "",
+              });
+            } catch {
+              // La asignación falló pero el vehículo ya fue creado — no bloqueamos
+              notifyError(
+                "Vehículo creado, asignación pendiente",
+                "El vehículo fue registrado pero no se pudo asignar el conductor automáticamente."
+              );
+            }
+          }
+
+          onClose();
+          router.push(`/vehiculos/${assetId}`);
+        } finally {
+          setSaving(false);
+        }
+      },
+    });
+  };
+
+  /* ─────────────────────────────────────────
+     Render
+  ───────────────────────────────────────── */
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0f1623]">
+
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-gray-100 px-6 pb-4 pt-5 dark:border-white/[0.06]">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-blue-500">Nuevo vehículo</p>
+            <h2 className="mt-0.5 text-base font-bold text-gray-800 dark:text-white">{STEPS[step]}</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition hover:bg-gray-100 dark:hover:bg-white/10"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Barra de progreso */}
+        <div className="h-0.5 bg-gray-100 dark:bg-white/[0.06]">
+          <div
+            className="h-full bg-blue-500 transition-all duration-300"
+            style={{ width: `${((step + 1) / STEPS.length) * 100}%` }}
+          />
+        </div>
+
+        {/* Indicadores de step */}
+        <div className="flex items-center justify-center gap-2 bg-gray-50 px-6 py-3 dark:bg-white/[0.02]">
+          {STEPS.map((s, i) => (
+            <div key={s} className="flex items-center gap-2">
+              <div
+                className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold transition
+                  ${i < step   ? "bg-blue-500 text-white"
+                  : i === step ? "bg-blue-100 text-blue-600 ring-2 ring-blue-400 dark:bg-blue-500/20 dark:text-blue-400"
+                  :              "bg-gray-200 text-gray-400 dark:bg-white/[0.08]"}`}
+              >
+                {i < step ? "✓" : i + 1}
+              </div>
+              <span
+                className={`hidden text-xs font-medium sm:block ${
+                  i === step ? "text-blue-500" : "text-gray-400"
+                }`}
+              >
+                {s}
+              </span>
+              {i < STEPS.length - 1 && (
+                <div className="ml-1 h-px w-6 bg-gray-200 dark:bg-white/[0.08]" />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Cuerpo */}
+        <div className="max-h-[55vh] overflow-y-auto px-6 py-5">
+
+          {/* ── Step 0 · Identificación ── */}
+          {step === 0 && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Código" error={errors.code}>
+                <input
+                  className={inputCls}
+                  value={values.code}
+                  onChange={(e) => set("code", e.target.value)}
+                  placeholder="VEH-001"
+                />
+              </Field>
+              <Field label="Nombre" error={errors.name}>
+                <input
+                  className={inputCls}
+                  value={values.name}
+                  onChange={(e) => set("name", e.target.value)}
+                  placeholder="Camión Cummins #1"
+                />
+              </Field>
+              <Field label="Marca" error={errors.brand}>
+                <input
+                  className={inputCls}
+                  value={values.brand}
+                  onChange={(e) => set("brand", e.target.value)}
+                  placeholder="Mercedes-Benz"
+                />
+              </Field>
+              <Field label="Modelo" error={errors.model}>
+                <input
+                  className={inputCls}
+                  value={values.model}
+                  onChange={(e) => set("model", e.target.value)}
+                  placeholder="Actros 2651"
+                />
+              </Field>
+              <Field label="Placa" error={errors.plate}>
+                <input
+                  className={inputCls}
+                  value={values.plate}
+                  onChange={(e) => set("plate", e.target.value.toUpperCase())}
+                  placeholder="ABC-1234"
+                />
+              </Field>
+              <Field label="Serie">
+                <input
+                  className={inputCls}
+                  value={values.serial}
+                  onChange={(e) => set("serial", e.target.value)}
+                  placeholder="SN-123456"
+                />
+              </Field>
+              <Field label="Año" error={errors.year}>
+                <input
+                  className={inputCls}
+                  value={values.year}
+                  onChange={(e) => set("year", e.target.value.replace(/\D/g, "").slice(0, 4))}
+                  placeholder="2021"
+                  inputMode="numeric"
+                  maxLength={4}
+                />
+              </Field>
+              <Field label="Color">
+                <input
+                  className={inputCls}
+                  value={values.color}
+                  onChange={(e) => set("color", e.target.value)}
+                  placeholder="Blanco"
+                />
+              </Field>
+            </div>
+          )}
+
+          {/* ── Step 1 · Técnico ── */}
+          {step === 1 && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Tipo de combustible">
+                <select
+                  className={selectCls}
+                  value={values.fuelType}
+                  onChange={(e) => set("fuelType", e.target.value)}
+                >
+                  {FUEL_OPTIONS.map((o) => (
+                    <option key={o} value={o}>{o}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Tipo de aceite" error={errors.oilType}>
+                <input
+                  className={inputCls}
+                  value={values.oilType}
+                  onChange={(e) => set("oilType", e.target.value)}
+                  placeholder="15W-40"
+                />
+              </Field>
+              <Field label="Capacidad de aceite" error={errors.oilCapacity}>
+                <input
+                  className={inputCls}
+                  value={values.oilCapacity}
+                  onChange={(e) => set("oilCapacity", e.target.value)}
+                  placeholder="15 L"
+                />
+              </Field>
+              <Field label="Carga máxima" error={errors.maxLoad}>
+                <input
+                  className={inputCls}
+                  value={values.maxLoad}
+                  onChange={(e) => set("maxLoad", e.target.value)}
+                  placeholder="5000 kg"
+                  inputMode="decimal"
+                />
+              </Field>
+              <Field label="Próximo mantenimiento">
+                <input
+                  className={inputCls}
+                  type="date"
+                  value={values.nextMaintenance}
+                  onChange={(e) => set("nextMaintenance", e.target.value)}
+                />
+              </Field>
+            </div>
+          )}
+
+          {/* ── Step 2 · Operativo ── */}
+          {step === 2 && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Estado">
+                <select
+                  className={selectCls}
+                  value={values.status}
+                  onChange={(e) => set("status", e.target.value as AssetStatus)}
+                >
+                  {STATUS_OPTIONS.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Ubicación">
+                <input
+                  className={inputCls}
+                  value={values.location}
+                  onChange={(e) => set("location", e.target.value)}
+                  placeholder="Patio principal"
+                />
+              </Field>
+
+              {/* Conductor — select desde la API */}
+              <Field label="Conductor asignado">
+                {driversLoading ? (
+                  <div className="flex h-10 items-center gap-2 rounded-xl border border-gray-200 px-3 dark:border-gray-600">
+                    <Loader2 size={14} className="animate-spin text-gray-400" />
+                    <span className="text-sm text-gray-400">Cargando conductores…</span>
+                  </div>
+                ) : (
+                  <select
+                    className={selectCls}
+                    value={values.driverId}
+                    onChange={(e) => set("driverId", e.target.value)}
+                  >
+                    <option value="">— Sin asignar —</option>
+                      {drivers
+                        .filter((d) => d.status === "Activo")
+                        .map((d) => {
+                          const label = [d.firstName, d.lastName].filter(Boolean).join(" ") || d.code;
+                          return (
+                            <option key={d.id} value={d.id} className="bg-gray-900 text-white">
+                              {label} · {d.licenseType}
+                            </option>
+                          );
+                        })}
+                  </select>
+                )}
+              </Field>
+
+              <Field label="Observaciones">
+                <textarea
+                  className="w-full resize-none rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 dark:border-gray-600 dark:bg-white/[0.05] dark:text-white dark:placeholder:text-gray-500"
+                  rows={3}
+                  value={values.observations}
+                  onChange={(e) => set("observations", e.target.value)}
+                  placeholder="Notas adicionales…"
+                />
+              </Field>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50 px-6 py-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
+          <button
+            type="button"
+            onClick={() => (step === 0 ? onClose() : setStep((s) => s - 1))}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 transition hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/10"
+          >
+            <ChevronLeft size={15} />
+            {step === 0 ? "Cancelar" : "Anterior"}
+          </button>
+
+          {step < STEPS.length - 1 ? (
+            <button
+              type="button"
+              onClick={next}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-600 active:scale-95"
+            >
+              Siguiente
+              <ChevronRight size={15} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={submit}
+              disabled={saving}
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-600 active:scale-95 disabled:opacity-60"
+            >
+              {saving && <Loader2 size={14} className="animate-spin" />}
+              {saving ? "Guardando…" : "Crear vehículo"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

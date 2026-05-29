@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Fleet Command Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed": "#ccff00",
+                        "background": "#05070A",
+                        "surface-container": "#0C0E12",
+                        "on-surface": "#e1e2e7",
+                        "on-surface-variant": "#c4c9ac",
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "1.25rem",
+                        "xl": "2rem",
+                        "full": "9999px"
+                    },
+                    "fontFamily": {
+                        "body-md": ["Plus Jakarta Sans"],
+                        "headline-md": ["Plus Jakarta Sans"]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        body { background-color: #05070A; }
+        .glass-panel {
+            background: #0C0E12;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.3s ease;
+        }
+        .neon-glow-lime {
+            box-shadow: 0 0 15px rgba(204, 255, 0, 0.15);
+        }
+        .gauge-tick {
+            stroke: rgba(255, 255, 255, 0.1);
+            stroke-width: 1;
+        }
+        .gauge-tick-active {
+            stroke: #ccff00;
+            stroke-width: 2;
+        }
+        @keyframes rotate-needle {
+            0% { transform: rotate(-120deg); }
+            100% { transform: rotate(45deg); }
+        }
+        .needle {
+            transform-origin: center;
+            transition: transform 1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .route-path-neon {
+            stroke: #ccff00;
+            filter: drop-shadow(0 0 5px #ccff00);
+            stroke-dasharray: 400;
+            stroke-dashoffset: 400;
+            animation: draw 2s ease-out forwards;
+        }
+        @keyframes draw {
+            to { stroke-dashoffset: 0; }
+        }
+        .map-mask {
+            mask-image: radial-gradient(circle at center, black 60%, transparent 100%);
+        }
+    </style>
+</head>
+<body class="font-body-md text-on-surface selection:bg-primary-fixed selection:text-black overflow-hidden">
+<!-- Left Sidebar Shell -->
+<aside class="fixed left-0 top-0 h-screen w-20 bg-background border-r border-white/5 z-50 flex flex-col py-8 items-center">
+<div class="mb-12">
+<div class="w-10 h-10 bg-primary-fixed rounded-xl flex items-center justify-center rotate-45">
+<span class="material-symbols-outlined text-black -rotate-45 font-bold">bolt</span>
+</div>
+</div>
+<nav class="flex-1 space-y-8">
+<a class="flex items-center justify-center w-12 h-12 rounded-full bg-white/5 text-primary-fixed transition-all group" href="#">
+<span class="material-symbols-outlined text-2xl" style="font-variation-settings: 'FILL' 1;">home</span>
+</a>
+<a class="flex items-center justify-center w-12 h-12 rounded-full text-on-surface-variant hover:bg-white/5 transition-all" href="#">
+<span class="material-symbols-outlined text-2xl">photo_camera</span>
+</a>
+<a class="flex items-center justify-center w-12 h-12 rounded-full text-on-surface-variant hover:bg-white/5 transition-all" href="#">
+<span class="material-symbols-outlined text-2xl">call</span>
+</a>
+<a class="flex items-center justify-center w-12 h-12 rounded-full text-on-surface-variant hover:bg-white/5 transition-all" href="#">
+<span class="material-symbols-outlined text-2xl">play_circle</span>
+</a>
+</nav>
+<div class="mt-auto">
+<a class="flex items-center justify-center w-12 h-12 rounded-full text-on-surface-variant hover:bg-white/5 transition-all" href="#">
+<span class="material-symbols-outlined text-2xl">settings</span>
+</a>
+</div>
+</aside>
+<!-- Main Workspace -->
+<main class="ml-20 min-h-screen flex flex-col relative p-6">
+<!-- Top Bar -->
+<header class="flex justify-between items-center mb-8">
+<div class="flex items-center gap-12">
+<h1 class="text-2xl font-bold tracking-tight">Dashboard</h1>
+<div class="relative">
+<span class="absolute left-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-on-surface-variant text-lg">search</span>
+<input class="bg-white/5 border-0 rounded-full pl-12 pr-6 py-2.5 text-sm focus:ring-1 focus:ring-primary-fixed w-80" placeholder="Search..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-8">
+<div class="flex items-center gap-3">
+<div class="text-right">
+<p class="text-lg font-bold leading-none">25° C</p>
+<p class="text-xs text-on-surface-variant">Rainy</p>
+</div>
+<div class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary-fixed">cloudy_snowing</span>
+</div>
+</div>
+<div class="h-8 w-[1px] bg-white/10"></div>
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant hover:text-primary-fixed cursor-pointer">notifications</span>
+<img alt="User" class="w-10 h-10 rounded-full border border-white/10" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBnS7ArDTczPm2aVCqfUMfGrqFwUbQfab_mnTxNI-rdMUpvzOkBOPqcC6Vmy8WDwEoDDzN5ZmufDB4Rd_lbBLvXZHoVbISiJAPDUcF648SQ3OwXbXjrduDtk8vlo1hr0IolwieLa1SzeZDvRFgfL15HVnOiWViKKK-Byeqx2aBO7cvjJ0Bmo1GtFZd4gDUYeMzXAsd8tb5R3ee7ja3S6jGvnpzBvcGe3z_CzzMwImwJi4GOXHmps8ixOmbNzzkNKFUVfGbmeJ2VzKE4"/>
+</div>
+</div>
+</header>
+<div class="grid grid-cols-12 gap-6 flex-1">
+<!-- Left Column: Navigation and Media -->
+<div class="col-span-3 flex flex-col gap-6">
+<!-- Navigation Card -->
+<div class="glass-panel rounded-xl flex-1 overflow-hidden relative flex flex-col p-6">
+<div class="flex items-start gap-4 mb-4 z-10">
+<div class="p-2 bg-primary-fixed/20 rounded-lg">
+<span class="material-symbols-outlined text-primary-fixed">turn_right</span>
+</div>
+<div>
+<h3 class="text-2xl font-bold">600m</h3>
+<p class="text-xs text-on-surface-variant">In 500m take turning right</p>
+</div>
+</div>
+<div class="flex-1 relative mb-4">
+<div class="absolute inset-0 opacity-40 grayscale contrast-125 map-mask">
+<img alt="Map" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCSBHCEwjWh48oKiNPDvnAKcNeCGSika0BDEZNs5GIqjF5KEBIHvVaGLwQMsl3EfGBpQ6tRbooMIO3EJpiktCogds7RF5nTTDSziOXpxHZL1Gv0S2tuLL_hGx9gBp01-B5UmrXugpdCJpspIFsf0WQVcPdLAnMWbRFbqIVGFvjAO-sE2Yctd_GKtw5ew1pIPdDjxm-tWm_9ZE1VzPSX7eOlRF1M8taHZQQkcY7b9_HvLgJNB0lUYdNaJOn4vLbz-vwuJY8HSmw3sT6o"/>
+</div>
+<svg class="absolute inset-0 w-full h-full pointer-events-none" viewbox="0 0 200 300">
+<path class="route-path-neon" d="M100,280 L100,200 L160,180 L140,80 L80,60" fill="none" stroke-linecap="round" stroke-width="4"></path>
+<circle class="pulse-glow" cx="80" cy="60" fill="#ccff00" r="4"></circle>
+</svg>
+</div>
+<div class="z-10 mt-auto">
+<p class="text-xs font-bold text-on-surface-variant">Club Town Gardens</p>
+<p class="text-[10px] text-on-surface-variant/60">MM Feeder Road, Kolkata</p>
+<div class="mt-2 flex justify-between items-center text-[10px]">
+<span>2 Km</span>
+<div class="h-1 flex-1 mx-3 bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary-fixed w-1/3 shadow-[0_0_8px_#ccff00]"></div>
+</div>
+<span>3 min</span>
+</div>
+</div>
+</div>
+<!-- Media Player -->
+<div class="glass-panel rounded-xl p-6">
+<div class="flex items-center gap-4 mb-4">
+<div class="w-16 h-16 rounded-lg overflow-hidden shrink-0">
+<img alt="Album" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAJzaIAcOR7uEvSg7QSkByk98bRKUp-fJLArNW_zhaiPtdQrD-8nQkDckMz2LhKvpqaoQH0LLAg7pKDOetxIcIs9WunYHpgSpZP_AG5iiYuq9TWkPZivjVyUYDiDu_s6ga0rmzNpJEo0KUP5OKql9JfNCKI8QlaEkO7JF5h_4CeRwZ3Hq5h_jErBkT4xpi52rWvMu2DOrg44sI7lp0fBvAjonWx2suAWLQqP6Gz2aXRmy1YwgNExg0UkOK4C6p0H4ZOb7G1UVK7P5rU"/>
+</div>
+<div class="overflow-hidden">
+<p class="font-bold truncate">Love me like you do</p>
+<p class="text-xs text-on-surface-variant truncate">Ellie Goulding</p>
+</div>
+</div>
+<div class="flex items-center justify-between gap-4">
+<span class="text-[10px] text-on-surface-variant/60">0:00</span>
+<div class="h-1 flex-1 bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary-fixed w-[40%]"></div>
+</div>
+<span class="text-[10px] text-on-surface-variant/60">2:20</span>
+</div>
+<div class="flex justify-center items-center gap-6 mt-4">
+<span class="material-symbols-outlined text-on-surface-variant cursor-pointer text-xl">skip_previous</span>
+<div class="w-10 h-10 rounded-full border-2 border-primary-fixed flex items-center justify-center cursor-pointer">
+<span class="material-symbols-outlined text-primary-fixed">pause</span>
+</div>
+<span class="material-symbols-outlined text-on-surface-variant cursor-pointer text-xl">skip_next</span>
+</div>
+</div>
+</div>
+<!-- Middle Column: Climate and Calendar -->
+<div class="col-span-3 flex flex-col gap-6">
+<!-- Climate Control -->
+<div class="glass-panel rounded-xl p-6">
+<div class="flex justify-between items-start mb-6">
+<div>
+<h3 class="text-sm font-bold text-on-surface-variant mb-1 uppercase tracking-widest">Climate</h3>
+<p class="text-[10px] text-on-surface-variant/60">INTERIOR: 24° C</p>
+</div>
+<span class="material-symbols-outlined text-primary-fixed">thermostat</span>
+</div>
+<div class="text-center mb-6">
+<h2 class="text-5xl font-bold">23° C</h2>
+<p class="text-[10px] text-on-surface-variant mt-2 tracking-widest">WINDOW CLOSED</p>
+</div>
+<div class="relative pt-6">
+<div class="flex justify-between text-[10px] text-on-surface-variant/40 mb-2">
+<span>10° C</span>
+<span>40° C</span>
+</div>
+<div class="h-1.5 w-full bg-white/5 rounded-full relative">
+<div class="absolute top-1/2 left-[45%] -translate-y-1/2 w-6 h-6 bg-primary-fixed rounded-full shadow-[0_0_15px_#ccff00] border-4 border-[#0C0E12] flex items-center justify-center">
+<span class="material-symbols-outlined text-[12px] text-black font-bold">ac_unit</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Calendar -->
+<div class="glass-panel rounded-xl p-6 flex-1">
+<div class="flex justify-between items-center mb-6">
+<h3 class="text-sm font-bold uppercase tracking-widest">My Calendar</h3>
+<span class="material-symbols-outlined text-on-surface-variant">more_horiz</span>
+</div>
+<p class="text-xs text-primary-fixed mb-4">5 Aug - 2022</p>
+<div class="space-y-4">
+<div class="flex gap-4">
+<span class="text-[10px] text-on-surface-variant/40 shrink-0">5:00</span>
+<div class="bg-white/5 border-l-4 border-primary-fixed p-3 rounded-r-lg flex-1">
+<p class="text-xs font-bold">Meeting with clients</p>
+<p class="text-[10px] text-on-surface-variant/60">5:00 - 6:20</p>
+</div>
+</div>
+<div class="flex gap-4">
+<span class="text-[10px] text-on-surface-variant/40 shrink-0">6:00</span>
+<div class="h-[1px] bg-white/10 flex-1 mt-1.5"></div>
+</div>
+</div>
+</div>
+<!-- Mini Controls -->
+<div class="grid grid-cols-2 gap-4 mt-auto">
+<div class="glass-panel rounded-xl p-4 flex flex-col items-center gap-1">
+<span class="material-symbols-outlined text-on-surface-variant">opacity</span>
+<span class="text-[10px] text-on-surface-variant/60">Humidity</span>
+</div>
+<div class="glass-panel rounded-xl p-4 flex flex-col items-center gap-1">
+<span class="material-symbols-outlined text-on-surface-variant">air</span>
+<span class="text-[10px] text-on-surface-variant/60">Wind</span>
+</div>
+</div>
+</div>
+<!-- Right Column: Vehicle Display and Gauges -->
+<div class="col-span-6 flex flex-col gap-6">
+<!-- Hero Vehicle Display -->
+<div class="glass-panel rounded-xl p-6 flex-1 relative overflow-hidden flex flex-col">
+<div class="absolute top-4 left-4 z-10 flex flex-col gap-2">
+<div class="bg-red-500/10 border border-red-500/20 p-3 rounded-lg flex items-center gap-3">
+<span class="material-symbols-outlined text-red-500 text-sm">warning</span>
+<div class="text-[10px]">
+<p class="font-bold text-white leading-none">Emergency</p>
+<p class="text-on-surface-variant/60">Switch On only in emergency case</p>
+</div>
+<div class="ml-4 w-8 h-4 bg-primary-fixed rounded-full relative">
+<div class="absolute right-0.5 top-0.5 w-3 h-3 bg-[#0C0E12] rounded-full"></div>
+</div>
+</div>
+</div>
+<div class="flex-1 flex items-center justify-center relative">
+<div class="absolute w-[80%] aspect-square border border-primary-fixed/20 rounded-full scale-y-[0.3] bottom-0 shadow-[0_0_60px_rgba(204,255,0,0.1)]"></div>
+<img alt="Vehicle" class="w-[85%] h-auto object-contain relative z-10 drop-shadow-[0_20px_50px_rgba(0,0,0,0.8)]" src="https://lh3.googleusercontent.com/aida/ADBb0ui2Jqj8chiT4q0ZPEyoVGqtaBnWHGSzjNXymiwUaAY5_p-zw7n0jdWA43YUQo4CFyfOVt0Jdaki0-NvuUB4NO8vkZm1gxD_7zyLA_QGteH_kqLPycws7iTWRphVpC9yQIqIBHzER7Rq-zZ4ELFSaAEf36Ji3ixHhzkuGa-FZY493iGhi-8FHPxsCg7wSuwr-WI-F8tXy1S-qDi659ddlfoFn5oh4BTJtkSI7A5vJP4faQLgo1jTSR17z9c"/>
+<!-- Controls around car -->
+<div class="absolute right-10 top-1/2 -translate-y-1/2 flex flex-col items-center gap-8 z-20">
+<div class="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center text-black shadow-[0_0_15px_#ccff00] cursor-pointer">
+<span class="material-symbols-outlined text-lg">lock_open</span>
+</div>
+</div>
+<div class="absolute left-10 top-1/2 -translate-y-1/2 flex flex-col items-center gap-8 z-20">
+<div class="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-on-surface-variant cursor-pointer">
+<span class="material-symbols-outlined text-lg">lock</span>
+</div>
+</div>
+</div>
+<!-- Car Interaction Buttons -->
+<div class="flex justify-center gap-8 pb-4">
+<div class="flex flex-col items-center gap-2">
+<div class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-on-surface-variant cursor-pointer hover:bg-white/10">
+<span class="material-symbols-outlined text-lg">light_mode</span>
+</div>
+<span class="text-[8px] text-on-surface-variant/60 uppercase">Brightness</span>
+</div>
+<div class="flex flex-col items-center gap-2">
+<div class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-on-surface-variant cursor-pointer hover:bg-white/10">
+<span class="material-symbols-outlined text-lg">fingerprint</span>
+</div>
+<span class="text-[8px] text-on-surface-variant/60 uppercase">Fingerprint</span>
+</div>
+<div class="flex flex-col items-center gap-2">
+<div class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-on-surface-variant cursor-pointer hover:bg-white/10">
+<span class="material-symbols-outlined text-lg">contrast</span>
+</div>
+<span class="text-[8px] text-on-surface-variant/60 uppercase">Statistics</span>
+</div>
+</div>
+</div>
+<!-- Bottom Gauges Row -->
+<div class="grid grid-cols-3 gap-6">
+<!-- Fuel Gauge -->
+<div class="glass-panel rounded-xl p-4 flex flex-col items-center justify-center relative overflow-hidden h-48">
+<div class="relative w-32 h-32">
+<svg class="w-full h-full -rotate-180" viewbox="0 0 100 100">
+<path d="M 20 80 A 40 40 0 1 1 80 80" fill="none" stroke="rgba(255,255,255,0.05)" stroke-linecap="round" stroke-width="8"></path>
+<path class="drop-shadow-[0_0_8px_#ccff00]" d="M 20 80 A 40 40 0 0 1 65 24" fill="none" stroke="#ccff00" stroke-linecap="round" stroke-width="8"></path>
+</svg>
+<div class="absolute inset-0 flex flex-col items-center justify-center mt-4">
+<span class="material-symbols-outlined text-primary-fixed mb-1 text-sm">local_gas_station</span>
+<p class="text-sm font-bold">Petrol</p>
+<p class="text-[10px] text-on-surface-variant">65%</p>
+</div>
+</div>
+</div>
+<!-- Main Speedometer -->
+<div class="glass-panel rounded-xl p-4 flex flex-col items-center justify-center relative h-48 bg-black">
+<div class="relative w-44 h-44">
+<svg class="w-full h-full" viewbox="0 0 100 100">
+<!-- Gauge Ticks -->
+<g class="ticks">
+<circle cx="50" cy="50" fill="none" r="45" stroke="rgba(255,255,255,0.05)" stroke-width="0.5"></circle>
+<!-- JS would generate these ticks more efficiently -->
+<line class="gauge-tick" transform="rotate(0 50 50)" x1="50" x2="50" y1="5" y2="10"></line>
+<line class="gauge-tick-active" transform="rotate(45 50 50)" x1="50" x2="50" y1="5" y2="12"></line>
+<line class="gauge-tick" transform="rotate(90 50 50)" x1="50" x2="50" y1="5" y2="10"></line>
+<line class="gauge-tick" transform="rotate(135 50 50)" x1="50" x2="50" y1="5" y2="10"></line>
+<line class="gauge-tick" transform="rotate(180 50 50)" x1="50" x2="50" y1="5" y2="10"></line>
+<line class="gauge-tick" transform="rotate(225 50 50)" x1="50" x2="50" y1="5" y2="10"></line>
+<line class="gauge-tick" transform="rotate(270 50 50)" x1="50" x2="50" y1="5" y2="10"></line>
+<line class="gauge-tick" transform="rotate(315 50 50)" x1="50" x2="50" y1="5" y2="10"></line>
+</g>
+<!-- Needle -->
+<line class="needle" stroke="#ccff00" stroke-width="2" style="transform: rotate(45deg); filter: drop-shadow(0 0 5px #ccff00);" x1="50" x2="50" y1="50" y2="12"></line>
+<circle cx="50" cy="50" fill="#ccff00" r="3"></circle>
+</svg>
+<div class="absolute inset-0 flex flex-col items-center justify-center">
+<span class="text-4xl font-black mt-2">57</span>
+<span class="text-[10px] font-bold text-on-surface-variant">Km/h</span>
+</div>
+<!-- Speed Numbers -->
+<div class="absolute inset-0 text-[8px] text-on-surface-variant font-bold">
+<span class="absolute top-2 left-1/2 -translate-x-1/2">100</span>
+<span class="absolute top-1/4 right-6">140</span>
+<span class="absolute top-1/4 left-6">60</span>
+<span class="absolute bottom-1/2 right-2">180</span>
+<span class="absolute bottom-1/2 left-2">20</span>
+</div>
+</div>
+</div>
+<!-- Battery Gauge -->
+<div class="glass-panel rounded-xl p-4 flex flex-col items-center justify-center relative overflow-hidden h-48">
+<div class="relative w-32 h-32">
+<svg class="w-full h-full -rotate-180" viewbox="0 0 100 100">
+<path d="M 20 80 A 40 40 0 1 1 80 80" fill="none" stroke="rgba(255,255,255,0.05)" stroke-linecap="round" stroke-width="8"></path>
+<path class="drop-shadow-[0_0_8px_#ccff00]" d="M 20 80 A 40 40 0 0 1 75 35" fill="none" stroke="#ccff00" stroke-linecap="round" stroke-width="8"></path>
+</svg>
+<div class="absolute inset-0 flex flex-col items-center justify-center mt-4">
+<span class="material-symbols-outlined text-primary-fixed mb-1 text-sm">battery_charging_full</span>
+<p class="text-sm font-bold">Battery</p>
+<p class="text-[10px] text-on-surface-variant">60%</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Footer Meta -->
+<footer class="mt-6 flex justify-between items-center text-[10px] font-bold tracking-widest text-on-surface-variant/40">
+<div class="flex gap-8">
+<div class="flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-primary-fixed"></span>
+<span>ENCRYPTED CHANNEL A-04</span>
+</div>
+<span>LAT: 34.0522° N</span>
+</div>
+<span>© 2024 VANGUARD TECH • ALL SYSTEMS NOMINAL</span>
+</footer>
+</main>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // Simple needle animation logic
+        const speedNeedle = document.querySelector('.needle');
+        setInterval(() => {
+            const randomSpeed = 30 + Math.floor(Math.random() * 40);
+            const rotation = ((randomSpeed / 180) * 270) - 135;
+            if(speedNeedle) speedNeedle.style.transform = `rotate(${rotation}deg)`;
+            
+            const speedText = document.querySelector('.text-4xl');
+            if(speedText) speedText.textContent = randomSpeed;
+        }, 3000);
+
+        // Interaction for side nav
+        document.querySelectorAll('nav a').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                document.querySelectorAll('nav a').forEach(l => l.classList.remove('bg-white/5', 'text-primary-fixed'));
+                link.classList.add('bg-white/5', 'text-primary-fixed');
+            });
+        });
+    });
+</script>
+</body></html>

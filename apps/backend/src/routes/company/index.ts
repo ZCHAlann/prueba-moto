@@ -18,6 +18,7 @@ import analyticsRouter from './analytics';
 import oilsRouter from './oils';
 import oilChangesRouter from './oil-changes';
 import vehiculoRouter from './vehiculo';
+import profileRouter from './auth.me';
 
 const router = Router({ mergeParams: true });
 
@@ -41,5 +42,6 @@ router.use('/analytics', analyticsRouter);
 router.use('/oils', oilsRouter);
 router.use('/oil-changes', oilChangesRouter);
 router.use('/vehicle-cockpit', vehiculoRouter);
+router.use('/auth/me', profileRouter);
 
 export default router;

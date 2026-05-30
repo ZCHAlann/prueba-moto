@@ -11,6 +11,7 @@ import {
   timestamp,
   unique,
   integer,
+  doublePrecision,
 } from 'drizzle-orm/pg-core';
 import { companies, companyUsers } from './platform';
 
@@ -353,6 +354,8 @@ export const companyGarages = pgTable(
     supervisor: varchar('supervisor', { length: 160 }),
     status: varchar('status', { length: 40 }),
     notes: text('notes'),
+    latitude: doublePrecision('latitude'),
+    longitude: doublePrecision('longitude'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },

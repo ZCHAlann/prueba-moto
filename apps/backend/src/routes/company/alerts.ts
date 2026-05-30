@@ -16,7 +16,7 @@ const router = Router({ mergeParams: true });
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
 const ALERT_SEVERITIES = ['Alta', 'Media', 'Baja'] as const;
-const ALERT_STATUSES = ['Abierta', 'En revisión', 'Cerrada'] as const;
+const ALERT_STATUSES = ['Abierta', 'En seguimiento', 'Cerrada'] as const;
 
 const createAlertSchema = z.object({
   title: z.string().min(1, 'El título es requerido'),

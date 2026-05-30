@@ -22,6 +22,8 @@ const createGarageSchema = z.object({
   supervisor: z.string().optional().nullable(),
   status: z.enum(['Activo', 'Inactivo']).default('Activo'),
   notes: z.string().optional().nullable(),
+  latitude: z.number().optional().nullable(),
+  longitude: z.number().optional().nullable(),
 });
 
 const updateGarageSchema = createGarageSchema.partial();
@@ -169,6 +171,8 @@ function serializeGarage(g: typeof companyGarages.$inferSelect) {
     notes: g.notes,
     createdAt: g.createdAt,
     updatedAt: g.updatedAt,
+    latitude: g.latitude,
+    longitude: g.longitude,
   };
 }
 

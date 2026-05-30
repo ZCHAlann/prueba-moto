@@ -213,7 +213,7 @@ router.delete(
 // ─── GET /company/:id/checklists ──────────────────────────────────────────────
 // Query: ?status=Aprobado &assetId=asset-1 &driverId=driver-1 &categoryId=checklist-category-1
 
-router.get('/checklists', requireModule('checklist'), async (req, res, next) => {
+router.get('/', requireModule('checklist'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const { status, assetId, driverId, categoryId } = req.query;
@@ -270,10 +270,9 @@ router.get('/checklists/:checkId', requireModule('checklist'), async (req, res, 
 });
 
 // ─── POST /company/:id/checklists ─────────────────────────────────────────────
-// Sin requireAdmin ni requireSupervisor — cualquier usuario autenticado con módulo puede crear
 
 router.post(
-  '/checklists',
+  '/',
   requireModule('checklist'),
   validate(createChecklistSchema),
   async (req, res, next) => {

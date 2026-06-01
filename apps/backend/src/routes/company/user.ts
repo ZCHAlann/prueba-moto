@@ -9,6 +9,7 @@ import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { hashPassword } from '../../services/auth.service';
+import type { PermissionMap } from '../../middlewares/authenticate';
 
 const router = Router({ mergeParams: true });
 
@@ -29,7 +30,8 @@ const createCompanyUserSchema = z.object({
   role:              z.enum(COMPANY_ROLES),
   status:            z.enum(['active', 'inactive']).default('active'),
   modulePermissions: z.array(z.string()).default([]),
-  profileData:       z.record(z.unknown()).default({}),
+  permissions:       z.record(z.string(), z.record(z.string(), z.array(z.string()))).default({}),  // ← nuevo
+  profileData:       z.record(z.string(), z.unknown()).default({}),
 });
 
 const updateCompanyUserSchema = createCompanyUserSchema
@@ -49,6 +51,7 @@ function serializeUser(u: typeof companyUsers.$inferSelect) {
     role:              u.role,
     status:            u.status,
     modulePermissions: (profile.modulePermissions as string[]) ?? [],
+    permissions:       (profile.permissions as PermissionMap) ?? {},   // ← nuevo
     profileData:       profile,
     createdAt:         u.createdAt,
     updatedAt:         u.updatedAt,
@@ -112,7 +115,7 @@ router.post(
 
       const passwordHash = await hashPassword(body.password);
 
-      const { modulePermissions, profileData, ...rest } = body;
+      const { modulePermissions, permissions, profileData, ...rest } = body;
 
       const [created] = await db
         .insert(companyUsers)
@@ -123,7 +126,7 @@ router.post(
           passwordHash,
           role:         rest.role,
           status:       rest.status,
-          profileData:  { ...profileData, modulePermissions },
+          profileData:  { ...profileData, modulePermissions, permissions }, 
         })
         .returning();
 
@@ -152,7 +155,7 @@ router.put(
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
-      const userId    = parseId('company-user', req.params.userId);
+      const userId    = parseId('company-user', req.params.userId as string);
       const body      = req.body as z.infer<typeof updateCompanyUserSchema>;
 
       const existing = await db
@@ -166,9 +169,9 @@ router.put(
         )
         .limit(1);
 
-      if (!existing.length) throw new NotFoundError('Usuario', req.params.userId);
+      if (!existing.length) throw new NotFoundError('Usuario', req.params.userId as string);
 
-      const { password, modulePermissions, profileData, ...rest } = body;
+      const { password, modulePermissions, permissions, profileData, ...rest } = body;
 
       const updateData: Partial<typeof companyUsers.$inferInsert> & Record<string, unknown> = {
         ...rest,
@@ -179,12 +182,13 @@ router.put(
         updateData.passwordHash = await hashPassword(password);
       }
 
-      if (modulePermissions !== undefined || profileData !== undefined) {
+      if (modulePermissions !== undefined || profileData !== undefined || permissions !== undefined) {
         const currentProfile = (existing[0].profileData as Record<string, unknown>) ?? {};
         updateData.profileData = {
           ...currentProfile,
           ...(profileData ?? {}),
           ...(modulePermissions !== undefined ? { modulePermissions } : {}),
+          ...(permissions !== undefined ? { permissions } : {}),   // ← nuevo
         };
       }
 
@@ -223,7 +227,7 @@ router.delete(
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
-      const userId    = parseId('company-user', req.params.userId);
+      const userId    = parseId('company-user', req.params.userId as string);
 
       const existing = await db
         .select()
@@ -236,7 +240,7 @@ router.delete(
         )
         .limit(1);
 
-      if (!existing.length) throw new NotFoundError('Usuario', req.params.userId);
+      if (!existing.length) throw new NotFoundError('Usuario', req.params.userId as string);
 
       await db
         .delete(companyUsers)

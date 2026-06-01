@@ -54,3 +54,4 @@ export const companyUsers = pgTable(
     unique('company_users_company_id_username').on(table.companyId, table.username),
   ]
 );
+

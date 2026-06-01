@@ -524,3 +524,32 @@ export const companyOilChanges = pgTable('company_oil_changes', {
   notes: text('notes'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
+
+// Seguros
+
+export const companyInsurancePolicies = pgTable('company_insurance_policies', {
+  id: serial('id').primaryKey(),
+ 
+  companyId: serial('company_id')
+    .notNull()
+    .references(() => companies.id, { onDelete: 'cascade' }),
+ 
+  assetId: integer('asset_id')
+    .notNull()
+    .references(() => companyAssets.id, { onDelete: 'cascade' }),
+ 
+  insurer: varchar('insurer', { length: 160 }).notNull(),
+  policyNumber: varchar('policy_number', { length: 120 }).notNull(),
+  coverage: varchar('coverage', { length: 255 }),
+ 
+  startDate: date('start_date').notNull(),
+  endDate:   date('end_date').notNull(),
+ 
+  // 'Vigente' | 'Por vencer' | 'Vencido'
+  status: varchar('status', { length: 40 }).default('Vigente'),
+ 
+  notes: text('notes'),
+ 
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});

@@ -1,14 +1,2 @@
-Mi propuesta de consolidación:
-Página 1 — Mantenimiento (ya la tienes, mejorarla) Preventivo/correctivo con stats de costos, kanban o tabla
-Página 2 — Lubricación e inventario (fusionar inventario + cambios de aceite) Son lo mismo — el inventario son los repuestos/aceites, y los cambios consumen ese stock
-Página 3 — Operación (fusionar combustible + kilometraje) Ambos son registros de uso operativo del vehículo, misma audiencia, misma lógica
-Página 4 — Verificación de aceite (separado, para conductores + IA)
-Página 5 — Verificación de aceite supervisor (separado)
+Tengo una app de gestión de flota en React + Vite + TypeScript con Tailwind CSS. Necesito que adaptes un componente .tsx existente al sistema de diseño del proyecto. Las reglas son: usar clases de Tailwind con los tokens del proyecto — brand-, success-, error-, warning-, gray- con sus variantes dark: — bordes con border-gray-200 dark:border-white/[0.06], fondos con bg-white dark:bg-white/[0.03], textos con text-gray-800 dark:text-white para primario y text-gray-400 dark:text-gray-500 para secundario, bordes redondeados con rounded-xl o rounded-2xl, sin hardcodear colores como bg-neutral-900 ni clases con opacidad estilo text-white/40. El layout de página sigue este patrón: header con badge de categoría + título + descripción + botón de acción a la derecha, luego KPI cards en grid, luego la sección principal. Los modales usan AnimatePresence + motion.div de framer-motion con fixed inset-0 z-40 para el backdrop y fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 para el modal centrado. Los drawers laterales usan fixed right-0 top-0 z-50 h-full con spring animation. Los hooks ya están listos y conectados al backend — solo hay que consumirlos igual que están, sin cambiar lógica. No hay providers ni contextos especiales salvo useAuth del AuthContext. Te voy a pasar el .tsx antiguo para que lo adaptes siguiendo estas reglas.
 
-la 5 no, por gusto
-
-Una cosa, el de mantenimietno es sobre mantenimientos mas detallados sobre donde fue y asi
-
-Y que cuando se de click pues que se despliegue un modal, pero no como el otro, sino que sea como un pop up y bueno, harás un buen diseño
-
-Bueno, entonces, recuerda que debes ser innovador, empecemos con el primero

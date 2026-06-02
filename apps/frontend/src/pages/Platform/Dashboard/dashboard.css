@@ -1,0 +1,47 @@
+/* Dashboard specific styles - Tailwind v4 compatible */
+
+@layer utilities {
+  /* Chart card base styles */
+  .chart-card {
+    @apply rounded-2xl border border-white/[0.06] bg-gradient-to-br from-white/5 to-transparent dark:from-white/[0.02] px-5 pb-5 pt-5;
+  }
+
+  .chart-card-title {
+    @apply text-sm font-semibold text-gray-900 dark:text-white mb-4;
+  }
+
+  /* Loading state */
+  .dashboard-loading {
+    @apply flex items-center justify-center min-h-screen;
+  }
+
+  .dashboard-loading-spinner {
+    @apply animate-spin rounded-full h-12 w-12 border-b-2 border-brand-500 mx-auto mb-4;
+  }
+
+  /* Error state */
+  .dashboard-error {
+    @apply flex items-center justify-center min-h-screen text-center;
+  }
+}
+
+/* ApexCharts dark theme overrides */
+.apexcharts-tooltip-title {
+  @apply !mb-2 !bg-transparent !p-0 !text-[11px] !leading-4 !text-white/70;
+}
+
+.apexcharts-tooltip-text {
+  @apply !text-[12px] !text-white/90;
+}
+
+.apexcharts-legend-text {
+  @apply !text-[13px] !text-gray-400;
+}
+
+.apexcharts-xaxis-label {
+  @apply !text-[12px] !text-gray-500;
+}
+
+.apexcharts-yaxis-label {
+  @apply !text-[12px] !text-gray-500;
+}

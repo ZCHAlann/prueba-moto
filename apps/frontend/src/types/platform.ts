@@ -191,3 +191,97 @@ export interface PlatformStats {
   };
   generatedAt: string;
 }
+
+export interface PlatformAuditEntry {
+  id:          number;
+  actorId:     number | null;
+  actorEmail:  string | null;
+  action:      string;        // 'company.created', 'plan.changed', etc.
+  entity:      string | null; // 'company' | 'lead' | 'plan' | 'user'
+  entityId:    string | null;
+  description: string | null;
+  metadata:    Record<string, unknown>;
+  createdAt:   string;
+}
+
+export interface PlatformAuditFilters {
+  entity:  string;
+  action:  string;
+  actorId: string;
+  from:    string;
+  to:      string;
+  search:  string;
+  limit:   number;
+}
+
+export type DealUrgency = "normal" | "warning" | "critical";
+
+export interface CRMDeal extends PlatformLead {
+  score: number;
+  urgency: DealUrgency;
+  daysSinceUpdate: number;
+  daysInPipeline: number;
+  forecastValue: number;
+}
+
+export interface CRMPipelineStage {
+  stage: LeadStatus;
+  deals: CRMDeal[];
+  count: number;
+  totalValue: number;
+  forecastValue: number;
+}
+
+export interface CRMStats {
+  totalDeals: number;
+  activeDeals: number;
+  wonDeals: number;
+  lostDeals: number;
+  winRate: number;
+  winRateThisMonth: number;
+  winRateLastMonth: number;
+  avgClosingDays: number;
+  pipelineValue: number;
+  forecastValue: number;
+  pipelineHealth: "healthy" | "warning" | "critical";
+  staleDeals: number;
+  stalePercent: number;
+  wonThisMonth: number;
+  recentActivity: CRMDeal[];
+}
+
+export interface CRMForecastStage {
+  stage: LeadStatus;
+  probability: number;
+  dealCount: number;
+  totalValue: number;
+  forecastValue: number;
+}
+
+export interface CRMForecast {
+  byStage: CRMForecastStage[];
+  totalForecast: number;
+  totalPipeline: number;
+  generatedAt: string;
+}
+
+export interface CRMActivity {
+  id: number;
+  companyName: string;
+  status: LeadStatus;
+  updatedAt: string;
+  createdAt: string;
+  isNew: boolean;
+  estimatedValue: string | null;
+  score: number;
+  urgency: DealUrgency;
+}
+
+export interface CRMConvertInput {
+  name: string;
+  slug: string;
+  planId: string;
+  enabledModules: string[];
+  contractStartAt?: string;
+  contractEndAt?: string;
+}

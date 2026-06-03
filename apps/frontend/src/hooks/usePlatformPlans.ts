@@ -20,10 +20,10 @@ export function usePlatformPlans(): UsePlatformPlansResult {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/platform/plans", { credentials: "include" });
+      const res = await fetch("/api/platform/plans", { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json: PlatformPlan[] = await res.json();
-      setPlans(json);
+      const json: { data: PlatformPlan[]; total: number } = await res.json();
+      setPlans(json.data);  // ← antes era: setPlans(json)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error desconocido");
     } finally {
@@ -34,7 +34,7 @@ export function usePlatformPlans(): UsePlatformPlansResult {
   useEffect(() => { void fetchPlans(); }, [fetchPlans]);
 
   const createPlan = useCallback(async (input: PlatformPlanInput): Promise<PlatformPlan> => {
-    const res = await fetch("/platform/plans", {
+    const res = await fetch("/api/platform/plans", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -51,7 +51,7 @@ export function usePlatformPlans(): UsePlatformPlansResult {
 
   const updatePlan = useCallback(
     async (id: string, input: Partial<PlatformPlanInput>): Promise<PlatformPlan> => {
-      const res = await fetch(`/platform/plans/${id}`, {
+      const res = await fetch(`/api/platform/plans/${id}`, {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -69,7 +69,7 @@ export function usePlatformPlans(): UsePlatformPlansResult {
   );
 
   const deletePlan = useCallback(async (id: string): Promise<void> => {
-    const res = await fetch(`/platform/plans/${id}`, {
+    const res = await fetch(`/api/platform/plans/${id}`, {
       method: "DELETE",
       credentials: "include",
     });

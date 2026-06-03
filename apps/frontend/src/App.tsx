@@ -35,6 +35,7 @@ import { SitesManagementPage } from "./pages/Gestion/Sedes/page";
 import { InsuranceManagementPage } from "./pages/Gestion/Seguros/page";
 import { UsersPage } from "./pages/Accesos/Usuarios/page";
 import { RolesPage } from "./pages/Accesos/Roles/page";
+import SoportePage from "@/pages/Soporte/page";
 
 // Platform pages
 import PlatformDashboard from "./pages/Platform/Dashboard/page";
@@ -43,6 +44,12 @@ import { CompaniesPage } from "./pages/Platform/Companies/page";
 import { LeadsPage } from "./pages/Platform/Leads/page";
 import { ModulesPage } from "./pages/Platform/Modules/pages";
 import { PlatformUsersPage } from "./pages/Platform/Users/page";
+import { AuditPage } from "./pages/Platform/Audit/page";
+import { PlatformSettingsPage } from "./pages/Platform/Settings/page";
+import { CRMPage } from "./pages/CRM/page";
+import { BillingPage } from "./pages/Platform/Billing/page";
+import { FleetHealthPage } from "./pages/Platform/Flotas/page";
+import PlatformTicketsPage from "./pages/Platform/Tickets/page";
 
 // ─── Guards ──────────────────────────────────────────────────────────────────
 
@@ -120,6 +127,7 @@ export default function App() {
           <Route path="/gestion/seguros" element={<InsuranceManagementPage />} />
           <Route path="/accesos/usuarios" element={<UsersPage />} />
           <Route path="/accesos/roles" element={<RolesPage />} />
+          <Route path="/soporte" element={<SoportePage />} />
         </Route>
 
         {/* ── Plataforma ── */}
@@ -130,6 +138,12 @@ export default function App() {
           <Route path="/platform/leads" element={<LeadsPage />} />
           <Route path="/platform/modules" element={<ModulesPage />} />
           <Route path="/platform/users" element={<PlatformUsersPage />} />
+          <Route path="/platform/audit" element={<AuditPage />} />
+          <Route path="/platform/settings" element={<PlatformSettingsPage />} />
+          <Route path="/platform/crm" element={<CRMPage />} />
+          <Route path="/platform/billing" element={<BillingPage />} />
+          <Route path="/platform/fleet" element={<FleetHealthPage />} />
+          <Route path="/platform/tickets" element={<PlatformTicketsPage />} />
         </Route>
 
         {/* ── Auth (público) ── */}

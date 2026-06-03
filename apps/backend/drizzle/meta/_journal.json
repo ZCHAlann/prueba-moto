@@ -5,43 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1779736465907,
-      "tag": "0000_tiny_hercules",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1779830498330,
-      "tag": "0001_smooth_reavers",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1779922070742,
-      "tag": "0002_medical_shiver_man",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1780002136240,
-      "tag": "0003_redundant_felicia_hardy",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1780179316375,
-      "tag": "0004_gray_beyonder",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1780435173864,
-      "tag": "0005_smiling_wolf_cub",
+      "when": 1780527290373,
+      "tag": "0000_complex_green_goblin",
       "breakpoints": true
     }
   ]

@@ -20,6 +20,7 @@ import oilChangesRouter from './oil-changes';
 import vehiculoRouter from './vehiculo';
 import profileRouter from './auth.me';
 import usersRouter from './user'; 
+import ticketsRouter from './ticket';
 
 const router = Router({ mergeParams: true });
 
@@ -45,4 +46,6 @@ router.use('/oil-changes', oilChangesRouter);
 router.use('/vehicle-cockpit', vehiculoRouter);
 router.use('/auth/me', profileRouter);
 router.use('/users', usersRouter);  
+router.use('/tickets', ticketsRouter);
+
 export default router;

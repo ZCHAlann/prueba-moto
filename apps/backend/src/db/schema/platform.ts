@@ -103,8 +103,11 @@ export const platformUsers = pgTable('platform_users', {
   passwordHash: text('password_hash').notNull(),
   role: varchar('role', { length: 40 }).notNull(),
   status: varchar('status', { length: 40 }).notNull().default('active'),
+  failedLoginAttempts: integer('failed_login_attempts').default(0),
+  lockedUntil:        timestamp('locked_until'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  
 });
 
 // ─────────────────────────────────────────────
@@ -122,6 +125,8 @@ export const companyUsers = pgTable(
     role: varchar('role', { length: 40 }).notNull(),
     status: varchar('status', { length: 40 }).notNull().default('active'),
     profileData: jsonb('profile_data').notNull().default({}),
+    failedLoginAttempts: integer('failed_login_attempts').default(0),
+    lockedUntil:        timestamp('locked_until'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
@@ -170,4 +175,137 @@ export const platformAuditEntries = pgTable('platform_audit_entries', {
   description: text('description'),
   metadata: jsonb('metadata').default({}),
   createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+export const platformSettings = pgTable('platform_settings', {
+  id:                    integer('id').primaryKey().default(1),  // siempre 1 — singleton
+  // General
+  platformName:          varchar('platform_name', { length: 120 }).default('ApliSmart Motors'),
+  platformUrl:           varchar('platform_url', { length: 255 }),
+  supportEmail:          varchar('support_email', { length: 160 }),
+  defaultTimezone:       varchar('default_timezone', { length: 80 }).default('America/Guayaquil'),
+  defaultLanguage:       varchar('default_language', { length: 10 }).default('es'),
+  // Seguridad
+  passwordMinLength:     integer('password_min_length').default(8),
+  passwordRequireUpper:  boolean('password_require_upper').default(true),
+  passwordRequireNumber: boolean('password_require_number').default(true),
+  passwordRequireSymbol: boolean('password_require_symbol').default(false),
+  passwordExpiryDays:    integer('password_expiry_days').default(0),   // 0 = nunca
+  sessionExpiryHours:    integer('session_expiry_hours').default(24),
+  maxLoginAttempts:      integer('max_login_attempts').default(5),
+  lockoutMinutes:        integer('lockout_minutes').default(30),
+  // Notificaciones
+  smtpHost:              varchar('smtp_host', { length: 255 }),
+  smtpPort:              integer('smtp_port').default(587),
+  smtpUser:              varchar('smtp_user', { length: 160 }),
+  smtpPassword:          text('smtp_password'),                         // cifrado en app
+  smtpFromAddress:       varchar('smtp_from_address', { length: 160 }),
+  smtpFromName:          varchar('smtp_from_name', { length: 120 }),
+  notifyOnNewCompany:    boolean('notify_on_new_company').default(true),
+  notifyOnTrialExpiring: boolean('notify_on_trial_expiring').default(true),
+  notifyOnLoginFailure:  boolean('notify_on_login_failure').default(false),
+  // Defaults para nuevas empresas
+  defaultTrialDays:      integer('default_trial_days').default(14),
+  defaultMaxUsers:       integer('default_max_users').default(5),
+  defaultMaxAssets:      integer('default_max_assets').default(20),
+  updatedAt:             timestamp('updated_at').notNull().defaultNow(),
+  updatedBy:             integer('updated_by').references(() => platformUsers.id, { onDelete: 'set null' }),
+});
+
+// ─────────────────────────────────────────────
+// Facturación
+// ─────────────────────────────────────────────
+
+export const invoiceStatusEnum = pgEnum('invoice_status_enum', [
+  'draft',
+  'sent',
+  'paid',
+  'overdue',
+  'cancelled',
+]);
+
+export const billingCycleEnum = pgEnum('billing_cycle_enum', [
+  'monthly',
+  'annual',
+]);
+
+export const platformInvoices = pgTable('platform_invoices', {
+  id:            serial('id').primaryKey(),
+  companyId:     integer('company_id').notNull()
+                   .references(() => companies.id, { onDelete: 'cascade' }),
+  planId:        varchar('plan_id', { length: 40 })
+                   .references(() => platformPlans.id, { onDelete: 'set null' }),
+
+  invoiceNumber: varchar('invoice_number', { length: 40 }).notNull().unique(),
+  status:        invoiceStatusEnum('status').notNull().default('draft'),
+  cycle:         billingCycleEnum('cycle').notNull().default('monthly'),
+
+  amount:        numeric('amount', { precision: 12, scale: 2 }).notNull(),
+  tax:           numeric('tax', { precision: 12, scale: 2 }).default('0'),
+  total:         numeric('total', { precision: 12, scale: 2 }).notNull(),
+
+  issuedAt:      date('issued_at').notNull(),
+  dueAt:         date('due_at').notNull(),
+  paidAt:        date('paid_at'),
+
+  notes:         text('notes'),
+  createdAt:     timestamp('created_at').notNull().defaultNow(),
+  updatedAt:     timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ─────────────────────────────────────────────
+// Soporte / Tickets
+// ─────────────────────────────────────────────
+
+export const ticketStatusEnum = pgEnum('ticket_status_enum', [
+  'open',
+  'in_progress', 
+  'resolved',
+  'closed',
+]);
+
+export const ticketPriorityEnum = pgEnum('ticket_priority_enum', [
+  'low',
+  'medium',
+  'high',
+  'critical',
+]);
+
+export const platformTickets = pgTable('platform_tickets', {
+  id:           serial('id').primaryKey(),
+  companyId:    integer('company_id').notNull()
+                  .references(() => companies.id, { onDelete: 'cascade' }),
+  createdBy:    integer('created_by')
+                  .references(() => companyUsers.id, { onDelete: 'set null' }),
+  assignedTo:   integer('assigned_to')
+                  .references(() => platformUsers.id, { onDelete: 'set null' }),
+
+  ticketNumber: varchar('ticket_number', { length: 40 }).notNull().unique(),
+  title:        varchar('title', { length: 255 }).notNull(),
+  description:  text('description').notNull(),
+  status:       ticketStatusEnum('status').notNull().default('open'),
+  priority:     ticketPriorityEnum('priority').notNull().default('medium'),
+  category:     varchar('category', { length: 80 }),  // 'bug' | 'consulta' | 'facturación' | 'acceso' | 'otro'
+
+  resolvedAt:   timestamp('resolved_at'),
+  closedAt:     timestamp('closed_at'),
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+  updatedAt:    timestamp('updated_at').notNull().defaultNow(),
+});
+
+export const platformTicketMessages = pgTable('platform_ticket_messages', {
+  id:        serial('id').primaryKey(),
+  ticketId:  integer('ticket_id').notNull()
+               .references(() => platformTickets.id, { onDelete: 'cascade' }),
+
+  // autor — uno de los dos será null
+  authorPlatformUserId: integer('author_platform_user_id')
+                          .references(() => platformUsers.id, { onDelete: 'set null' }),
+  authorCompanyUserId:  integer('author_company_user_id')
+                          .references(() => companyUsers.id, { onDelete: 'set null' }),
+
+  authorName:  varchar('author_name', { length: 160 }),
+  authorRole:  varchar('author_role', { length: 40 }),  // 'platform' | 'company'
+  body:        text('body').notNull(),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
 });

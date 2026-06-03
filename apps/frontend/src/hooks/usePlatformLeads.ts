@@ -20,7 +20,7 @@ export function usePlatformLeads(): UsePlatformLeadsResult {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/platform/leads", { credentials: "include" });
+      const res = await fetch("/api/platform/leads", { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: PlatformLead[] = await res.json();
       setLeads(json);
@@ -34,7 +34,7 @@ export function usePlatformLeads(): UsePlatformLeadsResult {
   useEffect(() => { void fetchLeads(); }, [fetchLeads]);
 
   const createLead = useCallback(async (input: PlatformLeadInput): Promise<PlatformLead> => {
-    const res = await fetch("/platform/leads", {
+    const res = await fetch("/api/platform/leads", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -51,7 +51,7 @@ export function usePlatformLeads(): UsePlatformLeadsResult {
 
   const updateLead = useCallback(
     async (id: number, input: Partial<PlatformLeadInput>): Promise<PlatformLead> => {
-      const res = await fetch(`/platform/leads/${id}`, {
+      const res = await fetch(`/api/platform/leads/${id}`, {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -69,7 +69,7 @@ export function usePlatformLeads(): UsePlatformLeadsResult {
   );
 
   const deleteLead = useCallback(async (id: number): Promise<void> => {
-    const res = await fetch(`/platform/leads/${id}`, {
+    const res = await fetch(`/api/platform/leads/${id}`, {
       method: "DELETE",
       credentials: "include",
     });

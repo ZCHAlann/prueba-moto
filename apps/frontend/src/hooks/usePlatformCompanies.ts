@@ -3,6 +3,7 @@ import type { PlatformCompany, PlatformCompanyInput } from "../types/platform";
 
 interface UsePlatformCompaniesResult {
   companies: PlatformCompany[];
+  total: number;
   loading: boolean;
   error: string | null;
   refetch: () => void;
@@ -15,15 +16,17 @@ export function usePlatformCompanies(): UsePlatformCompaniesResult {
   const [companies, setCompanies] = useState<PlatformCompany[]>([]);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState<string | null>(null);
+  const [total, setTotal] = useState(0);
 
   const fetchCompanies = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/platform/companies", { credentials: "include" });
+      const res = await fetch("/api/platform/companies", { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json: PlatformCompany[] = await res.json();
-      setCompanies(json);
+      const json: { data: PlatformCompany[]; total: number } = await res.json();
+      setCompanies(json.data);
+      setTotal(json.total);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error desconocido");
     } finally {
@@ -34,7 +37,7 @@ export function usePlatformCompanies(): UsePlatformCompaniesResult {
   useEffect(() => { void fetchCompanies(); }, [fetchCompanies]);
 
   const createCompany = useCallback(async (input: PlatformCompanyInput): Promise<PlatformCompany> => {
-    const res = await fetch("/platform/companies", {
+    const res = await fetch("/api/platform/companies", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -51,7 +54,7 @@ export function usePlatformCompanies(): UsePlatformCompaniesResult {
 
   const updateCompany = useCallback(
     async (id: number, input: Partial<PlatformCompanyInput>): Promise<PlatformCompany> => {
-      const res = await fetch(`/platform/companies/${id}`, {
+      const res = await fetch(`/api/platform/companies/${id}`, {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -69,7 +72,7 @@ export function usePlatformCompanies(): UsePlatformCompaniesResult {
   );
 
   const deleteCompany = useCallback(async (id: number): Promise<void> => {
-    const res = await fetch(`/platform/companies/${id}`, {
+    const res = await fetch(`/api/platform/companies/${id}`, {
       method: "DELETE",
       credentials: "include",
     });
@@ -80,5 +83,5 @@ export function usePlatformCompanies(): UsePlatformCompaniesResult {
     setCompanies((prev) => prev.filter((c) => c.id !== id));
   }, []);
 
-  return { companies, loading, error, refetch: fetchCompanies, createCompany, updateCompany, deleteCompany };
+  return { companies, total, loading, error, refetch: fetchCompanies, createCompany, updateCompany, deleteCompany };
 }

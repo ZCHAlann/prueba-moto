@@ -17,7 +17,7 @@ export function usePlatformStats(): UsePlatformStatsResult {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/platform/stats", { credentials: "include" });
+      const res = await fetch("/api/platform/stats", { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: PlatformStats = await res.json();
       setData(json);

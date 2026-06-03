@@ -6,6 +6,9 @@ import {
   platformPlans,
   platformLeads,
   platformAuditEntries,
+  platformInvoices,
+  platformTickets,
+  platformTicketMessages,
 } from './platform';
 import {
   companySites,
@@ -28,6 +31,7 @@ import {
   companyOilTypes,
   companyOilChanges,
 } from './operational';
+import { from } from 'stream/iter';
 
 // ─────────────────────────────────────────────
 // Platform
@@ -78,6 +82,9 @@ export const companiesRelations = relations(companies, ({ many, one }) => ({
     fields: [companies.planId],
     references: [platformPlans.id],
   }),
+  invoices: many(platformInvoices),
+  tickets: many(platformTickets),
+
 }));
 
 export const companyUsersRelations = relations(companyUsers, ({ one }) => ({
@@ -112,4 +119,28 @@ export const companyOilChangesRelations = relations(companyOilChanges, ({ one })
     fields: [companyOilChanges.oilTypeId],
     references: [companyOilTypes.id],
   }),
+}));
+
+export const platformInvoicesRelations = relations(platformInvoices, ({ one }) => ({
+  company: one(companies, {
+    fields: [platformInvoices.companyId],
+    references: [companies.id],
+  }),
+  plan: one(platformPlans, {
+    fields: [platformInvoices.planId],
+    references: [platformPlans.id],
+  }),
+}));
+
+export const platformTicketsRelations = relations(platformTickets, ({ one, many }) => ({
+  company:    one(companies,     { fields: [platformTickets.companyId],  references: [companies.id] }),
+  createdBy:  one(companyUsers,  { fields: [platformTickets.createdBy],  references: [companyUsers.id] }),
+  assignedTo: one(platformUsers, { fields: [platformTickets.assignedTo], references: [platformUsers.id] }),
+  messages:   many(platformTicketMessages),
+}));
+
+export const platformTicketMessagesRelations = relations(platformTicketMessages, ({ one }) => ({
+  ticket:             one(platformTickets, { fields: [platformTicketMessages.ticketId],              references: [platformTickets.id] }),
+  authorPlatformUser: one(platformUsers,   { fields: [platformTicketMessages.authorPlatformUserId],  references: [platformUsers.id] }),
+  authorCompanyUser:  one(companyUsers,    { fields: [platformTicketMessages.authorCompanyUserId],   references: [companyUsers.id] }),
 }));

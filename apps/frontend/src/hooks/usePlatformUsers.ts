@@ -1,7 +1,7 @@
 // src/hooks/usePlatformUsers.ts
 import { useState, useEffect, useCallback } from "react";
 
-const API = "/platform/users";
+const API = "/api/platform/users";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

@@ -26,6 +26,7 @@ export const platformNavigationSections: NavigationSection[] = [
       { label: "Planes",            href: "/platform/plans",     icon: "PL",  description: "Oferta comercial y limites",           accent: "sky" },
       { label: "Módulos",           href: "/platform/modules",   icon: "MD",  description: "Habilitacion por empresa",             accent: "sky" },
       { label: "Usuarios globales", href: "/platform/users",     icon: "US",  description: "Roles y accesos de plataforma",        accent: "sky" },
+      { label: "Soporte",           href: "/platform/tickets",   icon: "TK",  description: "Gestión de tickets de soporte",        accent: "sky" },
       { label: "Auditoría",         href: "/platform/audit",     icon: "AU",  description: "Logs y trazabilidad",                  accent: "sky" },
       { label: "Configuración",     href: "/platform/settings",  icon: "CF",  description: "Branding e integraciones",             accent: "sky" },
     ],
@@ -37,8 +38,6 @@ export const platformNavigationSections: NavigationSection[] = [
     accent: "amber",
     items: [
       { label: "CRM",         href: "/platform/crm",     icon: "CRM", description: "Embudo y seguimiento",                accent: "amber" },
-      { label: "Leads",       href: "/platform/leads",   icon: "LD",  description: "Solicitudes de demo y oportunidades", accent: "amber" },
-      { label: "Clientes",    href: "/platform/clients", icon: "CL",  description: "Cartera activa",                      accent: "amber" },
       { label: "Facturación", href: "/platform/billing", icon: "FC",  description: "Renovaciones y pagos",                accent: "amber" },
     ],
   },
@@ -49,43 +48,23 @@ export const platformNavigationSections: NavigationSection[] = [
     accent: "orange",
     items: [
       { label: "Flotas",      href: "/platform/fleet",      icon: "FL", description: "Vehiculos operativos por empresa", accent: "orange" },
-      { label: "Motores",     href: "/platform/motors",     icon: "MT", description: "Inventario tecnico de motores",    accent: "orange" },
       { label: "Generadores", href: "/platform/generators", icon: "GE", description: "Equipos de respaldo electrico",    accent: "orange" },
     ],
   },
   {
-    label: "Personal y operación",
-    icon: "CD",
-    description: "Quien opera que",
+    label: "Geolocalizacion",
+    icon: "GL",
+    description: "Ubicacion operativa y monitoreo",
     accent: "teal",
     items: [
-      { label: "Conductores",  href: "/platform/drivers",     icon: "CD", description: "Licencias, estado y disponibilidad", accent: "teal" },
-      { label: "Asignaciones", href: "/platform/assignments", icon: "AS", description: "Vehiculo asignado por conductor",     accent: "teal" },
-      { label: "Sedes",        href: "/platform/sites",       icon: "SD", description: "Bases, patios y plantas",             accent: "teal" },
+      {
+        label: "Geolocalizacion",
+        href: "/geolocalizacion",
+        icon: "GL",
+        description: "Vista de unidades y zonas activas",
+        accent: "teal",
+      },
     ],
-  },
-  {
-    label: "Mantenimiento",
-    icon: "MN",
-    description: "Taller y stock",
-    accent: "amber",
-    items: [
-      { label: "Preventivo / correctivo", href: "/platform/maintenance", icon: "MN", description: "OT, fechas y responsables", accent: "amber" },
-      { label: "Inventario",              href: "/platform/inventory",   icon: "IV", description: "Repuestos y stock minimo",   accent: "amber" },
-      { label: "Checklist",               href: "/platform/checklist",   icon: "CK", description: "Inspecciones operativas",    accent: "amber" },
-    ],
-  },
-  {
-    label: "Seguimiento",
-    icon: "AL",
-    description: "Monitoreo y control",
-    accent: "rose",
-    items: [
-      { label: "Alertas",         href: "/platform/alerts",      icon: "AL", description: "Criticidad y seguimiento",  accent: "rose" },
-      { label: "Reportes",        href: "/platform/reports",     icon: "RP", description: "Reportes y exportaciones",  accent: "rose" },
-      { label: "Combustible",     href: "/platform/fuel",        icon: "CB", description: "Consumo y rendimiento",     accent: "rose" },
-      { label: "Geolocalización", href: "/platform/geolocation", icon: "GL", description: "Mapa y unidades activas",   accent: "rose" },
-      { label: "Seguros",         href: "/platform/insurance",   icon: "SG", description: "Polizas y vencimientos",    accent: "rose" },
-    ],
-  },
+  }
+  
 ];

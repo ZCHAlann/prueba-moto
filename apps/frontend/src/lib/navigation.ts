@@ -305,6 +305,21 @@ export const navigationSections: NavigationSection[] = [
     ],
   },
   {
+    label: "Soporte",
+    icon: "SP",
+    description: "Asistencia y soporte técnico",
+    accent: "emerald",
+    items: [
+      {
+        label: "Soporte",
+        href: "/soporte",
+        icon: "SP",
+        description: "Vista general operativa",
+        accent: "emerald",
+      },
+    ],
+  },
+  {
     label: "Cuenta",
     icon: "CT",
     description: "Perfil y ajustes del sistema",

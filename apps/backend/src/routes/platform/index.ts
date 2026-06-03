@@ -9,6 +9,13 @@ import usersRouter     from './users';
 import plansRouter     from './plans';
 import leadsRouter     from './leads';
 import statsRouter     from './stats';
+import auditRouter from './audit';
+import settingsRouter      from './settings';
+import platformUsersRouter from './platform-users';
+import crmRouter from './crm';
+import billingRouter from './billing';
+import fleetHealthRouter from './fleet-health';
+import ticketRouter from './ticket'
 
 const router = Router();
 
@@ -69,5 +76,13 @@ router.use('/users',     usersRouter);
 router.use('/plans',     plansRouter);
 router.use('/leads',     leadsRouter);
 router.use('/stats',     statsRouter);
+router.use('/audit', auditRouter);
+router.use('/settings',       settingsRouter);
+router.use('/platform-users', platformUsersRouter);
+router.use('/crm', crmRouter);
+router.use('/billing', billingRouter);
+router.use('/fleet-health', fleetHealthRouter);
+router.use('/tickets', ticketRouter);
+
 
 export default router;

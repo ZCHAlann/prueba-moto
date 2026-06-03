@@ -49,16 +49,18 @@ async function countInRange(
   startDate: Date,
   endDate: Date
 ): Promise<number> {
+  const start = startDate.toISOString();
+  const end = endDate.toISOString();
+  
   const [result] = await db
     .select({ count: count() })
     .from(table)
     .where(
       and(
-        gte(dateCol, startDate),
-        lt(dateCol, endDate)
+        sql`${dateCol} >= ${start}::timestamptz`,
+        sql`${dateCol} < ${end}::timestamptz`
       )
     );
-  
   return Number(result?.count) || 0;
 }
 
@@ -84,11 +86,11 @@ router.get('/', async (req, res, next) => {
         suspended: sql<number>`count(*) filter (where ${companies.status} = 'suspended')`.as('suspended'),
         inactive:  sql<number>`count(*) filter (where ${companies.status} = 'inactive')`.as('inactive'),
         newThisMonth: sql<number>`
-          count(*) filter (where ${companies.createdAt} >= ${thisMonth})
+          count(*) filter (where ${companies.createdAt} >= ${thisMonth.toISOString()}::timestamptz)
         `.as('new_this_month'),
         newPrevMonth: sql<number>`
-          count(*) filter (where ${companies.createdAt} >= ${prevMonth}
-                           and   ${companies.createdAt} <  ${thisMonth})
+          count(*) filter (where ${companies.createdAt} >= ${prevMonth.toISOString()}::timestamptz
+                          and   ${companies.createdAt} <  ${thisMonth.toISOString()}::timestamptz)
         `.as('new_prev_month'),
       })
       .from(companies);
@@ -121,18 +123,18 @@ router.get('/', async (req, res, next) => {
 
     const [leadCounts] = await db
       .select({
-        total:           count().as('total'),
-        nuevo:           sql<number>`count(*) filter (where ${platformLeads.status} = 'nuevo')`.as('nuevo'),
-        contactado:      sql<number>`count(*) filter (where ${platformLeads.status} = 'contactado')`.as('contactado'),
-        demoAgendada:    sql<number>`count(*) filter (where ${platformLeads.status} = 'demo_agendada')`.as('demo_agendada'),
-        propuestaEnviada:sql<number>`count(*) filter (where ${platformLeads.status} = 'propuesta_enviada')`.as('propuesta_enviada'),
-        ganado:          sql<number>`count(*) filter (where ${platformLeads.status} = 'ganado')`.as('ganado'),
-        perdido:         sql<number>`count(*) filter (where ${platformLeads.status} = 'perdido')`.as('perdido'),
-        newThisMonth:    sql<number>`
-          count(*) filter (where ${platformLeads.createdAt} >= ${thisMonth})
+        total:            count().as('total'),
+        nuevo:            sql<number>`count(*) filter (where ${platformLeads.status} = 'nuevo')`.as('nuevo'),
+        contactado:       sql<number>`count(*) filter (where ${platformLeads.status} = 'contactado')`.as('contactado'),
+        demoAgendada:     sql<number>`count(*) filter (where ${platformLeads.status} = 'demo_agendada')`.as('demo_agendada'),
+        propuestaEnviada: sql<number>`count(*) filter (where ${platformLeads.status} = 'propuesta_enviada')`.as('propuesta_enviada'),
+        ganado:           sql<number>`count(*) filter (where ${platformLeads.status} = 'ganado')`.as('ganado'),
+        perdido:          sql<number>`count(*) filter (where ${platformLeads.status} = 'perdido')`.as('perdido'),
+        newThisMonth: sql<number>`
+          count(*) filter (where ${platformLeads.createdAt} >= ${thisMonth.toISOString()}::timestamptz)
         `.as('leads_new_this_month'),
         convertedThisMonth: sql<number>`
-          count(*) filter (where ${platformLeads.convertedAt} >= ${thisMonth})
+          count(*) filter (where ${platformLeads.convertedAt} >= ${thisMonth.toISOString()}::timestamptz)
         `.as('leads_converted_this_month'),
       })
       .from(platformLeads);
@@ -190,7 +192,12 @@ router.get('/', async (req, res, next) => {
       })
       .from(companyUsers);
 
+
+
     // ── 8. Empresas con trial próximo a vencer (≤ 7 días) ────────────────────
+    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const nowIso = now.toISOString();
+    const sevenDaysIso = sevenDaysFromNow.toISOString();
 
     const trialExpiringSoon = await db
       .select({
@@ -205,11 +212,8 @@ router.get('/', async (req, res, next) => {
         and(
           eq(companies.status, 'trial'),
           isNotNull(companies.trialEndsAt),
-          gte(companies.trialEndsAt!, now),
-          lt(
-            companies.trialEndsAt!,
-            new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
-          )
+          sql`${companies.trialEndsAt} >= ${nowIso}::timestamptz`,
+          sql`${companies.trialEndsAt} < ${sevenDaysIso}::timestamptz`
         )
       )
       .orderBy(companies.trialEndsAt!);

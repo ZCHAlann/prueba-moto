@@ -1,8 +1,9 @@
-import { useMemo, useState, useRef, useCallback } from "react";
+import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { useAlerts, type ApiAlert, type AlertSeverity, type AlertStatus, type AlertType } from "../../hooks/useAlerts";
 import { useAssets } from "../../hooks/useAssets";
+import { usePermissions } from "../../hooks/usePermissions";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -64,41 +65,11 @@ function KpiBar({
   onFilter: (f: FilterValue) => void;
 }) {
   const stats: { label: string; value: number; filter: FilterValue; colorCls: string; activeCls: string }[] = [
-    {
-      label: "Todas",
-      value: alerts.length,
-      filter: "Todas",
-      colorCls: "text-gray-800 dark:text-white",
-      activeCls: "border-gray-800 dark:border-white",
-    },
-    {
-      label: "Abiertas",
-      value: alerts.filter((a) => a.status === "Abierta").length,
-      filter: "Abierta",
-      colorCls: "text-error-600 dark:text-error-400",
-      activeCls: "border-error-500",
-    },
-    {
-      label: "Seguimiento",
-      value: alerts.filter((a) => a.status === "En seguimiento").length,
-      filter: "En seguimiento",
-      colorCls: "text-warning-600 dark:text-warning-400",
-      activeCls: "border-warning-500",
-    },
-    {
-      label: "Cerradas",
-      value: alerts.filter((a) => a.status === "Cerrada").length,
-      filter: "Cerrada",
-      colorCls: "text-success-600 dark:text-success-400",
-      activeCls: "border-success-500",
-    },
-    {
-      label: "Críticas",
-      value: alerts.filter((a) => a.severity === "Alta").length,
-      filter: "Todas",
-      colorCls: "text-error-600 dark:text-error-400",
-      activeCls: "border-error-500",
-    },
+    { label: "Todas",      value: alerts.length,                                          filter: "Todas",           colorCls: "text-gray-800 dark:text-white",             activeCls: "border-gray-800 dark:border-white" },
+    { label: "Abiertas",   value: alerts.filter((a) => a.status === "Abierta").length,    filter: "Abierta",         colorCls: "text-error-600 dark:text-error-400",         activeCls: "border-error-500" },
+    { label: "Seguimiento",value: alerts.filter((a) => a.status === "En seguimiento").length, filter: "En seguimiento", colorCls: "text-warning-600 dark:text-warning-400",  activeCls: "border-warning-500" },
+    { label: "Cerradas",   value: alerts.filter((a) => a.status === "Cerrada").length,    filter: "Cerrada",         colorCls: "text-success-600 dark:text-success-400",     activeCls: "border-success-500" },
+    { label: "Críticas",   value: alerts.filter((a) => a.severity === "Alta").length,     filter: "Todas",           colorCls: "text-error-600 dark:text-error-400",         activeCls: "border-error-500" },
   ];
 
   return (
@@ -127,11 +98,15 @@ function KpiBar({
 function AlertCard({
   alert,
   assetLabel,
+  canEdit,
+  canDelete,
   onStatusChange,
   onDelete,
 }: {
   alert: ApiAlert;
   assetLabel: string;
+  canEdit: boolean;
+  canDelete: boolean;
   onStatusChange: (id: string, status: AlertStatus) => void;
   onDelete: (id: string) => void;
 }) {
@@ -141,21 +116,17 @@ function AlertCard({
 
   async function handleStatusChange() {
     setChanging(true);
-    try {
-      await onStatusChange(alert.id, nextStatus[alert.status]);
-    } finally {
-      setChanging(false);
-    }
+    try { await onStatusChange(alert.id, nextStatus[alert.status]); }
+    finally { setChanging(false); }
   }
 
   async function handleDelete() {
     setDeleting(true);
-    try {
-      await onDelete(alert.id);
-    } finally {
-      setDeleting(false);
-    }
+    try { await onDelete(alert.id); }
+    finally { setDeleting(false); }
   }
+
+  const showActions = canEdit || canDelete;
 
   return (
     <motion.div
@@ -207,28 +178,34 @@ function AlertCard({
         </div>
 
         {/* right: actions */}
-        <div className="flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
-          <button
-            type="button"
-            onClick={handleStatusChange}
-            disabled={changing}
-            title={nextStatusLabel[alert.status]}
-            className="rounded-xl border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 transition hover:border-brand-300 dark:hover:border-brand-500/40 hover:bg-brand-50 dark:hover:bg-brand-500/[0.08] hover:text-brand-600 dark:hover:text-brand-400 disabled:opacity-40"
-          >
-            {changing ? "…" : nextStatusLabel[alert.status]}
-          </button>
-          <button
-            type="button"
-            onClick={handleDelete}
-            disabled={deleting}
-            aria-label="Eliminar alerta"
-            className="flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 dark:border-white/[0.08] text-gray-300 dark:text-gray-600 transition hover:border-error-200 dark:hover:border-error-500/30 hover:bg-error-50 dark:hover:bg-error-500/[0.08] hover:text-error-400 disabled:opacity-40"
-          >
-            <svg className="h-3.5 w-3.5" viewBox="0 0 14 14" fill="none">
-              <path d="M2 3.5h10M5.5 3.5V2.5a1 1 0 012 0v1M5 3.5l.5 8M9 3.5l-.5 8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
-            </svg>
-          </button>
-        </div>
+        {showActions && (
+          <div className="flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+            {canEdit && (
+              <button
+                type="button"
+                onClick={handleStatusChange}
+                disabled={changing}
+                title={nextStatusLabel[alert.status]}
+                className="rounded-xl border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 transition hover:border-brand-300 dark:hover:border-brand-500/40 hover:bg-brand-50 dark:hover:bg-brand-500/[0.08] hover:text-brand-600 dark:hover:text-brand-400 disabled:opacity-40"
+              >
+                {changing ? "…" : nextStatusLabel[alert.status]}
+              </button>
+            )}
+            {canDelete && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+                aria-label="Eliminar alerta"
+                className="flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 dark:border-white/[0.08] text-gray-300 dark:text-gray-600 transition hover:border-error-200 dark:hover:border-error-500/30 hover:bg-error-50 dark:hover:bg-error-500/[0.08] hover:text-error-400 disabled:opacity-40"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 14 14" fill="none">
+                  <path d="M2 3.5h10M5.5 3.5V2.5a1 1 0 012 0v1M5 3.5l.5 8M9 3.5l-.5 8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </motion.div>
   );
@@ -255,7 +232,7 @@ const emptyForm = (): FormState => ({
 });
 
 const selectCls = "w-full appearance-none rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.05] px-3 py-2.5 text-sm text-gray-700 dark:text-gray-200 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 [&>option]:bg-white dark:[&>option]:bg-gray-800";
-const inputCls = "w-full rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.05] px-3 py-2.5 text-sm text-gray-700 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-600 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10";
+const inputCls  = "w-full rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.05] px-3 py-2.5 text-sm text-gray-700 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-600 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10";
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-1.5 block">{children}</label>;
@@ -448,8 +425,14 @@ function CreateDrawer({
 export function AlertsPage() {
   const { alerts, loading, createAlert, updateAlert, deleteAlert } = useAlerts();
   const { assets } = useAssets();
-  const [filter, setFilter] = useState<FilterValue>("Todas");
-  const [search, setSearch] = useState("");
+  const { can } = usePermissions();
+
+  const canCreate = can("alertas", "alertas", "crear");
+  const canEdit   = can("alertas", "alertas", "editar");
+  const canDelete = can("alertas", "alertas", "eliminar");
+
+  const [filter, setFilter]       = useState<FilterValue>("Todas");
+  const [search, setSearch]       = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const assetMap = useMemo(() => {
@@ -495,13 +478,13 @@ export function AlertsPage() {
   async function handleCreate(form: FormState) {
     try {
       await createAlert({
-        assetId: form.assetId,
-        title: form.title,
-        type: form.type,
+        assetId:  form.assetId,
+        title:    form.title,
+        type:     form.type,
         severity: form.severity,
-        status: "Abierta",
-        dueDate: form.dueDate,
-        notes: form.notes,
+        status:   "Abierta",
+        dueDate:  form.dueDate,
+        notes:    form.notes,
       });
       toast.success("Alerta creada");
     } catch {
@@ -523,16 +506,18 @@ export function AlertsPage() {
             Gestiona vencimientos, mantenimientos y eventos críticos de tu flota en tiempo real.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setDrawerOpen(true)}
-          className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm font-semibold text-brand-600 transition hover:bg-brand-100 dark:border-brand-500/20 dark:bg-brand-500/[0.08] dark:text-brand-400 dark:hover:bg-brand-500/[0.15]"
-        >
-          <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none">
-            <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-          </svg>
-          Nueva alerta
-        </button>
+        {canCreate && (
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm font-semibold text-brand-600 transition hover:bg-brand-100 dark:border-brand-500/20 dark:bg-brand-500/[0.08] dark:text-brand-400 dark:hover:bg-brand-500/[0.15]"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none">
+              <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+            </svg>
+            Nueva alerta
+          </button>
+        )}
       </div>
 
       {/* KPI bar */}
@@ -573,7 +558,7 @@ export function AlertsPage() {
               <p className="text-sm text-gray-400 dark:text-gray-500">
                 {search || filter !== "Todas" ? "Sin resultados para ese filtro" : "No hay alertas registradas"}
               </p>
-              {!search && filter === "Todas" && (
+              {!search && filter === "Todas" && canCreate && (
                 <button
                   type="button"
                   onClick={() => setDrawerOpen(true)}
@@ -591,6 +576,8 @@ export function AlertsPage() {
                     key={alert.id}
                     alert={alert}
                     assetLabel={assetMap[alert.assetId ?? ""] ?? ""}
+                    canEdit={canEdit}
+                    canDelete={canDelete}
                     onStatusChange={handleStatusChange}
                     onDelete={handleDelete}
                   />
@@ -601,12 +588,14 @@ export function AlertsPage() {
         </div>
       </div>
 
-      <CreateDrawer
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        assets={assets}
-        onSave={handleCreate}
-      />
+      {canCreate && (
+        <CreateDrawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          assets={assets}
+          onSave={handleCreate}
+        />
+      )}
     </div>
   );
 }

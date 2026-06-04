@@ -293,40 +293,68 @@ export function getAccessMessage(role: PlatformRole, pathname: string) {
   return "Tu rol actual no tiene permiso para abrir esta pantalla.";
 }
 
+// Mapa explícito sectionKey → moduleKeys del JWT
+const SECTION_MODULE_MAP: Record<string, string[]> = {
+  "dashboard":            ["dashboard"],
+  "accesos":              ["accesos"],
+  "gestion":              ["gestion", "garajes", "seguros", "conductores", "activos"],
+  "motores":              ["motores"],
+  "generadores":          ["generadores"],
+  "aires_acondicionados": ["ac"],
+  "mantenimiento":        ["mantenimiento", "inventario"],
+  "checklist":            ["checklist"],
+  "alertas":              ["alertas"],
+  "reportes":             ["reportes"],
+  "combustible":          ["combustible"],
+  "geolocalizacion":      ["geolocalizacion"],
+  "cuenta":               [],
+};
+
+const ADMIN_ROLES = ["superadmin", "owner_empresa", "admin_empresa"];
+const ALWAYS_VISIBLE = ["dashboard", "cuenta"];
+const ALWAYS_VISIBLE_ADMIN = ["dashboard", "cuenta", "accesos"];
+
 export function filterOperationalNavigation(
   sections: NavigationSection[],
   role: PlatformRole | null,
-  modulePermissions: PlatformModuleKey[] = []
+  modulePermissions: Record<string, Record<string, string[]>> = {},
+  companyModules: string[] = [],
 ) {
   if (!role) return [];
 
-  const isAdminRole = ["superadmin", "owner_empresa", "admin_empresa"].includes(role);
-  // Secciones que siempre se muestran según rol, sin depender del JWT
-  const roleBasedSections = ["dashboard", "cuenta"];
-  if (isAdminRole) roleBasedSections.push("accesos");
+  const isAdmin = ADMIN_ROLES.includes(role);
 
   return sections
     .map((section) => {
       const filteredItems = section.items.filter((item) => canAccessPath(role, item.href));
+      const sectionKey = section.label.toLowerCase().replace(/[\s/]+/g, "_");
 
-      if (role !== "superadmin") {
-        const sectionKey = section.label.toLowerCase().replace(/[\s/]+/g, "_");
+      // Superadmin ve todo
+      if (role === "superadmin") {
+        return { ...section, items: filteredItems };
+      }
 
-        // Secciones que pasan por rol directamente
-        if (roleBasedSections.includes(sectionKey)) {
-          return { ...section, items: filteredItems };
-        }
+      // Secciones siempre visibles
+      const alwaysVisible = isAdmin ? ALWAYS_VISIBLE_ADMIN : ALWAYS_VISIBLE;
+      if (alwaysVisible.includes(sectionKey)) {
+        return { ...section, items: filteredItems };
+      }
 
-        // El resto pasa si la sección o alguno de sus items está en modulePermissions
-        const itemKeys = section.items.map((item) =>
-          item.href.split("/").filter(Boolean).pop() ?? ""
-        );
+      const mappedKeys = SECTION_MODULE_MAP[sectionKey] ?? [];
 
-        const sectionAllowed =
-          modulePermissions.includes(sectionKey as PlatformModuleKey) ||
-          itemKeys.some((key) => modulePermissions.includes(key as PlatformModuleKey));
-
-        if (!sectionAllowed) return { ...section, items: [] };
+      if (isAdmin) {
+        // Admins: mostrar si alguno de los moduleKeys está en enabledModules de la empresa
+        const allowed = mappedKeys.some((key) => companyModules.includes(key));
+        if (!allowed) return { ...section, items: [] };
+      } else {
+        // Otros roles: necesitan "ver" en al menos un submódulo del módulo
+        const allowed = mappedKeys.some((key) => {
+          const modulePerm = modulePermissions[key] ?? {};
+          return Object.values(modulePerm).some(
+            (actions) => Array.isArray(actions) && actions.includes("ver")
+          );
+        });
+        if (!allowed) return { ...section, items: [] };
       }
 
       return { ...section, items: filteredItems };

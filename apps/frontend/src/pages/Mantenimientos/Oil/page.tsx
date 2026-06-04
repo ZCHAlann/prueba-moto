@@ -1,16 +1,21 @@
 import { useState } from "react";
 import { useAuth } from "../../../context/AuthContext";
+import { usePermissions } from "../../../hooks/usePermissions";
 import { useOilCheck } from "../../../hooks/useOilCheck";
 import OilCheckCapture from "../components/OilCheckCapture";
 import OilCheckHistory from "../components/OilCheckHistory";
 
-const HISTORY_ROLES = ["owner_empresa", "admin_empresa", "supervisor", "superadmin"];
 type Tab = "captura" | "historial";
 
 export default function VerificacionAceitePage() {
   const { session } = useAuth();
+  const { can } = usePermissions();
   const [activeTab, setActiveTab] = useState<Tab>("captura");
-  const canSeeHistory = session ? HISTORY_ROLES.includes(session.role) : false;
+
+  // El historial requiere permiso "ver" en el submódulo "oil"
+  // (si tiene acceso a esta página ya tiene "ver", pero el historial
+  // es información más sensible que solo la captura)
+  const canSeeHistory = can("mantenimiento", "oil", "ver");
 
   // Hook lifted here — shared between Capture and History
   const oilCheck = useOilCheck(session?.companyId ?? "");

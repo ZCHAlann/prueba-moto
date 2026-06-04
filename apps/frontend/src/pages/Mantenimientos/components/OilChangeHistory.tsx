@@ -11,7 +11,7 @@ function fmtDate(d: string): string {
 
 interface OilChangeHistoryProps {
   changes: OilChange[];
-  onDelete: (chg: OilChange) => void;
+  onDelete?: (chg: OilChange) => void;  
 }
 
 export function OilChangeHistory({ changes, onDelete }: OilChangeHistoryProps) {
@@ -66,7 +66,7 @@ export function OilChangeHistory({ changes, onDelete }: OilChangeHistoryProps) {
               </td>
               <td className="px-4 py-3">
                 <button
-                  onClick={() => onDelete(chg)}
+                  onClick={() => onDelete?.(chg)}
                   className="flex h-7 w-7 items-center justify-center rounded-lg text-rose-500/30 opacity-0 transition hover:bg-rose-500/10 hover:text-rose-400 group-hover:opacity-100"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

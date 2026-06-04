@@ -9,7 +9,6 @@ import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { hashPassword } from '../../services/auth.service';
-import type { PermissionMap } from '../../middlewares/authenticate';
 
 const router = Router({ mergeParams: true });
 
@@ -23,14 +22,18 @@ const COMPANY_ROLES = [
   'conductor',
 ] as const;
 
+const modulePermissionsSchema = z.record(
+  z.string(),
+  z.record(z.string(), z.array(z.enum(["ver", "crear", "editar", "eliminar"])))
+).default({});
+
 const createCompanyUserSchema = z.object({
   email:             z.string().email('El correo es inválido'),
   username:          z.string().min(3, 'El usuario debe tener al menos 3 caracteres'),
   password:          z.string().min(8, 'La contraseña debe tener al menos 8 caracteres'),
   role:              z.enum(COMPANY_ROLES),
   status:            z.enum(['active', 'inactive']).default('active'),
-  modulePermissions: z.array(z.string()).default([]),
-  permissions:       z.record(z.string(), z.record(z.string(), z.array(z.string()))).default({}),  // ← nuevo
+  modulePermissions: modulePermissionsSchema,
   profileData:       z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -38,6 +41,10 @@ const updateCompanyUserSchema = createCompanyUserSchema
   .omit({ password: true })
   .extend({ password: z.string().min(8).optional() })
   .partial();
+
+const permissionsSchema = z.object({
+  modulePermissions: modulePermissionsSchema,
+});
 
 // ─── Serializer ───────────────────────────────────────────────────────────────
 
@@ -50,8 +57,8 @@ function serializeUser(u: typeof companyUsers.$inferSelect) {
     username:          u.username,
     role:              u.role,
     status:            u.status,
-    modulePermissions: (profile.modulePermissions as string[]) ?? [],
-    permissions:       (profile.permissions as PermissionMap) ?? {},   // ← nuevo
+    modulePermissions: (u.modulePermissions as Record<string, Record<string, string[]>>) ?? {},
+    permissions:       {},  // deprecado, siempre vacío
     profileData:       profile,
     createdAt:         u.createdAt,
     updatedAt:         u.updatedAt,
@@ -88,7 +95,7 @@ router.get('/:userId', async (req, res, next) => {
       .from(companyUsers)
       .where(
         and(
-          eq(companyUsers.id, companyId),
+          eq(companyUsers.id, userId),
           eq(companyUsers.companyId, companyId),
         )
       )
@@ -115,18 +122,19 @@ router.post(
 
       const passwordHash = await hashPassword(body.password);
 
-      const { modulePermissions, permissions, profileData, ...rest } = body;
+      const { modulePermissions, profileData, ...rest } = body;
 
       const [created] = await db
         .insert(companyUsers)
         .values({
           companyId,
-          email:        rest.email,
-          username:     rest.username,
+          email:             rest.email,
+          username:          rest.username,
           passwordHash,
-          role:         rest.role,
-          status:       rest.status,
-          profileData:  { ...profileData, modulePermissions, permissions }, 
+          role:              rest.role,
+          status:            rest.status,
+          modulePermissions: modulePermissions ?? {},
+          profileData:       profileData ?? {},
         })
         .returning();
 
@@ -171,7 +179,7 @@ router.put(
 
       if (!existing.length) throw new NotFoundError('Usuario', req.params.userId as string);
 
-      const { password, modulePermissions, permissions, profileData, ...rest } = body;
+      const { password, modulePermissions, profileData, ...rest } = body;
 
       const updateData: Partial<typeof companyUsers.$inferInsert> & Record<string, unknown> = {
         ...rest,
@@ -182,14 +190,13 @@ router.put(
         updateData.passwordHash = await hashPassword(password);
       }
 
-      if (modulePermissions !== undefined || profileData !== undefined || permissions !== undefined) {
+      if (modulePermissions !== undefined) {
+        updateData.modulePermissions = modulePermissions;
+      }
+
+      if (profileData !== undefined) {
         const currentProfile = (existing[0].profileData as Record<string, unknown>) ?? {};
-        updateData.profileData = {
-          ...currentProfile,
-          ...(profileData ?? {}),
-          ...(modulePermissions !== undefined ? { modulePermissions } : {}),
-          ...(permissions !== undefined ? { permissions } : {}),   // ← nuevo
-        };
+        updateData.profileData = { ...currentProfile, ...profileData };
       }
 
       const [updated] = await db
@@ -213,6 +220,58 @@ router.put(
       });
 
       res.json(serializeUser(updated));
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ─── PUT /company/:id/users/:userId/permissions ───────────────────────────────
+
+router.put(
+  '/:userId/permissions',
+  requireAdmin,
+  validate(permissionsSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const userId    = parseId('company-user', req.params.userId);
+      const { modulePermissions } = req.body as z.infer<typeof permissionsSchema>;
+
+      const existing = await db
+        .select()
+        .from(companyUsers)
+        .where(
+          and(
+            eq(companyUsers.id, userId),
+            eq(companyUsers.companyId, companyId),
+          )
+        )
+        .limit(1);
+
+      if (!existing.length) throw new NotFoundError('Usuario', req.params.userId);
+
+      const [updated] = await db
+        .update(companyUsers)
+        .set({ modulePermissions, updatedAt: new Date() })
+        .where(
+          and(
+            eq(companyUsers.id, userId),
+            eq(companyUsers.companyId, companyId),
+          )
+        )
+        .returning();
+
+      await logAudit(db, companyId, {
+        entity:      'company_users',
+        entityId:    toId('company-user', updated.id),
+        action:      'update',
+        actorId:     req.user!.sub,
+        actorName:   req.user!.name,
+        description: `Permisos de "${updated.email}" actualizados.`,
+      });
+
+      res.json({ ok: true });
     } catch (err) {
       next(err);
     }

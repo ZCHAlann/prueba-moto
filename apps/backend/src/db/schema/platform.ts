@@ -125,6 +125,7 @@ export const companyUsers = pgTable(
     role: varchar('role', { length: 40 }).notNull(),
     status: varchar('status', { length: 40 }).notNull().default('active'),
     profileData: jsonb('profile_data').notNull().default({}),
+    modulePermissions: jsonb('module_permissions').notNull().default({}),
     failedLoginAttempts: integer('failed_login_attempts').default(0),
     lockedUntil:        timestamp('locked_until'),
     createdAt: timestamp('created_at').notNull().defaultNow(),

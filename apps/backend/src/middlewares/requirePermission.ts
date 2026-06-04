@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
 import { ForbiddenError } from '../lib/errors';
-import type { ActionKey } from './authenticate';
 
 const BYPASS_ROLES = ['superadmin', 'owner_empresa', 'admin_empresa'] as const;
 
@@ -10,13 +9,13 @@ const BYPASS_ROLES = ['superadmin', 'owner_empresa', 'admin_empresa'] as const;
  * Uso: requirePermission('gestion', 'flotas', 'eliminar')
  *
  * - superadmin, owner_empresa y admin_empresa pasan siempre
- * - El resto necesita que su permissions[module][submodule] incluya la acción
- * - Si el usuario no tiene el campo permissions (token antiguo), se deniega
+ * - El resto necesita que su modulePermissions[module][submodule] incluya la acción
+ * - Si el usuario no tiene modulePermissions (token antiguo), se deniega
  */
 export const requirePermission = (
   module: string,
   submodule: string,
-  action: ActionKey,
+  action: "ver" | "crear" | "editar" | "eliminar",
 ) => (req: Request, _res: Response, next: NextFunction): void => {
   const user = req.user;
 
@@ -24,12 +23,12 @@ export const requirePermission = (
     throw new ForbiddenError('No autenticado');
   }
 
-  // Admins y owners tienen acceso total — no verificamos permisos
   if ((BYPASS_ROLES as readonly string[]).includes(user.role)) {
     return next();
   }
 
-  const actions: ActionKey[] = user.permissions?.[module]?.[submodule] ?? [];
+  const perms = (user.modulePermissions as unknown as Record<string, Record<string, string[]>>) ?? {};
+  const actions = perms[module]?.[submodule] ?? [];
 
   if (!actions.includes(action)) {
     throw new ForbiddenError(

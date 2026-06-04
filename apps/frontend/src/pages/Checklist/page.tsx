@@ -15,6 +15,7 @@ import type {
   ChecklistStatus,
   ChecklistTargetKind,
 } from "../../types/fleet";
+import { usePermissions } from "../../hooks/usePermissions";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -158,6 +159,7 @@ export function ChecklistPage(){
   const [drawerChecklist,setDrawerChecklist]=useState<typeof checklists[0]|null>(null);
   const [categoryModalOpen,setCategoryModalOpen]=useState(false);
   const [searchQuery,setSearchQuery]=useState("");
+  const { can } = usePermissions();
 
   const inspectors=useMemo(()=>drivers.filter(d=>d.status==="Activo"),[drivers]);
 
@@ -259,13 +261,15 @@ export function ChecklistPage(){
             Inspecciona equipos paso a paso. Elige el equipo, agrega hallazgos y registra el checklist completo.
           </p>
         </div>
-        <button type="button" onClick={()=>setCategoryModalOpen(true)}
-          className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm font-semibold text-brand-600 transition hover:bg-brand-100 dark:border-brand-500/20 dark:bg-brand-500/[0.08] dark:text-brand-400 dark:hover:bg-brand-500/[0.15]">
-          <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none">
-            <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-          </svg>
-          Gestionar categorías
-        </button>
+        {can("checklist", "checklist", "crear") && (
+          <button type="button" onClick={()=>setCategoryModalOpen(true)}
+            className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm font-semibold text-brand-600 transition hover:bg-brand-100 dark:border-brand-500/20 dark:bg-brand-500/[0.08] dark:text-brand-400 dark:hover:bg-brand-500/[0.15]">
+            <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none">
+              <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+            </svg>
+            Gestionar categorías
+          </button>
+        )}
       </div>
 
       {/* stats */}
@@ -323,7 +327,7 @@ export function ChecklistPage(){
               )}
               <div className="mt-5 flex justify-end">
                 <button type="button" onClick={goToStep2}
-                  disabled={assets.length===0||inspectors.length===0||categories.length===0}
+                  disabled={assets.length===0||inspectors.length===0||categories.length===0||!can("checklist","checklist","crear")}
                   className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95 disabled:opacity-40">
                   Continuar
                   <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -512,7 +516,7 @@ export function ChecklistPage(){
                   className="rounded-xl border border-gray-200 px-5 py-2.5 text-sm font-semibold text-gray-500 transition hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-400 dark:hover:bg-white/[0.05]">
                   Volver a editar
                 </button>
-                <button type="button" onClick={handleSubmit} disabled={submitting}
+                <button type="button" onClick={handleSubmit} disabled={submitting || !can("checklist", "checklist", "crear")}
                   className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-6 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95 disabled:opacity-50">
                   {submitting?(
                     <><svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>Registrando…</>

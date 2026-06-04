@@ -154,8 +154,7 @@ function formToCreateInput(form: UserFormState): CreateCompanyUserInput {
     password: form.password,
     role:     form.role,
     status:   form.status,
-    modulePermissions: Object.keys(form.permissions) as PlatformModuleKey[],
-    permissions:       form.permissions,                // nuevo campo granular
+    modulePermissions: form.permissions,
     profileData: {
       fullName:       form.fullName.trim(),
       lastName:       form.lastName.trim(),
@@ -175,8 +174,7 @@ function formToUpdateInput(form: UserFormState): UpdateCompanyUserInput {
     username: form.username.trim().toLowerCase(),
     role:     form.role,
     status:   form.status,
-    modulePermissions: Object.keys(form.permissions) as PlatformModuleKey[],
-    permissions:       form.permissions,                // nuevo campo granular
+    modulePermissions: form.permissions,
     profileData: {
       fullName:       form.fullName.trim(),
       lastName:       form.lastName.trim(),
@@ -194,21 +192,21 @@ function formToUpdateInput(form: UserFormState): UpdateCompanyUserInput {
 function userToForm(user: CompanyUser): UserFormState {
   const p = user.profileData;
   return {
-    email:         user.email,
-    username:      user.username,
-    password:      "",
-    role:          user.role,
-    status:        user.status,
-    permissions:   Object.keys(user.permissions).length > 0
-                     ? user.permissions
-                     : ROLE_DEFAULT_PERMISSIONS[user.role] ?? {},
-    fullName:      String(p.fullName ?? ""),
-    lastName:      String(p.lastName ?? ""),
-    phone:         String(p.phone ?? ""),
-    site:          String(p.site ?? ""),
-    area:          String(p.area ?? ""),
+    email:          user.email,
+    username:       user.username,
+    password:       "",
+    role:           user.role,
+    status:         user.status,
+    permissions:    Object.keys(user.modulePermissions).length > 0
+                      ? user.modulePermissions
+                      : ROLE_DEFAULT_PERMISSIONS[user.role] ?? {},
+    fullName:       String(p.fullName ?? ""),  
+    lastName:       String(p.lastName ?? ""),
+    phone:          String(p.phone ?? ""),
+    site:           String(p.site ?? ""),
+    area:           String(p.area ?? ""),
     documentNumber: String(p.documentNumber ?? ""),
-    notes:         String(p.notes ?? ""),
+    notes:          String(p.notes ?? ""),
   };
 }
 
@@ -1131,7 +1129,7 @@ export function UsersPage() {
                         {/* Módulos */}
                         <td className="px-5 py-3.5">
                             <span className="text-sm font-medium text-gray-800 dark:text-white">
-                              {Object.keys(u.permissions).length}
+                              {Object.keys(u.modulePermissions).length}
                             </span>
                             <span className="ml-1 text-xs text-gray-400 dark:text-gray-500">
                               / {Object.keys(MODULE_TREE).length}

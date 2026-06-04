@@ -1,17 +1,14 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
-import { useAuth } from "../../../context/AuthContext";
 import { useAssets } from "../../../hooks/useAssets";
 import { useGarages } from "../../../hooks/useGarages";
 import { useCompanyUsers } from "../../../hooks/useCompanyUsers";
+import { usePermissions } from "../../../hooks/usePermissions";
 import { ExportToolbar } from "../../../components/ui/export-toolbar/ExportToolbar";
 import type { GarageRecord, GarageStatus } from "../../../types/fleet";
 import { LocationPickerModal } from "../../../components/ui/map/LocationPicker";
 import { GarageMap } from "@/components/ui/map/GarageMap";
-
-// ─── permission roles ────────────────────────────────────────────────────────
-const ADMIN_ROLES = ["owner_empresa", "admin_empresa", "supervisor", "superadmin"];
 
 // ─── types ────────────────────────────────────────────────────────────────────
 type GarageForm = Omit<GarageRecord, "id" | "tenantId"> & {
@@ -171,11 +168,12 @@ function OccupancyBar({ capacity, occupied }: { capacity: number; occupied: numb
 
 // ─── Garage card ────────────────────────────────────────────────────────────────
 function GarageCard({
-  garage, occupied, vehicleList, canManage, onEdit, onDelete, onDetail,
+  garage, occupied, vehicleList, canEdit, canDelete, onEdit, onDelete, onDetail,
 }: {
   garage: GarageRecord; occupied: number;
   vehicleList: { plate: string; brand: string; model: string }[];
-  canManage: boolean; onEdit: () => void; onDelete: () => void; onDetail: () => void;
+  canEdit: boolean; canDelete: boolean;
+  onEdit: () => void; onDelete: () => void; onDetail: () => void;
 }) {
   const isActive = garage.status === "Activo";
   const pct = garage.capacity > 0 ? (occupied / garage.capacity) * 100 : 0;
@@ -262,17 +260,17 @@ function GarageCard({
             className="flex-1 rounded-xl border border-gray-200 dark:border-white/[0.06] py-1.5 text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition-colors">
             Ver detalle
           </button>
-          {canManage && (
-            <>
-              <button type="button" onClick={onEdit}
-                className="flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 dark:border-white/[0.06] text-gray-500 dark:text-gray-400 hover:border-brand-300 dark:hover:border-brand-500/40 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-brand-50 dark:hover:bg-brand-500/10 transition-colors">
-                <IconEdit className="h-3.5 w-3.5" />
-              </button>
-              <button type="button" onClick={onDelete}
-                className="flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 dark:border-white/[0.06] text-gray-500 dark:text-gray-400 hover:border-error-200 dark:hover:border-error-500/30 hover:text-error-600 dark:hover:text-error-400 hover:bg-error-50 dark:hover:bg-error-500/10 transition-colors">
-                <IconTrash className="h-3.5 w-3.5" />
-              </button>
-            </>
+          {canEdit && (
+            <button type="button" onClick={onEdit}
+              className="flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 dark:border-white/[0.06] text-gray-500 dark:text-gray-400 hover:border-brand-300 dark:hover:border-brand-500/40 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-brand-50 dark:hover:bg-brand-500/10 transition-colors">
+              <IconEdit className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {canDelete && (
+            <button type="button" onClick={onDelete}
+              className="flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 dark:border-white/[0.06] text-gray-500 dark:text-gray-400 hover:border-error-200 dark:hover:border-error-500/30 hover:text-error-600 dark:hover:text-error-400 hover:bg-error-50 dark:hover:bg-error-500/10 transition-colors">
+              <IconTrash className="h-3.5 w-3.5" />
+            </button>
           )}
         </div>
       </div>
@@ -294,8 +292,7 @@ const inputCls =
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export function GaragesPage() {
-  const { session } = useAuth();
-  const canManage = ADMIN_ROLES.includes(session?.role ?? "");
+  const { can } = usePermissions();
 
   const { assets } = useAssets();
   const { garages, loading, createGarage, updateGarage, deleteGarage } = useGarages();
@@ -313,7 +310,10 @@ export function GaragesPage() {
   // ── Derived ─────────────────────────────────────────────────────────────────
   const supervisorOptions = users
     .filter((u) => ["owner_empresa", "admin_empresa", "supervisor"].includes(u.role))
-    .map((u) => ({ value: u.name, label: u.name }));
+    .map((u) => {
+      const name = [u.profileData?.firstName, u.profileData?.lastName].filter(Boolean).join(" ") || u.username;
+      return { value: name, label: name };
+    });
 
   const garageRows = useMemo(
     () => garages.map((g) => {
@@ -471,7 +471,7 @@ export function GaragesPage() {
               </button>
             ))}
           </div>
-          {canManage && (
+          {can("gestion", "garajes", "crear") && (
             <button
               type="button"
               onClick={openCreate}
@@ -580,7 +580,8 @@ export function GaragesPage() {
                     garage={g}
                     occupied={g.occupied}
                     vehicleList={g.vehicles.map((v) => ({ plate: v.plate, brand: v.brand, model: v.model }))}
-                    canManage={canManage}
+                    canEdit={can("gestion", "garajes", "editar")}
+                    canDelete={can("gestion", "garajes", "eliminar")}
                     onEdit={() => openEdit(g)}
                     onDelete={() => handleDelete(g.id, g.name)}
                     onDetail={() => setDrawerGarageId(g.id)}
@@ -807,18 +808,22 @@ export function GaragesPage() {
                 )}
 
                 {/* drawer actions */}
-                {canManage && (
+                {(can("gestion", "garajes", "editar") || can("gestion", "garajes", "eliminar")) && (
                   <div className="flex gap-3 pt-1">
-                    <button type="button" onClick={() => { setDrawerGarageId(null); openEdit(drawerGarage); }}
-                      className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 dark:border-white/[0.06] py-2.5 text-sm font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition-colors">
-                      <IconEdit className="h-4 w-4" /> Editar
-                    </button>
-                    <button type="button" disabled={deletingId === drawerGarage.id}
-                      onClick={() => handleDelete(drawerGarage.id, drawerGarage.name)}
-                      className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-error-200 dark:border-error-500/20 bg-error-50 dark:bg-error-500/10 py-2.5 text-sm font-semibold text-error-600 dark:text-error-400 hover:bg-error-100 dark:hover:bg-error-500/20 disabled:opacity-60 transition-colors">
-                      <IconTrash className="h-4 w-4" />
-                      {deletingId === drawerGarage.id ? "Eliminando…" : "Eliminar"}
-                    </button>
+                    {can("gestion", "garajes", "editar") && (
+                      <button type="button" onClick={() => { setDrawerGarageId(null); openEdit(drawerGarage); }}
+                        className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 dark:border-white/[0.06] py-2.5 text-sm font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition-colors">
+                        <IconEdit className="h-4 w-4" /> Editar
+                      </button>
+                    )}
+                    {can("gestion", "garajes", "eliminar") && (
+                      <button type="button" disabled={deletingId === drawerGarage.id}
+                        onClick={() => handleDelete(drawerGarage.id, drawerGarage.name)}
+                        className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-error-200 dark:border-error-500/20 bg-error-50 dark:bg-error-500/10 py-2.5 text-sm font-semibold text-error-600 dark:text-error-400 hover:bg-error-100 dark:hover:bg-error-500/20 disabled:opacity-60 transition-colors">
+                        <IconTrash className="h-4 w-4" />
+                        {deletingId === drawerGarage.id ? "Eliminando…" : "Eliminar"}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

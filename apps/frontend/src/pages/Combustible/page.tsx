@@ -6,15 +6,15 @@ import {
   Fuel, Plus, X, Droplets, DollarSign, Gauge,
   MapPin, TrendingUp, TrendingDown, ChevronRight,
   Flame, BarChart3, Table2, LineChart, ChevronLeft,
-  BarChart,
 } from "lucide-react";
 import { useAssets } from "../../hooks/useAssets";
 import { useFuel, type CreateFuelPayload } from "../../hooks/useFuel";
+import { usePermissions } from "../../hooks/usePermissions";
 import { ExportToolbar, type ExportColumn, type ExportRow } from "../../components/ui/export-toolbar/ExportToolbar";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import { LineChartExp } from "../../components/ui/charts/LineChart";
 import { RadarChart } from "../../components/ui/charts/RadarChart";
-import { BarChartExp }   from "../../components/ui/charts/BarChart";
+import { BarChartExp } from "../../components/ui/charts/BarChart";
 
 // ─── Export columns ────────────────────────────────────────────────────────────
 
@@ -240,6 +240,9 @@ type ViewTab = "tabla" | "graficas";
 export function FuelPage() {
   const { assets, loading: assetsLoading } = useAssets();
   const { fuelEntries, loading: fuelLoading, createFuelEntry } = useFuel();
+  const { can } = usePermissions();
+
+  const canCreate = can("combustible", "combustible", "crear");
 
   const loading = assetsLoading || fuelLoading;
 
@@ -329,7 +332,6 @@ export function FuelPage() {
       );
   }, [fuelEntries, assets, search]);
 
-  // Reset page when search changes
   const handleSearch = (v: string) => { setSearch(v); setPage(1); };
 
   const paginatedRows = useMemo(() => {
@@ -359,14 +361,16 @@ export function FuelPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={openModal}
-          className="inline-flex shrink-0 items-center gap-2 self-start rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95"
-        >
-          <Plus size={15} />
-          Nuevo registro
-        </button>
+        {canCreate && (
+          <button
+            type="button"
+            onClick={openModal}
+            className="inline-flex shrink-0 items-center gap-2 self-start rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95"
+          >
+            <Plus size={15} />
+            Nuevo registro
+          </button>
+        )}
       </div>
 
       {/* ── KPIs ───────────────────────────────────────────────────────────── */}
@@ -410,7 +414,6 @@ export function FuelPage() {
             </p>
           </div>
 
-          {/* Tab switcher */}
           <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
             <button
               type="button"
@@ -442,7 +445,6 @@ export function FuelPage() {
         {/* ── VISTA: TABLA ─────────────────────────────────────────────────── */}
         {viewTab === "tabla" && (
           <>
-            {/* Toolbar */}
             <div className="border-b border-gray-100 px-5 py-3 dark:border-white/[0.06]">
               <div className="flex items-center gap-3">
                 <div className="relative flex-1 max-w-sm">
@@ -465,7 +467,6 @@ export function FuelPage() {
               </div>
             </div>
 
-            {/* Table */}
             {loading ? (
               <div className="flex items-center justify-center gap-3 py-20 text-gray-400">
                 <svg className="animate-spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
@@ -497,13 +498,7 @@ export function FuelPage() {
                     </tbody>
                   </table>
                 </div>
-
-                <Pagination
-                  page={page}
-                  total={tableRows.length}
-                  pageSize={PAGE_SIZE}
-                  onChange={setPage}
-                />
+                <Pagination page={page} total={tableRows.length} pageSize={PAGE_SIZE} onChange={setPage} />
               </>
             )}
           </>
@@ -519,22 +514,17 @@ export function FuelPage() {
               </div>
             ) : (
               <>
-                {/* Línea */}
                 <div className="rounded-2xl border border-gray-100 p-5 dark:border-white/[0.06]">
                   <h3 className="mb-1 text-sm font-semibold text-gray-800 dark:text-white">Consumo mensual</h3>
                   <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">Litros acumulados por mes · zoom con rueda del mouse</p>
                   <LineChartExp fuelEntries={fuelEntries} assets={assets} mode="liters" />
                 </div>
-
                 <div className="grid gap-5 lg:grid-cols-2">
-                  {/* Barras */}
                   <div className="rounded-2xl border border-gray-100 p-5 dark:border-white/[0.06]">
                     <h3 className="mb-1 text-sm font-semibold text-gray-800 dark:text-white">Comparativa por vehículo</h3>
                     <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">Litros · Costo · Cargas por unidad</p>
                     <BarChartExp fuelEntries={fuelEntries} assets={assets} />
                   </div>
-
-                  {/* Radar */}
                   <div className="rounded-2xl border border-gray-100 p-5 dark:border-white/[0.06]">
                     <h3 className="mb-1 text-sm font-semibold text-gray-800 dark:text-white">Radar de salud por vehículo</h3>
                     <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">Comparativa multidimensional normalizada</p>
@@ -548,123 +538,122 @@ export function FuelPage() {
       </div>
 
       {/* ── Modal nuevo registro ───────────────────────────────────────────── */}
-      <AnimatePresence>
-        {modalOpen && (
-          <>
-            <motion.div
-              key="backdrop"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-40 bg-gray-950/50 backdrop-blur-sm"
-              onClick={() => setModalOpen(false)}
-            />
-
-            <motion.div
-              key="modal"
-              initial={{ opacity: 0, scale: 0.96, y: 16 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 16 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-              className="fixed left-1/2 top-1/2 z-50 w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-gray-900"
-            >
-              {/* Modal header */}
-              <div className="flex items-start justify-between border-b border-gray-100 px-6 py-5 dark:border-white/[0.06]">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-warning-50 dark:bg-warning-500/[0.12]">
-                      <Fuel size={15} className="text-warning-600 dark:text-warning-400" />
-                    </div>
-                    <h2 className="text-lg font-bold text-gray-800 dark:text-white">Nuevo registro de combustible</h2>
-                  </div>
-                  <p className="mt-1 ml-10 text-xs text-gray-400 dark:text-gray-500">
-                    Registra la carga con litros, costo y lectura de odómetro.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 text-gray-400 transition hover:bg-gray-50 dark:border-white/[0.08] dark:hover:bg-white/[0.05]"
-                >
-                  <X size={15} />
-                </button>
-              </div>
-
-              {/* Modal form */}
-              <form onSubmit={handleSubmit}>
-                <div className="grid gap-4 p-6 sm:grid-cols-2">
-                  <div className="sm:col-span-2">
-                    <label className={labelCls}>Vehículo</label>
-                    <select value={form.assetId} onChange={(e) => setForm((f) => ({ ...f, assetId: e.target.value }))} className={inputCls} required>
-                      {assets.map((a) => (
-                        <option key={a.id} value={a.id}>{a.plate} — {a.brand} {a.model}</option>
-                      ))}
-                    </select>
-                  </div>
-
+      {canCreate && (
+        <AnimatePresence>
+          {modalOpen && (
+            <>
+              <motion.div
+                key="backdrop"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="fixed inset-0 z-40 bg-gray-950/50 backdrop-blur-sm"
+                onClick={() => setModalOpen(false)}
+              />
+              <motion.div
+                key="modal"
+                initial={{ opacity: 0, scale: 0.96, y: 16 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 16 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
+                className="fixed left-1/2 top-1/2 z-50 w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-gray-900"
+              >
+                <div className="flex items-start justify-between border-b border-gray-100 px-6 py-5 dark:border-white/[0.06]">
                   <div>
-                    <DatePicker label="Fecha de carga" value={form.date} onChange={(v) => setForm((f) => ({ ...f, date: v }))} />
-                  </div>
-
-                  <div>
-                    <label className={labelCls}>Estación de servicio</label>
-                    <input type="text" value={form.station} onChange={(e) => setForm((f) => ({ ...f, station: e.target.value }))} placeholder="Ej. Petroecuador El Recreo" className={inputCls} required />
-                  </div>
-
-                  <div>
-                    <label className={labelCls}>Litros cargados</label>
-                    <div className="relative">
-                      <Droplets size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input type="number" min={0} step={0.01} value={form.liters || ""} onChange={(e) => setForm((f) => ({ ...f, liters: Number(e.target.value) }))} placeholder="0.00" className={`${inputCls} pl-9`} required />
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-warning-50 dark:bg-warning-500/[0.12]">
+                        <Fuel size={15} className="text-warning-600 dark:text-warning-400" />
+                      </div>
+                      <h2 className="text-lg font-bold text-gray-800 dark:text-white">Nuevo registro de combustible</h2>
                     </div>
+                    <p className="mt-1 ml-10 text-xs text-gray-400 dark:text-gray-500">
+                      Registra la carga con litros, costo y lectura de odómetro.
+                    </p>
                   </div>
-
-                  <div>
-                    <label className={labelCls}>Costo total (USD)</label>
-                    <div className="relative">
-                      <DollarSign size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input type="number" min={0} step={0.01} value={form.cost || ""} onChange={(e) => setForm((f) => ({ ...f, cost: Number(e.target.value) }))} placeholder="0.00" className={`${inputCls} pl-9`} required />
-                    </div>
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className={labelCls}>Lectura de odómetro / horómetro (km)</label>
-                    <div className="relative">
-                      <Gauge size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input type="number" min={0} value={form.odometer || ""} onChange={(e) => setForm((f) => ({ ...f, odometer: Number(e.target.value) }))} placeholder="0" className={`${inputCls} pl-9`} required />
-                    </div>
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className={labelCls}>Notas (opcional)</label>
-                    <textarea rows={2} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Observaciones adicionales…" className="w-full resize-none rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-700 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200 dark:placeholder:text-gray-500" />
-                  </div>
-                </div>
-
-                {form.liters > 0 && form.cost > 0 && (
-                  <div className="mx-6 mb-4 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 dark:border-brand-500/20 dark:bg-brand-500/[0.07]">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-brand-700 dark:text-brand-300">
-                      <ChevronRight size={12} />
-                      Precio por litro: <span className="font-black">{fmt(form.cost / form.liters)} USD/L</span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-end gap-3 border-t border-gray-100 px-6 py-4 dark:border-white/[0.06]">
-                  <button type="button" onClick={() => setModalOpen(false)} className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.04]">
-                    Cancelar
-                  </button>
-                  <button type="submit" disabled={submitting} className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-5 py-2 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95 disabled:opacity-60">
-                    {submitting && <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>}
-                    Guardar consumo
+                  <button
+                    type="button"
+                    onClick={() => setModalOpen(false)}
+                    className="flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 text-gray-400 transition hover:bg-gray-50 dark:border-white/[0.08] dark:hover:bg-white/[0.05]"
+                  >
+                    <X size={15} />
                   </button>
                 </div>
-              </form>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+
+                <form onSubmit={handleSubmit}>
+                  <div className="grid gap-4 p-6 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                      <label className={labelCls}>Vehículo</label>
+                      <select value={form.assetId} onChange={(e) => setForm((f) => ({ ...f, assetId: e.target.value }))} className={inputCls} required>
+                        {assets.map((a) => (
+                          <option key={a.id} value={a.id}>{a.plate} — {a.brand} {a.model}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <DatePicker label="Fecha de carga" value={form.date} onChange={(v) => setForm((f) => ({ ...f, date: v }))} />
+                    </div>
+
+                    <div>
+                      <label className={labelCls}>Estación de servicio</label>
+                      <input type="text" value={form.station} onChange={(e) => setForm((f) => ({ ...f, station: e.target.value }))} placeholder="Ej. Petroecuador El Recreo" className={inputCls} required />
+                    </div>
+
+                    <div>
+                      <label className={labelCls}>Litros cargados</label>
+                      <div className="relative">
+                        <Droplets size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input type="number" min={0} step={0.01} value={form.liters || ""} onChange={(e) => setForm((f) => ({ ...f, liters: Number(e.target.value) }))} placeholder="0.00" className={`${inputCls} pl-9`} required />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className={labelCls}>Costo total (USD)</label>
+                      <div className="relative">
+                        <DollarSign size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input type="number" min={0} step={0.01} value={form.cost || ""} onChange={(e) => setForm((f) => ({ ...f, cost: Number(e.target.value) }))} placeholder="0.00" className={`${inputCls} pl-9`} required />
+                      </div>
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className={labelCls}>Lectura de odómetro / horómetro (km)</label>
+                      <div className="relative">
+                        <Gauge size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input type="number" min={0} value={form.odometer || ""} onChange={(e) => setForm((f) => ({ ...f, odometer: Number(e.target.value) }))} placeholder="0" className={`${inputCls} pl-9`} required />
+                      </div>
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className={labelCls}>Notas (opcional)</label>
+                      <textarea rows={2} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Observaciones adicionales…" className="w-full resize-none rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-700 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200 dark:placeholder:text-gray-500" />
+                    </div>
+                  </div>
+
+                  {form.liters > 0 && form.cost > 0 && (
+                    <div className="mx-6 mb-4 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 dark:border-brand-500/20 dark:bg-brand-500/[0.07]">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-brand-700 dark:text-brand-300">
+                        <ChevronRight size={12} />
+                        Precio por litro: <span className="font-black">{fmt(form.cost / form.liters)} USD/L</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-3 border-t border-gray-100 px-6 py-4 dark:border-white/[0.06]">
+                    <button type="button" onClick={() => setModalOpen(false)} className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.04]">
+                      Cancelar
+                    </button>
+                    <button type="submit" disabled={submitting} className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-5 py-2 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95 disabled:opacity-60">
+                      {submitting && <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>}
+                      Guardar consumo
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+      )}
     </div>
   );
 }

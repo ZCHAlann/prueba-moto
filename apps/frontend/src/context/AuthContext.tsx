@@ -23,7 +23,8 @@ export type AuthSession = {
   email: string;
   name: string;
   role: PlatformRole;
-  modulePermissions: string[];
+  companyModules: string[];                       
+  modulePermissions: Record<string, string[]>; 
   permissions: PermissionMap;
   roleLabel: string;
   companyId: string | null;
@@ -64,7 +65,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (mounted && data) {
           setSession({
             ...data,
-            modulePermissions: data.modulePermissions ?? data.companyModules ?? [],
+            companyModules:    data.companyModules ?? [],
+            modulePermissions: data.modulePermissions ?? {},
             permissions:       data.permissions ?? {},
             roleLabel:         roleLabelMap[data.role] ?? data.role,
           });
@@ -94,7 +96,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await res.json();
       setSession({
         ...data,
-        modulePermissions: data.modulePermissions ?? [],
+        companyModules:    data.companyModules ?? [],
+        modulePermissions: data.modulePermissions ?? {},
         permissions:       data.permissions ?? {},
         roleLabel:         roleLabelMap[data.role] ?? data.role,
       });
@@ -123,7 +126,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await res.json();
       setSession({
         ...data,
-        modulePermissions: data.modulePermissions ?? [],
+        companyModules:    data.companyModules ?? [],
+        modulePermissions: data.modulePermissions ?? {},
         permissions:       data.permissions ?? {},
         roleLabel:         roleLabelMap[data.role] ?? data.role,
       });

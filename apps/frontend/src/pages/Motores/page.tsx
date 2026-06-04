@@ -9,6 +9,7 @@ import { MotorCreateModal } from "../../components/motors/motor-create-modal";
 import { MotorEditModal } from "../../components/motors/motor-editar-modal";
 import type { Asset } from "../../types/activo";
 import { useNavigate } from "react-router";
+import { usePermissions } from "../../hooks/usePermissions";
 
 /* ── Confirm delete dialog ── */
 function ConfirmDeleteDialog({
@@ -28,7 +29,6 @@ function ConfirmDeleteDialog({
       onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
     >
       <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0f1623]">
-        {/* Header */}
         <div className="px-6 pb-4 pt-5">
           <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 dark:bg-rose-500/10">
             <AlertTriangle size={18} className="text-rose-500" />
@@ -39,7 +39,6 @@ function ConfirmDeleteDialog({
           </p>
         </div>
 
-        {/* Summary */}
         <div className="mx-6 mb-5 rounded-xl border border-gray-100 bg-gray-50 p-3.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
           {[
             { label: "Código",    value: motor.code },
@@ -54,7 +53,6 @@ function ConfirmDeleteDialog({
           ))}
         </div>
 
-        {/* Actions */}
         <div className="flex items-center gap-3 border-t border-gray-100 bg-gray-50 px-6 py-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
           <button
             type="button"
@@ -142,10 +140,14 @@ function RowActions({
   motor,
   onDelete,
   onEdit,
+  canEdit,
+  canDelete,
 }: {
   motor: Asset;
   onDelete: (m: Asset) => void;
   onEdit: (m: Asset) => void;
+  canEdit: boolean;
+  canDelete: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -158,6 +160,9 @@ function RowActions({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
+
+  // Si no tiene ninguna acción disponible, no mostrar el menú
+  if (!canEdit && !canDelete) return null;
 
   return (
     <div ref={ref} className="relative flex justify-end">
@@ -180,23 +185,29 @@ function RowActions({
             <Eye size={14} className="text-gray-400" />
             Ver detalle
           </Link>
-          <button
-            type="button"
-            onClick={() => { setOpen(false); onEdit(motor); }}
-            className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-700 transition hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.05]"
-          >
-            <Pencil size={14} className="text-gray-400" />
-            Editar
-          </button>
-          <div className="mx-3 border-t border-gray-100 dark:border-white/[0.06]" />
-          <button
-            type="button"
-            onClick={() => { setOpen(false); onDelete(motor); }}
-            className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-rose-600 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
-          >
-            <Trash2 size={14} />
-            Eliminar
-          </button>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onEdit(motor); }}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-700 transition hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.05]"
+            >
+              <Pencil size={14} className="text-gray-400" />
+              Editar
+            </button>
+          )}
+          {canDelete && (
+            <>
+              <div className="mx-3 border-t border-gray-100 dark:border-white/[0.06]" />
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onDelete(motor); }}
+                className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-rose-600 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
+              >
+                <Trash2 size={14} />
+                Eliminar
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -227,6 +238,7 @@ function EmptyState({ hasFilters }: { hasFilters: boolean }) {
 /* ── Main page ── */
 export function MotorsPage() {
   const { motors, deleteMotor } = useMotors();
+  const { can } = usePermissions();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("Todos");
   const [showModal, setShowModal] = useState(false);
@@ -234,6 +246,10 @@ export function MotorsPage() {
   const [motorToDelete, setMotorToDelete] = useState<Asset | null>(null);
   const [deleting, setDeleting] = useState(false);
   const navigate = useNavigate();
+
+  const canCreate = can("motores", "lista_motores", "crear");
+  const canEdit   = can("motores", "lista_motores", "editar");
+  const canDelete = can("motores", "lista_motores", "eliminar");
 
   const filtered = useMemo(() => {
     const value = query.trim().toLowerCase();
@@ -286,14 +302,16 @@ export function MotorsPage() {
         subtitle="Inventario técnico de motores registrados en la empresa."
         accent="orange"
         action={
-          <button
-            type="button"
-            onClick={() => setShowModal(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-orange-500/20 transition hover:bg-orange-600 active:scale-95"
-          >
-            <Plus size={16} />
-            Nuevo motor
-          </button>
+          canCreate ? (
+            <button
+              type="button"
+              onClick={() => setShowModal(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-orange-500/20 transition hover:bg-orange-600 active:scale-95"
+            >
+              <Plus size={16} />
+              Nuevo motor
+            </button>
+          ) : undefined
         }
       />
 
@@ -364,7 +382,7 @@ export function MotorsPage() {
                         {h}
                       </th>
                     ))}
-                  </tr> 
+                  </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
                   {filtered.map((motor) => (
@@ -393,7 +411,13 @@ export function MotorsPage() {
                         <StatusPill label={motor.status} tone={statusTone(motor.status)} />
                       </td>
                       <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
-                        <RowActions motor={motor} onDelete={setMotorToDelete} onEdit={setMotorToEdit} />
+                        <RowActions
+                          motor={motor}
+                          onDelete={setMotorToDelete}
+                          onEdit={setMotorToEdit}
+                          canEdit={canEdit}
+                          canDelete={canDelete}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -412,7 +436,13 @@ export function MotorsPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <StatusPill label={motor.status} tone={statusTone(motor.status)} />
-                      <RowActions motor={motor} onDelete={setMotorToDelete} onEdit={setMotorToEdit} />
+                      <RowActions
+                        motor={motor}
+                        onDelete={setMotorToDelete}
+                        onEdit={setMotorToEdit}
+                        canEdit={canEdit}
+                        canDelete={canDelete}
+                      />
                     </div>
                   </div>
                   <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">{motor.brand} {motor.model}</p>

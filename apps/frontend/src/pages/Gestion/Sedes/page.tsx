@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { useSites } from "@/hooks/useSites";
 import { useAssets } from "@/hooks/useAssets";
 import { useDrivers } from "@/hooks/useDrivers";
-import { useAuth } from "@/context/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import type { OperationalSite, SiteStatus } from "@/types/fleet";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -544,9 +544,7 @@ export function SitesManagementPage() {
   const { sites, loading, createSite, updateSite } = useSites();
   const { assets } = useAssets();
   const { drivers } = useDrivers();
-  const { session } = useAuth();
-
-  const hasPermission = ["owner_empresa", "admin_empresa", "superadmin"].includes(session?.role ?? "");
+  const { can } = usePermissions();
 
   const [query, setQuery] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -627,7 +625,7 @@ export function SitesManagementPage() {
               Catálogo operativo real para crear, revisar e inactivar sedes.
             </p>
           </div>
-          {hasPermission && (
+          {can("gestion", "sedes", "crear") && (
             <button
               onClick={openCreate}
               className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition"
@@ -733,7 +731,7 @@ export function SitesManagementPage() {
                       <td className="px-5 py-3.5">
                         <RowMenu
                           site={site}
-                          hasPermission={hasPermission}
+                          hasPermission={can("gestion", "sedes", "editar")}
                           onDetail={() => setDetailSite(site)}
                           onEdit={() => openEdit(site)}
                           onToggle={() => handleToggleStatus(site)}
@@ -747,10 +745,9 @@ export function SitesManagementPage() {
           )}
         </div>
 
-        {/* No-permission notice */}
-        {!hasPermission && (
-          <div className="rounded-xl border border-yellow-200 dark:border-yellow-500/20 bg-yellow-50 dark:bg-yellow-500/10 px-4 py-3 text-sm text-yellow-800 dark:text-yellow-400">
-            Solo perfiles administradores pueden crear o editar sedes. El catálogo sigue visible para consulta.
+        {!can("gestion", "sedes", "crear") && !can("gestion", "sedes", "editar") && (
+          <div className="rounded-xl border border-yellow-200 ...">
+            Solo perfiles administradores pueden crear o editar sedes...
           </div>
         )}
       </div>
@@ -768,7 +765,7 @@ export function SitesManagementPage() {
         site={detailSite}
         assets={assets}
         drivers={drivers}
-        hasPermission={hasPermission}
+        hasPermission={can("gestion", "sedes", "editar")}
         onClose={() => setDetailSite(null)}
         onEdit={(s) => openEdit(s)}
         onToggleStatus={handleToggleStatus}

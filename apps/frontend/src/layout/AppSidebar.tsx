@@ -6,7 +6,6 @@ import { useAuth } from "../context/AuthContext";
 import { filterOperationalNavigation } from "../lib/access-control";
 import { navigationSections, isRouteActive } from "../lib/navigation";
 import type { NavigationSection } from "../lib/navigation";
-import type { PlatformModuleKey } from "../types/platform";
 import {
   LayoutGrid, User, List, Table2, MapPin, PieChart,
   FileText, Box, Plug, Calendar, Bell, BookOpen,
@@ -54,9 +53,10 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ sections: sectionsProp, homeHre
       filterOperationalNavigation(
         navigationSections,
         session?.role ?? null,
-        (session?.modulePermissions ?? []) as PlatformModuleKey[]
+        (session?.modulePermissions ?? {}) as Record<string, string[]>,
+        session?.companyModules ?? [],
       ),
-    [session?.role, session?.modulePermissions]
+    [session?.role, session?.modulePermissions, session?.companyModules]
   );
 
   const sections = sectionsProp ?? operationSections;

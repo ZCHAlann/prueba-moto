@@ -3,13 +3,14 @@ import { toast } from "sonner";
 import { useMaintenances } from "../../hooks/useMaintenances";
 import { useAssets } from "../../hooks/useAssets";
 import { useDrivers } from "../../hooks/useDrivers";
+import { usePermissions } from "../../hooks/usePermissions";
 import { ModulePageHeader } from "../../components/features/modules/ModulePageHeader";
 import type { ApiMaintenance, MaintenancePriority, MaintenanceStatus, MaintenanceKind } from "../../hooks/useMaintenances";
 import type { Asset } from "../../types/activo";
 import {
   Plus, Search, Wrench, AlertTriangle, Clock, CheckCircle2,
   Calendar, User, Pencil, Trash2, ChevronDown, X, Loader2,
-  Car, DollarSign, FileText, Image as ImageIcon, Filter,
+  Car, FileText, Image as ImageIcon, Filter,
   TrendingUp, Zap, Shield, ChevronLeft, ChevronRight,
 } from "lucide-react";
 
@@ -56,7 +57,6 @@ function KpiRow({ stats }: {
 }) {
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-      {/* OTs block */}
       <div className="col-span-2 grid grid-cols-3 gap-3 md:col-span-2">
         <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.03]">
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Total</p>
@@ -74,8 +74,6 @@ function KpiRow({ stats }: {
           <div className="mt-1 flex items-center gap-1 text-xs text-blue-500"><Wrench size={10} />activas</div>
         </div>
       </div>
-
-      {/* Cost block */}
       <div className="col-span-2 grid grid-cols-3 gap-3 md:col-span-2">
         <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.03]">
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Mano obra</p>
@@ -99,14 +97,18 @@ function KpiRow({ stats }: {
 
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
 
-function DetailModal({ item, asset, onClose, onEdit, onDelete, onStatusChange }: {
+function DetailModal({ item, asset, onClose, onEdit, onDelete, onStatusChange, canEdit, canDelete }: {
   item: ApiMaintenance; asset: Asset | undefined;
   onClose: () => void; onEdit: () => void; onDelete: () => void;
   onStatusChange: (s: MaintenanceStatus) => void;
+  canEdit: boolean; canDelete: boolean;
 }) {
   const s = STATUS_CFG[item.status];
   const k = KIND_CFG[item.kind] ?? KIND_CFG["Correctivo"];
   const total = (item.laborCost ?? 0) + (item.partsCost ?? 0);
+
+  const hasFooterLeft = canDelete || canEdit;
+  const hasFooterRight = canEdit; // cambios de estado son una forma de edición
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm"
@@ -201,27 +203,36 @@ function DetailModal({ item, asset, onClose, onEdit, onDelete, onStatusChange }:
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/80 px-6 py-3.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
-          <div className="flex gap-2">
-            <button onClick={onDelete} className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-500/20 dark:text-rose-400 dark:hover:bg-rose-500/10">
-              <Trash2 size={12} />Eliminar
-            </button>
-            <button onClick={onEdit} className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]">
-              <Pencil size={12} />Editar
-            </button>
-          </div>
-          <div className="flex gap-2">
-            {(["Pendiente", "En proceso", "Completado"] as MaintenanceStatus[]).filter(st => st !== item.status).map(st => {
-              const cfg = STATUS_CFG[st];
-              return (
-                <button key={st} onClick={() => onStatusChange(st)}
-                  className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition hover:opacity-80 ${cfg.bg} ${cfg.color} ${cfg.border}`}>
-                  {cfg.icon}{cfg.label}
+        {/* Footer — solo se muestra si el usuario tiene al menos una acción */}
+        {(hasFooterLeft || hasFooterRight) && (
+          <div className="flex items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/80 px-6 py-3.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
+            <div className="flex gap-2">
+              {canDelete && (
+                <button onClick={onDelete} className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-500/20 dark:text-rose-400 dark:hover:bg-rose-500/10">
+                  <Trash2 size={12} />Eliminar
                 </button>
-              );
-            })}
+              )}
+              {canEdit && (
+                <button onClick={onEdit} className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]">
+                  <Pencil size={12} />Editar
+                </button>
+              )}
+            </div>
+            {canEdit && (
+              <div className="flex gap-2">
+                {(["Pendiente", "En proceso", "Completado"] as MaintenanceStatus[]).filter(st => st !== item.status).map(st => {
+                  const cfg = STATUS_CFG[st];
+                  return (
+                    <button key={st} onClick={() => onStatusChange(st)}
+                      className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition hover:opacity-80 ${cfg.bg} ${cfg.color} ${cfg.border}`}>
+                      {cfg.icon}{cfg.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -387,9 +398,10 @@ function DeleteConfirm({ title, onConfirm, onCancel }: { title: string; onConfir
 
 // ─── Table row ────────────────────────────────────────────────────────────────
 
-function MaintenanceRow({ item, asset, onDetail, onEdit, onDelete }: {
+function MaintenanceRow({ item, asset, onDetail, onEdit, onDelete, canEdit, canDelete }: {
   item: ApiMaintenance; asset: Asset | undefined;
   onDetail: () => void; onEdit: () => void; onDelete: () => void;
+  canEdit: boolean; canDelete: boolean;
 }) {
   const s = STATUS_CFG[item.status];
   const k = KIND_CFG[item.kind] ?? KIND_CFG["Correctivo"];
@@ -438,9 +450,14 @@ function MaintenanceRow({ item, asset, onDetail, onEdit, onDelete }: {
       </td>
       <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          {/* "Ver" siempre visible — si llegaron aquí tienen "ver" */}
           <button onClick={onDetail} className="rounded-lg border border-orange-200 px-2 py-1 text-[11px] font-semibold text-orange-600 hover:bg-orange-50 dark:border-orange-500/20 dark:text-orange-400 whitespace-nowrap">Ver</button>
-          <button onClick={onEdit} className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.08]"><Pencil size={12} /></button>
-          <button onClick={onDelete} className="flex h-7 w-7 items-center justify-center rounded-lg text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 size={12} /></button>
+          {canEdit && (
+            <button onClick={onEdit} className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.08]"><Pencil size={12} /></button>
+          )}
+          {canDelete && (
+            <button onClick={onDelete} className="flex h-7 w-7 items-center justify-center rounded-lg text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 size={12} /></button>
+          )}
         </div>
       </td>
     </tr>
@@ -459,6 +476,12 @@ export default function MaintenancePage() {
   const { maintenances, loading, createMaintenance, updateMaintenance, deleteMaintenance, completeMaintenance } = useMaintenances();
   const { assets, loading: loadingAssets } = useAssets();
   const { drivers, loading: driversLoading } = useDrivers();
+  const { can } = usePermissions();
+
+  // ─── Permisos granulares ──────────────────────────────────────────────────
+  const canCreate = can("mantenimiento", "ordenes", "crear");
+  const canEdit   = can("mantenimiento", "ordenes", "editar");
+  const canDelete = can("mantenimiento", "ordenes", "eliminar");
 
   const assetMap = useMemo(() => new Map(assets.map(a => [a.id, a])), [assets]);
 
@@ -487,7 +510,6 @@ export default function MaintenancePage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  // Reset page on filter change
   const setFilter = (fn: () => void) => { fn(); setPage(1); };
 
   const stats = useMemo(() => ({
@@ -564,10 +586,12 @@ export default function MaintenancePage() {
         subtitle="OTs visibles, fechas claras, responsables definidos y costos registrados."
         accent="orange"
         action={
-          <button onClick={openCreate}
-            className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-orange-500/20 hover:bg-orange-600 active:scale-95">
-            <Plus size={15} />Nuevo mantenimiento
-          </button>
+          canCreate ? (
+            <button onClick={openCreate}
+              className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-orange-500/20 hover:bg-orange-600 active:scale-95">
+              <Plus size={15} />Nuevo mantenimiento
+            </button>
+          ) : undefined
         }
       />
 
@@ -641,6 +665,8 @@ export default function MaintenancePage() {
                     onDetail={() => setDetailItem(item)}
                     onEdit={() => { setDetailItem(null); openEdit(item); }}
                     onDelete={() => { setDetailItem(null); setDeleteTarget(item); }}
+                    canEdit={canEdit}
+                    canDelete={canDelete}
                   />
                 ))}
               </tbody>
@@ -673,11 +699,15 @@ export default function MaintenancePage() {
 
       {/* Modals */}
       {detailItem && (
-        <DetailModal item={detailItem} asset={assetMap.get(detailItem.assetId)}
+        <DetailModal
+          item={detailItem} asset={assetMap.get(detailItem.assetId)}
           onClose={() => setDetailItem(null)}
           onEdit={() => { openEdit(detailItem); setDetailItem(null); }}
           onDelete={() => { setDeleteTarget(detailItem); setDetailItem(null); }}
-          onStatusChange={s => handleStatusChange(detailItem, s)} />
+          onStatusChange={s => handleStatusChange(detailItem, s)}
+          canEdit={canEdit}
+          canDelete={canDelete}
+        />
       )}
       {modal && (
         <FormModal mode={modal.mode} initial={modal.form} assets={assets}

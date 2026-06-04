@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
-import { useAuth } from "../../../context/AuthContext";
+import { usePermissions } from "../../../hooks/usePermissions";
 import { useAssets } from "../../../hooks/useAssets";
 import { useDrivers } from "../../../hooks/useDrivers";
 import { useAssignments } from "../../../hooks/useAssignments";
@@ -48,9 +48,7 @@ function KpiCard({
   };
 
   return (
-    <div
-      className={`rounded-2xl border p-4 ${toneMap[tone]}`}
-    >
+    <div className={`rounded-2xl border p-4 ${toneMap[tone]}`}>
       <p className="text-xs font-medium uppercase tracking-wide opacity-70">{label}</p>
       <p className="mt-1 text-3xl font-bold text-gray-800 dark:text-white">{value}</p>
       <p className="mt-0.5 text-xs opacity-60">{detail}</p>
@@ -141,8 +139,10 @@ function AssetCard({
 // ─── main page ───────────────────────────────────────────────────────────────
 
 export function AssignmentsPage() {
-  const { session } = useAuth();
-  const currentUser = { name: session?.name ?? "Sistema" };
+  const { can } = usePermissions();
+
+  const canCreate   = can("gestion", "asignaciones", "crear");
+  const canFinalize = can("gestion", "asignaciones", "editar");  // finalizar = editar
 
   const { assets, loading: assetsLoading } = useAssets();
   const { drivers, loading: driversLoading } = useDrivers();
@@ -200,11 +200,10 @@ export function AssignmentsPage() {
             driverName: driver?.name ?? "Sin conductor",
             plate: asset?.plate ?? a.assetId,
             unit: asset ? `${asset.brand} ${asset.model}` : a.assetId,
-            assignedBy: currentUser.name,
           };
         })
         .sort((a, b) => b.startDate.localeCompare(a.startDate)),
-    [assignments, assets, drivers, currentUser.name]
+    [assignments, assets, drivers]
   );
 
   const filteredRows = useMemo(() => {
@@ -227,11 +226,13 @@ export function AssignmentsPage() {
   // ── actions ───────────────────────────────────────────────────────────────
 
   function handleDriverClick(driverId: string) {
+    if (!canCreate) return;
     setSelectedDriverId((prev) => (prev === driverId ? null : driverId));
     setSelectedAssetId(null);
   }
 
   function handleAssetClick(assetId: string) {
+    if (!canCreate) return;
     if (!selectedDriverId) {
       toast.warning("Selecciona primero un conductor");
       return;
@@ -268,6 +269,7 @@ export function AssignmentsPage() {
   }
 
   async function handleFinalize(id: string, plate: string) {
+    if (!canFinalize) return;
     try {
       await finalizeAssignment(id, new Date().toISOString().slice(0, 10));
       toast.success(`Asignación de ${plate} finalizada`);
@@ -355,7 +357,9 @@ export function AssignmentsPage() {
                 Tablero de conexión
               </h2>
               <p className="mt-0.5 text-sm text-gray-400 dark:text-gray-500">
-                Selecciona un conductor → luego un vehículo para crear la asignación.
+                {canCreate
+                  ? "Selecciona un conductor → luego un vehículo para crear la asignación."
+                  : "Solo lectura — no tienes permiso para crear asignaciones."}
               </p>
             </div>
 
@@ -386,10 +390,17 @@ export function AssignmentsPage() {
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
                   Vehículos disponibles ({availableAssets.length})
                 </p>
-                {!selectedDriverId && (
+                {canCreate && !selectedDriverId && (
                   <div className="mb-3 rounded-xl border border-dashed border-brand-200 dark:border-brand-500/30 bg-brand-50/50 dark:bg-brand-500/5 px-4 py-3">
                     <p className="text-xs text-brand-600 dark:text-brand-400">
                       ← Primero selecciona un conductor
+                    </p>
+                  </div>
+                )}
+                {!canCreate && (
+                  <div className="mb-3 rounded-xl border border-dashed border-gray-200 dark:border-white/[0.06] px-4 py-3">
+                    <p className="text-xs text-gray-400 dark:text-gray-500">
+                      Sin permiso para crear asignaciones.
                     </p>
                   </div>
                 )}
@@ -480,13 +491,15 @@ export function AssignmentsPage() {
                           >
                             Detalle
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleFinalize(a.id, asset?.plate ?? a.assetId)}
-                            className="rounded-lg border border-error-200 dark:border-error-500/20 px-2.5 py-1 text-xs font-medium text-error-600 dark:text-error-400 hover:bg-error-50 dark:hover:bg-error-500/10 transition-colors"
-                          >
-                            Finalizar
-                          </button>
+                          {canFinalize && (
+                            <button
+                              type="button"
+                              onClick={() => handleFinalize(a.id, asset?.plate ?? a.assetId)}
+                              className="rounded-lg border border-error-200 dark:border-error-500/20 px-2.5 py-1 text-xs font-medium text-error-600 dark:text-error-400 hover:bg-error-50 dark:hover:bg-error-500/10 transition-colors"
+                            >
+                              Finalizar
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -529,7 +542,7 @@ export function AssignmentsPage() {
               <table className="w-full min-w-[900px]">
                 <thead>
                   <tr className="border-b border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02]">
-                    {["#", "Acciones", "Documento", "Vehículo", "Asignado por", "Fecha", "Estado", "Acta"].map(
+                    {["#", "Acciones", "Documento", "Vehículo", "Fecha", "Estado", "Acta"].map(
                       (h) => (
                         <th
                           key={h}
@@ -557,7 +570,7 @@ export function AssignmentsPage() {
                           >
                             Detalle
                           </button>
-                          {row.status === "Activa" && (
+                          {canFinalize && row.status === "Activa" && (
                             <button
                               type="button"
                               onClick={() => handleFinalize(row.id, row.plate)}
@@ -576,7 +589,6 @@ export function AssignmentsPage() {
                         <p className="text-sm font-semibold text-gray-800 dark:text-white">{row.plate}</p>
                         <p className="text-xs text-gray-400 dark:text-gray-500">{row.unit}</p>
                       </td>
-                      <td className="px-4 py-3.5 text-sm text-gray-600 dark:text-gray-300">{row.assignedBy}</td>
                       <td className="px-4 py-3.5 text-sm text-gray-600 dark:text-gray-300">{row.startDate}</td>
                       <td className="px-4 py-3.5">
                         <span
@@ -612,9 +624,9 @@ export function AssignmentsPage() {
         </div>
       )}
 
-      {/* ── CONFIRM MODAL (minimal) ── */}
+      {/* ── CONFIRM MODAL ── */}
       <AnimatePresence>
-        {confirmOpen && selectedDriverId && selectedAssetId && (() => {
+        {confirmOpen && canCreate && selectedDriverId && selectedAssetId && (() => {
           const driver = drivers.find((d) => d.id === selectedDriverId);
           const asset = assets.find((a) => a.id === selectedAssetId);
           return (
@@ -822,7 +834,6 @@ export function AssignmentsPage() {
                           : "Finalizada",
                     },
                     { label: "Estado", value: drawerAssignment.status },
-                    { label: "Asignado por", value: drawerAssignment.assignedBy },
                   ].map(({ label, value }) => (
                     <div key={label} className="flex items-center justify-between px-4 py-3">
                       <span className="text-xs text-gray-400 dark:text-gray-500">{label}</span>
@@ -866,12 +877,10 @@ export function AssignmentsPage() {
                 )}
 
                 {/* finalize action */}
-                {drawerAssignment.status === "Activa" && (
+                {canFinalize && drawerAssignment.status === "Activa" && (
                   <button
                     type="button"
-                    onClick={() => {
-                      handleFinalize(drawerAssignment.id, drawerAssignment.plate);
-                    }}
+                    onClick={() => handleFinalize(drawerAssignment.id, drawerAssignment.plate)}
                     className="w-full rounded-xl border border-error-200 dark:border-error-500/20 bg-error-50 dark:bg-error-500/10 py-2.5 text-sm font-semibold text-error-600 dark:text-error-400 hover:bg-error-100 dark:hover:bg-error-500/20 transition-colors"
                   >
                     Finalizar asignación

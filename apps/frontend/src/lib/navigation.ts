@@ -213,20 +213,6 @@ export const navigationSections: NavigationSection[] = [
         description: "Análisis con IA del nivel y estado del aceite",
         accent: "amber",
       },
-      {
-        label: "Registro combustible",
-        href: "/mantenimiento/registro-combustible",
-        icon: "RC",
-        description: "Consumos y rendimiento operativo",
-        accent: "amber",
-      },
-      {
-        label: "Kilometraje / horometro",
-        href: "/mantenimiento/kilometraje",
-        icon: "KM",
-        description: "Lecturas para control tecnico",
-        accent: "amber",
-      },
     ],
   },
   {

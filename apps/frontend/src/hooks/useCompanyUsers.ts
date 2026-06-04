@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import type { PlatformModuleKey, PlatformRole } from "@/types/platform";
+import type { PlatformRole } from "@/types/platform";
 import type { PermissionMap } from "../lib/module-tree";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -14,8 +14,8 @@ export type CompanyUser = {
   username: string;
   role: PlatformRole;
   status: CompanyUserStatus;
-  modulePermissions: PlatformModuleKey[];
-  permissions: PermissionMap;        // ← nuevo
+  modulePermissions: PermissionMap;
+  permissions: Record<string, unknown>;  // deprecado, siempre {}
   profileData: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -27,8 +27,7 @@ export type CreateCompanyUserInput = {
   password: string;
   role: PlatformRole;
   status?: CompanyUserStatus;
-  modulePermissions?: PlatformModuleKey[];
-  permissions?: PermissionMap;        // ← nuevo
+  modulePermissions?: PermissionMap;
   profileData?: Record<string, unknown>;
 };
 
@@ -44,6 +43,7 @@ type UseCompanyUsersReturn = {
   createUser: (input: CreateCompanyUserInput) => Promise<string | null>;
   updateUser: (id: string, input: UpdateCompanyUserInput) => Promise<boolean>;
   deleteUser: (id: string) => Promise<boolean>;
+  updatePermissions: (id: string, modulePermissions: PermissionMap) => Promise<boolean>;
 };
 
 // ─── Mapper ───────────────────────────────────────────────────────────────────
@@ -56,8 +56,8 @@ function mapApiToUser(data: Record<string, unknown>): CompanyUser {
     username:          String(data.username ?? ""),
     role:              (data.role as PlatformRole) ?? "operador",
     status:            (data.status as CompanyUserStatus) ?? "active",
-    modulePermissions: (data.modulePermissions as PlatformModuleKey[]) ?? [],
-    permissions:       (data.permissions as PermissionMap) ?? {},   // ← nuevo
+    modulePermissions: (data.modulePermissions as PermissionMap) ?? {},
+    permissions:       {},  // deprecado
     profileData:       (data.profileData as Record<string, unknown>) ?? {},
     createdAt:         String(data.createdAt ?? data.created_at ?? ""),
     updatedAt:         String(data.updatedAt ?? data.updated_at ?? ""),
@@ -70,10 +70,10 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
   const { session } = useAuth();
   const companyId = session?.companyId ? String(session.companyId) : null;
 
-  const [users, setUsers]   = useState<CompanyUser[]>([]);
+  const [users, setUsers]     = useState<CompanyUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError]   = useState<string | null>(null);
-  const [tick, setTick]     = useState(0);
+  const [error, setError]     = useState<string | null>(null);
+  const [tick, setTick]       = useState(0);
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
 
@@ -116,7 +116,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
             password:          input.password,
             role:              input.role,
             status:            input.status ?? "active",
-            modulePermissions: input.modulePermissions ?? [],
+            modulePermissions: input.modulePermissions ?? {},
             profileData:       input.profileData ?? {},
           }),
         });
@@ -149,7 +149,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
           username:          input.username,
           role:              input.role,
           status:            input.status ?? "active",
-          modulePermissions: input.modulePermissions ?? [],
+          modulePermissions: input.modulePermissions ?? {},
           profileData:       input.profileData ?? {},
         };
 
@@ -182,6 +182,35 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
     [companyId]
   );
 
+  // ── Update Permissions ─────────────────────────────────────────────────────
+  const updatePermissions = useCallback(
+    async (id: string, modulePermissions: PermissionMap): Promise<boolean> => {
+      if (!companyId) return false;
+
+      try {
+        const res = await fetch(`/api/company/${companyId}/users/${id}/permissions`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ modulePermissions }),
+        });
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+        }
+
+        setUsers((current) =>
+          current.map((u) => (u.id === id ? { ...u, modulePermissions } : u))
+        );
+        return true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Error actualizando permisos");
+        return false;
+      }
+    },
+    [companyId]
+  );
+
   // ── Delete ─────────────────────────────────────────────────────────────────
   const deleteUser = useCallback(
     async (id: string): Promise<boolean> => {
@@ -207,5 +236,5 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
     [companyId]
   );
 
-  return { users, loading, error, refresh, createUser, updateUser, deleteUser };
+  return { users, loading, error, refresh, createUser, updateUser, deleteUser, updatePermissions };
 }

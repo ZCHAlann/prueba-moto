@@ -3,13 +3,14 @@ import { toast } from "sonner";
 import { useAssets } from "../../../hooks/useAssets";
 import { useAssignments } from "../../../hooks/useAssignments";
 import { useMaintenances } from "../../../hooks/useMaintenances";
+import { usePermissions } from "../../../hooks/usePermissions";
 import { ModulePageHeader } from "../../../components/features/modules/ModulePageHeader";
 import type { Asset } from "../../../types/activo";
 import {
   Plus, Search, Car, Wrench, Trash2, Pencil, X, Loader2,
   ChevronDown, Filter, MoreHorizontal, MapPin, User, Fuel,
   Droplets, Calendar, Hash, AlertTriangle, ShieldCheck,
-  ClipboardList, ChevronLeft, ChevronRight, Eye,
+  ChevronLeft, ChevronRight, Eye,
 } from "lucide-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -24,9 +25,9 @@ const PAGE_SIZE = 12;
 // ─── Status config ────────────────────────────────────────────────────────────
 
 const STATUS_CFG: Record<string, { color: string; bg: string; border: string; dot: string }> = {
-  Operativo:         { dot: "bg-emerald-400", color: "text-emerald-700 dark:text-emerald-400",  bg: "bg-emerald-50 dark:bg-emerald-500/10",  border: "border-emerald-200 dark:border-emerald-500/20"  },
-  "En mantenimiento":{ dot: "bg-amber-400",   color: "text-amber-700 dark:text-amber-400",     bg: "bg-amber-50 dark:bg-amber-500/10",      border: "border-amber-200 dark:border-amber-500/20"      },
-  "Fuera de servicio":{ dot: "bg-rose-400",   color: "text-rose-700 dark:text-rose-400",       bg: "bg-rose-50 dark:bg-rose-500/10",        border: "border-rose-200 dark:border-rose-500/20"        },
+  Operativo:           { dot: "bg-emerald-400", color: "text-emerald-700 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-500/10", border: "border-emerald-200 dark:border-emerald-500/20" },
+  "En mantenimiento":  { dot: "bg-amber-400",   color: "text-amber-700 dark:text-amber-400",    bg: "bg-amber-50 dark:bg-amber-500/10",    border: "border-amber-200 dark:border-amber-500/20"   },
+  "Fuera de servicio": { dot: "bg-rose-400",     color: "text-rose-700 dark:text-rose-400",      bg: "bg-rose-50 dark:bg-rose-500/10",      border: "border-rose-200 dark:border-rose-500/20"     },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -42,15 +43,15 @@ function StatusBadge({ status }: { status: string }) {
 // ─── KPI Row ──────────────────────────────────────────────────────────────────
 
 function KpiRow({ vehicles }: { vehicles: Asset[] }) {
-  const operativos   = vehicles.filter(v => v.status === "Operativo").length;
+  const operativos    = vehicles.filter(v => v.status === "Operativo").length;
   const mantenimiento = vehicles.filter(v => v.status === "En mantenimiento").length;
-  const fuera        = vehicles.filter(v => v.status === "Fuera de servicio").length;
+  const fuera         = vehicles.filter(v => v.status === "Fuera de servicio").length;
 
   const cards = [
-    { label: "Total flota",        value: vehicles.length, sub: "unidades registradas",   cls: "border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]",                                    valCls: "text-gray-800 dark:text-white"   },
-    { label: "Operativos",         value: operativos,      sub: "listos para despacho",   cls: "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/5",                      valCls: "text-emerald-700 dark:text-emerald-300" },
-    { label: "En mantenimiento",   value: mantenimiento,   sub: "con restricción técnica", cls: "border-amber-200 bg-amber-50/60 dark:border-amber-500/20 dark:bg-amber-500/5",                             valCls: "text-amber-700 dark:text-amber-300" },
-    { label: "Fuera de servicio",  value: fuera,           sub: "detenidos por novedad",  cls: "border-rose-200 bg-rose-50/60 dark:border-rose-500/20 dark:bg-rose-500/5",                                  valCls: "text-rose-700 dark:text-rose-300"   },
+    { label: "Total flota",       value: vehicles.length, sub: "unidades registradas",    cls: "border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]",                          valCls: "text-gray-800 dark:text-white"          },
+    { label: "Operativos",        value: operativos,      sub: "listos para despacho",    cls: "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/5",             valCls: "text-emerald-700 dark:text-emerald-300" },
+    { label: "En mantenimiento",  value: mantenimiento,   sub: "con restricción técnica", cls: "border-amber-200 bg-amber-50/60 dark:border-amber-500/20 dark:bg-amber-500/5",                    valCls: "text-amber-700 dark:text-amber-300"     },
+    { label: "Fuera de servicio", value: fuera,           sub: "detenidos por novedad",   cls: "border-rose-200 bg-rose-50/60 dark:border-rose-500/20 dark:bg-rose-500/5",                        valCls: "text-rose-700 dark:text-rose-300"       },
   ];
 
   return (
@@ -68,12 +69,15 @@ function KpiRow({ vehicles }: { vehicles: Asset[] }) {
 
 // ─── Three-dot menu ───────────────────────────────────────────────────────────
 
-function RowMenu({ vehicle, onView, onEdit, onMaintenance, onDelete }: {
+function RowMenu({ vehicle, onView, onEdit, onMaintenance, onDelete, canEdit, canDelete, canMaintenance }: {
   vehicle: Asset;
   onView: () => void;
   onEdit: () => void;
   onMaintenance: () => void;
   onDelete: () => void;
+  canEdit: boolean;
+  canDelete: boolean;
+  canMaintenance: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -87,12 +91,25 @@ function RowMenu({ vehicle, onView, onEdit, onMaintenance, onDelete }: {
     return () => document.removeEventListener("mousedown", handle);
   }, [open]);
 
+  // "Ver" siempre disponible — si llegaron aquí tienen "ver"
   const items = [
-    { label: "Ver detalle",       icon: <Eye size={13} />,         action: onView,        cls: "text-gray-700 dark:text-gray-300" },
-    { label: "Editar",            icon: <Pencil size={13} />,      action: onEdit,        cls: "text-gray-700 dark:text-gray-300" },
-    { label: "Nuevo mantenimiento", icon: <Wrench size={13} />,    action: onMaintenance, cls: "text-amber-600 dark:text-amber-400" },
-    { label: "Eliminar",          icon: <Trash2 size={13} />,      action: onDelete,      cls: "text-rose-600 dark:text-rose-400" },
-  ];
+    { label: "Ver detalle",         icon: <Eye size={13} />,      action: onView,        cls: "text-gray-700 dark:text-gray-300", show: true             },
+    { label: "Editar",              icon: <Pencil size={13} />,   action: onEdit,        cls: "text-gray-700 dark:text-gray-300", show: canEdit          },
+    { label: "Nuevo mantenimiento", icon: <Wrench size={13} />,   action: onMaintenance, cls: "text-amber-600 dark:text-amber-400", show: canMaintenance },
+    { label: "Eliminar",            icon: <Trash2 size={13} />,   action: onDelete,      cls: "text-rose-600 dark:text-rose-400",   show: canDelete      },
+  ].filter(i => i.show);
+
+  // Si solo queda "Ver", no tiene sentido el menú de tres puntos
+  if (items.length <= 1) {
+    return (
+      <button
+        onClick={e => { e.stopPropagation(); onView(); }}
+        className="rounded-lg border border-sky-200 px-2 py-1 text-[11px] font-semibold text-sky-600 hover:bg-sky-50 dark:border-sky-500/20 dark:text-sky-400 whitespace-nowrap"
+      >
+        Ver
+      </button>
+    );
+  }
 
   return (
     <div className="relative" ref={ref}>
@@ -121,12 +138,15 @@ function RowMenu({ vehicle, onView, onEdit, onMaintenance, onDelete }: {
 
 // ─── Detail Drawer ────────────────────────────────────────────────────────────
 
-function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance }: {
+function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance, canEdit, canDelete, canMaintenance }: {
   vehicle: Asset;
   onClose: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onMaintenance: () => void;
+  canEdit: boolean;
+  canDelete: boolean;
+  canMaintenance: boolean;
 }) {
   const { assignments } = useAssignments();
   const { maintenances } = useMaintenances();
@@ -145,10 +165,8 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance }: {
 
   const lastMaintenance = vehicleMaintenances[0];
   const pendingCount = vehicleMaintenances.filter(m => m.status === "Pendiente" || m.status === "En proceso").length;
-
   const cfg = STATUS_CFG[vehicle.status] ?? STATUS_CFG["Operativo"];
 
-  // Spring animation via useEffect
   const drawerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = drawerRef.current;
@@ -158,25 +176,19 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance }: {
       el.style.transition = "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)";
       el.style.transform = "translateX(0)";
     });
-    return () => {
-      el.style.transform = "translateX(100%)";
-    };
+    return () => { el.style.transform = "translateX(100%)"; };
   }, []);
+
+  const hasFooter = canDelete || canEdit || canMaintenance;
 
   return (
     <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      {/* Drawer */}
+      <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       <div
         ref={drawerRef}
         className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0d1320]"
         style={{ transform: "translateX(100%)" }}
       >
-        {/* Color bar */}
         <div className={`h-1 w-full ${cfg.dot}`} />
 
         {/* Header */}
@@ -205,16 +217,15 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance }: {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-
           {/* Datos técnicos */}
           <section>
             <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">Datos técnicos</p>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { icon: <Car size={12} />,        label: "Tipo",     value: vehicle.category },
-                { icon: <Hash size={12} />,       label: "Chasis",   value: vehicle.serial   },
-                { icon: <Fuel size={12} />,       label: "Combustible", value: vehicle.fuelType },
-                { icon: <Droplets size={12} />,   label: "Aceite",   value: `${vehicle.oilType} · ${vehicle.oilCapacity}` },
+                { icon: <Car size={12} />,      label: "Tipo",        value: vehicle.category },
+                { icon: <Hash size={12} />,     label: "Chasis",      value: vehicle.serial   },
+                { icon: <Fuel size={12} />,     label: "Combustible", value: vehicle.fuelType },
+                { icon: <Droplets size={12} />, label: "Aceite",      value: `${vehicle.oilType} · ${vehicle.oilCapacity}` },
               ].map(({ icon, label, value }) => (
                 <div key={label} className="rounded-xl border border-gray-100 bg-gray-50 p-3 dark:border-white/[0.05] dark:bg-white/[0.03]">
                   <p className="mb-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">{icon}{label}</p>
@@ -255,9 +266,7 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance }: {
                   <User size={13} className="text-sky-600 dark:text-sky-400" />
                 </div>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-bold text-sky-700 dark:text-sky-300">
-                    {activeAssignment.driverId}
-                  </p>
+                  <p className="truncate text-sm font-bold text-sky-700 dark:text-sky-300">{activeAssignment.driverId}</p>
                   <p className="text-xs text-sky-500">Asignado desde {fmtDate(activeAssignment.startDate)}</p>
                 </div>
                 <span className="ml-auto rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:bg-sky-500/20 dark:text-sky-300">
@@ -324,29 +333,37 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance }: {
           )}
         </div>
 
-        {/* Footer actions */}
-        <div className="flex items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/80 px-5 py-3.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
-          <button
-            onClick={onDelete}
-            className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-500/20 dark:text-rose-400 dark:hover:bg-rose-500/10"
-          >
-            <Trash2 size={12} />Eliminar
-          </button>
-          <div className="flex gap-2">
-            <button
-              onClick={onMaintenance}
-              className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 dark:border-amber-500/20 dark:bg-amber-500/5 dark:text-amber-400"
-            >
-              <Wrench size={12} />Mantenimiento
-            </button>
-            <button
-              onClick={onEdit}
-              className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-            >
-              <Pencil size={12} />Editar
-            </button>
+        {/* Footer — solo si tiene al menos una acción */}
+        {hasFooter && (
+          <div className="flex items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/80 px-5 py-3.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
+            {canDelete ? (
+              <button
+                onClick={onDelete}
+                className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-500/20 dark:text-rose-400 dark:hover:bg-rose-500/10"
+              >
+                <Trash2 size={12} />Eliminar
+              </button>
+            ) : <div />}
+            <div className="flex gap-2">
+              {canMaintenance && (
+                <button
+                  onClick={onMaintenance}
+                  className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 dark:border-amber-500/20 dark:bg-amber-500/5 dark:text-amber-400"
+                >
+                  <Wrench size={12} />Mantenimiento
+                </button>
+              )}
+              {canEdit && (
+                <button
+                  onClick={onEdit}
+                  className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
+                >
+                  <Pencil size={12} />Editar
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </>
   );
@@ -399,13 +416,16 @@ function DeleteConfirm({ vehicle, onConfirm, onCancel }: {
 
 // ─── Table Row ────────────────────────────────────────────────────────────────
 
-function VehicleRow({ vehicle, index, onView, onEdit, onMaintenance, onDelete }: {
+function VehicleRow({ vehicle, index, onView, onEdit, onMaintenance, onDelete, canEdit, canDelete, canMaintenance }: {
   vehicle: Asset;
   index: number;
   onView: () => void;
   onEdit: () => void;
   onMaintenance: () => void;
   onDelete: () => void;
+  canEdit: boolean;
+  canDelete: boolean;
+  canMaintenance: boolean;
 }) {
   return (
     <tr
@@ -442,6 +462,9 @@ function VehicleRow({ vehicle, index, onView, onEdit, onMaintenance, onDelete }:
           onEdit={onEdit}
           onMaintenance={onMaintenance}
           onDelete={onDelete}
+          canEdit={canEdit}
+          canDelete={canDelete}
+          canMaintenance={canMaintenance}
         />
       </td>
     </tr>
@@ -452,28 +475,36 @@ function VehicleRow({ vehicle, index, onView, onEdit, onMaintenance, onDelete }:
 
 export default function FlotasPage() {
   const { assets, loading, deleteAsset } = useAssets();
+  const { can } = usePermissions();
+
+  // ─── Permisos granulares ──────────────────────────────────────────────────
+  const canCreate      = can("gestion", "flotas", "crear");
+  const canEdit        = can("gestion", "flotas", "editar");
+  const canDelete      = can("gestion", "flotas", "eliminar");
+  // "Nuevo mantenimiento" desde flotas requiere permiso de crear OTs
+  const canMaintenance = can("mantenimiento", "ordenes", "crear");
 
   const vehicles = useMemo(
     () => assets.filter(a => a.assetType === "Vehiculo"),
     [assets]
   );
 
-  const [search, setSearch]         = useState("");
+  const [search, setSearch]             = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
-  const [page, setPage]             = useState(1);
+  const [page, setPage]                 = useState(1);
 
-  const [drawerVehicle, setDrawerVehicle]   = useState<Asset | null>(null);
-  const [deleteTarget, setDeleteTarget]     = useState<Asset | null>(null);
+  const [drawerVehicle, setDrawerVehicle] = useState<Asset | null>(null);
+  const [deleteTarget, setDeleteTarget]   = useState<Asset | null>(null);
 
   const setFilter = (fn: () => void) => { fn(); setPage(1); };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return vehicles.filter(v => {
-      const matchQ     = !q || v.plate.toLowerCase().includes(q) || v.brand.toLowerCase().includes(q) || v.model.toLowerCase().includes(q) || (v.responsible ?? "").toLowerCase().includes(q) || (v.site ?? "").toLowerCase().includes(q);
-      const matchS     = !filterStatus || v.status === filterStatus;
-      const matchC     = !filterCategory || v.category === filterCategory;
+      const matchQ = !q || v.plate.toLowerCase().includes(q) || v.brand.toLowerCase().includes(q) || v.model.toLowerCase().includes(q) || (v.responsible ?? "").toLowerCase().includes(q) || (v.site ?? "").toLowerCase().includes(q);
+      const matchS = !filterStatus || v.status === filterStatus;
+      const matchC = !filterCategory || v.category === filterCategory;
       return matchQ && matchS && matchC;
     });
   }, [vehicles, search, filterStatus, filterCategory]);
@@ -514,12 +545,14 @@ export default function FlotasPage() {
         subtitle="Centro operativo de vehículos — detalle completo, historial y acciones sin salir de la tabla."
         accent="sky"
         action={
-          <a
-            href="/flotas/nuevo"
-            className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-sky-500/20 hover:bg-sky-600 active:scale-95"
-          >
-            <Plus size={15} />Nuevo vehículo
-          </a>
+          canCreate ? (
+            <a
+              href="/flotas/nuevo"
+              className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-sky-500/20 hover:bg-sky-600 active:scale-95"
+            >
+              <Plus size={15} />Nuevo vehículo
+            </a>
+          ) : undefined
         }
       />
 
@@ -611,6 +644,9 @@ export default function FlotasPage() {
                       onEdit={() => openEdit(vehicle)}
                       onMaintenance={() => openMaintenance(vehicle)}
                       onDelete={() => setDeleteTarget(vehicle)}
+                      canEdit={canEdit}
+                      canDelete={canDelete}
+                      canMaintenance={canMaintenance}
                     />
                   ))}
                 </tbody>
@@ -658,7 +694,10 @@ export default function FlotasPage() {
           onClose={() => setDrawerVehicle(null)}
           onEdit={() => { openEdit(drawerVehicle); setDrawerVehicle(null); }}
           onDelete={() => { setDeleteTarget(drawerVehicle); setDrawerVehicle(null); }}
-          onMaintenance={() => { openMaintenance(drawerVehicle); }}
+          onMaintenance={() => openMaintenance(drawerVehicle)}
+          canEdit={canEdit}
+          canDelete={canDelete}
+          canMaintenance={canMaintenance}
         />
       )}
 

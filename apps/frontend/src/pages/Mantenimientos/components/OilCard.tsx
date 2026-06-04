@@ -2,9 +2,9 @@ import type { OilType } from "./types";
 
 interface OilTableProps {
   oils: OilType[];
-  onEdit: (oil: OilType) => void;
-  onDelete: (oil: OilType) => void;
-  onRegisterChange: (oil: OilType) => void;
+  onEdit?: (oil: OilType) => void;      // ← agregar ?
+  onDelete?: (oil: OilType) => void;
+  onRegisterChange?: (oil: OilType) => void;
 }
 
 function StockBar({ stock, minStock }: { stock: number; minStock: number }) {
@@ -81,19 +81,19 @@ export function OilCard({ oils, onEdit, onDelete, onRegisterChange }: OilTablePr
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-end gap-1 opacity-0 transition group-hover:opacity-100">
                     <button
-                      onClick={() => onRegisterChange(oil)}
+                      onClick={() => onRegisterChange?.(oil)}
                       className="rounded-lg bg-emerald-500 px-2.5 py-1.5 text-[11px] font-bold text-black transition hover:bg-emerald-400"
                     >
                       + Cambio
                     </button>
                     <button
-                      onClick={() => onEdit(oil)}
+                      onClick={() => onEdit?.(oil)}
                       className="rounded-lg border border-white/[0.08] px-2.5 py-1.5 text-[11px] font-semibold text-white/50 transition hover:bg-white/[0.06] hover:text-white"
                     >
                       Editar
                     </button>
                     <button
-                      onClick={() => onDelete(oil)}
+                      onClick={() => onDelete?.(oil)}
                       className="rounded-lg border border-rose-500/20 px-2.5 py-1.5 text-[11px] font-semibold text-rose-500/60 transition hover:bg-rose-500/10 hover:text-rose-400"
                     >
                       Eliminar

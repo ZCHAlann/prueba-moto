@@ -10,6 +10,7 @@ import { useOilChanges } from "../../../hooks/useOilChanges";
 import { useInventory } from "../../../hooks/useInventory";
 import { useAssets } from "../../../hooks/useAssets";
 import { useDrivers } from "../../../hooks/useDrivers";
+import { usePermissions } from "../../../hooks/usePermissions";
 import type { OilType, InventoryItem, OilChange, TabKey } from "../components/types";
 
 // ─── KPI strip ────────────────────────────────────────────────────────────────
@@ -20,14 +21,6 @@ interface KpiStripProps {
   oilChanges: OilChange[];
 }
 
-interface Kpi {
-  label: string;
-  value: number;
-  detail: string;
-  accent: string;
-  bar: string;
-}
-
 function KpiStrip({ oilTypes, inventory, oilChanges }: KpiStripProps) {
   const lowOil = oilTypes.filter((o) => o.stock <= o.minStock).length;
   const lowInv = inventory.filter((i) => i.stock <= i.minStock).length;
@@ -35,15 +28,12 @@ function KpiStrip({ oilTypes, inventory, oilChanges }: KpiStripProps) {
 
   return (
     <div className="flex gap-3 overflow-x-auto pb-1">
-
-      {/* Total */}
       <div className="min-w-[120px] flex-1 rounded-2xl border border-white/[0.07] bg-white/[0.03] px-4 py-3">
         <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">Total</p>
         <p className="mt-1 text-3xl font-black tabular-nums text-white">{oilTypes.length + inventory.length}</p>
         <p className="mt-0.5 text-xs text-white/30">ítems</p>
       </div>
 
-      {/* Alertas */}
       <div className={`min-w-[120px] flex-1 rounded-2xl border px-4 py-3 ${totalAlerts > 0 ? "border-amber-500/30 bg-amber-500/5" : "border-white/[0.07] bg-white/[0.03]"}`}>
         <p className={`text-[10px] font-bold uppercase tracking-widest ${totalAlerts > 0 ? "text-amber-400" : "text-white/40"}`}>
           Alertas de stock
@@ -63,27 +53,23 @@ function KpiStrip({ oilTypes, inventory, oilChanges }: KpiStripProps) {
         </div>
       </div>
 
-      {/* Aceites */}
       <div className="min-w-[120px] flex-1 rounded-2xl border border-white/[0.07] bg-white/[0.03] px-4 py-3">
         <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">Aceites</p>
         <p className="mt-1 text-3xl font-black tabular-nums text-white">{oilTypes.length}</p>
         <p className="mt-0.5 text-xs text-white/30">catálogo activo</p>
       </div>
 
-      {/* Repuestos */}
       <div className="min-w-[120px] flex-1 rounded-2xl border border-white/[0.07] bg-white/[0.03] px-4 py-3">
         <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">Repuestos</p>
         <p className="mt-1 text-3xl font-black tabular-nums text-white">{inventory.length}</p>
         <p className="mt-0.5 text-xs text-white/30">en inventario</p>
       </div>
 
-      {/* Cambios */}
       <div className="min-w-[120px] flex-1 rounded-2xl border border-white/[0.07] bg-white/[0.03] px-4 py-3">
         <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">Cambios</p>
         <p className="mt-1 text-3xl font-black tabular-nums text-white">{oilChanges.length}</p>
         <p className="mt-0.5 text-xs text-white/30">historial acumulado</p>
       </div>
-
     </div>
   );
 }
@@ -107,13 +93,9 @@ function Tab({ label, active, onClick, count }: TabProps) {
     >
       {label}
       {count !== undefined && (
-        <span
-          className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
-            active
-              ? "bg-emerald-500 text-black"
-              : "bg-white/[0.08] text-white/40"
-          }`}
-        >
+        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+          active ? "bg-emerald-500 text-black" : "bg-white/[0.08] text-white/40"
+        }`}>
           {count}
         </span>
       )}
@@ -127,7 +109,6 @@ function Tab({ label, active, onClick, count }: TabProps) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function LubricacionPage() {
-  // ── Hooks ──
   const {
     oilTypes,
     createOilType,
@@ -149,8 +130,13 @@ export default function LubricacionPage() {
   } = useInventory();
 
   const { assets } = useAssets();
-
   const { drivers } = useDrivers();
+  const { can } = usePermissions();
+
+  // ─── Permisos granulares ──────────────────────────────────────────────────
+  const canCreate = can("mantenimiento", "inventario", "crear");
+  const canEdit   = can("mantenimiento", "inventario", "editar");
+  const canDelete = can("mantenimiento", "inventario", "eliminar");
 
   // ── State: UI ──
   const [tab, setTab] = useState<TabKey>("aceites");
@@ -258,20 +244,24 @@ export default function LubricacionPage() {
             Catálogo de lubricantes, stock de repuestos y registro de cambios por activo.
           </p>
         </div>
-        <div className="flex shrink-0 gap-2">
-          <button
-            onClick={() => setInvFormModal(true)}
-            className="rounded-xl border border-white/[0.08] px-4 py-2 text-xs font-bold text-white/60 transition hover:bg-white/[0.05] hover:text-white"
-          >
-            + Repuesto
-          </button>
-          <button
-            onClick={() => setOilFormModal("new")}
-            className="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-black transition hover:bg-emerald-400 active:scale-95"
-          >
-            + Aceite
-          </button>
-        </div>
+
+        {/* Botones de acción — solo si puede crear */}
+        {canCreate && (
+          <div className="flex shrink-0 gap-2">
+            <button
+              onClick={() => setInvFormModal(true)}
+              className="rounded-xl border border-white/[0.08] px-4 py-2 text-xs font-bold text-white/60 transition hover:bg-white/[0.05] hover:text-white"
+            >
+              + Repuesto
+            </button>
+            <button
+              onClick={() => setOilFormModal("new")}
+              className="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-black transition hover:bg-emerald-400 active:scale-95"
+            >
+              + Aceite
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── KPIs ── */}
@@ -315,12 +305,8 @@ export default function LubricacionPage() {
               <div className="relative">
                 <svg
                   className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
+                  width="12" height="12" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5"
                 >
                   <circle cx="11" cy="11" r="8" />
                   <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -334,7 +320,8 @@ export default function LubricacionPage() {
                 />
               </div>
             )}
-            {tab === "historial" && (
+            {/* Botón "Registrar cambio" — solo si puede crear */}
+            {tab === "historial" && canCreate && (
               <button
                 onClick={() => setOilChangeModal({})}
                 className="rounded-xl bg-emerald-500/90 px-3 py-1.5 text-xs font-bold text-black transition hover:bg-emerald-500"
@@ -352,19 +339,21 @@ export default function LubricacionPage() {
               {oilTypes.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-2 py-16">
                   <p className="text-sm text-white/30">Sin aceites registrados</p>
-                  <button
-                    onClick={() => setOilFormModal("new")}
-                    className="mt-1 rounded-xl border border-emerald-500/30 px-4 py-2 text-xs font-bold text-emerald-400 hover:bg-emerald-500/10 transition"
-                  >
-                    Agregar primer aceite
-                  </button>
+                  {canCreate && (
+                    <button
+                      onClick={() => setOilFormModal("new")}
+                      className="mt-1 rounded-xl border border-emerald-500/30 px-4 py-2 text-xs font-bold text-emerald-400 hover:bg-emerald-500/10 transition"
+                    >
+                      Agregar primer aceite
+                    </button>
+                  )}
                 </div>
               ) : (
                 <OilCard
                   oils={oilTypes}
-                  onEdit={(o) => setOilFormModal(o)}
-                  onDelete={handleDeleteOil}
-                  onRegisterChange={(o) => setOilChangeModal(o)}
+                  onEdit={canEdit ? (o) => setOilFormModal(o) : undefined}
+                  onDelete={canDelete ? handleDeleteOil : undefined}
+                  onRegisterChange={canCreate ? (o) => setOilChangeModal(o) : undefined}
                 />
               )}
             </div>
@@ -374,7 +363,7 @@ export default function LubricacionPage() {
             <InventoryTable
               items={filteredInventory}
               onItemClick={setItemDetail}
-              onAddItem={() => setInvFormModal(true)}
+              onAddItem={canCreate ? () => setInvFormModal(true) : undefined}
             />
           )}
 
@@ -382,7 +371,7 @@ export default function LubricacionPage() {
             <div className="p-4">
               <OilChangeHistory
                 changes={oilChanges}
-                onDelete={handleDeleteChange}
+                onDelete={canDelete ? handleDeleteChange : undefined}
               />
             </div>
           )}
@@ -394,7 +383,7 @@ export default function LubricacionPage() {
         <ItemDetailModal
           item={itemDetail}
           onClose={() => setItemDetail(null)}
-          onEdit={() => {}}
+          onEdit={canEdit ? () => {} : undefined}
         />
       )}
       {oilChangeModal !== null && (

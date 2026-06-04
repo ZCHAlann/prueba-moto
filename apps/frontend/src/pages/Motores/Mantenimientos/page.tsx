@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { useAssets } from "../../../hooks/useAssets";
 import { useMaintenances } from "../../../hooks/useMaintenances";
 import { useDrivers } from "../../../hooks/useDrivers";
+import { usePermissions } from "../../../hooks/usePermissions";
 import { ModulePageHeader } from "../../../components/features/modules/ModulePageHeader";
 import {
   Plus, Search, Wrench, AlertTriangle, Clock, CheckCircle2,
@@ -182,7 +183,7 @@ function ResponsibleSelect({
             >
               — Sin asignar —
             </button>
-            {drivers.filter(d => (d as any).status === "Activo" || true).map(d => (
+            {drivers.map(d => (
               <button
                 key={d.id}
                 type="button"
@@ -202,11 +203,13 @@ function ResponsibleSelect({
 
 // ─── Card actions dropdown ────────────────────────────────────────────────────
 
-function CardActions({ item, onEdit, onDelete, onStatusChange }: {
+function CardActions({ item, onEdit, onDelete, onStatusChange, canEdit, canDelete }: {
   item: ApiMaintenance;
   onEdit: () => void;
   onDelete: () => void;
   onStatusChange: (s: MaintenanceStatus) => void;
+  canEdit: boolean;
+  canDelete: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -221,6 +224,8 @@ function CardActions({ item, onEdit, onDelete, onStatusChange }: {
   }, [open]);
 
   const otherStatuses = COLUMNS.filter(s => s !== item.status);
+  const hasActions = canEdit || canDelete || otherStatuses.length > 0;
+  if (!hasActions) return null;
 
   return (
     <div ref={ref} className="relative">
@@ -233,7 +238,8 @@ function CardActions({ item, onEdit, onDelete, onStatusChange }: {
       </button>
       {open && (
         <div className="absolute right-0 top-8 z-50 w-48 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-white/[0.08] dark:bg-gray-900">
-          {otherStatuses.map(s => {
+          {/* Mover a — siempre visible si hay editar */}
+          {canEdit && otherStatuses.map(s => {
             const cfg = COLUMN_CONFIG[s];
             return (
               <button
@@ -247,24 +253,32 @@ function CardActions({ item, onEdit, onDelete, onStatusChange }: {
               </button>
             );
           })}
-          <div className="mx-3 border-t border-gray-100 dark:border-white/[0.06]" />
-          <button
-            type="button"
-            onClick={() => { setOpen(false); onEdit(); }}
-            className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-700 transition hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.05]"
-          >
-            <Pencil size={14} className="text-gray-400" />
-            Editar
-          </button>
-          <div className="mx-3 border-t border-gray-100 dark:border-white/[0.06]" />
-          <button
-            type="button"
-            onClick={() => { setOpen(false); onDelete(); }}
-            className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-rose-600 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
-          >
-            <Trash2 size={14} />
-            Eliminar
-          </button>
+          {canEdit && (
+            <>
+              <div className="mx-3 border-t border-gray-100 dark:border-white/[0.06]" />
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onEdit(); }}
+                className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-700 transition hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.05]"
+              >
+                <Pencil size={14} className="text-gray-400" />
+                Editar
+              </button>
+            </>
+          )}
+          {canDelete && (
+            <>
+              <div className="mx-3 border-t border-gray-100 dark:border-white/[0.06]" />
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onDelete(); }}
+                className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-rose-600 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
+              >
+                <Trash2 size={14} />
+                Eliminar
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -275,7 +289,7 @@ function CardActions({ item, onEdit, onDelete, onStatusChange }: {
 
 function KanbanCard({
   item, motorName, onEdit, onDelete, onStatusChange,
-  isDragging, dragHandleProps,
+  isDragging, dragHandleProps, canEdit, canDelete,
 }: {
   item: ApiMaintenance;
   motorName: string;
@@ -284,6 +298,8 @@ function KanbanCard({
   onStatusChange: (s: MaintenanceStatus) => void;
   isDragging?: boolean;
   dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
+  canEdit: boolean;
+  canDelete: boolean;
 }) {
   const days = daysUntil(item.dueDate);
   const isOverdue = days < 0 && item.status !== "Completado";
@@ -299,12 +315,14 @@ function KanbanCard({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-1.5">
-          <div
-            {...dragHandleProps}
-            className="cursor-grab text-gray-300 hover:text-gray-400 dark:text-gray-600 dark:hover:text-gray-500 active:cursor-grabbing"
-          >
-            <GripVertical size={14} />
-          </div>
+          {canEdit && (
+            <div
+              {...dragHandleProps}
+              className="cursor-grab text-gray-300 hover:text-gray-400 dark:text-gray-600 dark:hover:text-gray-500 active:cursor-grabbing"
+            >
+              <GripVertical size={14} />
+            </div>
+          )}
           <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs font-semibold ${p.bg} ${p.text} ${p.border}`}>
             {item.priority === "Emergente" && (
               <span className={`h-1.5 w-1.5 animate-pulse rounded-full ${p.dot}`} />
@@ -312,7 +330,14 @@ function KanbanCard({
             {item.priority}
           </span>
         </div>
-        <CardActions item={item} onEdit={onEdit} onDelete={onDelete} onStatusChange={onStatusChange} />
+        <CardActions
+          item={item}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onStatusChange={onStatusChange}
+          canEdit={canEdit}
+          canDelete={canDelete}
+        />
       </div>
 
       <p className="mt-2.5 text-sm font-semibold leading-snug text-gray-800 dark:text-white">
@@ -334,10 +359,10 @@ function KanbanCard({
           {isOverdue && <span className="font-semibold">· {Math.abs(days)}d atrás</span>}
           {isSoon && !isOverdue && <span className="font-semibold">· {days === 0 ? "Hoy" : `${days}d`}</span>}
         </div>
-        {item.technician  && (
+        {item.technician && (
           <div className="flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500">
             <User size={11} />
-            <span className="max-w-[80px] truncate">{item.technician }</span>
+            <span className="max-w-[80px] truncate">{item.technician}</span>
           </div>
         )}
       </div>
@@ -345,10 +370,10 @@ function KanbanCard({
   );
 }
 
-// ─── Kanban column with drag-and-drop ─────────────────────────────────────────
+// ─── Kanban column ────────────────────────────────────────────────────────────
 
 function KanbanColumn({
-  status, items, motorMap, onEdit, onDelete, onStatusChange, onDrop,
+  status, items, motorMap, onEdit, onDelete, onStatusChange, onDrop, canEdit, canDelete,
 }: {
   status: MaintenanceStatus;
   items: ApiMaintenance[];
@@ -357,6 +382,8 @@ function KanbanColumn({
   onDelete: (item: ApiMaintenance) => void;
   onStatusChange: (item: ApiMaintenance, s: MaintenanceStatus) => void;
   onDrop: (itemId: string, targetStatus: MaintenanceStatus) => void;
+  canEdit: boolean;
+  canDelete: boolean;
 }) {
   const cfg = COLUMN_CONFIG[status];
   const [isDragOver, setIsDragOver] = useState(false);
@@ -368,6 +395,7 @@ function KanbanColumn({
   const hiddenCount = isCompleted ? items.length - COMPLETED_PREVIEW : 0;
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
+    if (!canEdit) return;
     e.dataTransfer.setData("itemId", id);
     e.dataTransfer.setData("fromStatus", status);
     setDraggingId(id);
@@ -376,6 +404,7 @@ function KanbanColumn({
   const handleDragEnd = () => setDraggingId(null);
 
   const handleDragOver = (e: React.DragEvent) => {
+    if (!canEdit) return;
     e.preventDefault();
     setIsDragOver(true);
   };
@@ -385,16 +414,14 @@ function KanbanColumn({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
+    if (!canEdit) return;
     const itemId = e.dataTransfer.getData("itemId");
     const fromStatus = e.dataTransfer.getData("fromStatus");
-    if (itemId && fromStatus !== status) {
-      onDrop(itemId, status);
-    }
+    if (itemId && fromStatus !== status) onDrop(itemId, status);
   };
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      {/* Column header */}
       <div className={`mb-3 flex items-center justify-between rounded-2xl border border-gray-200 px-4 py-3 dark:border-white/[0.06] ${cfg.headerBg}`}>
         <div className="flex items-center gap-2">
           <div className={`h-1.5 w-1.5 rounded-full ${cfg.accent}`} />
@@ -408,7 +435,6 @@ function KanbanColumn({
         </span>
       </div>
 
-      {/* Drop zone */}
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -428,7 +454,7 @@ function KanbanColumn({
           visibleItems.map(item => (
             <div
               key={item.id}
-              draggable
+              draggable={canEdit}
               onDragStart={e => handleDragStart(e, item.id)}
               onDragEnd={handleDragEnd}
             >
@@ -440,12 +466,13 @@ function KanbanColumn({
                 onStatusChange={s => onStatusChange(item, s)}
                 isDragging={draggingId === item.id}
                 dragHandleProps={{}}
+                canEdit={canEdit}
+                canDelete={canDelete}
               />
             </div>
           ))
         )}
 
-        {/* Show more / less for completed */}
         {isCompleted && items.length > COMPLETED_PREVIEW && (
           <button
             type="button"
@@ -463,13 +490,15 @@ function KanbanColumn({
 // ─── Table view ───────────────────────────────────────────────────────────────
 
 function TableView({
-  items, motorMap, onEdit, onDelete, onStatusChange,
+  items, motorMap, onEdit, onDelete, onStatusChange, canEdit, canDelete,
 }: {
   items: ApiMaintenance[];
   motorMap: Map<string, Asset>;
   onEdit: (item: ApiMaintenance) => void;
   onDelete: (item: ApiMaintenance) => void;
   onStatusChange: (item: ApiMaintenance, s: MaintenanceStatus) => void;
+  canEdit: boolean;
+  canDelete: boolean;
 }) {
   const [activeTab, setActiveTab] = useState<TableTab>("Pendiente");
 
@@ -486,9 +515,10 @@ function TableView({
     { status: "Completado", icon: <CheckCircle2 size={13} />, activeClass: "border-emerald-400 text-emerald-600 dark:text-emerald-400" },
   ];
 
+  const showActionsColumn = canEdit || canDelete;
+
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
-      {/* Tabs */}
       <div className="flex border-b border-gray-100 dark:border-white/[0.06]">
         {tabConfig.map(({ status, icon, activeClass }) => (
           <button
@@ -515,7 +545,6 @@ function TableView({
         ))}
       </div>
 
-      {/* Table */}
       {tabItems.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-2 py-16">
           <Wrench size={20} className="text-gray-300 dark:text-gray-600" />
@@ -526,11 +555,13 @@ function TableView({
           <table className="w-full min-w-[800px]">
             <thead>
               <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                {["Motor", "Trabajo", "Prioridad", "Responsable", "Fecha límite", ""].map((h, i) => (
-                  <th key={i} className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                    {h}
-                  </th>
-                ))}
+                {["Motor", "Trabajo", "Prioridad", "Responsable", "Fecha límite", showActionsColumn ? "" : null]
+                  .filter(Boolean)
+                  .map((h, i) => (
+                    <th key={i} className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                      {h}
+                    </th>
+                  ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
@@ -564,7 +595,7 @@ function TableView({
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
                         <User size={13} className="text-gray-400" />
-                        {item.technician  || "—"}
+                        {item.technician || "—"}
                       </div>
                     </td>
                     <td className="px-5 py-4">
@@ -576,35 +607,41 @@ function TableView({
                         {isOverdue && <span className="text-xs font-semibold">({Math.abs(days)}d atrás)</span>}
                       </div>
                     </td>
-                    <td className="px-5 py-4">
-                      <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                        <button
-                          type="button"
-                          onClick={() => onEdit(item)}
-                          className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-white/[0.08]"
-                        >
-                          <Pencil size={13} />
-                        </button>
-                        {COLUMNS.filter(s => s !== item.status).map(s => (
-                          <button
-                            key={s}
-                            type="button"
-                            title={`Mover a ${s}`}
-                            onClick={() => onStatusChange(item, s)}
-                            className={`flex h-7 w-7 items-center justify-center rounded-lg transition hover:bg-gray-100 dark:hover:bg-white/[0.08] ${COLUMN_CONFIG[s].iconColor}`}
-                          >
-                            {COLUMN_CONFIG[s].icon}
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => onDelete(item)}
-                          className="flex h-7 w-7 items-center justify-center rounded-lg text-rose-400 transition hover:bg-rose-50 dark:hover:bg-rose-500/10"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </td>
+                    {showActionsColumn && (
+                      <td className="px-5 py-4">
+                        <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => onEdit(item)}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-white/[0.08]"
+                            >
+                              <Pencil size={13} />
+                            </button>
+                          )}
+                          {canEdit && COLUMNS.filter(s => s !== item.status).map(s => (
+                            <button
+                              key={s}
+                              type="button"
+                              title={`Mover a ${s}`}
+                              onClick={() => onStatusChange(item, s)}
+                              className={`flex h-7 w-7 items-center justify-center rounded-lg transition hover:bg-gray-100 dark:hover:bg-white/[0.08] ${COLUMN_CONFIG[s].iconColor}`}
+                            >
+                              {COLUMN_CONFIG[s].icon}
+                            </button>
+                          ))}
+                          {canDelete && (
+                            <button
+                              type="button"
+                              onClick={() => onDelete(item)}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg text-rose-400 transition hover:bg-rose-50 dark:hover:bg-rose-500/10"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -646,7 +683,6 @@ function MaintenanceModal({
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0f1623]">
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-100 px-6 pb-4 pt-5 dark:border-white/[0.06]">
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-orange-500">
@@ -664,10 +700,8 @@ function MaintenanceModal({
         </div>
         <div className="h-0.5 w-full bg-orange-500" />
 
-        {/* Body */}
         <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-
             <div className="sm:col-span-2">
               <Field label="Motor" required>
                 <div className="relative">
@@ -752,7 +786,6 @@ function MaintenanceModal({
           </div>
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50 px-6 py-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
           <button type="button" onClick={onClose}
             className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 transition hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/10"
@@ -842,6 +875,11 @@ export default function MotorMaintenancesRoute() {
     createMaintenance, updateMaintenance, deleteMaintenance, completeMaintenance,
   } = useMaintenances();
   const { drivers, loading: driversLoading } = useDrivers();
+  const { can } = usePermissions();
+
+  const canCreate = can("motores", "mantenimientos_motor", "crear");
+  const canEdit   = can("motores", "mantenimientos_motor", "editar");
+  const canDelete = can("motores", "mantenimientos_motor", "eliminar");
 
   const motors = useMemo(() => assets.filter(a => a.assetType === "Motor"), [assets]);
   const motorIds = useMemo(() => new Set(motors.map(m => m.id)), [motors]);
@@ -866,7 +904,7 @@ export default function MotorMaintenancesRoute() {
         return (
           m.title.toLowerCase().includes(q) ||
           (motor?.name ?? "").toLowerCase().includes(q) ||
-          m.technician .toLowerCase().includes(q)
+          m.technician.toLowerCase().includes(q)
         );
       })
       .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
@@ -881,13 +919,12 @@ export default function MotorMaintenancesRoute() {
   }, [filteredAll]);
 
   const stats = useMemo(() => ({
-    total: motorMaintenances.length,
+    total:      motorMaintenances.length,
     emergentes: motorMaintenances.filter(m => m.priority === "Emergente").length,
-    enProceso: motorMaintenances.filter(m => m.status === "En proceso").length,
-    atrasados: motorMaintenances.filter(m => daysUntil(m.dueDate) < 0 && m.status !== "Completado").length,
+    enProceso:  motorMaintenances.filter(m => m.status === "En proceso").length,
+    atrasados:  motorMaintenances.filter(m => daysUntil(m.dueDate) < 0 && m.status !== "Completado").length,
   }), [motorMaintenances]);
 
-  // Get assigned driver name for a motor
   const getDefaultResponsible = useCallback((assetId: string) => {
     const motor = motorMap.get(assetId);
     if (!motor?.responsible) return "";
@@ -913,30 +950,21 @@ export default function MotorMaintenancesRoute() {
         assetId: item.assetId, title: item.title, kind: item.kind,
         priority: item.priority, status: item.status,
         scheduledDate: item.scheduledDate, dueDate: item.dueDate,
-        responsible: item.technician , notes: item.notes,
+        responsible: item.technician, notes: item.notes,
       },
     });
-
-  // When motor changes in create mode, prefill responsible
-  const handleFormMotorChange = useCallback((assetId: string) => {
-    if (modal?.mode === "create") {
-      setModal(prev => prev ? {
-        ...prev,
-        form: { ...prev.form, assetId, responsible: getDefaultResponsible(assetId) },
-      } : null);
-    }
-  }, [modal?.mode, getDefaultResponsible]);
 
   const handleSubmit = async (form: FormState) => {
     try {
       if (modal?.mode === "create") {
         await createMaintenance({
-        assetId: form.assetId, title: form.title,
-        kind: form.kind as ApiMaintenance["kind"],
-        priority: form.priority, status: form.status,
-        scheduledDate: form.scheduledDate, dueDate: form.dueDate,
-        completedDate: null, technician: form.responsible,  // ← renombrado
-        photoUrls: [], notes: form.notes,                   // ← renombrado
+          assetId: form.assetId, title: form.title,
+          kind: form.kind as ApiMaintenance["kind"],
+          priority: form.priority, status: form.status,
+          scheduledDate: form.scheduledDate, dueDate: form.dueDate,
+          completedDate: null, technician: form.responsible,
+          laborCost: 0, partsCost: 0,
+          photoUrls: [], notes: form.notes,
         });
         toast.success("Mantenimiento creado", { description: form.title });
       } else if (modal?.mode === "edit" && modal.id) {
@@ -945,7 +973,7 @@ export default function MotorMaintenancesRoute() {
           kind: form.kind as ApiMaintenance["kind"],
           priority: form.priority, status: form.status,
           scheduledDate: form.scheduledDate, dueDate: form.dueDate,
-          technician : form.responsible, notes: form.notes,
+          technician: form.responsible, notes: form.notes,
         });
         toast.success("Cambios guardados", { description: form.title });
       }
@@ -956,34 +984,34 @@ export default function MotorMaintenancesRoute() {
   };
 
   const handleDrop = useCallback(async (itemId: string, targetStatus: MaintenanceStatus) => {
+    if (!canEdit) return;
     const item = motorMaintenances.find(m => m.id === itemId);
     if (!item) return;
     try {
-        if (targetStatus === "Completado") {
+      if (targetStatus === "Completado") {
         await completeMaintenance(itemId, todayISO());
-        } else {
-        await updateMaintenance(itemId, { status: targetStatus }); // ← solo el status
-        }
-        toast.success(`Movido a ${targetStatus}`, { description: item.title });
+      } else {
+        await updateMaintenance(itemId, { status: targetStatus });
+      }
+      toast.success(`Movido a ${targetStatus}`, { description: item.title });
     } catch {
-        toast.error("No se pudo mover el mantenimiento");
+      toast.error("No se pudo mover el mantenimiento");
     }
-    }, [motorMaintenances, completeMaintenance, updateMaintenance]);
-
-
+  }, [motorMaintenances, completeMaintenance, updateMaintenance, canEdit]);
 
   const handleStatusChange = useCallback(async (item: ApiMaintenance, newStatus: MaintenanceStatus) => {
+    if (!canEdit) return;
     try {
-        if (newStatus === "Completado") {
+      if (newStatus === "Completado") {
         await completeMaintenance(item.id, todayISO());
-        } else {
-        await updateMaintenance(item.id, { status: newStatus }); // ← solo manda el campo que cambia
-        }
-        toast.success(`Movido a ${newStatus}`, { description: item.title });
+      } else {
+        await updateMaintenance(item.id, { status: newStatus });
+      }
+      toast.success(`Movido a ${newStatus}`, { description: item.title });
     } catch {
-        toast.error("No se pudo cambiar el estado");
+      toast.error("No se pudo cambiar el estado");
     }
-    }, [completeMaintenance, updateMaintenance]);
+  }, [completeMaintenance, updateMaintenance, canEdit]);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -998,12 +1026,6 @@ export default function MotorMaintenancesRoute() {
 
   const loading = loadingAssets || loadingMaint;
 
-  // Patch modal form when motor changes to set default responsible
-  const modalWithPrefill = modal ? {
-    ...modal,
-    form: modal.form,
-  } : null;
-
   return (
     <div className="space-y-6">
       <ModulePageHeader
@@ -1012,14 +1034,16 @@ export default function MotorMaintenancesRoute() {
         subtitle="Gestión de trabajos técnicos para motores registrados."
         accent="orange"
         action={
-          <button
-            type="button"
-            onClick={openCreate}
-            className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-orange-500/20 transition hover:bg-orange-600 active:scale-95"
-          >
-            <Plus size={16} />
-            Nuevo
-          </button>
+          canCreate ? (
+            <button
+              type="button"
+              onClick={openCreate}
+              className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-orange-500/20 transition hover:bg-orange-600 active:scale-95"
+            >
+              <Plus size={16} />
+              Nuevo
+            </button>
+          ) : null
         }
       />
 
@@ -1059,7 +1083,6 @@ export default function MotorMaintenancesRoute() {
             <ChevronDown size={13} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
           </div>
 
-          {/* View toggle */}
           <div className="flex items-center gap-1 rounded-xl border border-gray-200 p-1 dark:border-white/[0.08]">
             <button
               type="button"
@@ -1105,6 +1128,8 @@ export default function MotorMaintenancesRoute() {
               onDelete={setDeleteTarget}
               onStatusChange={handleStatusChange}
               onDrop={handleDrop}
+              canEdit={canEdit}
+              canDelete={canDelete}
             />
           ))}
         </div>
@@ -1115,14 +1140,16 @@ export default function MotorMaintenancesRoute() {
           onEdit={openEdit}
           onDelete={setDeleteTarget}
           onStatusChange={handleStatusChange}
+          canEdit={canEdit}
+          canDelete={canDelete}
         />
       )}
 
       {/* Modals */}
-      {modalWithPrefill && (
+      {modal && (
         <MaintenanceModal
-          mode={modalWithPrefill.mode}
-          initial={modalWithPrefill.form}
+          mode={modal.mode}
+          initial={modal.form}
           motors={motors}
           drivers={drivers}
           driversLoading={driversLoading}
@@ -1130,7 +1157,7 @@ export default function MotorMaintenancesRoute() {
           onSubmit={handleSubmit}
         />
       )}
-      {deleteTarget && (
+      {deleteTarget && canDelete && (
         <DeleteConfirm
           title={deleteTarget.title}
           onConfirm={handleDelete}

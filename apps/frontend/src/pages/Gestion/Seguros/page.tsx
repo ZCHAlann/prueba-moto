@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import { useAssetCenter } from "../../../hooks/useInsurancesPolicies";
 import { useAssets } from "@/hooks/useAssets";
+import { usePermissions } from "@/hooks/usePermissions";
 import type { AssetDocumentStatus } from "@/types/activo";
 import type { Asset } from "@/types/activo";
 
@@ -142,6 +143,13 @@ const IconTrash = () => (
   </svg>
 );
 
+const IconEdit = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+  </svg>
+);
+
 // ─── Shared primitives ────────────────────────────────────────────────────────
 
 const inputCls =
@@ -207,8 +215,6 @@ function ExpiryCell({ endDate, startDate }: { endDate: string; startDate: string
   const level  = urgencyLevel(days);
   const styles = urgencyStyles[level];
 
-  // Progress: how far through the policy period are we (0–100)
-  const totalDays = Math.max(1, daysRemaining(startDate) * -1 + daysRemaining(endDate) + (daysRemaining(startDate) * -1));
   const start = new Date(startDate);
   const end   = new Date(endDate);
   const now   = new Date();
@@ -222,7 +228,6 @@ function ExpiryCell({ endDate, startDate }: { endDate: string; startDate: string
         <IconCalendar />
         <span className="text-sm text-gray-700 dark:text-gray-300">{formatDate(endDate)}</span>
       </div>
-      {/* Progress bar */}
       <div className="h-1 w-24 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${styles.bar}`}
@@ -263,10 +268,14 @@ function RowMenu({
   onDetail,
   onEdit,
   onDelete,
+  canEdit,
+  canDelete,
 }: {
   onDetail: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  canEdit: boolean;
+  canDelete: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -310,13 +319,8 @@ function RowMenu({
             className="absolute right-0 z-20 mt-1 w-44 rounded-xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-gray-900 shadow-xl p-1"
           >
             {item("Ver detalle", <IconShield />, onDetail)}
-            {item("Editar", (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-              </svg>
-            ), onEdit)}
-            {item("Eliminar", <IconTrash />, onDelete, true)}
+            {canEdit   && item("Editar", <IconEdit />, onEdit)}
+            {canDelete && item("Eliminar", <IconTrash />, onDelete, true)}
           </motion.div>
         )}
       </AnimatePresence>
@@ -510,12 +514,16 @@ function PolicyFormModal({
 function PolicyDetailDrawer({
   policy,
   asset,
+  canEdit,
+  canDelete,
   onClose,
   onEdit,
   onDelete,
 }: {
   policy: (PolicyForm & { id: string }) | null;
   asset: Asset | undefined;
+  canEdit: boolean;
+  canDelete: boolean;
   onClose: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -524,7 +532,6 @@ function PolicyDetailDrawer({
   const level  = policy ? urgencyLevel(days) : "ok";
   const styles = urgencyStyles[level];
 
-  // Timeline progress
   const start    = policy ? new Date(policy.startDate) : new Date();
   const end      = policy ? new Date(policy.endDate)   : new Date();
   const now      = new Date();
@@ -641,7 +648,6 @@ function PolicyDetailDrawer({
                       className={`h-full rounded-full transition-all ${styles.bar}`}
                       style={{ width: `${progress}%` }}
                     />
-                    {/* Needle */}
                     <div
                       className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 h-3.5 w-0.5 rounded-full bg-gray-800 dark:bg-white"
                       style={{ left: `${Math.min(98, progress)}%` }}
@@ -663,20 +669,26 @@ function PolicyDetailDrawer({
             </div>
 
             {/* Footer */}
-            <div className="flex gap-2 px-6 py-4 border-t border-gray-200 dark:border-white/[0.06]">
-              <button
-                onClick={onEdit}
-                className="flex-1 rounded-lg border border-gray-200 dark:border-white/[0.06] px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition"
-              >
-                Editar póliza
-              </button>
-              <button
-                onClick={onDelete}
-                className="flex-1 rounded-lg border border-red-200 dark:border-red-500/20 bg-red-50 dark:bg-red-500/10 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/20 transition"
-              >
-                Eliminar
-              </button>
-            </div>
+            {(canEdit || canDelete) && (
+              <div className="flex gap-2 px-6 py-4 border-t border-gray-200 dark:border-white/[0.06]">
+                {canEdit && (
+                  <button
+                    onClick={onEdit}
+                    className="flex-1 rounded-lg border border-gray-200 dark:border-white/[0.06] px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition"
+                  >
+                    Editar póliza
+                  </button>
+                )}
+                {canDelete && (
+                  <button
+                    onClick={onDelete}
+                    className="flex-1 rounded-lg border border-red-200 dark:border-red-500/20 bg-red-50 dark:bg-red-500/10 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/20 transition"
+                  >
+                    Eliminar
+                  </button>
+                )}
+              </div>
+            )}
           </motion.div>
         </>
       )}
@@ -760,12 +772,13 @@ function DeleteConfirmModal({
 
 export function InsuranceManagementPage() {
   const { assets } = useAssets();
+  const { can } = usePermissions();
   const {
     policies: insurancePolicies,
     createPolicy: createInsurancePolicy,
     updatePolicy: updateInsurancePolicy,
     deletePolicy: deleteInsurancePolicy,
-    } = useAssetCenter();
+  } = useAssetCenter();
 
   const [query, setQuery] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -780,7 +793,6 @@ export function InsuranceManagementPage() {
         asset: assets.find((a) => a.id === item.assetId),
       }))
       .sort((a, b) => {
-        // Sort by urgency: expired first, then by days remaining asc
         const da = daysRemaining(a.endDate);
         const db = daysRemaining(b.endDate);
         return da - db;
@@ -811,15 +823,15 @@ export function InsuranceManagementPage() {
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    await deleteInsurancePolicy(deleteTarget.id);   // ← agregar await
+    await deleteInsurancePolicy(deleteTarget.id);
     toast.success("Póliza eliminada", { description: "La base de seguros fue actualizada." });
     setDeleteTarget(null);
     setDetailPolicy(null);
-    };
-    
-  const totalVigentes    = insurancePolicies.filter((p) => p.status === "Vigente").length;
-  const totalPorVencer   = insurancePolicies.filter((p) => p.status === "Por vencer").length;
-  const totalVencidos    = insurancePolicies.filter((p) => p.status === "Vencido").length;
+  };
+
+  const totalVigentes  = insurancePolicies.filter((p) => p.status === "Vigente").length;
+  const totalPorVencer = insurancePolicies.filter((p) => p.status === "Por vencer").length;
+  const totalVencidos  = insurancePolicies.filter((p) => p.status === "Vencido").length;
 
   return (
     <>
@@ -836,13 +848,15 @@ export function InsuranceManagementPage() {
               Control central de pólizas por vehículo con alta, edición y baja.
             </p>
           </div>
-          <button
-            onClick={openCreate}
-            className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition"
-          >
-            <IconPlus />
-            Nueva póliza
-          </button>
+          {can("gestion", "seguros", "crear") && (
+            <button
+              onClick={openCreate}
+              className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition"
+            >
+              <IconPlus />
+              Nueva póliza
+            </button>
+          )}
         </div>
 
         {/* ── KPI row ── */}
@@ -953,7 +967,6 @@ export function InsuranceManagementPage() {
                           "border-l-2 border-l-transparent"
                         }`}
                       >
-                        {/* Vehicle */}
                         <td className="px-5 py-3.5">
                           <div className="flex items-center gap-2.5">
                             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-white/[0.06] text-gray-500 dark:text-gray-400">
@@ -969,34 +982,26 @@ export function InsuranceManagementPage() {
                             </div>
                           </div>
                         </td>
-
-                        {/* Insurer / Policy */}
                         <td className="px-5 py-3.5">
                           <p className="text-sm font-medium text-gray-800 dark:text-white">{item.insurer}</p>
                           <p className="mt-0.5 font-mono text-xs text-gray-400 dark:text-gray-500">{item.policyNumber}</p>
                         </td>
-
-                        {/* Coverage */}
                         <td className="px-5 py-3.5">
                           <p className="text-sm text-gray-600 dark:text-gray-400">{item.coverage || "—"}</p>
                         </td>
-
-                        {/* Expiry with urgency */}
                         <td className="px-5 py-3.5">
                           <ExpiryCell endDate={item.endDate} startDate={item.startDate} />
                         </td>
-
-                        {/* Status */}
                         <td className="px-5 py-3.5">
                           <PolicyStatusBadge status={item.status} />
                         </td>
-
-                        {/* Actions */}
                         <td className="px-5 py-3.5">
                           <RowMenu
                             onDetail={() => setDetailPolicy(item)}
                             onEdit={() => openEdit(item)}
                             onDelete={() => setDeleteTarget(item)}
+                            canEdit={can("gestion", "seguros", "editar")}
+                            canDelete={can("gestion", "seguros", "eliminar")}
                           />
                         </td>
                       </tr>
@@ -1022,6 +1027,8 @@ export function InsuranceManagementPage() {
       <PolicyDetailDrawer
         policy={detailPolicy}
         asset={detailPolicy ? assets.find((a) => a.id === detailPolicy.assetId) : undefined}
+        canEdit={can("gestion", "seguros", "editar")}
+        canDelete={can("gestion", "seguros", "eliminar")}
         onClose={() => setDetailPolicy(null)}
         onEdit={() => detailPolicy && openEdit(detailPolicy)}
         onDelete={() => { setDeleteTarget(detailPolicy); setDetailPolicy(null); }}

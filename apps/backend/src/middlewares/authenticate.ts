@@ -4,9 +4,9 @@ import { UnauthorizedError } from '../lib/errors';
 
 export const COOKIE_NAME = "aplismart_token";
 
-// Tipo compartido con el frontend — estructura anidada de permisos
-export type ActionKey    = "ver" | "crear" | "editar" | "eliminar";
-export type PermissionMap = Record<string, Record<string, ActionKey[]>>;
+export type CrudAction = "create" | "read" | "update" | "delete";
+export type ModulePermissionMap = Record<string, CrudAction[]>;
+export type PermissionMap = Record<string, unknown>;
 
 export interface JwtPayload {
   sub: string;
@@ -16,8 +16,8 @@ export interface JwtPayload {
   scope: 'operacion' | 'plataforma';
   companyId: number | null;
   companyModules: string[];
-  modulePermissions: string[];  
-  permissions: PermissionMap; 
+  modulePermissions: ModulePermissionMap;  // ← cambió de string[]
+  permissions: PermissionMap;
   iat: number;
   exp: number;
 }

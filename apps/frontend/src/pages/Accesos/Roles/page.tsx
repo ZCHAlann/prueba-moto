@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
-import { useAuth } from "@/context/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
   MODULE_TREE,
   type ActionKey,
@@ -16,10 +16,10 @@ const ALL_ACTIONS: ActionKey[] = ["ver", "crear", "editar", "eliminar"];
 const STORAGE_KEY = "aplismart_role_permissions";
 
 const ACTION_CONFIG: Record<ActionKey, { label: string; color: string; ring: string; dot: string }> = {
-  ver:      { label: "Ver",      color: "bg-blue-500/10 text-blue-600 dark:text-blue-400",   ring: "ring-blue-500/30",   dot: "bg-blue-500" },
-  crear:    { label: "Crear",    color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", ring: "ring-emerald-500/30", dot: "bg-emerald-500" },
-  editar:   { label: "Editar",   color: "bg-amber-500/10 text-amber-600 dark:text-amber-400",  ring: "ring-amber-500/30",  dot: "bg-amber-500" },
-  eliminar: { label: "Eliminar", color: "bg-red-500/10 text-red-600 dark:text-red-400",       ring: "ring-red-500/30",    dot: "bg-red-500" },
+  ver:      { label: "Ver",      color: "bg-blue-500/10 text-blue-600 dark:text-blue-400",                 ring: "ring-blue-500/30",    dot: "bg-blue-500"    },
+  crear:    { label: "Crear",    color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",         ring: "ring-emerald-500/30", dot: "bg-emerald-500" },
+  editar:   { label: "Editar",   color: "bg-amber-500/10 text-amber-600 dark:text-amber-400",              ring: "ring-amber-500/30",   dot: "bg-amber-500"   },
+  eliminar: { label: "Eliminar", color: "bg-red-500/10 text-red-600 dark:text-red-400",                    ring: "ring-red-500/30",     dot: "bg-red-500"     },
 };
 
 const COMPANY_ROLES: Array<{
@@ -131,11 +131,10 @@ function Toggle({
       className={[
         "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border-2 border-transparent transition-colors duration-200",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
-        checked ? cfg.dot + " ring-0" : "bg-gray-200 dark:bg-white/[0.08]",
+        checked ? cfg.dot : "bg-gray-200 dark:bg-white/[0.08]",
         readonly ? "cursor-not-allowed opacity-50" : "cursor-pointer",
         checked ? cfg.ring : "",
       ].join(" ")}
-      style={checked ? undefined : undefined}
     >
       <span
         className={[
@@ -198,9 +197,10 @@ const MODULE_ICONS: Record<string, React.ReactNode> = {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function RolesPage() {
-  const { session } = useAuth();
+  const { can } = usePermissions();
 
-  const canManage = ["owner_empresa", "admin_empresa", "superadmin"].includes(session?.role ?? "");
+  // Esta página es de accesos — solo quien puede editar accesos puede modificar plantillas
+  const canManage = can("accesos", "accesos", "editar");
 
   const [stored, setStored]             = useState<Record<string, PermissionMap>>({});
   const [selectedRole, setSelectedRole] = useState<string>(COMPANY_ROLES[0].key);
@@ -222,6 +222,7 @@ export function RolesPage() {
   };
 
   const handleToggleAction = (mod: string, sub: string, action: ActionKey) => {
+    if (!canManage) return;
     setPermissions((prev) => {
       const current: ActionKey[] = prev[mod]?.[sub] ?? [];
       let next: ActionKey[];
@@ -240,6 +241,7 @@ export function RolesPage() {
   };
 
   const handleSetAll = (mod: string, sub: string | null, all: boolean) => {
+    if (!canManage) return;
     setPermissions((prev) => {
       const modDef = MODULE_TREE[mod as keyof typeof MODULE_TREE];
       if (!modDef) return prev;
@@ -254,6 +256,7 @@ export function RolesPage() {
   };
 
   const handleSave = async () => {
+    if (!canManage) return;
     setSaving(true);
     await new Promise((r) => setTimeout(r, 280));
     const next = { ...stored, [selectedRole]: permissions };
@@ -267,6 +270,7 @@ export function RolesPage() {
   };
 
   const handleReset = () => {
+    if (!canManage) return;
     setPermissions(DEFAULT_PERMISSIONS[selectedRole] ?? {});
     setDirty(true);
   };

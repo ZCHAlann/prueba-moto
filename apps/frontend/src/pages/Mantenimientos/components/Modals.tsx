@@ -151,7 +151,7 @@ function CloseBtn({ onClose }: { onClose: () => void }) {
 interface ItemDetailModalProps {
   item: InventoryItem | null;
   onClose: () => void;
-  onEdit: (item: InventoryItem) => void;
+  onEdit?: () => void;
 }
 
 export function ItemDetailModal({ item, onClose, onEdit }: ItemDetailModalProps) {
@@ -222,9 +222,11 @@ export function ItemDetailModal({ item, onClose, onEdit }: ItemDetailModalProps)
           <button onClick={onClose} className="flex-1 rounded-xl border border-white/[0.08] py-2.5 text-sm font-semibold text-white/50 transition hover:bg-white/[0.05] hover:text-white">
             Cerrar
           </button>
-          <button onClick={() => { onEdit(item); onClose(); }} className="flex-1 rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-black transition hover:bg-emerald-400 active:scale-95">
-            Editar repuesto
-          </button>
+          {onEdit && (
+            <button onClick={() => { onEdit(); onClose(); }} className="flex-1 rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-black transition hover:bg-emerald-400 active:scale-95">
+              Editar repuesto
+            </button>
+          )}
         </div>
       </div>
     </Overlay>

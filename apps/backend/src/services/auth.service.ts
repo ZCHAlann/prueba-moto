@@ -1,6 +1,6 @@
 import { hash, compare } from 'bcryptjs';
 import { sign, verify, type SignOptions } from 'jsonwebtoken';
-import { JwtPayload, PermissionMap } from '../middlewares/authenticate';
+import { JwtPayload, ModulePermissionMap, PermissionMap } from '../middlewares/authenticate';
 import { db } from '../db/client';
 import { platformSettings } from '../db/schema/platform';
 import { eq } from 'drizzle-orm';
@@ -49,7 +49,7 @@ interface SignTokenParams {
   scope: 'operacion' | 'plataforma';
   companyId: number | null;
   companyModules: string[];
-  modulePermissions: string[];
+  modulePermissions: ModulePermissionMap;  
   permissions?: PermissionMap;
 }
 

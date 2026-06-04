@@ -7,7 +7,7 @@ import { validate } from '../lib/validate';
 import { hashPassword, verifyPassword, signToken } from '../services/auth.service';
 import { UnauthorizedError, AppError } from '../lib/errors';
 import { toId } from '../lib/ids';
-import { authenticate, COOKIE_NAME, PermissionMap } from '../middlewares/authenticate';
+import { authenticate, COOKIE_NAME, PermissionMap, ModulePermissionMap } from '../middlewares/authenticate';
 
 const router = Router();
 
@@ -19,7 +19,7 @@ interface TokenPayload {
   scope:             'operacion' | 'plataforma';
   companyId:         number | null;
   companyModules:    string[];
-  modulePermissions: string[];
+  modulePermissions: ModulePermissionMap; 
   permissions:       PermissionMap;
 }
 
@@ -131,7 +131,7 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
         scope:             "plataforma",
         companyId:         null,
         companyModules:    [],
-        modulePermissions: [],
+        modulePermissions: {},
         permissions:       {},
       };
       userOut = {
@@ -169,10 +169,15 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
       // ── Login exitoso ─────────────────────────────────────────────────────
       await clearFailedLogin(companyUsers, user.id);
 
-      const profileData       = user.profileData as Record<string, unknown>;
-      const modulePermissions = (profileData?.modulePermissions as string[]) ?? [];
-      const permissions       = (profileData?.permissions as PermissionMap) ?? {};
-      const companyModules    = user.company?.enabledModules ?? [];
+      const isAdminRole  = ["owner_empresa", "admin_empresa"].includes(user.role);
+      const companyModules = user.company?.enabledModules ?? [];
+      const permissions    = {} as PermissionMap;
+
+      // Admins: {} significa acceso completo a todos los módulos de la empresa
+      // Otros roles: leer de la columna module_permissions
+      const modulePermissions: ModulePermissionMap = isAdminRole
+        ? {}
+        : (user.modulePermissions as ModulePermissionMap ?? {});
 
       tokenPayload = {
         sub:               toId("company-user", user.id.toString()),
@@ -192,6 +197,7 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
         role:              user.role,
         scope:             "operacion",
         companyId:         Number(user.companyId),
+        companyModules,        // ← agregar
         modulePermissions,
         permissions,
       };
@@ -227,7 +233,7 @@ router.post('/session', validate(sessionSchema), async (req, res, next) => {
         scope:             'plataforma',
         companyId:         null,
         companyModules:    [],
-        modulePermissions: [],
+        modulePermissions: {},
       });
 
       return res.json({
@@ -248,11 +254,13 @@ router.post('/session', validate(sessionSchema), async (req, res, next) => {
       });
       if (!user) throw new UnauthorizedError('Usuario no encontrado');
 
-      const profileData       = user.profileData as Record<string, unknown>;
-      const modulePermissions = (profileData?.modulePermissions as string[]) ?? [];
-      const permissions       = (profileData?.permissions as PermissionMap) ?? {};
-      const companyModules    = user.company?.enabledModules ?? [];
-
+      const isAdminRole    = ["owner_empresa", "admin_empresa"].includes(user.role);
+      const companyModules = user.company?.enabledModules ?? [];
+      const permissions    = {} as PermissionMap;
+      const modulePermissions: ModulePermissionMap = isAdminRole
+        ? {}
+        : (user.modulePermissions as ModulePermissionMap ?? {});
+        
       const token = await signToken({
         sub:               toId('company-user', user.id.toString()),
         email:             user.email,
@@ -317,11 +325,11 @@ router.get("/session", authenticate, (req, res) => {
     role:              user.role,
     scope:             user.scope,
     companyId:         user.companyId ? String(user.companyId) : null,
-    modulePermissions: user.modulePermissions ?? [],
+    companyModules:    user.companyModules ?? [],     // ← agregar
+    modulePermissions: user.modulePermissions ?? {},  // ← cambió [] por {}
     permissions:       user.permissions ?? {},
   });
 });
-
 // ─── POST /auth/logout ────────────────────────────────────────────────────────
 
 router.post("/logout", (req, res) => {

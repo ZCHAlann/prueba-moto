@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { useDrivers, type ApiDriver } from "../../../hooks/useDrivers";
 import { useAssignments } from "../../../hooks/useAssignments";
 import { useAssets } from "../../../hooks/useAssets";
-import { useAuth } from "../../../context/AuthContext";
+import { usePermissions } from "../../../hooks/usePermissions";
 import { ModulePageHeader } from "../../../components/features/modules/ModulePageHeader";
 import {
   AlertTriangle, Calendar, Car, ChevronDown, ChevronLeft, ChevronRight,
@@ -46,7 +46,6 @@ type ReportFormState = {
 
 const PAGE_SIZE = 12;
 const REPORT_KEY = "aplismart-driver-reports-v1";
-const ADMIN_ROLES = ["owner_empresa", "admin_empresa", "supervisor", "superadmin"];
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -124,10 +123,15 @@ function KpiRow({ drivers }: { drivers: ApiDriver[] }) {
 
 // ─── Row menu ─────────────────────────────────────────────────────────────────
 
-function RowMenu({ driver, canManage, onView, onEdit, onReport, onAssign, onDelete }: {
-  driver: ApiDriver; canManage: boolean;
-  onView: () => void; onEdit: () => void; onReport: () => void;
-  onAssign: () => void; onDelete: () => void;
+function RowMenu({ driver, canEdit, canDelete, onView, onEdit, onReport, onAssign, onDelete }: {
+  driver: ApiDriver;
+  canEdit: boolean;
+  canDelete: boolean;
+  onView: () => void;
+  onEdit: () => void;
+  onReport: () => void;
+  onAssign: () => void;
+  onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -140,12 +144,12 @@ function RowMenu({ driver, canManage, onView, onEdit, onReport, onAssign, onDele
   }, [open]);
 
   const items = [
-    { label: "Ver detalle",       icon: <Eye size={13} />,         action: onView,   cls: "text-gray-700 dark:text-gray-300",               always: true  },
-    { label: "Editar",            icon: <Pencil size={13} />,      action: onEdit,   cls: "text-gray-700 dark:text-gray-300",               always: true  },
-    { label: "Crear reporte",     icon: <ClipboardList size={13}/>, action: onReport, cls: "text-cyan-600 dark:text-cyan-400",               always: true  },
-    { label: "Asignar vehículo",  icon: <Car size={13} />,         action: onAssign, cls: "text-sky-600 dark:text-sky-400",                 always: true  },
-    { label: "Eliminar",          icon: <Trash2 size={13} />,      action: onDelete, cls: "text-rose-600 dark:text-rose-400",               always: canManage },
-  ].filter(i => i.always);
+    { label: "Ver detalle",       icon: <Eye size={13} />,          action: onView,   cls: "text-gray-700 dark:text-gray-300",  show: true       },
+    { label: "Editar",            icon: <Pencil size={13} />,       action: onEdit,   cls: "text-gray-700 dark:text-gray-300",  show: canEdit    },
+    { label: "Crear reporte",     icon: <ClipboardList size={13} />, action: onReport, cls: "text-cyan-600 dark:text-cyan-400",  show: true       },
+    { label: "Asignar vehículo",  icon: <Car size={13} />,          action: onAssign, cls: "text-sky-600 dark:text-sky-400",    show: true       },
+    { label: "Eliminar",          icon: <Trash2 size={13} />,       action: onDelete, cls: "text-rose-600 dark:text-rose-400",  show: canDelete  },
+  ].filter(i => i.show);
 
   return (
     <div className="relative" ref={ref}>
@@ -174,10 +178,15 @@ function RowMenu({ driver, canManage, onView, onEdit, onReport, onAssign, onDele
 
 // ─── Detail Drawer ────────────────────────────────────────────────────────────
 
-function DetailDrawer({ driver, onClose, onEdit, onReport, onAssign, onDelete, canManage }: {
-  driver: ApiDriver; canManage: boolean;
-  onClose: () => void; onEdit: () => void; onReport: () => void;
-  onAssign: () => void; onDelete: () => void;
+function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, onAssign, onDelete }: {
+  driver: ApiDriver;
+  canEdit: boolean;
+  canDelete: boolean;
+  onClose: () => void;
+  onEdit: () => void;
+  onReport: () => void;
+  onAssign: () => void;
+  onDelete: () => void;
 }) {
   const { assignments } = useAssignments();
   const { assets }      = useAssets();
@@ -327,7 +336,7 @@ function DetailDrawer({ driver, onClose, onEdit, onReport, onAssign, onDelete, c
 
         {/* Footer */}
         <div className="flex items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/80 px-5 py-3.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
-          {canManage ? (
+          {canDelete ? (
             <button onClick={onDelete} className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-500/20 dark:text-rose-400 dark:hover:bg-rose-500/10">
               <Trash2 size={12} />Eliminar
             </button>
@@ -336,9 +345,11 @@ function DetailDrawer({ driver, onClose, onEdit, onReport, onAssign, onDelete, c
             <button onClick={onReport} className="flex items-center gap-1.5 rounded-xl border border-cyan-200 bg-cyan-50/60 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100 dark:border-cyan-500/20 dark:bg-cyan-500/5 dark:text-cyan-400">
               <ClipboardList size={12} />Reporte
             </button>
-            <button onClick={onEdit} className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]">
-              <Pencil size={12} />Editar
-            </button>
+            {canEdit && (
+              <button onClick={onEdit} className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]">
+                <Pencil size={12} />Editar
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -351,10 +362,10 @@ function DetailDrawer({ driver, onClose, onEdit, onReport, onAssign, onDelete, c
 function AssignModal({ driver, onClose }: { driver: ApiDriver; onClose: () => void }) {
   const { assets }      = useAssets();
   const { assignments, createAssignment } = useAssignments();
-  const [assetId, setAssetId]   = useState("");
+  const [assetId, setAssetId]     = useState("");
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
-  const [notes, setNotes]       = useState("");
-  const [saving, setSaving]     = useState(false);
+  const [notes, setNotes]         = useState("");
+  const [saving, setSaving]       = useState(false);
 
   const activeIds  = new Set(assignments.filter(a => a.status === "Activa").map(a => a.assetId));
   const available  = assets.filter(a => a.assetType === "Vehiculo" && !activeIds.has(a.id));
@@ -588,10 +599,16 @@ function DeleteConfirm({ driver, onConfirm, onCancel }: { driver: ApiDriver; onC
 
 // ─── Table Row ────────────────────────────────────────────────────────────────
 
-function DriverRow({ driver, index, canManage, onView, onEdit, onReport, onAssign, onDelete }: {
-  driver: ApiDriver; index: number; canManage: boolean;
-  onView: () => void; onEdit: () => void; onReport: () => void;
-  onAssign: () => void; onDelete: () => void;
+function DriverRow({ driver, index, canEdit, canDelete, onView, onEdit, onReport, onAssign, onDelete }: {
+  driver: ApiDriver;
+  index: number;
+  canEdit: boolean;
+  canDelete: boolean;
+  onView: () => void;
+  onEdit: () => void;
+  onReport: () => void;
+  onAssign: () => void;
+  onDelete: () => void;
 }) {
   return (
     <tr className="group cursor-pointer border-b border-gray-100 transition-colors hover:bg-gray-50/80 dark:border-white/[0.04] dark:hover:bg-white/[0.02]"
@@ -632,9 +649,14 @@ function DriverRow({ driver, index, canManage, onView, onEdit, onReport, onAssig
       </td>
       <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
         <RowMenu
-          driver={driver} canManage={canManage}
-          onView={onView} onEdit={onEdit} onReport={onReport}
-          onAssign={onAssign} onDelete={onDelete}
+          driver={driver}
+          canEdit={canEdit}
+          canDelete={canDelete}
+          onView={onView}
+          onEdit={onEdit}
+          onReport={onReport}
+          onAssign={onAssign}
+          onDelete={onDelete}
         />
       </td>
     </tr>
@@ -645,8 +667,11 @@ function DriverRow({ driver, index, canManage, onView, onEdit, onReport, onAssig
 
 export default function DriversPage() {
   const { drivers, loading, deleteDriver } = useDrivers();
-  const { session } = useAuth();
-  const canManage = ADMIN_ROLES.includes(session?.role ?? "");
+  const { can } = usePermissions();
+
+  const canCreate = can("gestion", "conductores", "crear");
+  const canEdit   = can("gestion", "conductores", "editar");
+  const canDelete = can("gestion", "conductores", "eliminar");
 
   const [search, setSearch]               = useState("");
   const [filterStatus, setFilterStatus]   = useState("");
@@ -706,10 +731,14 @@ export default function DriversPage() {
         subtitle="Control del personal asignable — licencias, contacto, vehículo activo y reportes en un solo lugar."
         accent="cyan"
         action={
-          <a href="/operaciones/conductores/nuevo"
-            className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-cyan-500/20 hover:bg-cyan-600 active:scale-95">
-            <Plus size={15} />Nuevo conductor
-          </a>
+          canCreate ? (
+            <a
+              href="/operaciones/conductores/nuevo"
+              className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-cyan-500/20 hover:bg-cyan-600 active:scale-95"
+            >
+              <Plus size={15} />Nuevo conductor
+            </a>
+          ) : null
         }
       />
 
@@ -777,7 +806,8 @@ export default function DriversPage() {
                       key={driver.id}
                       driver={driver}
                       index={(page - 1) * PAGE_SIZE + index}
-                      canManage={canManage}
+                      canEdit={canEdit}
+                      canDelete={canDelete}
                       onView={() => setDrawerDriver(driver)}
                       onEdit={() => { window.location.href = `/operaciones/conductores/${driver.id}/editar`; }}
                       onReport={() => openReport(driver.id)}
@@ -816,7 +846,9 @@ export default function DriversPage() {
       {/* Drawer */}
       {drawerDriver && (
         <DetailDrawer
-          driver={drawerDriver} canManage={canManage}
+          driver={drawerDriver}
+          canEdit={canEdit}
+          canDelete={canDelete}
           onClose={() => setDrawerDriver(null)}
           onEdit={() => { window.location.href = `/operaciones/conductores/${drawerDriver.id}/editar`; }}
           onReport={() => { openReport(drawerDriver.id); setDrawerDriver(null); }}

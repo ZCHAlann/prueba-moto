@@ -3,8 +3,8 @@ import type { InventoryItem } from "./types";
 interface InventoryTableProps {
   items: InventoryItem[];
   onItemClick: (item: InventoryItem) => void;
-  onAddItem: () => void;
-}
+    onAddItem?: () => void;
+  }
 
 export function InventoryTable({ items, onItemClick }: InventoryTableProps) {
   if (items.length === 0) {

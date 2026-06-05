@@ -1,16 +1,16 @@
-import { useMemo } from "react";
+import { useMemo, lazy, Suspense } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { KpiCard } from "../../components/dashboard/kpi-card";
 import { AlertsFeed } from "../../components/dashboard/alerts-feed";
 import { MaintenanceTable } from "../../components/dashboard/maintenance-table";
 import { useDashboardAnalytics } from "../../hooks/useDashboardAnalytics";
 import { useAlerts } from "../../hooks/useAlerts";
-import { useMaintenances } from "../../hooks/useMaintenances";
-import { useAssets } from "../../hooks/useAssets";
-import ReactApexChart from "react-apexcharts";
 import type { ApexOptions } from "apexcharts";
-import { Wrench, Truck, User, Fuel, Bell, Circle } from "lucide-react";
 import type { AlertItem } from "../../components/dashboard/alerts-feed";
+import { Wrench, Truck, User, Fuel, Bell, Circle } from "lucide-react";
+
+// ─── Lazy-load ReactApexChart — never blocks initial paint ───────────────────
+const ReactApexChart = lazy(() => import("react-apexcharts"));
 
 /* ─── Icons ──────────────────────────────────────────────────────────────── */
 function TruckIcon() {
@@ -47,10 +47,20 @@ function Sk({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-gray-200 dark:bg-white/[0.06] ${className}`} />;
 }
 
+// Skeleton de chart — se muestra mientras ApexCharts carga (lazy) o datos cargan
+function ChartSkeleton({ height }: { height: string }) {
+  return (
+    <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-[#0F172A] p-5">
+      <Sk className="h-5 w-40 mb-5" />
+      <Sk className={height} />
+    </div>
+  );
+}
+
 /* ─── ChartCard ──────────────────────────────────────────────────────────── */
 function ChartCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <div className=" rounded-2xl border border-white/[0.06] bg-white dark:bg-[#0F172A] px-5 pb-5 pt-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
+    <div className="rounded-2xl border border-white/[0.06] bg-white dark:bg-[#0F172A] px-5 pb-5 pt-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
       <div className="mb-5">
         <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">{title}</h3>
         {subtitle && <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{subtitle}</p>}
@@ -60,7 +70,7 @@ function ChartCard({ title, subtitle, children }: { title: string; subtitle?: st
   );
 }
 
-/* ─── Event meta para actividad reciente ─────────────────────────────────── */
+/* ─── Event meta ─────────────────────────────────────────────────────────── */
 function getEventMeta(entity: string) {
   const map: Record<string, { icon: React.ReactNode; color: string; bgColor: string; textColor: string; label: string }> = {
     maintenances:        { icon: <Wrench size={11} />, color: "#10b981", bgColor: "rgba(16,185,129,0.15)", textColor: "#10b981", label: "Mantenimiento" },
@@ -73,20 +83,92 @@ function getEventMeta(entity: string) {
   return map[entity] ?? { icon: <Circle size={11} />, color: "#6b7280", bgColor: "rgba(107,114,128,0.15)", textColor: "#9ca3af", label: entity };
 }
 
+/* ─── Memoized ApexOptions (fuera del componente = nunca se recrean) ─────── */
+const BASE_AXIS_STYLE = { fontSize: "12px", colors: "#e5e7eb" as string | string[] };
+const BASE_YAXIS_STYLE = { fontSize: "12px", colors: ["#6B7280"] };
+const GRID_BORDER = "rgba(156,163,175,0.12)";
+
+function makeAreaOptions(categories: string[]): ApexOptions {
+  return {
+    legend: { show: false },
+    colors: ["#465FFF", "#10b981"],
+    chart: { fontFamily: "Outfit, sans-serif", height: 310, type: "line", toolbar: { show: false }, background: "transparent" },
+    stroke: { curve: "straight", width: [2, 2] },
+    fill: { type: "gradient", gradient: { opacityFrom: 0.55, opacityTo: 0 } },
+    markers: { size: 0, strokeColors: "#fff", strokeWidth: 2, hover: { size: 6 } },
+    grid: { xaxis: { lines: { show: false } }, yaxis: { lines: { show: true } }, borderColor: GRID_BORDER },
+    dataLabels: { enabled: false },
+    xaxis: { type: "category", categories, axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: BASE_AXIS_STYLE } },
+    yaxis: { labels: { style: BASE_YAXIS_STYLE } },
+    tooltip: { theme: "dark" },
+  };
+}
+
+function makeBarOptions(categories: string[]): ApexOptions {
+  return {
+    colors: ["#465fff"],
+    chart: { fontFamily: "Outfit, sans-serif", type: "bar", height: 180, toolbar: { show: false }, background: "transparent" },
+    plotOptions: { bar: { horizontal: false, columnWidth: "39%", borderRadius: 5, borderRadiusApplication: "end" } },
+    dataLabels: { enabled: false },
+    stroke: { show: true, width: 4, colors: ["transparent"] },
+    xaxis: { categories, axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: BASE_AXIS_STYLE } },
+    yaxis: { labels: { style: BASE_YAXIS_STYLE } },
+    grid: { yaxis: { lines: { show: true } }, borderColor: GRID_BORDER },
+    fill: { opacity: 1 },
+    tooltip: { theme: "dark", x: { show: false } },
+  };
+}
+
+function makeDonutOptions(labels: string[]): ApexOptions {
+  return {
+    chart: { type: "donut", background: "transparent", fontFamily: "Outfit, sans-serif" },
+    colors: ["#10b981", "#f59e0b", "#ef4444", "#9ca3af"],
+    labels,
+    legend: { position: "bottom", fontSize: "12px", labels: { colors: "#9ca3af" } },
+    dataLabels: { enabled: false },
+    plotOptions: { pie: { donut: { size: "65%", labels: { show: true, total: { show: true, label: "Total", color: "#9ca3af", fontSize: "13px" } } } } },
+    stroke: { width: 0 },
+    tooltip: { theme: "dark" },
+  };
+}
+
+const H_BAR_OPTIONS: ApexOptions = {
+  colors: ["#465fff"],
+  chart: { fontFamily: "Outfit, sans-serif", type: "bar", height: 180, toolbar: { show: false }, background: "transparent" },
+  plotOptions: { bar: { horizontal: true, borderRadius: 4, barHeight: "55%" } },
+  dataLabels: { enabled: false },
+  xaxis: { axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: BASE_YAXIS_STYLE } },
+  yaxis: { labels: { style: BASE_YAXIS_STYLE } },
+  grid: { xaxis: { lines: { show: true } }, yaxis: { lines: { show: false } }, borderColor: GRID_BORDER },
+  tooltip: { theme: "dark" },
+};
+
+/* ─── KPI skeleton ───────────────────────────────────────────────────────── */
+const SkeletonKpi = (
+  <div className="rounded-2xl bg-white dark:bg-white/[0.03] p-5 md:p-6 space-y-4">
+    <Sk className="h-12 w-12 rounded-xl" />
+    <div className="space-y-2 mt-5">
+      <Sk className="h-3 w-20" />
+      <Sk className="h-7 w-16" />
+    </div>
+  </div>
+);
+
 /* ─── Component ──────────────────────────────────────────────────────────── */
 export function DashboardOverview() {
   const { session } = useAuth();
   const companyId = session?.companyId ?? null;
 
+  // Único hook crítico para el primer paint (KPIs + charts + actividad)
   const { data: an, loading } = useDashboardAnalytics(companyId);
-  const { alerts }            = useAlerts();
-  const { maintenances }      = useMaintenances();
-  const { assets }            = useAssets();
 
-  /* ── KPIs ──────────────────────────────────────────────────────────────── */
+  // Alerts: solo para el feed — se difiere con su propio loading
+  const { alerts } = useAlerts();
+
+  // ── KPIs — memoizados sobre an.kpis, no sobre `an` entero ───────────────
   const kpiCards = useMemo(() => {
-    if (!an) return [];
-    const k = an.kpis;
+    const k = an?.kpis;
+    if (!k) return [];
     const pctAssets = k.totalAssets > 0 ? `+${Math.round((k.operativeAssets / k.totalAssets) * 100)}%` : undefined;
     return [
       { label: "Vehículos",       value: k.totalAssets.toString(),                  badge: pctAssets,  tone: "success" as const, icon: <TruckIcon />,  href: "/flotas"        },
@@ -94,86 +176,27 @@ export function DashboardOverview() {
       { label: "Alertas activas", value: k.openAlerts.toString(),                   badge: k.criticalAlerts > 0 ? `-${k.criticalAlerts} críticas` : undefined, tone: "error" as const, icon: <BellIcon />, href: "/alertas" },
       { label: "Combustible (L)", value: k.totalFuelLiters.toLocaleString("es-EC"), badge: undefined,  tone: "brand" as const,   icon: <FuelIcon />,   href: "/combustible"   },
     ];
-  }, [an]);
+  }, [an?.kpis]);
 
-  /* ── Charts ────────────────────────────────────────────────────────────── */
+  // ── Chart options — memoizadas sobre sus categorías ──────────────────────
   const c = an?.charts;
 
-  const areaOptions: ApexOptions = {
-    legend: { show: false },
-    colors: ["#465FFF", "#10b981"],
-    chart: { fontFamily: "Outfit, sans-serif", height: 310, type: "line", toolbar: { show: false }, background: "transparent" },
-    stroke: { curve: "straight", width: [2, 2] },
-    fill: { type: "gradient", gradient: { opacityFrom: 0.55, opacityTo: 0 } },
-    markers: { size: 0, strokeColors: "#fff", strokeWidth: 2, hover: { size: 6 } },
-    grid: { xaxis: { lines: { show: false } }, yaxis: { lines: { show: true } }, borderColor: "rgba(156,163,175,0.12)" },
-    dataLabels: { enabled: false },
-    xaxis: { type: "category", categories: c?.fuelOverTime.categories ?? [], axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: { fontSize: "12px", colors: "#e5e7eb" } } },
-    yaxis: { labels: { style: { fontSize: "12px", colors: ["#6B7280"] } } },
-    tooltip: { theme: "dark" },
-  };
+  const areaOptions  = useMemo(() => makeAreaOptions(c?.fuelOverTime.categories ?? []),  [c?.fuelOverTime.categories]);
+  const barOptions   = useMemo(() => makeBarOptions(c?.maintenancesByMonth.categories ?? []), [c?.maintenancesByMonth.categories]);
+  const donutOptions = useMemo(
+    () => makeDonutOptions(c?.assetsByStatus.filter(d => d.value > 0).map(d => d.name) ?? []),
+    [c?.assetsByStatus]
+  );
 
-  const barOptions: ApexOptions = {
-    colors: ["#465fff"],
-    chart: { fontFamily: "Outfit, sans-serif", type: "bar", height: 180, toolbar: { show: false }, background: "transparent" },
-    plotOptions: { bar: { horizontal: false, columnWidth: "39%", borderRadius: 5, borderRadiusApplication: "end" } },
-    dataLabels: { enabled: false },
-    stroke: { show: true, width: 4, colors: ["transparent"] },
-    xaxis: { categories: c?.maintenancesByMonth.categories ?? [], axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: { fontSize: "12px", colors: "#e5e7eb" } } },
-    yaxis: { labels: { style: { colors: ["#6B7280"], fontSize: "12px" } } },
-    grid: { yaxis: { lines: { show: true } }, borderColor: "rgba(156,163,175,0.12)" },
-    fill: { opacity: 1 },
-    tooltip: { theme: "dark", x: { show: false } },
-  };
-
-  const donutOptions: ApexOptions = {
-    chart: { type: "donut", background: "transparent", fontFamily: "Outfit, sans-serif" },
-    colors: ["#10b981", "#f59e0b", "#ef4444", "#9ca3af"],
-    labels: c?.assetsByStatus.filter(d => d.value > 0).map(d => d.name) ?? [],
-    legend: { position: "bottom", fontSize: "12px", labels: { colors: "#9ca3af" } },
-    dataLabels: { enabled: false },
-    plotOptions: { pie: { donut: { size: "65%", labels: { show: true, total: { show: true, label: "Total", color: "#9ca3af", fontSize: "13px" } } } } },
-    stroke: { width: 0 },
-    tooltip: { theme: "dark" },
-  };
-
-  const hBarOptions: ApexOptions = {
-    colors: ["#465fff"],
-    chart: { fontFamily: "Outfit, sans-serif", type: "bar", height: 180, toolbar: { show: false }, background: "transparent" },
-    plotOptions: { bar: { horizontal: true, borderRadius: 4, barHeight: "55%" } },
-    dataLabels: { enabled: false },
-    xaxis: { axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: { colors: ["#6B7280"], fontSize: "12px" } } },
-    yaxis: { labels: { style: { colors: ["#6B7280"], fontSize: "12px" } } },
-    grid: { xaxis: { lines: { show: true } }, yaxis: { lines: { show: false } }, borderColor: "rgba(156,163,175,0.12)" },
-    tooltip: { theme: "dark" },
-  };
-
-  /* ── Alerts feed ───────────────────────────────────────────────────────── */
+  // ── Alert feed — memoizado sobre alerts ──────────────────────────────────
   const alertItems = useMemo<AlertItem[]>(() =>
     alerts.filter(a => a.status !== "Cerrada").slice(0, 6).map(a => ({
       title:       a.title,
       description: a.notes || `${a.type} en estado ${a.status}.`,
       severity:    a.severity as AlertItem["severity"],
       time:        a.dueDate ? `Vence: ${a.dueDate}` : a.status,
-    })), [alerts]);
-
-  /* ── Skeleton card ─────────────────────────────────────────────────────── */
-  const skeletonKpi = (
-    <div className="rounded-2xl bg-white dark:bg-white/[0.03] p-5 md:p-6 space-y-4">
-      <Sk className="h-12 w-12 rounded-xl" />
-      <div className="space-y-2 mt-5">
-        <Sk className="h-3 w-20" />
-        <Sk className="h-7 w-16" />
-      </div>
-    </div>
-  );
-
-  const skeletonChart = (h: string) => (
-    <div className="rounded-2xl border border-gray-200 dark:border-gray-100 bg-white dark:bg-white/[0.03] p-5 sm:p-6">
-      <Sk className="h-5 w-40 mb-5" />
-      <Sk className={h} />
-    </div>
-  );
+    })),
+  [alerts]);
 
   return (
     <div className="space-y-6">
@@ -184,77 +207,98 @@ export function DashboardOverview() {
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Visibilidad operativa: flota, mantenimiento y combustible.</p>
       </div>
 
-      {/* KPIs */}
+      {/* KPIs — render inmediato con skeleton */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 md:gap-6">
         {loading
-          ? Array.from({ length: 4 }).map((_, i) => <div key={i}>{skeletonKpi}</div>)
-          : kpiCards.map(card => <KpiCard key={card.label} {...card} />)}
+          ? Array.from({ length: 4 }).map((_, i) => <div key={i}>{SkeletonKpi}</div>)
+          : kpiCards.map(card => <KpiCard key={card.label} {...card} />)
+        }
       </div>
 
       {/* Fila 1: Área combustible + Donut */}
       <div className="grid gap-4 xl:grid-cols-3 md:gap-6">
         <div className="xl:col-span-2">
-          {loading ? skeletonChart("h-[310px]") : c && (
-            <ChartCard title="Combustible por mes" subtitle="Litros cargados y costo acumulado">
-              <div className="max-w-full overflow-x-hidden">
-                <div className="min-w-[600px] xl:min-w-full">
-                  <ReactApexChart
-                    options={areaOptions}
-                    series={[
-                      { name: "Litros",    data: c.fuelOverTime.liters },
-                      { name: "Costo USD", data: c.fuelOverTime.cost   },
-                    ]}
-                    type="area"
-                    height={310}
-                  />
+          {loading || !c
+            ? <ChartSkeleton height="h-[310px]" />
+            : (
+              <ChartCard title="Combustible por mes" subtitle="Litros cargados y costo acumulado">
+                <div className="max-w-full overflow-x-hidden">
+                  <div className="min-w-[600px] xl:min-w-full">
+                    <Suspense fallback={<Sk className="h-[310px]" />}>
+                      <ReactApexChart
+                        options={areaOptions}
+                        series={[
+                          { name: "Litros",    data: c.fuelOverTime.liters },
+                          { name: "Costo USD", data: c.fuelOverTime.cost   },
+                        ]}
+                        type="area"
+                        height={310}
+                      />
+                    </Suspense>
+                  </div>
                 </div>
-              </div>
-            </ChartCard>
-          )}
+              </ChartCard>
+            )
+          }
         </div>
         <div>
-          {loading ? skeletonChart("h-[310px]") : c && (
-            <ChartCard title="Flota por estado" subtitle="Distribución operativa">
-              <ReactApexChart
-                options={donutOptions}
-                series={c.assetsByStatus.map(d => d.value).filter(v => v > 0)}
-                type="donut"
-                height={310}
-              />
-            </ChartCard>
-          )}
+          {loading || !c
+            ? <ChartSkeleton height="h-[310px]" />
+            : (
+              <ChartCard title="Flota por estado" subtitle="Distribución operativa">
+                <Suspense fallback={<Sk className="h-[310px]" />}>
+                  <ReactApexChart
+                    options={donutOptions}
+                    series={c.assetsByStatus.map(d => d.value).filter(v => v > 0)}
+                    type="donut"
+                    height={310}
+                  />
+                </Suspense>
+              </ChartCard>
+            )
+          }
         </div>
       </div>
 
       {/* Fila 2: Barras mantenimientos + Barras licencias */}
       <div className="grid gap-4 xl:grid-cols-3 md:gap-6">
         <div className="xl:col-span-2">
-          {loading ? skeletonChart("h-[180px]") : c && (
-            <ChartCard title="Mantenimientos por mes" subtitle="Órdenes programadas en el año">
-              <div className="max-w-full overflow-x-auto">
-                <div className="-ml-5 min-w-[600px] xl:min-w-full pl-2">
+          {loading || !c
+            ? <ChartSkeleton height="h-[180px]" />
+            : (
+              <ChartCard title="Mantenimientos por mes" subtitle="Órdenes programadas en el año">
+                <div className="max-w-full overflow-x-auto">
+                  <div className="-ml-5 min-w-[600px] xl:min-w-full pl-2">
+                    <Suspense fallback={<Sk className="h-[180px]" />}>
+                      <ReactApexChart
+                        options={barOptions}
+                        series={[{ name: "Cantidad", data: c.maintenancesByMonth.count }]}
+                        type="bar"
+                        height={180}
+                      />
+                    </Suspense>
+                  </div>
+                </div>
+              </ChartCard>
+            )
+          }
+        </div>
+        <div>
+          {loading || !c
+            ? <ChartSkeleton height="h-[180px]" />
+            : (
+              <ChartCard title="Conductores por licencia">
+                <Suspense fallback={<Sk className="h-[180px]" />}>
                   <ReactApexChart
-                    options={barOptions}
-                    series={[{ name: "Cantidad", data: c.maintenancesByMonth.count }]}
+                    options={H_BAR_OPTIONS}
+                    series={[{ name: "Conductores", data: c.driversByLicense.map(d => d.value) }]}
                     type="bar"
                     height={180}
                   />
-                </div>
-              </div>
-            </ChartCard>
-          )}
-        </div>
-        <div>
-          {loading ? skeletonChart("h-[180px]") : c && (
-            <ChartCard title="Conductores por licencia">
-              <ReactApexChart
-                options={hBarOptions}
-                series={[{ name: "Conductores", data: c.driversByLicense.map(d => d.value) }]}
-                type="bar"
-                height={180}
-              />
-            </ChartCard>
-          )}
+                </Suspense>
+              </ChartCard>
+            )
+          }
         </div>
       </div>
 
@@ -298,7 +342,7 @@ export function DashboardOverview() {
         </div>
       </div>
 
-      {/* Próximos mantenimientos */}
+      {/* Próximos mantenimientos — al fondo, carga last */}
       <section>
         <MaintenanceTable />
       </section>

@@ -7,12 +7,18 @@ import { useSites } from "@/hooks/useSites";
 import { useAssets } from "@/hooks/useAssets";
 import { useDrivers } from "@/hooks/useDrivers";
 import { usePermissions } from "@/hooks/usePermissions";
+import { LocationPickerModal } from "@/components/ui/map/LocationPicker";
 import type { OperationalSite, SiteStatus } from "@/types/fleet";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type SiteFormState = Omit<OperationalSite, "id" | "tenantId">;
-type SiteFormErrors = Partial<Record<keyof SiteFormState, string>>;
+// Extended to carry coordinates alongside the address string
+type SiteFormState = Omit<OperationalSite, "id" | "tenantId"> & {
+  latitude?: number;
+  longitude?: number;
+};
+
+type SiteFormErrors = Partial<Record<keyof Omit<SiteFormState, "latitude" | "longitude">, string>>;
 
 type EnrichedSite = OperationalSite & {
   assetCount: number;
@@ -23,7 +29,17 @@ type EnrichedSite = OperationalSite & {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function createEmptyForm(): SiteFormState {
-  return { code: "", name: "", city: "", address: "", contact: "", status: "Activa", notes: "" };
+  return {
+    code: "",
+    name: "",
+    city: "",
+    address: "",
+    latitude: undefined,
+    longitude: undefined,
+    contact: "",
+    status: "Activa",
+    notes: "",
+  };
 }
 
 function validateSite(form: SiteFormState): SiteFormErrors {
@@ -186,14 +202,24 @@ function SiteFormModal({
   onUpdate,
 }: {
   open: boolean;
-  site: OperationalSite | null; // null = create mode
+  site: OperationalSite | null;
   onClose: () => void;
   onCreate: (form: SiteFormState) => Promise<void>;
   onUpdate: (id: string, form: SiteFormState) => Promise<void>;
 }) {
   const [form, setForm] = useState<SiteFormState>(() =>
     site
-      ? { code: site.code, name: site.name, city: site.city, address: site.address, contact: site.contact, status: site.status, notes: site.notes }
+      ? {
+          code: site.code,
+          name: site.name,
+          city: site.city,
+          address: site.address,
+          latitude: (site as any).latitude,
+          longitude: (site as any).longitude,
+          contact: site.contact,
+          status: site.status,
+          notes: site.notes,
+        }
       : createEmptyForm()
   );
   const [errors, setErrors] = useState<SiteFormErrors>({});
@@ -202,18 +228,30 @@ function SiteFormModal({
   // Sync when site changes (edit vs create)
   useEffect(() => {
     if (open) {
-      setForm(site
-        ? { code: site.code, name: site.name, city: site.city, address: site.address, contact: site.contact, status: site.status, notes: site.notes }
-        : createEmptyForm()
+      setForm(
+        site
+          ? {
+              code: site.code,
+              name: site.name,
+              city: site.city,
+              address: site.address,
+              latitude: (site as any).latitude,
+              longitude: (site as any).longitude,
+              contact: site.contact,
+              status: site.status,
+              notes: site.notes,
+            }
+          : createEmptyForm()
       );
       setErrors({});
     }
   }, [open, site]);
 
-  const field = (key: keyof SiteFormState) => ({
+  const field = (key: keyof Omit<SiteFormState, "latitude" | "longitude">) => ({
     value: form[key] as string,
-    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
-      setForm((prev) => ({ ...prev, [key]: e.target.value })),
+    onChange: (
+      e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+    ) => setForm((prev) => ({ ...prev, [key]: e.target.value })),
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -221,7 +259,9 @@ function SiteFormModal({
     const nextErrors = validateSite(form);
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors);
-      toast.error("Formulario incompleto", { description: "Completa todos los campos obligatorios." });
+      toast.error("Formulario incompleto", {
+        description: "Completa todos los campos obligatorios.",
+      });
       return;
     }
 
@@ -229,10 +269,14 @@ function SiteFormModal({
     try {
       if (site) {
         await onUpdate(site.id, form);
-        toast.success("Sede actualizada", { description: "El catálogo operativo ya refleja el cambio." });
+        toast.success("Sede actualizada", {
+          description: "El catálogo operativo ya refleja el cambio.",
+        });
       } else {
         await onCreate(form);
-        toast.success("Sede creada", { description: "La sede ya está disponible en formularios." });
+        toast.success("Sede creada", {
+          description: "La sede ya está disponible en formularios.",
+        });
       }
       onClose();
     } catch {
@@ -307,19 +351,43 @@ function SiteFormModal({
                 </div>
 
                 <FormField label="Nombre de sede" error={errors.name}>
-                  <input className={inputCls} placeholder="Nombre de la sede principal" {...field("name")} />
+                  <input
+                    className={inputCls}
+                    placeholder="Nombre de la sede principal"
+                    {...field("name")}
+                  />
                 </FormField>
 
                 <FormField label="Ciudad / Localidad" error={errors.city}>
-                  <input className={inputCls} placeholder="Ciudad, municipio o zona operativa" {...field("city")} />
+                  <input
+                    className={inputCls}
+                    placeholder="Ciudad, municipio o zona operativa"
+                    {...field("city")}
+                  />
                 </FormField>
 
+                {/* ── Dirección con selector de mapa ── */}
                 <FormField label="Dirección" error={errors.address}>
-                  <input className={inputCls} placeholder="Dirección completa o referencia de ubicación" {...field("address")} />
+                  <LocationPickerModal
+                    value={form.address}
+                    onChange={(result) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        address: result.address,
+                        latitude: result.latitude || undefined,
+                        longitude: result.longitude || undefined,
+                      }))
+                    }
+                    placeholder="Busca o fija la dirección en el mapa…"
+                  />
                 </FormField>
 
                 <FormField label="Contacto visible" error={errors.contact}>
-                  <input className={inputCls} placeholder="Contacto responsable / teléfono" {...field("contact")} />
+                  <input
+                    className={inputCls}
+                    placeholder="Contacto responsable / teléfono"
+                    {...field("contact")}
+                  />
                 </FormField>
 
                 <FormField label="Notas">
@@ -376,7 +444,7 @@ function SiteDetailDrawer({
   onEdit: (site: EnrichedSite) => void;
   onToggleStatus: (site: EnrichedSite) => void;
 }) {
-  const linkedAssets = site ? assets.filter((a) => a.site === site.name) : [];
+  const linkedAssets  = site ? assets.filter((a) => a.site === site.name) : [];
   const linkedDrivers = site ? drivers.filter((d) => d.site === site.name) : [];
 
   return (
@@ -434,15 +502,32 @@ function SiteDetailDrawer({
               {/* Info block */}
               <div className="rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] divide-y divide-gray-200 dark:divide-white/[0.06]">
                 {[
-                  { label: "Ciudad", value: site.city },
+                  { label: "Ciudad",    value: site.city },
                   { label: "Dirección", value: site.address },
-                  { label: "Contacto", value: site.contact },
+                  { label: "Contacto",  value: site.contact },
                 ].map(({ label, value }) => (
                   <div key={label} className="flex items-start gap-3 px-4 py-3">
                     <span className="w-20 shrink-0 text-xs font-medium text-gray-400 dark:text-gray-500 pt-0.5">{label}</span>
                     <span className="text-sm text-gray-800 dark:text-white">{value || "—"}</span>
                   </div>
                 ))}
+                {/* Google Maps link if coordinates exist */}
+                {(site as any).latitude && (site as any).longitude && (
+                  <div className="px-4 py-3">
+                    <a
+                      href={`https://www.google.com/maps?q=${(site as any).latitude},${(site as any).longitude}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+                        <circle cx="12" cy="9" r="2.5"/>
+                      </svg>
+                      Ver en Google Maps
+                    </a>
+                  </div>
+                )}
                 {site.notes && (
                   <div className="flex items-start gap-3 px-4 py-3">
                     <span className="w-20 shrink-0 text-xs font-medium text-gray-400 dark:text-gray-500 pt-0.5">Notas</span>
@@ -454,9 +539,7 @@ function SiteDetailDrawer({
               {/* Linked assets */}
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-gray-800 dark:text-white">
-                    Flota vinculada
-                  </h3>
+                  <h3 className="text-sm font-semibold text-gray-800 dark:text-white">Flota vinculada</h3>
                   <span className="rounded-full bg-gray-100 dark:bg-white/[0.06] px-2 py-0.5 text-xs font-medium text-gray-500 dark:text-gray-400">
                     {linkedAssets.length}
                   </span>
@@ -483,9 +566,7 @@ function SiteDetailDrawer({
               {/* Linked drivers */}
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-gray-800 dark:text-white">
-                    Conductores vinculados
-                  </h3>
+                  <h3 className="text-sm font-semibold text-gray-800 dark:text-white">Conductores vinculados</h3>
                   <span className="rounded-full bg-gray-100 dark:bg-white/[0.06] px-2 py-0.5 text-xs font-medium text-gray-500 dark:text-gray-400">
                     {linkedDrivers.length}
                   </span>
@@ -542,14 +623,14 @@ function SiteDetailDrawer({
 
 export function SitesManagementPage() {
   const { sites, loading, createSite, updateSite } = useSites();
-  const { assets } = useAssets();
-  const { drivers } = useDrivers();
-  const { can } = usePermissions();
+  const { assets }   = useAssets();
+  const { drivers }  = useDrivers();
+  const { can }      = usePermissions();
 
-  const [query, setQuery] = useState("");
-  const [modalOpen, setModalOpen] = useState(false);
+  const [query,       setQuery]       = useState("");
+  const [modalOpen,   setModalOpen]   = useState(false);
   const [editingSite, setEditingSite] = useState<OperationalSite | null>(null);
-  const [detailSite, setDetailSite] = useState<EnrichedSite | null>(null);
+  const [detailSite,  setDetailSite]  = useState<EnrichedSite | null>(null);
 
   // Enrich sites with reference counts
   const rows = useMemo<EnrichedSite[]>(() => {
@@ -585,7 +666,6 @@ export function SitesManagementPage() {
       toast.success(next === "Activa" ? "Sede reactivada" : "Sede inactivada", {
         description: "El catálogo ya refleja el nuevo estado operativo.",
       });
-      // Update detail pane if open
       setDetailSite((prev) => (prev?.id === site.id ? { ...prev, status: next } : prev));
     } catch {
       toast.error("Error al cambiar estado");
@@ -640,10 +720,10 @@ export function SitesManagementPage() {
 
         {/* ── KPI row ── */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiCard label="Total sedes"  value={String(sites.length)} detail="Catálogo actual"              accent="blue"   />
-          <KpiCard label="Activas"      value={String(totalActive)}  detail="Disponibles en formularios"  accent="green"  />
-          <KpiCard label="Inactivas"    value={String(totalInactive)} detail="Fuera de alta nueva"        accent="yellow" />
-          <KpiCard label="Referencias"  value={String(totalRefs)}    detail="Flota y conductores vinculados" accent="gray" />
+          <KpiCard label="Total sedes"  value={String(sites.length)}   detail="Catálogo actual"                   accent="blue"   />
+          <KpiCard label="Activas"      value={String(totalActive)}    detail="Disponibles en formularios"        accent="green"  />
+          <KpiCard label="Inactivas"    value={String(totalInactive)}  detail="Fuera de alta nueva"               accent="yellow" />
+          <KpiCard label="Referencias"  value={String(totalRefs)}      detail="Flota y conductores vinculados"    accent="gray"   />
         </div>
 
         {/* ── Table card ── */}
@@ -746,8 +826,8 @@ export function SitesManagementPage() {
         </div>
 
         {!can("gestion", "sedes", "crear") && !can("gestion", "sedes", "editar") && (
-          <div className="rounded-xl border border-yellow-200 ...">
-            Solo perfiles administradores pueden crear o editar sedes...
+          <div className="rounded-xl border border-yellow-200 dark:border-yellow-500/20 bg-yellow-50 dark:bg-yellow-500/10 px-4 py-3 text-sm text-yellow-700 dark:text-yellow-400">
+            Solo perfiles administradores pueden crear o editar sedes.
           </div>
         )}
       </div>

@@ -48,24 +48,24 @@ function mapApi(raw: Record<string, unknown>): ApiDriver {
   const lastName  = (raw.lastName  as string) ?? "";
   return {
     id: String(raw.id),
-    companyId: raw.company_id as number,
-    siteId: (raw.site_id as number | null) ?? null,
+    companyId: raw.companyId as number,
+    siteId: (raw.siteId as number | null) ?? null,
     code: (raw.code as string) ?? "",
     name: `${firstName} ${lastName}`.trim(),
     firstName,
     lastName,
     email: (raw.email as string) ?? "",
     phone: (raw.phone as string) ?? "",
-    licenseNumber: (raw.license_number as string) ?? "",
-    licenseType: (raw.license_type as string) ?? "",
-    licenseExpiry: (raw.license_expiry as string) ?? "",
-    licensePoints: (raw.license_points as number) ?? 0,
+    licenseNumber: (raw.licenseNumber as string) ?? "",
+    licenseType: (raw.licenseType as string) ?? "",
+    licenseExpiry: (raw.licenseExpiry as string) ?? "",
+    licensePoints: (raw.licensePoints as number) ?? 0,
     status: (raw.status as "Activo" | "Inactivo") ?? "Activo",
     site: (raw.site as string) ?? "",
     notes: (raw.notes as string) ?? "",
-    photoUrl: (raw.photo_url as string | null) ?? null,
-    createdAt: (raw.created_at as string) ?? "",
-    updatedAt: (raw.updated_at as string) ?? "",
+    photoUrl: (raw.photoUrl as string | null) ?? null,
+    createdAt: (raw.createdAt as string) ?? "",
+    updatedAt: (raw.updatedAt as string) ?? "",
   };
 }
 
@@ -99,19 +99,19 @@ export function useDrivers() {
     const res = await fetch(`/api/company/${companyId}/drivers`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      // ✅ camelCase — coincide con el Zod schema del backend
       body: JSON.stringify({
         code: payload.code,
-        first_name: payload.firstName,
-        last_name: payload.lastName,
-        license_number: payload.licenseNumber,
-        license_type: payload.licenseType,
-        license_expiry: payload.licenseExpiry,
-        license_points: payload.licensePoints,
-        email: payload.email,
-        phone: payload.phone,
-        site: payload.site,
+        firstName: payload.firstName,
+        lastName: payload.lastName,
+        licenseNumber: payload.licenseNumber,
+        licenseType: payload.licenseType,
+        licenseExpiry: payload.licenseExpiry || null,
+        licensePoints: payload.licensePoints,
+        email: payload.email || null,
+        phone: payload.phone || null,
         status: payload.status,
-        notes: payload.notes,
+        notes: payload.notes || null,
       }),
     });
     if (!res.ok) throw new Error(`Error ${res.status}`);
@@ -121,19 +121,19 @@ export function useDrivers() {
   }, [companyId]);
 
   const updateDriver = useCallback(async (id: string, payload: UpdateDriverPayload): Promise<ApiDriver> => {
+    // ✅ camelCase — coincide con el Zod schema del backend
     const body: Record<string, unknown> = {};
-    if (payload.code !== undefined) body.code = payload.code;
-    if (payload.firstName !== undefined) body.first_name = payload.firstName;
-    if (payload.lastName !== undefined) body.last_name = payload.lastName;
-    if (payload.licenseNumber !== undefined) body.license_number = payload.licenseNumber;
-    if (payload.licenseType !== undefined) body.license_type = payload.licenseType;
-    if (payload.licenseExpiry !== undefined) body.license_expiry = payload.licenseExpiry;
-    if (payload.licensePoints !== undefined) body.license_points = payload.licensePoints;
-    if (payload.email !== undefined) body.email = payload.email;
-    if (payload.phone !== undefined) body.phone = payload.phone;
-    if (payload.site !== undefined) body.site = payload.site;
-    if (payload.status !== undefined) body.status = payload.status;
-    if (payload.notes !== undefined) body.notes = payload.notes;
+    if (payload.code          !== undefined) body.code          = payload.code;
+    if (payload.firstName     !== undefined) body.firstName     = payload.firstName;
+    if (payload.lastName      !== undefined) body.lastName      = payload.lastName;
+    if (payload.licenseNumber !== undefined) body.licenseNumber = payload.licenseNumber;
+    if (payload.licenseType   !== undefined) body.licenseType   = payload.licenseType;
+    if (payload.licenseExpiry !== undefined) body.licenseExpiry = payload.licenseExpiry || null;
+    if (payload.licensePoints !== undefined) body.licensePoints = payload.licensePoints;
+    if (payload.email         !== undefined) body.email         = payload.email || null;
+    if (payload.phone         !== undefined) body.phone         = payload.phone || null;
+    if (payload.status        !== undefined) body.status        = payload.status;
+    if (payload.notes         !== undefined) body.notes         = payload.notes || null;
 
     const res = await fetch(`/api/company/${companyId}/drivers/${id}`, {
       method: "PUT",

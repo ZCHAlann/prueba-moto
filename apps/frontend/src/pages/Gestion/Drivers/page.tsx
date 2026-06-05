@@ -3,13 +3,14 @@ import { toast } from "sonner";
 import { useDrivers, type ApiDriver } from "../../../hooks/useDrivers";
 import { useAssignments } from "../../../hooks/useAssignments";
 import { useAssets } from "../../../hooks/useAssets";
+import { useSites } from "../../../hooks/useSites";
 import { usePermissions } from "../../../hooks/usePermissions";
 import { ModulePageHeader } from "../../../components/features/modules/ModulePageHeader";
 import {
-  AlertTriangle, Calendar, Car, ChevronDown, ChevronLeft, ChevronRight,
+  AlertTriangle, Car, ChevronDown, ChevronLeft, ChevronRight,
   Eye, Filter, Loader2, Mail, MapPin, MoreHorizontal, Pencil,
-  Phone, Plus, Search, Trash2, User, UserCheck, UserX, X,
-  Fuel, Droplets, FileText, ClipboardList, Link2,
+  Phone, Plus, Search, Trash2, User, X,
+  Fuel, Droplets, ClipboardList,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -42,6 +43,23 @@ type ReportFormState = {
   invoices: DriverInvoiceDraft[];
 };
 
+type DriverFormState = {
+  code: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  site: string;           // nombre de la sede, igual que CreateDriverPayload
+  licenseNumber: string;
+  licenseType: string;
+  licenseExpiry: string;
+  licensePoints: number;
+  status: "Activo" | "Inactivo";
+  notes: string;
+};
+
+type DriverFormErrors = Partial<Record<keyof DriverFormState, string>>;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 12;
@@ -63,6 +81,31 @@ function daysUntil(dateStr: string): number {
 
 function createReportForm(driverId = ""): ReportFormState {
   return { driverId, fuelLevel: "1/2", oilLevel: "1/2", vehicleFaults: "", invoices: [{ receiptNumber: "", description: "", photoName: "" }] };
+}
+
+function createDriverForm(driver?: ApiDriver): DriverFormState {
+  return {
+    code:          driver?.code          ?? "",
+    firstName:     driver?.firstName     ?? "",
+    lastName:      driver?.lastName      ?? "",
+    email:         driver?.email         ?? "",
+    phone:         driver?.phone         ?? "",
+    site:          driver?.site          ?? "",
+    licenseNumber: driver?.licenseNumber ?? "",
+    licenseType:   driver?.licenseType   ?? "",
+    licenseExpiry: driver?.licenseExpiry ?? "",
+    licensePoints: driver?.licensePoints ?? 0,
+    status:        driver?.status        ?? "Activo",
+    notes:         driver?.notes         ?? "",
+  };
+}
+
+function validateDriverForm(form: DriverFormState): DriverFormErrors {
+  const errors: DriverFormErrors = {};
+  if (!form.code.trim())      errors.code      = "El código es requerido.";
+  if (!form.firstName.trim()) errors.firstName = "El nombre es requerido.";
+  if (!form.lastName.trim())  errors.lastName  = "El apellido es requerido.";
+  return errors;
 }
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
@@ -102,10 +145,10 @@ function KpiRow({ drivers }: { drivers: ApiDriver[] }) {
   const vencidos  = drivers.filter(d => daysUntil(d.licenseExpiry) <= 0).length;
 
   const cards = [
-    { label: "Total conductores", value: drivers.length, sub: "base de la empresa",   cls: "border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]",                           valCls: "text-gray-800 dark:text-white"          },
-    { label: "Activos",           value: activos,         sub: "disponibles",           cls: "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/5",             valCls: "text-emerald-700 dark:text-emerald-300" },
-    { label: "Inactivos",         value: inactivos,       sub: "fuera de operación",    cls: "border-gray-200 bg-gray-50 dark:border-white/[0.06] dark:bg-white/[0.03]",                        valCls: "text-gray-500 dark:text-gray-400"       },
-    { label: "Licencias vencidas",value: vencidos,        sub: "requieren atención",    cls: "border-rose-200 bg-rose-50/60 dark:border-rose-500/20 dark:bg-rose-500/5",                        valCls: "text-rose-700 dark:text-rose-300"       },
+    { label: "Total conductores", value: drivers.length, sub: "base de la empresa",  cls: "border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]",                        valCls: "text-gray-800 dark:text-white"          },
+    { label: "Activos",           value: activos,         sub: "disponibles",          cls: "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/5",          valCls: "text-emerald-700 dark:text-emerald-300" },
+    { label: "Inactivos",         value: inactivos,       sub: "fuera de operación",   cls: "border-gray-200 bg-gray-50 dark:border-white/[0.06] dark:bg-white/[0.03]",                     valCls: "text-gray-500 dark:text-gray-400"       },
+    { label: "Licencias vencidas",value: vencidos,        sub: "requieren atención",   cls: "border-rose-200 bg-rose-50/60 dark:border-rose-500/20 dark:bg-rose-500/5",                     valCls: "text-rose-700 dark:text-rose-300"       },
   ];
 
   return (
@@ -144,11 +187,11 @@ function RowMenu({ driver, canEdit, canDelete, onView, onEdit, onReport, onAssig
   }, [open]);
 
   const items = [
-    { label: "Ver detalle",       icon: <Eye size={13} />,          action: onView,   cls: "text-gray-700 dark:text-gray-300",  show: true       },
-    { label: "Editar",            icon: <Pencil size={13} />,       action: onEdit,   cls: "text-gray-700 dark:text-gray-300",  show: canEdit    },
-    { label: "Crear reporte",     icon: <ClipboardList size={13} />, action: onReport, cls: "text-cyan-600 dark:text-cyan-400",  show: true       },
-    { label: "Asignar vehículo",  icon: <Car size={13} />,          action: onAssign, cls: "text-sky-600 dark:text-sky-400",    show: true       },
-    { label: "Eliminar",          icon: <Trash2 size={13} />,       action: onDelete, cls: "text-rose-600 dark:text-rose-400",  show: canDelete  },
+    { label: "Ver detalle",      icon: <Eye size={13} />,           action: onView,   cls: "text-gray-700 dark:text-gray-300", show: true      },
+    { label: "Editar",           icon: <Pencil size={13} />,        action: onEdit,   cls: "text-gray-700 dark:text-gray-300", show: canEdit   },
+    { label: "Crear reporte",    icon: <ClipboardList size={13} />, action: onReport, cls: "text-cyan-600 dark:text-cyan-400", show: true      },
+    { label: "Asignar vehículo", icon: <Car size={13} />,           action: onAssign, cls: "text-sky-600 dark:text-sky-400",   show: true      },
+    { label: "Eliminar",         icon: <Trash2 size={13} />,        action: onDelete, cls: "text-rose-600 dark:text-rose-400", show: canDelete },
   ].filter(i => i.show);
 
   return (
@@ -172,6 +215,257 @@ function RowMenu({ driver, canEdit, canDelete, onView, onEdit, onReport, onAssig
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Driver Form Modal ────────────────────────────────────────────────────────
+
+function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
+  open: boolean;
+  driver: ApiDriver | null;
+  onClose: () => void;
+  onCreate: (form: DriverFormState) => Promise<void>;
+  onUpdate: (id: string, form: DriverFormState) => Promise<void>;
+}) {
+  const { sites } = useSites();
+  const [form, setForm] = useState<DriverFormState>(() => createDriverForm(driver ?? undefined));
+  const [errors, setErrors] = useState<DriverFormErrors>({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setForm(createDriverForm(driver ?? undefined));
+      setErrors({});
+    }
+  }, [open, driver]);
+
+  const set = <K extends keyof DriverFormState>(key: K, value: DriverFormState[K]) =>
+    setForm(prev => ({ ...prev, [key]: value }));
+
+  const handleSubmit = async () => {
+    const errs = validateDriverForm(form);
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      toast.error("Formulario incompleto", { description: "Completa los campos requeridos." });
+      return;
+    }
+    setSaving(true);
+    try {
+      if (driver) {
+        await onUpdate(driver.id, form);
+        toast.success("Conductor actualizado", { description: `${form.firstName} ${form.lastName}` });
+      } else {
+        await onCreate(form);
+        toast.success("Conductor creado", { description: `${form.firstName} ${form.lastName}` });
+      }
+      onClose();
+    } catch {
+      toast.error("Error al guardar", { description: "No se pudo completar la operación." });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) return null;
+
+  const licenseTypes = ["A", "B", "C", "D", "E", "F"];
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4 py-6 backdrop-blur-sm"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0d1320]">
+        <div className="h-0.5 w-full bg-cyan-500" />
+
+        <div className="flex items-center justify-between border-b border-gray-100 px-6 pb-4 pt-5 dark:border-white/[0.06]">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-widest text-cyan-500">
+              {driver ? "Editar conductor" : "Nuevo conductor"}
+            </p>
+            <h2 className="mt-0.5 text-base font-bold text-gray-800 dark:text-white">
+              {driver ? `${driver.firstName} ${driver.lastName}` : "Registrar conductor"}
+            </h2>
+          </div>
+          <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-xl text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.08]">
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="max-h-[65vh] overflow-y-auto px-6 py-5 space-y-4">
+
+          {/* Código + Estado */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Código <span className="text-rose-400">*</span>
+              </label>
+              <input
+                className={inputCls}
+                placeholder="COND-001"
+                value={form.code}
+                onChange={e => set("code", e.target.value.toUpperCase())}
+              />
+              {errors.code && <p className="text-xs text-rose-500">{errors.code}</p>}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Estado</label>
+              <div className="relative">
+                <select className={selectCls} value={form.status} onChange={e => set("status", e.target.value as "Activo" | "Inactivo")}>
+                  <option value="Activo">Activo</option>
+                  <option value="Inactivo">Inactivo</option>
+                </select>
+                <ChevronDown size={13} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              </div>
+            </div>
+          </div>
+
+          {/* Nombre + Apellido */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Nombre <span className="text-rose-400">*</span>
+              </label>
+              <input
+                className={inputCls}
+                placeholder="Juan"
+                value={form.firstName}
+                onChange={e => set("firstName", e.target.value)}
+              />
+              {errors.firstName && <p className="text-xs text-rose-500">{errors.firstName}</p>}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Apellido <span className="text-rose-400">*</span>
+              </label>
+              <input
+                className={inputCls}
+                placeholder="Pérez"
+                value={form.lastName}
+                onChange={e => set("lastName", e.target.value)}
+              />
+              {errors.lastName && <p className="text-xs text-rose-500">{errors.lastName}</p>}
+            </div>
+          </div>
+
+          {/* Email + Teléfono */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Correo</label>
+              <input
+                type="email"
+                className={inputCls}
+                placeholder="correo@empresa.com"
+                value={form.email}
+                onChange={e => set("email", e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Teléfono</label>
+              <input
+                className={inputCls}
+                placeholder="0999 000 000"
+                value={form.phone}
+                onChange={e => set("phone", e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Sede */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Sede</label>
+            <div className="relative">
+              <select
+                className={selectCls}
+                value={form.site}
+                onChange={e => set("site", e.target.value)}
+              >
+                <option value="">Sin sede asignada</option>
+                {sites.map(s => (
+                  <option key={s.id} value={s.name}>{s.name}</option>
+                ))}
+              </select>
+              <ChevronDown size={13} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            </div>
+          </div>
+
+          {/* Licencia */}
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 dark:border-white/[0.05] dark:bg-white/[0.03] space-y-3">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Información de licencia</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Número de licencia</label>
+                <input
+                  className={inputCls}
+                  placeholder="0912345678"
+                  value={form.licenseNumber}
+                  onChange={e => set("licenseNumber", e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Tipo</label>
+                <div className="relative">
+                  <select className={selectCls} value={form.licenseType} onChange={e => set("licenseType", e.target.value)}>
+                    <option value="">Seleccionar tipo...</option>
+                    {licenseTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <ChevronDown size={13} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Fecha de vencimiento</label>
+                <input
+                  type="date"
+                  className={inputCls}
+                  value={form.licenseExpiry}
+                  onChange={e => set("licenseExpiry", e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Puntos</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={30}
+                  className={inputCls}
+                  placeholder="30"
+                  value={form.licensePoints}
+                  onChange={e => set("licensePoints", Number(e.target.value))}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Notas */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Notas</label>
+            <textarea
+              rows={3}
+              className="w-full resize-none rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.05] px-3 py-2.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/10 transition"
+              placeholder="Observaciones adicionales sobre el conductor."
+              value={form.notes}
+              onChange={e => set("notes", e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50 px-6 py-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
+          <button onClick={onClose} className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300">
+            Cancelar
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={saving}
+            className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-5 py-2 text-sm font-semibold text-white shadow-sm shadow-cyan-500/20 hover:bg-cyan-600 active:scale-95 disabled:opacity-50"
+          >
+            {saving && <Loader2 size={14} className="animate-spin" />}
+            {saving ? "Guardando..." : driver ? "Guardar cambios" : "Crear conductor"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -225,10 +519,8 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
         className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0d1320]"
         style={{ transform: "translateX(100%)" }}
       >
-        {/* Top bar */}
         <div className={`h-1 w-full ${driver.status === "Activo" ? "bg-emerald-400" : "bg-gray-300"}`} />
 
-        {/* Header */}
         <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
           <div className="flex items-center gap-3 min-w-0">
             {driver.photoUrl ? (
@@ -249,10 +541,7 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
           </button>
         </div>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-
-          {/* Contacto */}
           <section>
             <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">Contacto</p>
             <div className="space-y-2">
@@ -272,7 +561,6 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
             </div>
           </section>
 
-          {/* Licencia */}
           <section>
             <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">Licencia</p>
             <div className="grid grid-cols-3 gap-2">
@@ -292,15 +580,11 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
             </div>
           </section>
 
-          {/* Vehículo asignado */}
           <section>
             <div className="mb-2 flex items-center justify-between">
               <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Vehículo asignado</p>
               {!activeAssignment && (
-                <button
-                  onClick={onAssign}
-                  className="flex items-center gap-1 rounded-lg border border-sky-200 px-2 py-1 text-[10px] font-bold text-sky-600 hover:bg-sky-50 dark:border-sky-500/20 dark:text-sky-400"
-                >
+                <button onClick={onAssign} className="flex items-center gap-1 rounded-lg border border-sky-200 px-2 py-1 text-[10px] font-bold text-sky-600 hover:bg-sky-50 dark:border-sky-500/20 dark:text-sky-400">
                   <Plus size={10} />Asignar
                 </button>
               )}
@@ -323,7 +607,6 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
             )}
           </section>
 
-          {/* Notas */}
           {driver.notes && (
             <section>
               <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">Notas</p>
@@ -334,7 +617,6 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
           )}
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/80 px-5 py-3.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
           {canDelete ? (
             <button onClick={onDelete} className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-500/20 dark:text-rose-400 dark:hover:bg-rose-500/10">
@@ -367,8 +649,8 @@ function AssignModal({ driver, onClose }: { driver: ApiDriver; onClose: () => vo
   const [notes, setNotes]         = useState("");
   const [saving, setSaving]       = useState(false);
 
-  const activeIds  = new Set(assignments.filter(a => a.status === "Activa").map(a => a.assetId));
-  const available  = assets.filter(a => a.assetType === "Vehiculo" && !activeIds.has(a.id));
+  const activeIds = new Set(assignments.filter(a => a.status === "Activa").map(a => a.assetId));
+  const available = assets.filter(a => a.assetType === "Vehiculo" && !activeIds.has(a.id));
 
   const handleSubmit = async () => {
     if (!assetId) return;
@@ -490,7 +772,6 @@ function ReportModal({ drivers, initialDriverId, reports, onSave, onClose }: {
         </div>
 
         <div className="max-h-[65vh] overflow-y-auto px-6 py-5 space-y-4">
-          {/* Conductor */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Conductor</label>
             <div className="relative">
@@ -502,7 +783,6 @@ function ReportModal({ drivers, initialDriverId, reports, onSave, onClose }: {
             </div>
           </div>
 
-          {/* Niveles */}
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 dark:border-white/[0.05] dark:bg-white/[0.03]">
               <p className="mb-2 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-gray-400"><Fuel size={10} />Combustible</p>
@@ -524,7 +804,6 @@ function ReportModal({ drivers, initialDriverId, reports, onSave, onClose }: {
             </div>
           </div>
 
-          {/* Fallas */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Novedades del vehículo <span className="text-rose-400">*</span></label>
             <textarea rows={4} className="w-full resize-none rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.05] px-3 py-2.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/10 transition"
@@ -532,7 +811,6 @@ function ReportModal({ drivers, initialDriverId, reports, onSave, onClose }: {
               placeholder="Describe las fallas encontradas o escribe: Sin novedades." />
           </div>
 
-          {/* Facturas */}
           <div>
             <div className="mb-3 flex items-center justify-between">
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Facturas</p>
@@ -666,21 +944,34 @@ function DriverRow({ driver, index, canEdit, canDelete, onView, onEdit, onReport
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function DriversPage() {
-  const { drivers, loading, deleteDriver } = useDrivers();
+  const { drivers, loading, createDriver, updateDriver, deleteDriver } = useDrivers();
   const { can } = usePermissions();
 
   const canCreate = can("gestion", "conductores", "crear");
   const canEdit   = can("gestion", "conductores", "editar");
   const canDelete = can("gestion", "conductores", "eliminar");
 
-  const [search, setSearch]               = useState("");
-  const [filterStatus, setFilterStatus]   = useState("");
-  const [page, setPage]                   = useState(1);
+  const [search, setSearch]             = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [page, setPage]                 = useState(1);
 
-  const [drawerDriver, setDrawerDriver]   = useState<ApiDriver | null>(null);
-  const [deleteTarget, setDeleteTarget]   = useState<ApiDriver | null>(null);
-  const [reportDriverId, setReportDriverId] = useState<string | null>(null);
-  const [assignDriver, setAssignDriver]   = useState<ApiDriver | null>(null);
+  const [drawerDriver, setDrawerDriver]       = useState<ApiDriver | null>(null);
+  const [deleteTarget, setDeleteTarget]       = useState<ApiDriver | null>(null);
+  const [reportDriverId, setReportDriverId]   = useState<string | null>(null);
+  const [assignDriver, setAssignDriver]       = useState<ApiDriver | null>(null);
+  const [driverModalOpen, setDriverModalOpen] = useState(false);
+  const [driverModalTarget, setDriverModalTarget] = useState<ApiDriver | null>(null);
+
+  const openCreateModal = () => {
+    setDriverModalTarget(null);
+    setDriverModalOpen(true);
+  };
+
+  const openEditModal = (driver: ApiDriver) => {
+    setDriverModalTarget(driver);
+    setDriverModalOpen(true);
+    setDrawerDriver(null);
+  };
 
   const [reports, setReports] = useState<DriverReport[]>([]);
   useEffect(() => {
@@ -732,12 +1023,12 @@ export default function DriversPage() {
         accent="cyan"
         action={
           canCreate ? (
-            <a
-              href="/operaciones/conductores/nuevo"
+            <button
+              onClick={openCreateModal}
               className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-cyan-500/20 hover:bg-cyan-600 active:scale-95"
             >
               <Plus size={15} />Nuevo conductor
-            </a>
+            </button>
           ) : null
         }
       />
@@ -809,7 +1100,7 @@ export default function DriversPage() {
                       canEdit={canEdit}
                       canDelete={canDelete}
                       onView={() => setDrawerDriver(driver)}
-                      onEdit={() => { window.location.href = `/operaciones/conductores/${driver.id}/editar`; }}
+                      onEdit={() => openEditModal(driver)}
                       onReport={() => openReport(driver.id)}
                       onAssign={() => setAssignDriver(driver)}
                       onDelete={() => setDeleteTarget(driver)}
@@ -850,7 +1141,7 @@ export default function DriversPage() {
           canEdit={canEdit}
           canDelete={canDelete}
           onClose={() => setDrawerDriver(null)}
-          onEdit={() => { window.location.href = `/operaciones/conductores/${drawerDriver.id}/editar`; }}
+          onEdit={() => openEditModal(drawerDriver)}
           onReport={() => { openReport(drawerDriver.id); setDrawerDriver(null); }}
           onAssign={() => { setAssignDriver(drawerDriver); setDrawerDriver(null); }}
           onDelete={() => { setDeleteTarget(drawerDriver); setDrawerDriver(null); }}
@@ -858,6 +1149,17 @@ export default function DriversPage() {
       )}
 
       {/* Modals */}
+      <DriverFormModal
+        open={driverModalOpen}
+        driver={driverModalTarget}
+        onClose={() => setDriverModalOpen(false)}
+        onCreate={async (form) => {
+          await createDriver({ ...form, name: `${form.firstName} ${form.lastName}` });
+        }}
+        onUpdate={async (id, form) => {
+          await updateDriver(id, { ...form, name: `${form.firstName} ${form.lastName}` });
+        }}
+      />
       {reportDriverId !== null && (
         <ReportModal
           drivers={drivers}

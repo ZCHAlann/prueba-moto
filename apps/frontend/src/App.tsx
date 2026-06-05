@@ -50,7 +50,7 @@ import { CRMPage } from "./pages/CRM/page";
 import { BillingPage } from "./pages/Platform/Billing/page";
 import { FleetHealthPage } from "./pages/Platform/Flotas/page";
 import PlatformTicketsPage from "./pages/Platform/Tickets/page";
-import GeolocalizacionPage from "./pages/Geolocalizacion/page"
+import { GeolocationPage } from "./pages/Geolocalizacion/GeolocationPage";
 
 // ─── Guards ──────────────────────────────────────────────────────────────────
 
@@ -129,7 +129,7 @@ export default function App() {
           <Route path="/accesos/usuarios" element={<UsersPage />} />
           <Route path="/accesos/roles" element={<RolesPage />} />
           <Route path="/soporte" element={<SoportePage />} />
-          <Route path="/geolocalizacion" element={<GeolocalizacionPage />} />
+          <Route path="/geolocalizacion" element={<GeolocationPage />} />
         </Route>
 
         {/* ── Plataforma ── */}

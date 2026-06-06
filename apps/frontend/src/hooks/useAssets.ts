@@ -44,6 +44,7 @@ function mapApiToAsset(data: Record<string, unknown>, companyId: string): Asset 
     fuelType: String(data.fuelType ?? data.fuel_type ?? "")  as AssetFuelType,
     oilType: String(data.oilType ?? data.oil_type ?? ""),
     oilCapacity: String(data.oilCapacity ?? data.oil_capacity ?? ""),
+    garageId: data.garageId ? String(data.garageId) : null,
     photoUrls: Array.isArray(data.photoUrls ?? data.photo_urls) ? (data.photoUrls ?? data.photo_urls) as string[] : [],
   };
 }
@@ -74,6 +75,8 @@ function mapAssetToApi(input: CreateAssetInput | UpdateAssetInput) {
     fuelType: input.fuelType,
     oilType: input.oilType,
     oilCapacity: input.oilCapacity,
+    siteId: (input as any).siteId ?? null,
+    garageId: (input as any).garageId ?? null,
   };
 }
 

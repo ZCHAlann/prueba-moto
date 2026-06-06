@@ -1,19 +1,21 @@
-import { useParams } from "react-router";
-import { useAuth } from "../../../context/AuthContext";
-import VehicleCockpit from "../components/VehicleCockpit.tsx";
+import { useParams } from 'react-router-dom';
+import { useAuth } from './../../../context/AuthContext';
+import VehicleCockpit from './VehicleCockpit';
 
-export default function MotorCockpitPage() {
-  const { id } = useParams<{ id: string }>();
+export default function VehicleCockpitPage() {
+  const params = useParams<{ id: string }>();
   const { session } = useAuth();
 
-  return (
-    // Escapa el padding/margin del AppLayout (pt-24 p-4 md:p-6)
-    // y ocupa todo el viewport disponible debajo del header
-    <div className="-mt-24 -mx-4 md:-mx-6 h-screen">
-      <VehicleCockpit
-        assetId={String(id)}
-        companyId={session?.companyId ?? ""}
-      />
-    </div>
-  );
+  const rawCompanyId = session?.companyId ?? null;
+  const assetId      = params.id ? `${params.id}` : null;
+  const companyId    = rawCompanyId ? `${rawCompanyId}` : '';
+
+  if (!assetId) {
+    return <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>Vehículo no especificado</div>;
+  }
+  if (!companyId) {
+    return <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>Sin empresa activa</div>;
+  }
+
+  return <VehicleCockpit assetId={assetId} companyId={companyId} />;
 }

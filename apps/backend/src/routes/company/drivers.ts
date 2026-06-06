@@ -9,6 +9,8 @@ import { requireAdmin } from '../../middlewares/requireAdmin';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { companyDriverReports } from '../../db/schema/operational';
+import { desc } from 'drizzle-orm';
 
 const router = Router({ mergeParams: true });
 
@@ -243,6 +245,103 @@ function serializeDriver(d: typeof companyDrivers.$inferSelect) {
     photoUrl: d.photoUrl,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
+  };
+}
+
+
+// ─── Schemas reports ──────────────────────────────────────────────────────────
+
+const createReportSchema = z.object({
+  fuelLevel:     z.string().optional().nullable(),
+  oilLevel:      z.string().optional().nullable(),
+  vehicleFaults: z.string().min(1, 'Describe las novedades'),
+  invoices: z.array(z.object({
+    receiptNumber: z.string(),
+    description:   z.string(),
+    fileUrl:       z.string().optional().nullable(),
+  })).default([]),
+  fileUrls: z.array(z.string()).default([]),
+});
+
+// ─── GET /company/:id/drivers/:driverId/reports ───────────────────────────────
+
+router.get('/:driverId/reports', requireModule('conductores'), async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const driverId  = parseId('driver', req.params.driverId);
+
+    const rows = await db
+      .select()
+      .from(companyDriverReports)
+      .where(and(
+        eq(companyDriverReports.companyId, companyId),
+        eq(companyDriverReports.driverId, driverId),
+      ))
+      .orderBy(desc(companyDriverReports.createdAt));
+
+    res.json({ data: rows.map(serializeReport) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── POST /company/:id/drivers/:driverId/reports ──────────────────────────────
+
+router.post(
+  '/:driverId/reports',
+  requireModule('conductores'),
+  validate(createReportSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const driverId  = parseId('driver', req.params.driverId);
+      const body      = req.body as z.infer<typeof createReportSchema>;
+
+      // Verificar que el conductor existe
+      const driver = await db
+        .select()
+        .from(companyDrivers)
+        .where(and(eq(companyDrivers.id, driverId), eq(companyDrivers.companyId, companyId)))
+        .limit(1);
+
+      if (!driver.length) throw new NotFoundError('Conductor', req.params.driverId);
+
+      const [created] = await db
+        .insert(companyDriverReports)
+        .values({
+          companyId,
+          driverId,
+          driverName:    `${driver[0].firstName} ${driver[0].lastName}`,
+          fuelLevel:     body.fuelLevel,
+          oilLevel:      body.oilLevel,
+          vehicleFaults: body.vehicleFaults,
+          invoices:      body.invoices,
+          fileUrls:      body.fileUrls,
+        })
+        .returning();
+
+      res.status(201).json(serializeReport(created));
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ─── Report serializer ────────────────────────────────────────────────────────
+
+function serializeReport(r: typeof companyDriverReports.$inferSelect) {
+  return {
+    id:            toId('driver-report', r.id),
+    companyId:     toId('company', r.companyId),
+    driverId:      toId('driver', r.driverId),
+    driverName:    r.driverName,
+    fuelLevel:     r.fuelLevel,
+    oilLevel:      r.oilLevel,
+    vehicleFaults: r.vehicleFaults,
+    invoices:      r.invoices,
+    fileUrls:      r.fileUrls ?? [],
+    createdAt:     r.createdAt,
+    updatedAt:     r.updatedAt,
   };
 }
 

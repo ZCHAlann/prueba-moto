@@ -12,6 +12,7 @@ import {
   Step6Photos,
 } from "./wizard-steps/Steps";
 import type { ApiAssignment, HandoverPayload } from "../../../../hooks/useAssignments";
+import type { ExistingHandoverData } from "../../../../hooks/useHandoverWizard";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,8 +37,13 @@ type Props = {
   onComplete: (assignment: ApiAssignment) => void;
   createAssignment: (payload: { assetId: string; driverId: string; startDate: string }) => Promise<ApiAssignment>;
   updateHandover: (id: string, payload: HandoverPayload) => Promise<ApiAssignment>;
+  // ── Edit mode ──────────────────────────────────────────────────────────────
+  editMode?: boolean;               // true = editar acta existente
+  existingAssignmentId?: string;    // id de la asignación a editar
+  existingData?: ExistingHandoverData | null; // datos actuales del acta
 };
 
+// En edit mode saltamos el Step 0 (confirmación), arrancamos en Step 1
 const STEPS = [
   "Confirmación",
   "Datos del acta",
@@ -50,6 +56,9 @@ const STEPS = [
   "Firma Responsable",
   "Vista previa",
 ];
+
+const FIRST_STEP_CREATE = 0;
+const FIRST_STEP_EDIT   = 1;  // saltamos confirmación en edit mode
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -64,9 +73,14 @@ export function HandoverWizard({
   onComplete,
   createAssignment,
   updateHandover,
+  editMode = false,
+  existingAssignmentId,
+  existingData,
 }: Props) {
 
-  const [step, setStep]                     = useState(0);
+  const firstStep = editMode ? FIRST_STEP_EDIT : FIRST_STEP_CREATE;
+
+  const [step, setStep]                     = useState(firstStep);
   const [saving, setSaving]                 = useState(false);
   const [pdfBlob, setPdfBlob]               = useState<Blob | null>(null);
   const [pdfPreviewUrl, setPdfPreviewUrl]   = useState<string | null>(null);
@@ -76,13 +90,13 @@ export function HandoverWizard({
   const {
     data, setField, uploading, error, setError,
     uploadPhotos, uploadSignature, uploadPdf, reset,
-  } = useHandoverWizard(driver, asset, assignmentCount);
+  } = useHandoverWizard(driver, asset, assignmentCount, existingData);
 
   // Re-init on open
   useEffect(() => {
     if (open) {
-      reset();
-      setStep(0);
+      reset(existingData);
+      setStep(firstStep);
       setPdfBlob(null);
       setPdfPreviewUrl(null);
       setDone(false);
@@ -97,18 +111,15 @@ export function HandoverWizard({
   async function next() {
     setError(null);
     try {
-      // Subir fotos al salir del step 6
       if (step === 6 && data.vehiclePhotos.length > 0 && !data.vehiclePhotoUrls.length) {
         await uploadPhotos();
       }
-      // Subir firmas al salir de sus steps
       if (step === 7 && data.signatureLogDataUrl && !data.signatureLogUrl) {
         await uploadSignature("log", data.signatureLogDataUrl);
       }
       if (step === 8 && data.signatureRespDataUrl && !data.signatureRespUrl) {
         await uploadSignature("resp", data.signatureRespDataUrl);
       }
-      // Generar PDF al llegar al step 9 (vista previa)
       if (step === 8) {
         const blob = await generateActaPdf(data, data.vehiclePhotos);
         setPdfBlob(blob);
@@ -123,7 +134,8 @@ export function HandoverWizard({
 
   function prev() {
     setError(null);
-    setStep((s) => Math.max(s - 1, 0));
+    // En edit mode no permitir retroceder más allá del Step 1
+    setStep((s) => Math.max(s - 1, firstStep));
   }
 
   // ── Final save ──────────────────────────────────────────────────────────────
@@ -133,20 +145,23 @@ export function HandoverWizard({
     setSaving(true);
     setError(null);
     try {
-      const today = new Date().toISOString().split("T")[0];
+      let assignmentId: string;
 
-      // 1. Crear asignación
-      const assignment = await createAssignment({
-        assetId,
-        driverId,
-        startDate: today,
-      });
+      if (editMode && existingAssignmentId) {
+        // Edit mode: la asignación ya existe, no crear otra
+        assignmentId = existingAssignmentId;
+      } else {
+        // Create mode: crear asignación primero
+        const today = new Date().toISOString().split("T")[0];
+        const assignment = await createAssignment({ assetId, driverId, startDate: today });
+        assignmentId = assignment.id;
+      }
 
-      // 2. Subir PDF
+      // Subir PDF (siempre, genera uno nuevo aunque sea edición)
       const pdfUrl = await uploadPdf(pdfBlob);
 
-      // 3. Guardar datos del acta
-      const updated = await updateHandover(assignment.id, {
+      // Guardar / actualizar datos del acta
+      const updated = await updateHandover(assignmentId, {
         actaNumber:       data.actaNumber,
         actaDate:         data.actaDate,
         actaTime:         data.actaTime,
@@ -196,9 +211,13 @@ export function HandoverWizard({
             </svg>
           </div>
           <div className="text-center">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">¡Acta generada!</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+              {editMode ? "¡Acta actualizada!" : "¡Acta generada!"}
+            </h3>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              La asignación y el acta han sido guardadas correctamente.
+              {editMode
+                ? "El acta ha sido actualizada correctamente."
+                : "La asignación y el acta han sido guardadas correctamente."}
             </p>
           </div>
           <button
@@ -280,6 +299,9 @@ export function HandoverWizard({
   const isBusy    = uploading || saving;
   const canFinish = isLast && pdfPreviewUrl && !done;
 
+  // Título del step actual
+  const stepTitle = done ? (editMode ? "¡Listo!" : "¡Listo!") : STEPS[step];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div
@@ -289,9 +311,16 @@ export function HandoverWizard({
         {/* Header */}
         <div className="px-6 pt-5 pb-4 border-b border-gray-100 dark:border-gray-800">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-semibold text-gray-900 dark:text-white">
-              {done ? "¡Listo!" : STEPS[step]}
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+                {stepTitle}
+              </h2>
+              {editMode && !done && (
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                  Editando acta
+                </span>
+              )}
+            </div>
             <button
               type="button"
               onClick={() => {
@@ -310,13 +339,23 @@ export function HandoverWizard({
           {/* Barra de progreso */}
           {!done && (
             <div className="flex gap-1">
-              {STEPS.map((_, i) => (
-                <div
-                  key={i}
-                  className={`h-1 flex-1 rounded-full transition-all duration-300
-                    ${i <= step ? "bg-blue-500" : "bg-gray-200 dark:bg-gray-800"}`}
-                />
-              ))}
+              {STEPS.map((_, i) => {
+                // En edit mode, los steps anteriores al firstStep se muestran como completados
+                const isComplete = i < firstStep || i <= step;
+                const isSkipped  = editMode && i < firstStep;
+                return (
+                  <div
+                    key={i}
+                    className={`h-1 flex-1 rounded-full transition-all duration-300 ${
+                      isSkipped
+                        ? "bg-gray-200 dark:bg-gray-800"
+                        : isComplete
+                        ? "bg-blue-500"
+                        : "bg-gray-200 dark:bg-gray-800"
+                    }`}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
@@ -337,7 +376,7 @@ export function HandoverWizard({
             <button
               type="button"
               onClick={prev}
-              disabled={step === 0 || isBusy}
+              disabled={step === firstStep || isBusy}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm text-gray-600 dark:text-gray-400
                 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800
                 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -360,7 +399,7 @@ export function HandoverWizard({
                 className="flex items-center gap-1.5 px-5 py-2 rounded-lg text-sm font-medium
                   bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
               >
-                {saving ? "Guardando…" : "Confirmar y guardar"}
+                {saving ? "Guardando…" : editMode ? "Actualizar acta" : "Confirmar y guardar"}
               </button>
             ) : (
               <button

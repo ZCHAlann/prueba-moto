@@ -120,8 +120,8 @@ export type GarageRecord = {
   supervisor: string;
   status: GarageStatus;
   notes: string;
-  latitude?: number;
-  longitude?: number;
+  latitude: number | null; 
+  longitude: number | null;
 };
 
 export type AirConditioningStatus = "Operativo" | "En revision" | "Fuera de servicio" | "Pendiente revision";

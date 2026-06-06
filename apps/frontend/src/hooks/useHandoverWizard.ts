@@ -70,6 +70,28 @@ export type WizardData = {
   pdfUrl: string | null;
 };
 
+// Datos que vienen del acta existente (edit mode)
+export type ExistingHandoverData = {
+  actaNumber?:       string | null;
+  actaDate?:         string | null;
+  actaTime?:         string | null;
+  actaPlace?:        string | null;
+  actaArea?:         string | null;
+  driverDni?:        string | null;
+  driverPhone?:      string | null;
+  driverRole?:       string | null;
+  vehicleOdometer?:  string | null;
+  vehicleFuelLevel?: string | null;
+  vehicleCondition?: string | null;
+  novedades?:        Record<string, unknown> | null;
+  accesorios?:       Record<string, unknown> | null;
+  novedadesText?:    string | null;
+  signatureLogUrl?:  string | null;
+  signatureRespUrl?: string | null;
+  vehiclePhotoUrls?: string[];
+  handoverUrl?:      string | null;
+};
+
 const DEFAULT_NOVEDADES: NovedadesState = {
   sinNovedades:          false,
   lucesDanadas:          false,
@@ -108,6 +130,7 @@ function buildInitialData(
   },
   companyName: string,
   assignmentCount: number,
+  existing?: ExistingHandoverData | null,  // ← NUEVO
 ): WizardData {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -115,36 +138,37 @@ function buildInitialData(
   const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const year    = now.getFullYear();
 
+  // Si hay datos existentes, los usamos; si no, valores por defecto
   return {
-    actaNumber:    `ACTA-${year}-${String(assignmentCount + 1).padStart(4, "0")}`,
-    actaDate:      dateStr,
-    actaTime:      timeStr,
-    actaPlace:     "",
-    actaArea:      "",
+    actaNumber:    existing?.actaNumber    ?? `ACTA-${year}-${String(assignmentCount + 1).padStart(4, "0")}`,
+    actaDate:      existing?.actaDate      ?? dateStr,
+    actaTime:      existing?.actaTime      ?? timeStr,
+    actaPlace:     existing?.actaPlace     ?? "",
+    actaArea:      existing?.actaArea      ?? "",
     companyName,
     driverName:    `${driver.firstName} ${driver.lastName}`,
-    driverDni:     "",
-    driverPhone:   driver.phone ?? "",
-    driverRole:    "",
-    vehiclePlate:  asset.plate   ?? "",
-    vehicleBrand:  asset.brand   ?? "",
-    vehicleModel:  asset.model   ?? "",
-    vehicleColor:  asset.color   ?? "",
-    vehicleYear:   asset.year    ?? "",
-    vehicleOdometer:  "",
-    vehicleFuelLevel: "",
-    vehicleCondition: "",
-    novedades:        { ...DEFAULT_NOVEDADES },
-    novedadesText:    "",
-    accesorios:       { ...DEFAULT_ACCESORIOS },
+    driverDni:     existing?.driverDni     ?? "",
+    driverPhone:   existing?.driverPhone   ?? driver.phone ?? "",
+    driverRole:    existing?.driverRole    ?? "",
+    vehiclePlate:  asset.plate  ?? "",
+    vehicleBrand:  asset.brand  ?? "",
+    vehicleModel:  asset.model  ?? "",
+    vehicleColor:  asset.color  ?? "",
+    vehicleYear:   asset.year   ?? "",
+    vehicleOdometer:  existing?.vehicleOdometer  ?? "",
+    vehicleFuelLevel: existing?.vehicleFuelLevel ?? "",
+    vehicleCondition: existing?.vehicleCondition ?? "",
+    novedades:     (existing?.novedades as NovedadesState) ?? { ...DEFAULT_NOVEDADES },
+    novedadesText: existing?.novedadesText ?? "",
+    accesorios:    (existing?.accesorios as AccesoriosState) ?? { ...DEFAULT_ACCESORIOS },
     accesoriosOtros:  "",
     vehiclePhotos:    [],
-    vehiclePhotoUrls: [],
-    signatureLogDataUrl:  null,
-    signatureLogUrl:      null,
-    signatureRespDataUrl: null,
-    signatureRespUrl:     null,
-    pdfUrl: null,
+    vehiclePhotoUrls: existing?.vehiclePhotoUrls ?? [],
+    signatureLogDataUrl:  existing?.signatureLogUrl  ?? null,  // precarga URL como dataUrl visual
+    signatureLogUrl:      existing?.signatureLogUrl  ?? null,
+    signatureRespDataUrl: existing?.signatureRespUrl ?? null,
+    signatureRespUrl:     existing?.signatureRespUrl ?? null,
+    pdfUrl: existing?.handoverUrl ?? null,
   };
 }
 
@@ -160,6 +184,7 @@ export function useHandoverWizard(
     year?: string | null;
   } | null,
   assignmentCount: number,
+  existing?: ExistingHandoverData | null,  // ← NUEVO
 ) {
   const { session } = useAuth();
   const companyName = (session as Record<string, unknown>)?.companyName as string ?? "";
@@ -171,27 +196,27 @@ export function useHandoverWizard(
       asset  ?? {},
       companyName,
       assignmentCount,
+      existing,
     )
   );
   const [uploading, setUploading] = useState(false);
   const [error, setError]         = useState<string | null>(null);
 
-  // Re-initialize when driver/asset change
-  const reinitialize = useCallback(() => {
+  const reinitialize = useCallback((existingOverride?: ExistingHandoverData | null) => {
     setData(buildInitialData(
       driver ?? { firstName: "", lastName: "" },
       asset  ?? {},
       companyName,
       assignmentCount,
+      existingOverride ?? existing,
     ));
     setError(null);
-  }, [driver, asset, companyName, assignmentCount]);
+  }, [driver, asset, companyName, assignmentCount, existing]);
 
   const setField = useCallback(<K extends keyof WizardData>(key: K, value: WizardData[K]) => {
     setData((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  // Upload vehicle photos → returns urls
   const uploadPhotos = useCallback(async (): Promise<string[]> => {
     if (!data.vehiclePhotos.length) return [];
     setUploading(true);
@@ -211,7 +236,6 @@ export function useHandoverWizard(
     }
   }, [data.vehiclePhotos, companyId]);
 
-  // Upload a signature dataUrl → returns server url
   const uploadSignature = useCallback(
     async (type: "log" | "resp", dataUrl: string): Promise<string> => {
       setUploading(true);
@@ -237,7 +261,6 @@ export function useHandoverWizard(
     [companyId],
   );
 
-  // Upload PDF blob → returns server url
   const uploadPdf = useCallback(async (blob: Blob): Promise<string> => {
     setUploading(true);
     try {
@@ -256,8 +279,8 @@ export function useHandoverWizard(
     }
   }, [companyId]);
 
-  const reset = useCallback(() => {
-    reinitialize();
+  const reset = useCallback((existingOverride?: ExistingHandoverData | null) => {
+    reinitialize(existingOverride);
   }, [reinitialize]);
 
   return { data, setField, uploading, error, setError, uploadPhotos, uploadSignature, uploadPdf, reset };

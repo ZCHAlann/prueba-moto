@@ -8,6 +8,7 @@ import { useAssignments } from "../../../hooks/useAssignments";
 import { HandoverWizard } from "./components/HandoerWizard";
 import type { ApiDriver } from "../../../hooks/useDrivers";
 import type { Asset } from "../../../types/activo";
+import type { ExistingHandoverData } from "../../../hooks/useHandoverWizard";
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -44,11 +45,12 @@ function DocumentIcon({ className = "h-5 w-5" }: { className?: string }) {
   );
 }
 
-function ArrowsUpDownIcon({ className = "h-4 w-4" }: { className?: string }) {
+function PencilIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
       stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M7 16V4m0 0L3 8m4-4l4 4" /><path d="M17 8v12m0 0l4-4m-4 4l-4-4" />
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
     </svg>
   );
 }
@@ -150,8 +152,15 @@ export function AssignmentsPage() {
   const [selectedDriverId, setSelectedDriverId] = useState<string | null>(null);
   const [selectedAssetId,  setSelectedAssetId]  = useState<string | null>(null);
 
-  // ── wizard ────────────────────────────────────────────────────────────────
+  // ── wizard — create mode ──────────────────────────────────────────────────
   const [wizardOpen, setWizardOpen] = useState(false);
+
+  // ── wizard — edit mode ────────────────────────────────────────────────────
+  const [editWizardOpen,        setEditWizardOpen]        = useState(false);
+  const [editAssignmentId,      setEditAssignmentId]      = useState<string | null>(null);
+  const [editExistingData,      setEditExistingData]      = useState<ExistingHandoverData | null>(null);
+  const [editWizardDriverId,    setEditWizardDriverId]    = useState<string | null>(null);
+  const [editWizardAssetId,     setEditWizardAssetId]     = useState<string | null>(null);
 
   // ── detail drawer ─────────────────────────────────────────────────────────
   const [drawerAssignmentId, setDrawerAssignmentId] = useState<string | null>(null);
@@ -205,9 +214,13 @@ export function AssignmentsPage() {
     [drawerAssignmentId, rows],
   );
 
-  // Selected objects for wizard
+  // Wizard create — objetos seleccionados
   const wizardDriver = selectedDriverId ? drivers.find((d) => d.id === selectedDriverId) ?? null : null;
   const wizardAsset  = selectedAssetId  ? assets.find((a) => a.id === selectedAssetId)   ?? null : null;
+
+  // Wizard edit — objetos de la asignación a editar
+  const editWizardDriver = editWizardDriverId ? drivers.find((d) => d.id === editWizardDriverId) ?? null : null;
+  const editWizardAsset  = editWizardAssetId  ? assets.find((a) => a.id === editWizardAssetId)   ?? null : null;
 
   // ── actions ───────────────────────────────────────────────────────────────
 
@@ -236,6 +249,56 @@ export function AssignmentsPage() {
     setSelectedAssetId(null);
     toast.success("Asignación y acta guardadas correctamente");
   }
+
+  // ── edit acta ─────────────────────────────────────────────────────────────
+
+  function handleEditActa(assignmentId: string) {
+    const assignment = assignments.find((a) => a.id === assignmentId);
+    if (!assignment) return;
+
+    // Armar ExistingHandoverData desde la asignación
+    const existing: ExistingHandoverData = {
+      actaNumber:       assignment.actaNumber       ?? null,
+      actaDate:         assignment.actaDate         ?? null,
+      actaTime:         assignment.actaTime         ?? null,
+      actaPlace:        assignment.actaPlace        ?? null,
+      actaArea:         assignment.actaArea         ?? null,
+      driverDni:        assignment.driverDni        ?? null,
+      driverPhone:      assignment.driverPhone      ?? null,
+      driverRole:       assignment.driverRole       ?? null,
+      vehicleOdometer:  assignment.vehicleOdometer  ?? null,
+      vehicleFuelLevel: assignment.vehicleFuelLevel ?? null,
+      vehicleCondition: assignment.vehicleCondition ?? null,
+      novedades:        assignment.novedades        as Record<string, unknown> ?? null,
+      accesorios:       assignment.accesorios       as Record<string, unknown> ?? null,
+      novedadesText:    assignment.novedadesText    ?? null,
+      signatureLogUrl:  assignment.signatureLogUrl  ?? null,
+      signatureRespUrl: assignment.signatureRespUrl ?? null,
+      vehiclePhotoUrls: assignment.vehiclePhotoUrls ?? [],
+      handoverUrl:      assignment.handoverUrl      ?? null,
+    };
+
+    setEditAssignmentId(assignmentId);
+    setEditExistingData(existing);
+    setEditWizardDriverId(assignment.driverId);
+    setEditWizardAssetId(assignment.assetId);
+    setEditWizardOpen(true);
+  }
+
+  function handleEditWizardClose() {
+    setEditWizardOpen(false);
+    setEditAssignmentId(null);
+    setEditExistingData(null);
+    setEditWizardDriverId(null);
+    setEditWizardAssetId(null);
+  }
+
+  function handleEditWizardComplete() {
+    handleEditWizardClose();
+    toast.success("Acta actualizada correctamente");
+  }
+
+  // ── finalize ──────────────────────────────────────────────────────────────
 
   async function handleFinalize(id: string, plate: string) {
     if (!canFinalize) return;
@@ -400,14 +463,28 @@ export function AssignmentsPage() {
                           <td className="px-4 py-3.5 text-sm text-gray-500">{a.startDate}</td>
                           <td className="px-4 py-3.5 text-sm text-gray-500">{days === 0 ? "Hoy" : `${days}d`}</td>
                           <td className="px-4 py-3.5">
-                            {a.handoverUrl ? (
-                              <a href={a.handoverUrl} target="_blank" rel="noopener noreferrer"
-                                className="flex items-center gap-1 text-brand-600 dark:text-brand-400 text-xs hover:opacity-80">
-                                <DocumentIcon className="h-3.5 w-3.5" /> Ver acta
-                              </a>
-                            ) : (
-                              <span className="text-xs text-gray-400">Sin acta</span>
-                            )}
+                            <div className="flex items-center gap-2">
+                              {a.handoverUrl ? (
+                                <a href={a.handoverUrl} target="_blank" rel="noopener noreferrer"
+                                  className="flex items-center gap-1 text-brand-600 dark:text-brand-400 text-xs hover:opacity-80">
+                                  <DocumentIcon className="h-3.5 w-3.5" /> Ver acta
+                                </a>
+                              ) : (
+                                <span className="text-xs text-gray-400">Sin acta</span>
+                              )}
+                              {/* ── Botón editar acta ── */}
+                              {canFinalize && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditActa(a.id)}
+                                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition-colors"
+                                  title="Editar acta"
+                                >
+                                  <PencilIcon className="h-3.5 w-3.5" />
+                                  {a.handoverUrl ? "Editar" : "Crear acta"}
+                                </button>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-3.5">
                             <div className="flex items-center gap-2">
@@ -485,14 +562,28 @@ export function AssignmentsPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3.5">
-                        {row.handoverUrl ? (
-                          <a href={row.handoverUrl} target="_blank" rel="noopener noreferrer"
-                            className="flex items-center gap-1 text-brand-600 dark:text-brand-400 text-xs hover:opacity-80">
-                            <DocumentIcon className="h-3.5 w-3.5" /> Ver acta
-                          </a>
-                        ) : (
-                          <span className="text-xs text-gray-400">Sin acta</span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {row.handoverUrl ? (
+                            <a href={row.handoverUrl} target="_blank" rel="noopener noreferrer"
+                              className="flex items-center gap-1 text-brand-600 dark:text-brand-400 text-xs hover:opacity-80">
+                              <DocumentIcon className="h-3.5 w-3.5" /> Ver acta
+                            </a>
+                          ) : (
+                            <span className="text-xs text-gray-400">Sin acta</span>
+                          )}
+                          {/* ── Botón editar acta (historial también) ── */}
+                          {canFinalize && (
+                            <button
+                              type="button"
+                              onClick={() => handleEditActa(row.id)}
+                              className="flex items-center gap-1 text-xs text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition-colors"
+                              title="Editar acta"
+                            >
+                              <PencilIcon className="h-3.5 w-3.5" />
+                              {row.handoverUrl ? "Editar" : "Crear acta"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-2">
@@ -517,7 +608,7 @@ export function AssignmentsPage() {
         </div>
       )}
 
-      {/* ── HANDOVER WIZARD ── */}
+      {/* ── HANDOVER WIZARD — create mode ── */}
       {wizardDriver && wizardAsset && (
         <HandoverWizard
           open={wizardOpen}
@@ -530,6 +621,25 @@ export function AssignmentsPage() {
           onComplete={handleWizardComplete}
           createAssignment={createAssignment}
           updateHandover={updateHandover}
+        />
+      )}
+
+      {/* ── HANDOVER WIZARD — edit mode ── */}
+      {editWizardDriver && editWizardAsset && (
+        <HandoverWizard
+          open={editWizardOpen}
+          driverId={editWizardDriverId!}
+          assetId={editWizardAssetId!}
+          driver={editWizardDriver}
+          asset={editWizardAsset}
+          assignmentCount={assignments.length}
+          onClose={handleEditWizardClose}
+          onComplete={handleEditWizardComplete}
+          createAssignment={createAssignment}
+          updateHandover={updateHandover}
+          editMode
+          existingAssignmentId={editAssignmentId!}
+          existingData={editExistingData}
         />
       )}
 
@@ -625,6 +735,20 @@ export function AssignmentsPage() {
                     <p className="rounded-xl border border-dashed border-gray-200 dark:border-white/[0.06] px-4 py-3 text-sm text-gray-400 text-center">
                       Sin acta adjunta
                     </p>
+                  )}
+                  {/* Editar acta desde el drawer también */}
+                  {canFinalize && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDrawerAssignmentId(null);
+                        handleEditActa(drawerAssignment.id);
+                      }}
+                      className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 dark:border-white/[0.06] px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition-colors"
+                    >
+                      <PencilIcon className="h-4 w-4" />
+                      {drawerAssignment.handoverUrl ? "Editar acta" : "Crear acta"}
+                    </button>
                   )}
                 </div>
 

@@ -24,6 +24,7 @@ const createAssetSchema = z.object({
   category: z.string().optional(),
   status: z.enum(ASSET_STATUSES).default('Operativo'),
   siteId: z.string().optional().nullable(), // "site-N" | null
+  garageId: z.string().optional().nullable(),
   responsible: z.string().optional(),
   brand: z.string().optional(),
   model: z.string().optional(),
@@ -54,11 +55,11 @@ router.get('/', requireModule('flotas'), async (req, res, next) => {
     const conditions = [eq(companyAssets.companyId, companyId)];
 
     if (status && typeof status === 'string') {
-      conditions.push(eq(companyAssets.status, status));
+      conditions.push(eq(companyAssets.status, status as typeof ASSET_STATUSES[number]));
     }
 
     if (assetType && typeof assetType === 'string') {
-      conditions.push(eq(companyAssets.assetType, assetType));
+      conditions.push(eq(companyAssets.assetType, assetType as typeof ASSET_TYPES[number]));
     }
 
     if (siteId && typeof siteId === 'string') {
@@ -124,10 +125,11 @@ router.post(
 
       // Convertir siteId de string prefijado a número
       const siteId = body.siteId ? parseId('site', body.siteId) : null;
+      const garageId = body.garageId ? parseId('garage', body.garageId) : null;
 
       const [created] = await db
         .insert(companyAssets)
-        .values({ ...body, companyId, siteId: siteId ?? undefined })
+        .values({ ...body, companyId, siteId: siteId ?? undefined, garageId: garageId ?? undefined })
         .returning();
 
       await logAudit(db, companyId, {
@@ -171,6 +173,10 @@ router.put(
       const updateData: Record<string, unknown> = { ...body, updatedAt: new Date() };
       if (body.siteId !== undefined) {
         updateData.siteId = body.siteId ? parseId('site', body.siteId) : null;
+      }
+
+      if (body.garageId !== undefined) {
+        updateData.garageId = body.garageId ? parseId('garage', body.garageId) : null;
       }
 
       const [updated] = await db
@@ -263,6 +269,7 @@ function serializeAsset(a: typeof companyAssets.$inferSelect) {
     photoUrls: a.photoUrls ?? [],
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
+    garageId: a.garageId ? toId('garage', a.garageId) : null,
   };
 }
 

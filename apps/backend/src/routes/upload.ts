@@ -88,6 +88,8 @@ function uploadHandler(category: UploadCategory) {
   };
 }
 
+
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 router.post('/asset-photos', uploadHandler('assets'));
@@ -103,7 +105,7 @@ router.post('/handover-pdf', (req: Request, res: Response, next: NextFunction) =
   const folder = companyId ? `handover-pdfs/${companyId}` : 'handover-pdfs'; 
 
   const upload = multer({
-    storage: buildStorage(folder), // ← usar folder con companyId
+    storage: buildStorage(folder),
     limits: { fileSize: 20 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
       if (file.mimetype === 'application/pdf') cb(null, true);
@@ -116,6 +118,28 @@ router.post('/handover-pdf', (req: Request, res: Response, next: NextFunction) =
     const file = req.file;
     if (!file) return next(new AppError(400, 'No se recibió el PDF.'));
     res.json({ url: `/uploads/${folder}/${file.filename}` });
+  });
+});
+
+router.post('/invoice-files', (req, res, next) => {
+  const folder = 'invoices';
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+      if (allowed.includes(file.mimetype)) cb(null, true);
+      else cb(new AppError(400, 'Solo imágenes o PDF.'));
+    },
+  }).array('files', 5);
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    const files = req.files as Express.Multer.File[];
+    if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+    const companyId = req.query.companyId as string | undefined;
+    const folder2 = companyId ? `invoices/${companyId}` : 'invoices';
+    res.json({ urls: files.map(f => `/uploads/${folder2}/${f.filename}`) });
   });
 });
 

@@ -1,0 +1,41 @@
+import { ReactNode } from 'react';
+
+type Props = {
+  title: string;
+  subtitle?: string;
+  loading?: boolean;
+  children: ReactNode;
+};
+
+export default function ChartCard({ title, subtitle, loading, children }: Props) {
+  return (
+    <div style={{
+      background: '#fff',
+      borderRadius: '16px',
+      padding: '20px 20px 16px',
+      border: '1px solid #e2e8f0',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '12px',
+      minHeight: '260px',
+    }}>
+      <div>
+        <h3 style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: '#0f172a' }}>{title}</h3>
+        {subtitle && <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: 3 }}>{subtitle}</div>}
+      </div>
+      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        {loading && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#94a3b8', fontSize: 13,
+          }}>
+            Cargando…
+          </div>
+        )}
+        {children}
+      </div>
+    </div>
+  );
+}

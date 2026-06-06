@@ -100,20 +100,39 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ sections: sectionsProp, homeHre
       <div className={`py-8 flex items-center relative ${showLabels ? "justify-start" : "lg:justify-center"}`}>
         <Link to={homeHref}>
           {showLabels ? (
-            <img
-              src="/images/logo/logo.svg"
-              className="dark:hidden"
-              alt="Logo"
-              width={150}
-              height={40}
-            />
+            <>
+              <img
+                src="/images/logo/logo-dark.png"
+                className="dark:hidden"
+                alt="Logo"
+                width={150}
+                height={40}
+              />
+              <img
+                src="/images/logo/logo.png"
+                className="hidden dark:block"
+                alt="Logo"
+                width={150}
+                height={40}
+              />
+            </>
           ) : (
-            <img
-              src="/images/logo/logo-icon.svg"
-              alt="Logo"
-              width={32}
-              height={32}
-            />
+            <>
+              <img
+                src="/images/logo/favicon-aplismart.png"
+                className="dark:hidden"
+                alt="Logo"
+                width={100}
+                height={100}
+              />
+              <img
+                src="/images/logo/favicon-aplismart-light.png"
+                className="hidden dark:block"
+                alt="Logo"
+                width={100}
+                height={70}
+              />
+            </>
           )}
         </Link>
 

@@ -52,6 +52,14 @@ import { FleetHealthPage } from "./pages/Platform/Flotas/page";
 import PlatformTicketsPage from "./pages/Platform/Tickets/page";
 import { GeolocationPage } from "./pages/Geolocalizacion/GeolocationPage";
 
+//Landing
+import PublicLayout from "./layout/PublicLayout";                          
+import LandingPage from "./pages/Landing/page";                          
+import SolicitarDemoPage from "./pages/SolicitarDemo/page";             
+import PoliticaPrivacidadPage from "./pages/PoliticaPrivacidad/page";
+
+
+
 // ─── Guards ──────────────────────────────────────────────────────────────────
 
 /** Redirige a /signin si no hay sesión de operacion */
@@ -94,6 +102,18 @@ function GuestPlatform({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * Para la landing y solicitar-demo: si el usuario ya tiene sesion de
+ * operacion, lo mandamos directo a su panel. Si tiene sesion de plataforma,
+ * dejamos pasar (puede querer ver el sitio publico igual).
+ */
+function GuestLanding({ children }: { children: React.ReactNode }) {
+  const { ready, session } = useAuth();
+  if (!ready) return null;
+  if (session?.scope === "operacion") return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -103,9 +123,29 @@ export default function App() {
       <Toaster position="top-right" richColors closeButton toastOptions={{ duration: 4000 }} />
       <Routes>
 
+        {/* ── Publico (no autenticado) ── */}
+        <Route element={<PublicLayout />}>
+          <Route
+            path="/"
+            element={
+              <GuestLanding>
+                <LandingPage />
+              </GuestLanding>
+            }
+          />
+          <Route
+            path="/solicitar-demo"
+            element={
+              <GuestLanding>
+                <SolicitarDemoPage />
+              </GuestLanding>
+            }
+          />
+          <Route path="/politica-privacidad" element={<PoliticaPrivacidadPage />} />
+        </Route>
+
         {/* ── Operacion ── */}
         <Route element={<RequireOperacion />}>
-          <Route index path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardOverview />} />
           <Route path="/motores" element={<MotorsPage />} />
           <Route path="/motores/:id" element={<MotorCockpitPage />} />

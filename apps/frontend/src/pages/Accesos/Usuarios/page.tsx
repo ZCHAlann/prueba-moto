@@ -167,7 +167,6 @@ function formToCreateInput(form: UserFormState): CreateCompanyUserInput {
   };
 }
 
-
 function formToUpdateInput(form: UserFormState): UpdateCompanyUserInput {
   const input: UpdateCompanyUserInput = {
     email:    form.email.trim().toLowerCase(),
@@ -189,6 +188,7 @@ function formToUpdateInput(form: UserFormState): UpdateCompanyUserInput {
   return input;
 }
 
+// FIX 1 — userToForm: fallback a firstName + lastName cuando no hay fullName
 function userToForm(user: CompanyUser): UserFormState {
   const p = user.profileData;
   return {
@@ -200,7 +200,11 @@ function userToForm(user: CompanyUser): UserFormState {
     permissions:    Object.keys(user.modulePermissions).length > 0
                       ? user.modulePermissions
                       : ROLE_DEFAULT_PERMISSIONS[user.role] ?? {},
-    fullName:       String(p.fullName ?? ""),  
+    fullName:       String(
+                      p.fullName ??
+                      [p.firstName, p.lastName].filter(Boolean).join(" ") ??
+                      ""
+                    ),
     lastName:       String(p.lastName ?? ""),
     phone:          String(p.phone ?? ""),
     site:           String(p.site ?? ""),
@@ -250,33 +254,42 @@ function FormField({
   );
 }
 
-// ─── KPI Card ─────────────────────────────────────────────────────────────────
+// ─── KPI Card — FIX 4: barra lateral + ícono + fondo por acento ───────────────
 
 function KpiCard({
   label,
   value,
   detail,
   accent,
+  icon,
 }: {
   label: string;
   value: string;
   detail: string;
-  accent: "blue" | "green" | "yellow" | "red";
+  accent: "blue" | "green" | "red" | "yellow";
+  icon: React.ReactNode;
 }) {
-  const dot: Record<typeof accent, string> = {
-    blue:   "bg-blue-500",
-    green:  "bg-green-500",
-    yellow: "bg-yellow-400",
-    red:    "bg-red-500",
-  };
+  const cfg = {
+    blue:   { bar: "bg-blue-500",   bg: "bg-blue-50 dark:bg-blue-500/10",     text: "text-blue-600 dark:text-blue-400"   },
+    green:  { bar: "bg-green-500",  bg: "bg-green-50 dark:bg-green-500/10",   text: "text-green-600 dark:text-green-400" },
+    red:    { bar: "bg-red-500",    bg: "bg-red-50 dark:bg-red-500/10",       text: "text-red-600 dark:text-red-400"     },
+    yellow: { bar: "bg-yellow-400", bg: "bg-yellow-50 dark:bg-yellow-500/10", text: "text-yellow-600 dark:text-yellow-400" },
+  }[accent];
+
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] px-5 py-4">
-      <div className="flex items-center gap-2 mb-1">
-        <span className={`h-2 w-2 rounded-full ${dot[accent]}`} />
-        <p className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide">{label}</p>
+    <div className="relative rounded-xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] px-5 py-4 overflow-hidden flex items-start gap-4">
+      {/* Barra lateral de color */}
+      <div className={`absolute left-0 top-0 bottom-0 w-1 ${cfg.bar}`} />
+      {/* Ícono */}
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${cfg.bg} ${cfg.text}`}>
+        {icon}
       </div>
-      <p className="text-2xl font-bold text-gray-800 dark:text-white">{value}</p>
-      <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{detail}</p>
+      {/* Texto */}
+      <div>
+        <p className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide">{label}</p>
+        <p className="text-2xl font-bold text-gray-800 dark:text-white leading-tight">{value}</p>
+        <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{detail}</p>
+      </div>
     </div>
   );
 }
@@ -468,13 +481,11 @@ function PermissionEditor({
     let next: ActionKey[];
 
     if (action === "ver") {
-      // desmarcar Ver → quitar todo
       next = current.includes("ver") ? [] : ["ver"];
     } else {
       if (current.includes(action)) {
         next = current.filter((a) => a !== action);
       } else {
-        // marcar cualquier acción → asegurar Ver
         next = current.includes("ver")
           ? [...current, action]
           : ["ver", ...current, action];
@@ -517,7 +528,6 @@ function PermissionEditor({
             key={modKey}
             className="rounded-xl border border-gray-200 dark:border-white/[0.06] overflow-hidden"
           >
-            {/* Module header */}
             <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 dark:bg-white/[0.03]">
               <button
                 type="button"
@@ -551,7 +561,6 @@ function PermissionEditor({
               </div>
             </div>
 
-            {/* Submodules */}
             <AnimatePresence initial={false}>
               {isOpen && (
                 <motion.div
@@ -630,6 +639,7 @@ function UserFormModal({
   useEffect(() => {
     if (open) {
       if (user) {
+        console.log("userToForm input:", user)
         setForm(userToForm(user));
         setUsernameTouched(true);
       } else {
@@ -645,7 +655,6 @@ function UserFormModal({
     setForm((prev) => {
       const next = { ...prev, [key]: value };
 
-      // Auto-username cuando no se está editando y no se tocó manualmente
       if (!user && !usernameTouched && (key === "fullName" || key === "documentNumber")) {
         next.username = autoUsername(
           key === "fullName" ? value : prev.fullName,
@@ -653,7 +662,6 @@ function UserFormModal({
         );
       }
 
-      // Auto permissions cuando cambia el rol
       if (key === "role") {
         next.permissions = ROLE_DEFAULT_PERMISSIONS[value] ?? {};
       }
@@ -960,17 +968,30 @@ export function UsersPage() {
     [sites]
   );
 
+  // FIX 3 — Buscador: cubre displayName, firstName, lastName y roleLabel
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return users;
-    return users.filter(
-      (u) =>
+    return users.filter((u) => {
+      const p = u.profileData;
+      const displayName = (
+        String(p.fullName ?? "") ||
+        [String(p.firstName ?? ""), String(p.lastName ?? "")]
+          .filter(Boolean).join(" ")
+      ).toLowerCase();
+      const roleLabel = (ROLE_LABELS[u.role] ?? u.role).toLowerCase();
+
+      return (
         u.email.toLowerCase().includes(q) ||
         u.username.toLowerCase().includes(q) ||
         u.role.toLowerCase().includes(q) ||
-        String(u.profileData.fullName ?? "").toLowerCase().includes(q) ||
-        String(u.profileData.site ?? "").toLowerCase().includes(q),
-    );
+        roleLabel.includes(q) ||
+        displayName.includes(q) ||
+        String(p.lastName ?? "").toLowerCase().includes(q) ||
+        String(p.firstName ?? "").toLowerCase().includes(q) ||
+        String(p.site ?? "").toLowerCase().includes(q)
+      );
+    });
   }, [query, users]);
 
   const openCreate = () => { setEditingUser(null); setModalOpen(true); };
@@ -1032,12 +1053,58 @@ export function UsersPage() {
           )}
         </div>
 
-        {/* ── KPI row ── */}
+        {/* ── KPI row — FIX 4: KpiCard con ícono + barra lateral ── */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiCard label="Total usuarios" value={String(users.length)}     detail="Base total de la empresa"  accent="blue"   />
-          <KpiCard label="Activos"         value={String(totalActive)}      detail="Con acceso operativo"      accent="green"  />
-          <KpiCard label="Inactivos"       value={String(totalInactive)}    detail="Acceso suspendido"         accent="red"    />
-          <KpiCard label="Módulos" value={String(Object.keys(MODULE_TREE).length)} detail="Disponibles para asignar" accent="yellow" />
+          <KpiCard
+            label="Total usuarios"
+            value={String(users.length)}
+            detail="Base total de la empresa"
+            accent="blue"
+            icon={
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+              </svg>
+            }
+          />
+          <KpiCard
+            label="Activos"
+            value={String(totalActive)}
+            detail="Con acceso operativo"
+            accent="green"
+            icon={
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+            }
+          />
+          <KpiCard
+            label="Inactivos"
+            value={String(totalInactive)}
+            detail="Acceso suspendido"
+            accent="red"
+            icon={
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="15" y1="9" x2="9" y2="15"/>
+                <line x1="9" y1="9" x2="15" y2="15"/>
+              </svg>
+            }
+          />
+          <KpiCard
+            label="Módulos"
+            value={String(Object.keys(MODULE_TREE).length)}
+            detail="Disponibles para asignar"
+            accent="yellow"
+            icon={
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+              </svg>
+            }
+          />
         </div>
 
         {/* ── Table card ── */}
@@ -1096,61 +1163,76 @@ export function UsersPage() {
                 <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
                   {filtered.map((u) => {
                     const p = u.profileData;
-                    const fullName = [String(p.fullName ?? ""), String(p.lastName ?? "")].filter(Boolean).join(" ") || "—";
+
+                    // FIX 2 — Columna Colaborador: fallback a firstName + lastName
+                    const fullName =
+                      String(p.fullName ?? "") ||
+                      [String(p.firstName ?? ""), String(p.lastName ?? "")]
+                        .filter(Boolean).join(" ") ||
+                      "—";
+
                     const documentNumber = String(p.documentNumber ?? "");
-                    const site = String(p.site ?? "—");
+                    const site = String(p.site ?? "Operativo");
                     const area = String(p.area ?? "");
 
                     return (
-                        <tr key={u.id} className="group hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors">
+                      <tr key={u.id} className="group hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors">
                         {/* Colaborador */}
                         <td className="px-5 py-3.5">
-                            <p className="font-semibold text-sm text-gray-800 dark:text-white">{fullName}</p>
-                            {documentNumber && (
+                          <p className="font-semibold text-sm text-gray-800 dark:text-white">{fullName}</p>
+                          {documentNumber && (
                             <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{documentNumber}</p>
-                            )}
+                          )}
                         </td>
                         {/* Credenciales */}
                         <td className="px-5 py-3.5">
-                            <p className="text-sm font-medium text-gray-800 dark:text-white">@{u.username}</p>
-                            <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{u.email}</p>
+                          <p className="text-sm font-medium text-gray-800 dark:text-white">@{u.username}</p>
+                          <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{u.email}</p>
                         </td>
                         {/* Laboral */}
                         <td className="px-5 py-3.5">
-                            <p className="text-sm text-gray-700 dark:text-gray-300">{site}</p>
-                            {area && (
+                          <p className="text-sm text-gray-700 dark:text-gray-300">{site}</p>
+                          {area && (
                             <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{area}</p>
-                            )}
+                          )}
                         </td>
                         {/* Rol */}
                         <td className="px-5 py-3.5">
-                            <RoleBadge role={u.role} />
+                          <RoleBadge role={u.role} />
                         </td>
-                        {/* Módulos */}
+                        {/* FIX 5 — Módulos: badge "Acceso total" para admin/owner */}
                         <td className="px-5 py-3.5">
-                            <span className="text-sm font-medium text-gray-800 dark:text-white">
-                              {Object.keys(u.modulePermissions).length}
+                          {["owner_empresa", "admin_empresa"].includes(u.role) ? (
+                            <span className="inline-flex items-center rounded-full bg-purple-50 dark:bg-purple-500/10 px-2 py-0.5 text-xs font-medium text-purple-700 dark:text-purple-400">
+                              Acceso total
                             </span>
-                            <span className="ml-1 text-xs text-gray-400 dark:text-gray-500">
-                              / {Object.keys(MODULE_TREE).length}
-                            </span>
+                          ) : (
+                            <>
+                              <span className="text-sm font-medium text-gray-800 dark:text-white">
+                                {Object.keys(u.modulePermissions).length}
+                              </span>
+                              <span className="ml-1 text-xs text-gray-400 dark:text-gray-500">
+                                / {Object.keys(MODULE_TREE).length}
+                              </span>
+                            </>
+                          )}
                         </td>
                         {/* Estado */}
                         <td className="px-5 py-3.5">
-                            <StatusBadge status={u.status} />
+                          <StatusBadge status={u.status} />
                         </td>
                         {/* Acciones */}
                         <td className="px-5 py-3.5">
-                            {canManage && (
+                          {canManage && (
                             <RowMenu
-                                onEdit={() => openEdit(u)}
-                                onDelete={() => setDeleteTarget(u)}
+                              onEdit={() => openEdit(u)}
+                              onDelete={() => setDeleteTarget(u)}
                             />
-                            )}
+                          )}
                         </td>
-                        </tr>
+                      </tr>
                     );
-                    })}
+                  })}
                 </tbody>
               </table>
             </div>

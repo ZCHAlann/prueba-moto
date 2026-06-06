@@ -41,6 +41,7 @@ export type Asset = {
   oilType: string;
   oilCapacity: string;
   photoUrls: string[]; 
+  garageId: string | null;
 };
 
 export type AssetDocumentStatus = "Vigente" | "Por vencer" | "Vencido";

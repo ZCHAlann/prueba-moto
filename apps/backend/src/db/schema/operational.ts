@@ -1,3 +1,4 @@
+
 import {
   pgTable,
   pgEnum,
@@ -96,7 +97,7 @@ export const companySites = pgTable(
 );
 
 // ─────────────────────────────────────────────
-// Activos
+// Activos  (EXTENDIDO con telemática + GPS)
 // ─────────────────────────────────────────────
 
 export const companyAssets = pgTable(
@@ -107,10 +108,11 @@ export const companyAssets = pgTable(
       .notNull()
       .references(() => companies.id, { onDelete: 'cascade' }),
     siteId: integer('site_id').references(() => companySites.id, { onDelete: 'set null' }),
+    garageId: integer('garage_id').references(() => companyGarages.id, { onDelete: 'set null' }),
     code: varchar('code', { length: 40 }).notNull(),
     name: varchar('name', { length: 160 }).notNull(),
     assetType: assetTypeEnum('asset_type'),
-    category: assetCategoryEnum('category'),          // nullable — solo aplica a Vehiculo
+    category: assetCategoryEnum('category'),
     status: assetStatusEnum('status').default('Operativo'),
     responsible: varchar('responsible', { length: 160 }),
     brand: varchar('brand', { length: 120 }),
@@ -127,6 +129,16 @@ export const companyAssets = pgTable(
     availability: assetAvailabilityEnum('availability'),
     observations: text('observations'),
     photoUrls: text('photo_urls').array().default([]),
+
+    // ── NUEVO: telemática ────────────────────
+    engineOn: boolean('engine_on').default(false),
+    locked: boolean('locked').default(false),
+
+    // ── NUEVO: GPS en tiempo real ─────────────
+    lastLat: doublePrecision('last_lat'),
+    lastLng: doublePrecision('last_lng'),
+    lastGpsAt: timestamp('last_gps_at'),
+
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
@@ -190,19 +202,19 @@ export const companyAssignments = pgTable(
     // ── Acta de entrega ──────────────────────
     actaNumber:       varchar('acta_number',       { length: 40 }),
     actaDate:         date('acta_date'),
-    actaTime:         varchar('acta_time',          { length: 10 }),
-    actaPlace:        varchar('acta_place',         { length: 160 }),
-    actaArea:         varchar('acta_area',          { length: 120 }),
+    actaTime:         varchar('acta_time',         { length: 10 }),
+    actaPlace:        varchar('acta_place',        { length: 160 }),
+    actaArea:         varchar('acta_area',         { length: 120 }),
 
     // ── Conductor al momento del acta ────────
-    driverDni:        varchar('driver_dni',         { length: 40 }),
-    driverPhone:      varchar('driver_phone',       { length: 40 }),
-    driverRole:       varchar('driver_role',        { length: 120 }),
+    driverDni:        varchar('driver_dni',        { length: 40 }),
+    driverPhone:      varchar('driver_phone',      { length: 40 }),
+    driverRole:       varchar('driver_role',       { length: 120 }),
 
     // ── Estado del vehículo ──────────────────
-    vehicleOdometer:  varchar('vehicle_odometer',   { length: 40 }),
-    vehicleFuelLevel: varchar('vehicle_fuel_level', { length: 40 }),
-    vehicleCondition: varchar('vehicle_condition',  { length: 80 }),
+    vehicleOdometer:  varchar('vehicle_odometer',  { length: 40 }),
+    vehicleFuelLevel: varchar('vehicle_fuel_level',{ length: 40 }),
+    vehicleCondition: varchar('vehicle_condition', { length: 80 }),
 
     // ── Checklists ───────────────────────────
     novedades:        jsonb('novedades').default({}),
@@ -429,10 +441,6 @@ export const companyAcUnits = pgTable(
   (table) => [unique('company_ac_units_company_id_code').on(table.companyId, table.code)]
 );
 
-// ─────────────────────────────────────────────
-// Servicios AC
-// ─────────────────────────────────────────────
-
 export const companyAcServices = pgTable('company_ac_services', {
   id: serial('id').primaryKey(),
   companyId: serial('company_id')
@@ -450,10 +458,6 @@ export const companyAcServices = pgTable('company_ac_services', {
   notes: text('notes'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
-
-// ─────────────────────────────────────────────
-// Recargas refrigerante
-// ─────────────────────────────────────────────
 
 export const companyAcRefrigerantLogs = pgTable('company_ac_refrigerant_logs', {
   id: serial('id').primaryKey(),
@@ -511,7 +515,6 @@ export const oilChecks = pgTable('oil_checks', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
-
 export const companyOilTypes = pgTable(
   'company_oil_types',
   {
@@ -555,31 +558,84 @@ export const companyOilChanges = pgTable('company_oil_changes', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// ─────────────────────────────────────────────
 // Seguros
+// ─────────────────────────────────────────────
 
 export const companyInsurancePolicies = pgTable('company_insurance_policies', {
   id: serial('id').primaryKey(),
- 
   companyId: serial('company_id')
     .notNull()
     .references(() => companies.id, { onDelete: 'cascade' }),
- 
   assetId: integer('asset_id')
     .notNull()
     .references(() => companyAssets.id, { onDelete: 'cascade' }),
- 
   insurer: varchar('insurer', { length: 160 }).notNull(),
   policyNumber: varchar('policy_number', { length: 120 }).notNull(),
   coverage: varchar('coverage', { length: 255 }),
- 
   startDate: date('start_date').notNull(),
   endDate:   date('end_date').notNull(),
- 
-  // 'Vigente' | 'Por vencer' | 'Vencido'
   status: varchar('status', { length: 40 }).default('Vigente'),
- 
   notes: text('notes'),
- 
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ═════════════════════════════════════════════
+// NUEVO — asset_notes  (notas del cockpit)
+// ═════════════════════════════════════════════
+
+export const assetNotes = pgTable('asset_notes', {
+  id:        serial('id').primaryKey(),
+  companyId: integer('company_id')
+               .notNull()
+               .references(() => companies.id, { onDelete: 'cascade' }),
+  assetId:   integer('asset_id')
+               .notNull()
+               .references(() => companyAssets.id, { onDelete: 'cascade' }),
+  authorId:  integer('author_id')
+               .references(() => companyUsers.id, { onDelete: 'set null' }),
+  authorName: varchar('author_name', { length: 160 }),
+  body:      text('body').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ═════════════════════════════════════════════
+// NUEVO — asset_routes  (rutas registradas)
+// ═════════════════════════════════════════════
+
+export const assetRoutes = pgTable('asset_routes', {
+  id:           serial('id').primaryKey(),
+  companyId:    integer('company_id')
+                  .notNull()
+                  .references(() => companies.id, { onDelete: 'cascade' }),
+  assetId:      integer('asset_id')
+                  .notNull()
+                  .references(() => companyAssets.id, { onDelete: 'cascade' }),
+  driverId:     integer('driver_id')
+                  .references(() => companyDrivers.id, { onDelete: 'set null' }),
+  date:         date('date').notNull(),
+  origin:       varchar('origin', { length: 255 }),
+  destination:  varchar('destination', { length: 255 }),
+  distanceKm:   doublePrecision('distance_km'),
+  durationMin:  integer('duration_min'),
+  // GeoJSON LineString o array de [lat, lng] serializado
+  coordinates:  jsonb('coordinates').default([]),
+  notes:        text('notes'),
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+});
+
+export const companyDriverReports = pgTable('company_driver_reports', {
+  id:            serial('id').primaryKey(),
+  companyId:     serial('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  driverId:      serial('driver_id').notNull().references(() => companyDrivers.id, { onDelete: 'cascade' }),
+  driverName:    varchar('driver_name', { length: 160 }),
+  fuelLevel:     varchar('fuel_level', { length: 20 }),
+  oilLevel:      varchar('oil_level', { length: 20 }),
+  vehicleFaults: text('vehicle_faults'),
+  invoices:      jsonb('invoices').default([]),
+  fileUrls:      text('file_urls').array().default([]),
+  createdAt:     timestamp('created_at').notNull().defaultNow(),
+  updatedAt:     timestamp('updated_at').notNull().defaultNow(),
 });

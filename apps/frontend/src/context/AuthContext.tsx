@@ -29,6 +29,7 @@ export type AuthSession = {
   roleLabel: string;
   companyId: string | null;
   scope: "operacion" | "plataforma";
+  companyName: string;
 };
 
 type LoginInput  = { email: string; password: string; remember: boolean };
@@ -65,6 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (mounted && data) {
           setSession({
             ...data,
+            companyName:       data.companyName ?? "",
             companyModules:    data.companyModules ?? [],
             modulePermissions: data.modulePermissions ?? {},
             permissions:       data.permissions ?? {},

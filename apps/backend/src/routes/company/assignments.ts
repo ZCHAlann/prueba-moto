@@ -269,9 +269,97 @@ function serializeAssignment(a: typeof companyAssignments.$inferSelect) {
     status: a.status,
     notes: a.notes,
     handoverUrl: a.handoverUrl,
+    // ── Acta ──────────────────────────────────
+    actaNumber:       a.actaNumber,
+    actaDate:         a.actaDate,
+    actaTime:         a.actaTime,
+    actaPlace:        a.actaPlace,
+    actaArea:         a.actaArea,
+    driverDni:        a.driverDni,
+    driverPhone:      a.driverPhone,
+    driverRole:       a.driverRole,
+    vehicleOdometer:  a.vehicleOdometer,
+    vehicleFuelLevel: a.vehicleFuelLevel,
+    vehicleCondition: a.vehicleCondition,
+    novedades:        a.novedades,
+    accesorios:       a.accesorios,
+    novedadesText:    a.novedadesText,
+    signatureLogUrl:  a.signatureLogUrl,
+    signatureRespUrl: a.signatureRespUrl,
+    vehiclePhotoUrls: a.vehiclePhotoUrls ?? [],
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
   };
 }
+
+// ─── PUT /company/:id/assignments/:assignId/handover ──────────────────────────
+
+const handoverSchema = z.object({
+  actaNumber:       z.string().optional().nullable(),
+  actaDate:         z.string().optional().nullable(),
+  actaTime:         z.string().optional().nullable(),
+  actaPlace:        z.string().optional().nullable(),
+  actaArea:         z.string().optional().nullable(),
+  driverDni:        z.string().optional().nullable(),
+  driverPhone:      z.string().optional().nullable(),
+  driverRole:       z.string().optional().nullable(),
+  vehicleOdometer:  z.string().optional().nullable(),
+  vehicleFuelLevel: z.string().optional().nullable(),
+  vehicleCondition: z.string().optional().nullable(),
+  novedades:        z.record(z.unknown()).optional(),
+  accesorios:       z.record(z.unknown()).optional(),
+  novedadesText:    z.string().optional().nullable(),
+  signatureLogUrl:  z.string().optional().nullable(),
+  signatureRespUrl: z.string().optional().nullable(),
+  vehiclePhotoUrls: z.array(z.string()).optional(),
+  handoverUrl:      z.string().optional().nullable(),
+});
+
+router.put(
+  '/:assignId/handover',
+  requireModule('asignaciones'),
+  requireSupervisor,
+  validate(handoverSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const assignId = parseId('assignment', req.params.assignId);
+      const body = req.body as z.infer<typeof handoverSchema>;
+
+      const existing = await db
+        .select()
+        .from(companyAssignments)
+        .where(and(
+          eq(companyAssignments.id, assignId),
+          eq(companyAssignments.companyId, companyId)
+        ))
+        .limit(1);
+
+      if (!existing.length) throw new NotFoundError('Asignación', req.params.assignId);
+
+      const [updated] = await db
+        .update(companyAssignments)
+        .set({ ...body, updatedAt: new Date() })
+        .where(and(
+          eq(companyAssignments.id, assignId),
+          eq(companyAssignments.companyId, companyId)
+        ))
+        .returning();
+
+      await logAudit(db, companyId, {
+        entity: 'assignments',
+        entityId: toId('assignment', updated.id),
+        action: 'handover',
+        actorId: req.user!.sub,
+        actorName: req.user!.name,
+        description: `Acta de entrega registrada para asignación "${toId('assignment', updated.id)}".`,
+      });
+
+      res.json(serializeAssignment(updated));
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 export default router;

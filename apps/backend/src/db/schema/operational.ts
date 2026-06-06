@@ -186,6 +186,36 @@ export const companyAssignments = pgTable(
     status: varchar('status', { length: 40 }).default('Activa'),
     notes: text('notes'),
     handoverUrl: text('handover_url'),
+
+    // ── Acta de entrega ──────────────────────
+    actaNumber:       varchar('acta_number',       { length: 40 }),
+    actaDate:         date('acta_date'),
+    actaTime:         varchar('acta_time',          { length: 10 }),
+    actaPlace:        varchar('acta_place',         { length: 160 }),
+    actaArea:         varchar('acta_area',          { length: 120 }),
+
+    // ── Conductor al momento del acta ────────
+    driverDni:        varchar('driver_dni',         { length: 40 }),
+    driverPhone:      varchar('driver_phone',       { length: 40 }),
+    driverRole:       varchar('driver_role',        { length: 120 }),
+
+    // ── Estado del vehículo ──────────────────
+    vehicleOdometer:  varchar('vehicle_odometer',   { length: 40 }),
+    vehicleFuelLevel: varchar('vehicle_fuel_level', { length: 40 }),
+    vehicleCondition: varchar('vehicle_condition',  { length: 80 }),
+
+    // ── Checklists ───────────────────────────
+    novedades:        jsonb('novedades').default({}),
+    accesorios:       jsonb('accesorios').default({}),
+    novedadesText:    text('novedades_text'),
+
+    // ── Firmas ───────────────────────────────
+    signatureLogUrl:  text('signature_log_url'),
+    signatureRespUrl: text('signature_resp_url'),
+
+    // ── Fotos del vehículo ───────────────────
+    vehiclePhotoUrls: text('vehicle_photo_urls').array().default([]),
+
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   }

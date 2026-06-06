@@ -18,6 +18,7 @@ const ALLOWED_CATEGORIES = [
   'assignments',
   'assets',
   'general',
+  'handover-pdfs',
 ] as const;
 
 type UploadCategory = (typeof ALLOWED_CATEGORIES)[number];
@@ -95,6 +96,28 @@ router.post('/driver-photos', uploadHandler('drivers'));
 router.post('/assignment-photos', uploadHandler('assignments'));
 router.post('/ac-photos', uploadHandler('ac'));
 router.post('/user-photos', uploadHandler('users'));
+
+// PDF actas de entrega
+router.post('/handover-pdf', (req: Request, res: Response, next: NextFunction) => {
+  const companyId = req.query.companyId as string | undefined;
+  const folder = companyId ? `handover-pdfs/${companyId}` : 'handover-pdfs'; 
+
+  const upload = multer({
+    storage: buildStorage(folder), // ← usar folder con companyId
+    limits: { fileSize: 20 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype === 'application/pdf') cb(null, true);
+      else cb(new AppError(400, 'Solo se aceptan PDFs aquí.'));
+    },
+  }).single('pdf');
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    const file = req.file;
+    if (!file) return next(new AppError(400, 'No se recibió el PDF.'));
+    res.json({ url: `/uploads/${folder}/${file.filename}` });
+  });
+});
 
 // Genérico
 router.post('/photos', (req: Request, res: Response, next: NextFunction) => {

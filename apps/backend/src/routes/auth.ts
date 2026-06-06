@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { db } from '../db/client';
-import { platformUsers, companyUsers, platformSettings } from '../db/schema';
+import { platformUsers, companyUsers, platformSettings, companies } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { validate } from '../lib/validate';
 import { hashPassword, verifyPassword, signToken } from '../services/auth.service';
@@ -316,20 +316,37 @@ router.post('/refresh', authenticate, async (req, res, next) => {
 
 // ─── GET /auth/session ────────────────────────────────────────────────────────
 
-router.get("/session", authenticate, (req, res) => {
-  const user = req.user!;
-  return res.json({
-    id:                user.sub,
-    email:             user.email,
-    name:              user.name,
-    role:              user.role,
-    scope:             user.scope,
-    companyId:         user.companyId ? String(user.companyId) : null,
-    companyModules:    user.companyModules ?? [],     // ← agregar
-    modulePermissions: user.modulePermissions ?? {},  // ← cambió [] por {}
-    permissions:       user.permissions ?? {},
-  });
+router.get("/session", authenticate, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    let companyName = "";
+
+    if (user.companyId) {
+      const [company] = await db
+        .select({ name: companies.name })
+        .from(companies)
+        .where(eq(companies.id, Number(user.companyId)))
+        .limit(1);
+      companyName = company?.name ?? "";
+    }
+
+    return res.json({
+      id:                user.sub,
+      email:             user.email,
+      name:              user.name,
+      role:              user.role,
+      scope:             user.scope,
+      companyId:         user.companyId ? String(user.companyId) : null,
+      companyName,
+      companyModules:    user.companyModules ?? [],
+      modulePermissions: user.modulePermissions ?? {},
+      permissions:       user.permissions ?? {},
+    });
+  } catch (err) {
+    next(err);
+  }
 });
+
 // ─── POST /auth/logout ────────────────────────────────────────────────────────
 
 router.post("/logout", (req, res) => {

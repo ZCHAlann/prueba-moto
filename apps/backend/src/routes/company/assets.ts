@@ -243,6 +243,7 @@ router.delete(
 // ─── Serializer ───────────────────────────────────────────────────────────────
 
 function serializeAsset(a: typeof companyAssets.$inferSelect) {
+  console.log("serialize siteId:", a.siteId);
   return {
     id: toId('asset', a.id),
     companyId: toId('company', a.companyId),

@@ -317,7 +317,7 @@ export function GaragesPage() {
 
   const garageRows = useMemo(
     () => garages.map((g) => {
-      const vehicles = assets.filter((a) => a.location === g.name || a.site === g.name);
+      const vehicles = assets.filter((a) => a.garageId === g.id);
       return { ...g, vehicles, occupied: vehicles.length };
     }),
     [garages, assets]
@@ -345,7 +345,7 @@ export function GaragesPage() {
   const totalOccupied = garageRows.reduce((s, g) => s + g.occupied, 0);
   const globalPct     = totalCapacity > 0 ? Math.round((totalOccupied / totalCapacity) * 100) : 0;
   const fullGarages   = garageRows.filter((g) => g.capacity > 0 && g.occupied >= g.capacity).length;
-  const freeAssets    = assets.filter((a) => !garages.some((g) => g.name === a.location || g.name === a.site)).length;
+  const freeAssets = assets.filter((a) => !a.garageId).length;
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   function openCreate() { setEditingId(null); setForm(emptyForm()); setModalOpen(true); }

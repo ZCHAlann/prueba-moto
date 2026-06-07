@@ -22,6 +22,7 @@ export type Asset = {
   category: AssetCategory;
   status: AssetStatus;
   site: string;
+  siteId: string | null;
   responsible: string;
   brand: string;
   model: string;

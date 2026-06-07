@@ -18,7 +18,7 @@ type UseSitesReturn = {
 
 function mapApiToSite(data: Record<string, unknown>, companyId: string): OperationalSite {
   return {
-    id: String(data.id),
+    id: String(data.id ?? ""),
     tenantId: `tenant-company-${companyId}`,
     code: String(data.code ?? ""),
     name: String(data.name ?? ""),

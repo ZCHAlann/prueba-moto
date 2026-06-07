@@ -105,6 +105,7 @@ export const platformUsers = pgTable('platform_users', {
   status: varchar('status', { length: 40 }).notNull().default('active'),
   failedLoginAttempts: integer('failed_login_attempts').default(0),
   lockedUntil:        timestamp('locked_until'),
+  photoUrl: text('photo_url'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
   
@@ -128,6 +129,7 @@ export const companyUsers = pgTable(
     modulePermissions: jsonb('module_permissions').notNull().default({}),
     failedLoginAttempts: integer('failed_login_attempts').default(0),
     lockedUntil:        timestamp('locked_until'),
+    photoUrl: text('photo_url'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },

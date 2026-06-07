@@ -8,34 +8,33 @@ import { logAudit } from '../../lib/audit';
 import { toId, parseId } from '../../lib/ids';
 import { AppError, NotFoundError } from '../../lib/errors';
 
-const router = Router({ mergeParams: true }); // necesario para leer :companyId del padre
-
+const router = Router({ mergeParams: true });
 
 function getJwtIdentity(req: Express.Request): { userId: number; companyId: number } {
-  console.log(req.user)
   const sub = req.user?.sub;
   const rawCompanyId = req.user?.companyId;
 
   if (!sub || !rawCompanyId) {
     throw new AppError(401, 'Token de sesión inválido o sin empresa asociada.');
   }
-
   if (!sub.startsWith('company-user-')) {
-    // Los platform-users (superadmin, etc.) no tienen empresa — no deben usar esta ruta.
     throw new AppError(403, 'Esta ruta es exclusiva para usuarios de empresa.');
   }
 
-  const userId = parseId('company-user', sub);
-  const companyId = Number(rawCompanyId); 
+  const userId    = parseId('company-user', sub);
+  const companyId = Number(rawCompanyId);
   return { userId, companyId };
 }
 
-// ─── Schemas de validación ────────────────────────────────────────────────────
+// ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const updateProfileSchema = z.object({
   firstName : z.string().min(1).max(80).optional(),
   lastName  : z.string().min(1).max(80).optional(),
   username  : z.string().min(3).max(80).optional(),
+  // photoUrl: columna real — puede ser data-URI (base64) o URL externa, o null para eliminar
+  photoUrl  : z.string().max(5_000_000).nullable().optional(),  // ~3.75 MB en base64
+  // avatarUrl legado en profileData — se sigue aceptando por compatibilidad
   avatarUrl : z.string().max(2048).optional(),
   phone     : z.string().max(30).optional(),
   timezone  : z.string().max(60).optional(),
@@ -59,8 +58,6 @@ router.get('/', async (req, res, next) => {
   try {
     const { userId, companyId } = getJwtIdentity(req);
 
-    // WHERE id = userId AND company_id = companyId
-    // Si alguien falsifica la URL con otro companyId → 0 filas → 404.
     const [user] = await db
       .select()
       .from(companyUsers)
@@ -84,11 +81,14 @@ router.get('/', async (req, res, next) => {
       username  : user.username,
       role      : user.role,
       status    : user.status,
+      // ── Columna real (fuente de verdad para la foto) ──────────────────────
+      photoUrl  : user.photoUrl ?? null,
       profile   : {
         firstName : profileData.firstName ?? '',
         lastName  : profileData.lastName  ?? '',
         title     : profileData.title     ?? '',
         phone     : profileData.phone     ?? '',
+        // avatarUrl legado — se mantiene por si aún hay código que lo lee
         avatarUrl : profileData.avatarUrl ?? '',
         timezone  : profileData.timezone  ?? 'America/Guayaquil',
         language  : profileData.language  ?? 'es',
@@ -117,7 +117,6 @@ router.patch('/', async (req, res, next) => {
 
     const data = parsed.data;
 
-    // Verificar que el usuario existe en ESA empresa antes de tocar nada.
     const [existing] = await db
       .select()
       .from(companyUsers)
@@ -131,26 +130,28 @@ router.patch('/', async (req, res, next) => {
 
     if (!existing) throw new NotFoundError('Usuario', toId('company-user', userId));
 
-    // Construir el profileData actualizado (merge superficial).
+    // ── profileData: merge superficial para campos dentro del JSONB ──────────
     const currentProfile = (existing.profileData as Record<string, unknown>) ?? {};
     const nextProfile: Record<string, unknown> = { ...currentProfile };
 
     if (data.firstName !== undefined) nextProfile.firstName = data.firstName;
     if (data.lastName  !== undefined) nextProfile.lastName  = data.lastName;
     if (data.phone     !== undefined) nextProfile.phone     = data.phone;
-    if (data.avatarUrl !== undefined) nextProfile.avatarUrl = data.avatarUrl;
+    if (data.avatarUrl !== undefined) nextProfile.avatarUrl = data.avatarUrl; // legado
     if (data.timezone  !== undefined) nextProfile.timezone  = data.timezone;
     if (data.language  !== undefined) nextProfile.language  = data.language;
 
+    // ── Columnas propias de la tabla ─────────────────────────────────────────
     const updateData: Record<string, unknown> = {
       profileData : nextProfile,
       updatedAt   : new Date(),
     };
 
-    // username vive en columna propia, no en profileData.
     if (data.username !== undefined) updateData.username = data.username;
 
-    // UPDATE también filtra por companyId — doble seguro.
+    // photoUrl: columna real — null elimina la foto, string la actualiza
+    if (data.photoUrl !== undefined) updateData.photoUrl = data.photoUrl;
+
     const [updated] = await db
       .update(companyUsers)
       .set(updateData)
@@ -195,12 +196,8 @@ router.patch('/password', async (req, res, next) => {
 
     const { currentPassword, newPassword } = parsed.data;
 
-    // Buscar el hash actual filtrando por userId Y companyId simultáneamente.
     const [user] = await db
-      .select({
-        passwordHash : companyUsers.passwordHash,
-        companyId    : companyUsers.companyId,
-      })
+      .select({ passwordHash: companyUsers.passwordHash, companyId: companyUsers.companyId })
       .from(companyUsers)
       .where(
         and(
@@ -212,7 +209,6 @@ router.patch('/password', async (req, res, next) => {
 
     if (!user) throw new NotFoundError('Usuario', toId('company-user', userId));
 
-    // Verificar contraseña actual — si falla, 422 con field para el stepper.
     const isValid = await verifyPassword(currentPassword, user.passwordHash);
     if (!isValid) {
       return res.status(422).json({
@@ -223,7 +219,6 @@ router.patch('/password', async (req, res, next) => {
 
     const newHash = await hashPassword(newPassword);
 
-    // UPDATE también filtra por companyId — nunca toca otra empresa.
     await db
       .update(companyUsers)
       .set({ passwordHash: newHash, updatedAt: new Date() })

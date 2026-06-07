@@ -10,6 +10,7 @@ import { MotorEditModal } from "../../components/motors/motor-editar-modal";
 import type { Asset } from "../../types/activo";
 import { useNavigate } from "react-router";
 import { usePermissions } from "../../hooks/usePermissions";
+import { useGarages } from "../../hooks/useGarages";
 
 /* ── Confirm delete dialog ── */
 function ConfirmDeleteDialog({
@@ -246,10 +247,12 @@ export function MotorsPage() {
   const [motorToDelete, setMotorToDelete] = useState<Asset | null>(null);
   const [deleting, setDeleting] = useState(false);
   const navigate = useNavigate();
+  const { garages } = useGarages();
 
   const canCreate = can("motores", "lista_motores", "crear");
   const canEdit   = can("motores", "lista_motores", "editar");
   const canDelete = can("motores", "lista_motores", "eliminar");
+  
 
   const filtered = useMemo(() => {
     const value = query.trim().toLowerCase();
@@ -406,7 +409,11 @@ export function MotorsPage() {
                         <span className="font-medium">{motor.oilType ?? "—"}</span>
                         {motor.oilCapacity && <span className="ml-1 text-gray-400">/ {motor.oilCapacity}</span>}
                       </td>
-                      <td className="px-5 py-4 text-sm text-gray-500 dark:text-gray-400">{motor.location ?? "—"}</td>
+                      <td className="px-5 py-4 text-sm text-gray-500 dark:text-gray-400">
+                        {motor.garageId
+                          ? garages.find(g => g.id === motor.garageId)?.name ?? "—"
+                          : "—"}
+                      </td>
                       <td className="px-5 py-4">
                         <StatusPill label={motor.status} tone={statusTone(motor.status)} />
                       </td>
@@ -451,7 +458,11 @@ export function MotorsPage() {
                     {motor.oilCapacity && <span>{motor.oilCapacity}</span>}
                     {motor.year && <span>{motor.year}</span>}
                   </div>
-                  {motor.location && <p className="text-xs text-gray-400">{motor.location}</p>}
+                  {motor.garageId && (
+                    <p className="text-xs text-gray-400">
+                      {garages.find(g => g.id === motor.garageId)?.name ?? "—"}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

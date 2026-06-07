@@ -65,5 +65,36 @@ export function useDriverReports(driverId: string | null) {
     return created;
   }, [companyId, driverId]);
 
-  return { reports, loading, refresh, createReport };
+  const [allReports, setAllReports] = useState<ApiDriverReport[]>([]);
+  const [loadingAll, setLoadingAll] = useState(false);
+
+  const fetchAll = useCallback(async () => {
+    if (!companyId) return;
+    setLoadingAll(true);
+    try {
+      const res  = await fetch(`/api/company/${companyId}/drivers/reports/all`);
+      const json = await res.json();
+      setAllReports(json.data ?? []);
+    } finally {
+      setLoadingAll(false);
+    }
+  }, [companyId]);
+
+  const deleteReport = useCallback(async (reportId: string): Promise<boolean> => {
+    if (!companyId || !driverId) return false;
+    try {
+      const res = await fetch(
+        `/api/company/${companyId}/drivers/${driverId}/reports/${reportId}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) throw new Error();
+      setReports(prev => prev.filter(r => r.id !== reportId));
+      return true;
+    } catch {
+      return false;
+    }
+  }, [companyId, driverId]);
+
+
+  return { reports, loading, refresh, createReport, allReports, loadingAll, fetchAll, deleteReport };
 }

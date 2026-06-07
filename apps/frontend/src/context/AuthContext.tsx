@@ -23,13 +23,14 @@ export type AuthSession = {
   email: string;
   name: string;
   role: PlatformRole;
-  companyModules: string[];                       
-  modulePermissions: Record<string, string[]>; 
+  companyModules: string[];
+  modulePermissions: Record<string, string[]>;
   permissions: PermissionMap;
   roleLabel: string;
   companyId: string | null;
   scope: "operacion" | "plataforma";
   companyName: string;
+  photoUrl: string | null;          // ← NUEVO
 };
 
 type LoginInput  = { email: string; password: string; remember: boolean };
@@ -46,9 +47,24 @@ type AuthContextValue = {
   logout: () => void;
   canAccessCurrentPath: (pathname: string) => boolean;
   getHomePath: () => string;
+  /** Actualiza photoUrl en la sesión sin recargar la página */
+  refreshPhotoUrl: (url: string | null) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+// ── Helper para construir la sesión desde la respuesta del servidor ────────────
+function buildSession(data: Record<string, unknown>): AuthSession {
+  return {
+    ...(data as AuthSession),
+    companyName:       (data.companyName as string)  ?? "",
+    companyModules:    (data.companyModules as string[])   ?? [],
+    modulePermissions: (data.modulePermissions as Record<string, string[]>) ?? {},
+    permissions:       (data.permissions as PermissionMap) ?? {},
+    roleLabel:         roleLabelMap[data.role as string] ?? (data.role as string),
+    photoUrl:          (data.photoUrl as string | null) ?? null,
+  };
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -63,16 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return res.json();
       })
       .then((data) => {
-        if (mounted && data) {
-          setSession({
-            ...data,
-            companyName:       data.companyName ?? "",
-            companyModules:    data.companyModules ?? [],
-            modulePermissions: data.modulePermissions ?? {},
-            permissions:       data.permissions ?? {},
-            roleLabel:         roleLabelMap[data.role] ?? data.role,
-          });
-        }
+        if (mounted && data) setSession(buildSession(data));
       })
       .catch(() => {})
       .finally(() => { if (mounted) setReady(true); });
@@ -92,18 +99,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        return { ok: false, title: "Acceso denegado", description: err.message ?? "Credenciales inválidas." };
+        return { ok: false, title: "Acceso denegado", description: (err as {message?: string}).message ?? "Credenciales inválidas." };
       }
 
       const data = await res.json();
-      setSession({
-        ...data,
-        companyModules:    data.companyModules ?? [],
-        modulePermissions: data.modulePermissions ?? {},
-        permissions:       data.permissions ?? {},
-        roleLabel:         roleLabelMap[data.role] ?? data.role,
-      });
-
+      setSession(buildSession(data));
       return { ok: true, redirectTo: getDefaultRouteForRole(data.role) };
     } catch {
       return { ok: false, title: "Error de conexión", description: "No se pudo conectar con el servidor." };
@@ -122,18 +122,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        return { ok: false, title: "Acceso denegado", description: err.message ?? "Credenciales inválidas." };
+        return { ok: false, title: "Acceso denegado", description: (err as {message?: string}).message ?? "Credenciales inválidas." };
       }
 
       const data = await res.json();
-      setSession({
-        ...data,
-        companyModules:    data.companyModules ?? [],
-        modulePermissions: data.modulePermissions ?? {},
-        permissions:       data.permissions ?? {},
-        roleLabel:         roleLabelMap[data.role] ?? data.role,
-      });
-
+      setSession(buildSession(data));
       return { ok: true, redirectTo: "/platform/dashboard" };
     } catch {
       return { ok: false, title: "Error de conexión", description: "No se pudo conectar con el servidor." };
@@ -144,6 +137,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
     setSession(null);
     window.location.assign("/signin");
+  }, []);
+
+  /** Permite actualizar solo la foto sin re-fetch completo */
+  const refreshPhotoUrl = useCallback((url: string | null) => {
+    setSession((prev) => prev ? { ...prev, photoUrl: url } : prev);
   }, []);
 
   const canAccessCurrentPath = useCallback(
@@ -165,7 +163,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     logout,
     canAccessCurrentPath,
     getHomePath,
-  }), [ready, session, login, loginPlatform, logout, canAccessCurrentPath, getHomePath]);
+    refreshPhotoUrl,
+  }), [ready, session, login, loginPlatform, logout, canAccessCurrentPath, getHomePath, refreshPhotoUrl]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

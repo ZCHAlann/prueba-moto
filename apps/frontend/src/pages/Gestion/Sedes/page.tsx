@@ -437,43 +437,40 @@ function SiteDetailDrawer({
   onToggleStatus,
 }: {
   site: EnrichedSite | null;
-  assets: { id: string; name: string; plate?: string; site: string; status: string }[];
-  drivers: { id: string; name: string; site: string; status: string }[];
+  assets: { id: string; name: string; plate?: string; siteId: string | null; status: string; brand?: string; model?: string }[];
+  drivers: { id: string; firstName: string; lastName: string; siteId: string | null; status: string; licenseType?: string }[];
   hasPermission: boolean;
   onClose: () => void;
   onEdit: (site: EnrichedSite) => void;
   onToggleStatus: (site: EnrichedSite) => void;
 }) {
-  const linkedAssets  = site ? assets.filter((a) => a.site === site.name) : [];
-  const linkedDrivers = site ? drivers.filter((d) => d.site === site.name) : [];
+  const [hoveredAsset,  setHoveredAsset]  = useState<string | null>(null);
+  const [hoveredDriver, setHoveredDriver] = useState<string | null>(null);
+
+  const linkedAssets  = site ? assets.filter(a => a.siteId === site.id)  : [];
+  const linkedDrivers = site ? drivers.filter(d => d.siteId === site.id) : [];
 
   return (
     <AnimatePresence>
       {site && (
         <>
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
             className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
             onClick={onClose}
           />
-
           <motion.div
-            initial={{ x: "100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "100%" }}
+            initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
             transition={{ type: "spring", stiffness: 300, damping: 32 }}
             className="fixed right-0 top-0 z-50 h-full w-full max-w-md border-l border-gray-200 dark:border-white/[0.06] bg-white dark:bg-gray-900 shadow-2xl flex flex-col"
           >
-            {/* Drawer header */}
+            {/* Header */}
             <div className="flex items-start justify-between px-6 py-5 border-b border-gray-200 dark:border-white/[0.06]">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-                    <polyline points="9 22 9 12 15 12 15 22" />
+                    <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
                   </svg>
                 </div>
                 <div>
@@ -481,25 +478,21 @@ function SiteDetailDrawer({
                   <h2 className="text-base font-semibold text-gray-800 dark:text-white leading-tight">{site.name}</h2>
                 </div>
               </div>
-              <button
-                onClick={onClose}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition"
-              >
+              <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M3 3l10 10M13 3L3 13" />
+                  <path d="M3 3l10 10M13 3L3 13"/>
                 </svg>
               </button>
             </div>
 
-            {/* Drawer body */}
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
               {/* Status */}
               <div className="flex items-center justify-between">
                 <StatusBadge status={site.status} />
-                <span className="text-xs text-gray-400 dark:text-gray-500">{site.references} referencias totales</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500">{linkedAssets.length + linkedDrivers.length} referencias</span>
               </div>
 
-              {/* Info block */}
+              {/* Info */}
               <div className="rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] divide-y divide-gray-200 dark:divide-white/[0.06]">
                 {[
                   { label: "Ciudad",    value: site.city },
@@ -511,23 +504,6 @@ function SiteDetailDrawer({
                     <span className="text-sm text-gray-800 dark:text-white">{value || "—"}</span>
                   </div>
                 ))}
-                {/* Google Maps link if coordinates exist */}
-                {(site as any).latitude && (site as any).longitude && (
-                  <div className="px-4 py-3">
-                    <a
-                      href={`https://www.google.com/maps?q=${(site as any).latitude},${(site as any).longitude}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
-                        <circle cx="12" cy="9" r="2.5"/>
-                      </svg>
-                      Ver en Google Maps
-                    </a>
-                  </div>
-                )}
                 {site.notes && (
                   <div className="flex items-start gap-3 px-4 py-3">
                     <span className="w-20 shrink-0 text-xs font-medium text-gray-400 dark:text-gray-500 pt-0.5">Notas</span>
@@ -536,78 +512,166 @@ function SiteDetailDrawer({
                 )}
               </div>
 
-              {/* Linked assets */}
+              {/* ── Mapa conceptual ── */}
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-gray-800 dark:text-white">Flota vinculada</h3>
-                  <span className="rounded-full bg-gray-100 dark:bg-white/[0.06] px-2 py-0.5 text-xs font-medium text-gray-500 dark:text-gray-400">
-                    {linkedAssets.length}
-                  </span>
-                </div>
-                {linkedAssets.length === 0 ? (
-                  <p className="text-xs text-gray-400 dark:text-gray-500">Sin vehículos asignados a esta sede.</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {linkedAssets.slice(0, 8).map((a) => (
-                      <div key={a.id} className="flex items-center justify-between rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] px-3 py-2">
-                        <span className="text-sm text-gray-800 dark:text-white font-medium truncate">{a.name}</span>
-                        <span className="ml-2 shrink-0 text-xs text-gray-400 dark:text-gray-500">{a.status}</span>
-                      </div>
-                    ))}
-                    {linkedAssets.length > 8 && (
-                      <p className="text-xs text-gray-400 dark:text-gray-500 text-center pt-1">
-                        + {linkedAssets.length - 8} más
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
+                <p className="mb-4 text-[10px] font-bold uppercase tracking-widest text-gray-400">Mapa de recursos</p>
 
-              {/* Linked drivers */}
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-gray-800 dark:text-white">Conductores vinculados</h3>
-                  <span className="rounded-full bg-gray-100 dark:bg-white/[0.06] px-2 py-0.5 text-xs font-medium text-gray-500 dark:text-gray-400">
-                    {linkedDrivers.length}
-                  </span>
-                </div>
-                {linkedDrivers.length === 0 ? (
-                  <p className="text-xs text-gray-400 dark:text-gray-500">Sin conductores asignados a esta sede.</p>
+                {linkedAssets.length === 0 && linkedDrivers.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-gray-200 dark:border-white/[0.06] px-4 py-6 text-center text-xs text-gray-400">
+                    Sin vehículos ni conductores vinculados a esta sede.
+                  </div>
                 ) : (
-                  <div className="space-y-1.5">
-                    {linkedDrivers.slice(0, 8).map((d) => (
-                      <div key={d.id} className="flex items-center justify-between rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] px-3 py-2">
-                        <span className="text-sm text-gray-800 dark:text-white font-medium truncate">{d.name}</span>
-                        <span className="ml-2 shrink-0 text-xs text-gray-400 dark:text-gray-500">{d.status}</span>
+                  <div className="relative overflow-y-auto max-h-72 pr-1">
+                    {/* Sede — nodo raíz */}
+                    <div className="flex justify-center mb-6">
+                      <div className="flex items-center gap-2 rounded-xl border border-blue-200 dark:border-blue-500/20 bg-blue-50 dark:bg-blue-500/10 px-4 py-2.5">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-600 dark:text-blue-400">
+                          <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+                        </svg>
+                        <span className="text-sm font-semibold text-blue-700 dark:text-blue-300">{site.name}</span>
                       </div>
-                    ))}
-                    {linkedDrivers.length > 8 && (
-                      <p className="text-xs text-gray-400 dark:text-gray-500 text-center pt-1">
-                        + {linkedDrivers.length - 8} más
-                      </p>
+                    </div>
+
+                    {/* Línea vertical desde sede */}
+                    <div className="absolute left-1/2 top-[52px] -translate-x-px w-px bg-gray-200 dark:bg-white/[0.08]" style={{ height: "28px" }} />
+
+                    {/* Línea horizontal que conecta las dos ramas */}
+                    {linkedAssets.length > 0 && linkedDrivers.length > 0 && (
+                      <div className="absolute top-[80px] left-1/4 right-1/4 h-px bg-gray-200 dark:bg-white/[0.08]" />
                     )}
+
+                    {/* Dos columnas: vehículos | conductores */}
+                    <div className={`grid gap-6 mt-10 ${linkedAssets.length > 0 && linkedDrivers.length > 0 ? "grid-cols-2" : "grid-cols-1"}`}>
+
+                      {/* ── Columna vehículos ── */}
+                      {linkedAssets.length > 0 && (
+                        <div className="flex flex-col items-center gap-2">
+                          {/* Línea vertical desde rama hasta header */}
+                          <div className="w-px h-5 bg-gray-200 dark:bg-white/[0.08]" />
+
+                          {/* Header rama */}
+                          <div className="flex items-center gap-1.5 rounded-lg border border-sky-200 dark:border-sky-500/20 bg-sky-50 dark:bg-sky-500/10 px-3 py-1.5 mb-1">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-sky-600 dark:text-sky-400">
+                              <rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+                            </svg>
+                            <span className="text-[11px] font-bold text-sky-700 dark:text-sky-300 uppercase tracking-wide">Vehículos ({linkedAssets.length})</span>
+                          </div>
+
+                          {/* Nodos vehículos */}
+                          <div className="flex flex-col items-center gap-1.5 w-full">
+                            {linkedAssets.map((asset, i) => (
+                              <div key={asset.id} className="flex flex-col items-center w-full">
+                                <div className="w-px h-3 bg-gray-200 dark:bg-white/[0.08]" />
+                                <div
+                                  className="relative w-full"
+                                  onMouseEnter={() => setHoveredAsset(asset.id)}
+                                  onMouseLeave={() => setHoveredAsset(null)}
+                                >
+                                  <div className={`rounded-xl border px-3 py-2 text-center transition-all cursor-default ${
+                                    hoveredAsset === asset.id
+                                      ? "border-sky-300 dark:border-sky-500/40 bg-sky-50 dark:bg-sky-500/10"
+                                      : "border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03]"
+                                  }`}>
+                                    <p className="text-xs font-bold text-gray-800 dark:text-white truncate">{asset.plate || asset.name}</p>
+                                    <p className="text-[10px] text-gray-400 truncate">{asset.brand} {asset.model}</p>
+                                  </div>
+
+                                  {/* Tooltip hover */}
+                                  {hoveredAsset === asset.id && (
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-10 w-44 rounded-xl border border-sky-200 dark:border-sky-500/20 bg-white dark:bg-gray-900 shadow-lg px-3 py-2.5">
+                                      <p className="text-[10px] font-bold uppercase tracking-widest text-sky-500 mb-1">Vehículo</p>
+                                      <p className="text-xs font-semibold text-gray-800 dark:text-white">{asset.plate || "Sin placa"}</p>
+                                      {asset.brand && <p className="text-[11px] text-gray-500">{asset.brand} {asset.model}</p>}
+                                      <div className={`mt-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
+                                        asset.status === "Operativo"
+                                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+                                          : asset.status === "En mantenimiento"
+                                          ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+                                          : "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400"
+                                      }`}>
+                                        <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                                        {asset.status}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ── Columna conductores ── */}
+                      {linkedDrivers.length > 0 && (
+                        <div className="flex flex-col items-center gap-2">
+                          <div className="w-px h-5 bg-gray-200 dark:bg-white/[0.08]" />
+
+                          <div className="flex items-center gap-1.5 rounded-lg border border-violet-200 dark:border-violet-500/20 bg-violet-50 dark:bg-violet-500/10 px-3 py-1.5 mb-1">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-violet-600 dark:text-violet-400">
+                              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                            </svg>
+                            <span className="text-[11px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-wide">Conductores ({linkedDrivers.length})</span>
+                          </div>
+
+                          <div className="flex flex-col items-center gap-1.5 w-full">
+                            {linkedDrivers.map((driver) => (
+                              <div key={driver.id} className="flex flex-col items-center w-full">
+                                <div className="w-px h-3 bg-gray-200 dark:bg-white/[0.08]" />
+                                <div
+                                  className="relative w-full"
+                                  onMouseEnter={() => setHoveredDriver(driver.id)}
+                                  onMouseLeave={() => setHoveredDriver(null)}
+                                >
+                                  <div className={`rounded-xl border px-3 py-2 text-center transition-all cursor-default ${
+                                    hoveredDriver === driver.id
+                                      ? "border-violet-300 dark:border-violet-500/40 bg-violet-50 dark:bg-violet-500/10"
+                                      : "border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03]"
+                                  }`}>
+                                    <p className="text-xs font-bold text-gray-800 dark:text-white truncate">{driver.firstName} {driver.lastName}</p>
+                                    <p className="text-[10px] text-gray-400">Lic. {driver.licenseType || "—"}</p>
+                                  </div>
+
+                                  {/* Tooltip hover */}
+                                  {hoveredDriver === driver.id && (
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-10 w-44 rounded-xl border border-violet-200 dark:border-violet-500/20 bg-white dark:bg-gray-900 shadow-lg px-3 py-2.5">
+                                      <p className="text-[10px] font-bold uppercase tracking-widest text-violet-500 mb-1">Conductor</p>
+                                      <p className="text-xs font-semibold text-gray-800 dark:text-white">{driver.firstName} {driver.lastName}</p>
+                                      {driver.licenseType && <p className="text-[11px] text-gray-500">Licencia tipo {driver.licenseType}</p>}
+                                      <div className={`mt-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
+                                        driver.status === "Activo"
+                                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+                                          : "bg-gray-100 text-gray-500 dark:bg-white/[0.05] dark:text-gray-400"
+                                      }`}>
+                                        <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                                        {driver.status}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Drawer footer */}
+            {/* Footer */}
             {hasPermission && (
               <div className="flex gap-2 px-6 py-4 border-t border-gray-200 dark:border-white/[0.06]">
-                <button
-                  onClick={() => onEdit(site)}
-                  className="flex-1 rounded-lg border border-gray-200 dark:border-white/[0.06] px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition"
-                >
+                <button onClick={() => onEdit(site)}
+                  className="flex-1 rounded-lg border border-gray-200 dark:border-white/[0.06] px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition">
                   Editar sede
                 </button>
-                <button
-                  onClick={() => onToggleStatus(site)}
+                <button onClick={() => onToggleStatus(site)}
                   className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition ${
                     site.status === "Activa"
-                      ? "bg-yellow-50 dark:bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-100 dark:hover:bg-yellow-500/20 border border-yellow-200 dark:border-yellow-500/20"
-                      : "bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-500/20 border border-green-200 dark:border-green-500/20"
-                  }`}
-                >
+                      ? "bg-yellow-50 dark:bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-100 border border-yellow-200 dark:border-yellow-500/20"
+                      : "bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400 hover:bg-green-100 border border-green-200 dark:border-green-500/20"
+                  }`}>
                   {site.status === "Activa" ? "Inactivar" : "Reactivar"}
                 </button>
               </div>
@@ -636,8 +700,8 @@ export function SitesManagementPage() {
   const rows = useMemo<EnrichedSite[]>(() => {
     return sites
       .map((site) => {
-        const assetCount  = assets.filter((a) => a.site === site.name).length;
-        const driverCount = drivers.filter((d) => d.site === site.name).length;
+        const assetCount  = assets.filter(a => a.siteId === site.id).length;
+        const driverCount = drivers.filter(d => d.siteId === site.id).length;
         return { ...site, assetCount, driverCount, references: assetCount + driverCount };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -843,8 +907,23 @@ export function SitesManagementPage() {
 
       <SiteDetailDrawer
         site={detailSite}
-        assets={assets}
-        drivers={drivers}
+        assets={assets.map(a => ({
+          id: a.id,
+          name: a.name,
+          plate: a.plate,
+          siteId: a.siteId,
+          status: a.status,
+          brand: a.brand,
+          model: a.model,
+        }))}
+        drivers={drivers.map(d => ({
+          id: d.id,
+          firstName: d.firstName,
+          lastName: d.lastName,
+          siteId: d.siteId,
+          status: d.status,
+          licenseType: d.licenseType,
+        }))}
         hasPermission={can("gestion", "sedes", "editar")}
         onClose={() => setDetailSite(null)}
         onEdit={(s) => openEdit(s)}

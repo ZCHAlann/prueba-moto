@@ -143,6 +143,27 @@ router.post('/invoice-files', (req, res, next) => {
   });
 });
 
+router.post('/insurance-files', (req, res, next) => {
+  const companyId = req.query.companyId as string | undefined;
+  const folder = companyId ? `insurance/${companyId}` : 'insurance';
+
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: 8 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+      if (allowed.includes(file.mimetype)) cb(null, true);
+      else cb(new AppError(400, 'Solo imágenes o PDF.'));
+    },
+  }).single('file');
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    if (!req.file) return next(new AppError(400, 'No se recibió archivo.'));
+    res.json({ url: `/uploads/${folder}/${req.file.filename}` });
+  });
+});
+
 // Genérico
 router.post('/photos', (req: Request, res: Response, next: NextFunction) => {
   const category = req.query.category as string;

@@ -19,7 +19,7 @@ interface TokenPayload {
   scope:             'operacion' | 'plataforma';
   companyId:         number | null;
   companyModules:    string[];
-  modulePermissions: ModulePermissionMap; 
+  modulePermissions: ModulePermissionMap;
   permissions:       PermissionMap;
 }
 
@@ -41,7 +41,7 @@ const COOKIE_OPTS = {
   path:     "/",
 };
 
-// ─── Helper: leer settings de plataforma ─────────────────────────────────────
+// ─── Helpers lockout ──────────────────────────────────────────────────────────
 
 async function getLoginSettings() {
   const [s] = await db
@@ -54,8 +54,6 @@ async function getLoginSettings() {
     lockoutMinutes:   s?.lockoutMinutes   ?? 30,
   };
 }
-
-// ─── Helper: aplicar lógica de lockout ───────────────────────────────────────
 
 async function handleFailedLogin(
   table: typeof platformUsers | typeof companyUsers,
@@ -73,8 +71,8 @@ async function handleFailedLogin(
   const patch: Record<string, unknown> = { failedLoginAttempts: attempts };
 
   if (attempts >= maxAttempts) {
-    patch.lockedUntil           = new Date(Date.now() + lockoutMinutes * 60_000);
-    patch.failedLoginAttempts   = 0;
+    patch.lockedUntil         = new Date(Date.now() + lockoutMinutes * 60_000);
+    patch.failedLoginAttempts = 0;
   }
 
   await db.update(table).set(patch).where(eq(table.id, userId));
@@ -106,7 +104,6 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
       });
       if (!user) throw new UnauthorizedError("Credenciales inválidas");
 
-      // ── Verificar bloqueo ─────────────────────────────────────────────────
       if (user.lockedUntil && user.lockedUntil > new Date()) {
         const mins = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60_000);
         return res.status(423).json({
@@ -114,13 +111,11 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
         });
       }
 
-      // ── Verificar contraseña ──────────────────────────────────────────────
       if (!(await verifyPassword(password, user.passwordHash))) {
         await handleFailedLogin(platformUsers, user.id, maxLoginAttempts, lockoutMinutes);
         throw new UnauthorizedError("Credenciales inválidas");
       }
 
-      // ── Login exitoso ─────────────────────────────────────────────────────
       await clearFailedLogin(platformUsers, user.id);
 
       tokenPayload = {
@@ -143,6 +138,8 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
         companyId:         null,
         modulePermissions: [],
         permissions:       {},
+        // Incluir foto en la respuesta del login para que AuthContext la tenga de inmediato
+        photoUrl:          user.photoUrl ?? null,
       };
 
     } else {
@@ -152,7 +149,6 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
       });
       if (!user) throw new UnauthorizedError("Credenciales inválidas");
 
-      // ── Verificar bloqueo ─────────────────────────────────────────────────
       if (user.lockedUntil && user.lockedUntil > new Date()) {
         const mins = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60_000);
         return res.status(423).json({
@@ -160,21 +156,16 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
         });
       }
 
-      // ── Verificar contraseña ──────────────────────────────────────────────
       if (!(await verifyPassword(password, user.passwordHash))) {
         await handleFailedLogin(companyUsers, user.id, maxLoginAttempts, lockoutMinutes);
         throw new UnauthorizedError("Credenciales inválidas");
       }
 
-      // ── Login exitoso ─────────────────────────────────────────────────────
       await clearFailedLogin(companyUsers, user.id);
 
-      const isAdminRole  = ["owner_empresa", "admin_empresa"].includes(user.role);
+      const isAdminRole    = ["owner_empresa", "admin_empresa"].includes(user.role);
       const companyModules = user.company?.enabledModules ?? [];
       const permissions    = {} as PermissionMap;
-
-      // Admins: {} significa acceso completo a todos los módulos de la empresa
-      // Otros roles: leer de la columna module_permissions
       const modulePermissions: ModulePermissionMap = isAdminRole
         ? {}
         : (user.modulePermissions as ModulePermissionMap ?? {});
@@ -197,9 +188,11 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
         role:              user.role,
         scope:             "operacion",
         companyId:         Number(user.companyId),
-        companyModules,        // ← agregar
+        companyModules,
         modulePermissions,
         permissions,
+        // Incluir foto en la respuesta del login para que AuthContext la tenga de inmediato
+        photoUrl:          user.photoUrl ?? null,
       };
     }
 
@@ -214,6 +207,7 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
 });
 
 // ─── POST /auth/session ───────────────────────────────────────────────────────
+// (sin cambios relevantes — este endpoint no se usa para el flujo principal)
 
 router.post('/session', validate(sessionSchema), async (req, res, next) => {
   try {
@@ -244,6 +238,7 @@ router.post('/session', validate(sessionSchema), async (req, res, next) => {
           username: user.username,
           role:     user.role,
           scope:    'plataforma',
+          photoUrl: user.photoUrl ?? null,
         },
       });
 
@@ -260,7 +255,7 @@ router.post('/session', validate(sessionSchema), async (req, res, next) => {
       const modulePermissions: ModulePermissionMap = isAdminRole
         ? {}
         : (user.modulePermissions as ModulePermissionMap ?? {});
-        
+
       const token = await signToken({
         sub:               toId('company-user', user.id.toString()),
         email:             user.email,
@@ -282,6 +277,7 @@ router.post('/session', validate(sessionSchema), async (req, res, next) => {
           role:      user.role,
           scope:     'operacion',
           companyId: Number(user.companyId),
+          photoUrl:  user.photoUrl ?? null,
         },
       });
     }
@@ -315,19 +311,39 @@ router.post('/refresh', authenticate, async (req, res, next) => {
 });
 
 // ─── GET /auth/session ────────────────────────────────────────────────────────
+// Lee la foto fresca de DB en cada arranque de app — así no hay que
+// regenerar el JWT cuando el usuario cambia su foto.
 
 router.get("/session", authenticate, async (req, res, next) => {
   try {
     const user = req.user!;
     let companyName = "";
+    let photoUrl: string | null = null;
 
     if (user.companyId) {
-      const [company] = await db
-        .select({ name: companies.name })
-        .from(companies)
-        .where(eq(companies.id, Number(user.companyId)))
+      // Leer empresa Y foto del usuario en una sola query
+      const [row] = await db
+        .select({
+          companyName : companies.name,
+          photoUrl    : companyUsers.photoUrl,
+        })
+        .from(companyUsers)
+        .leftJoin(companies, eq(companyUsers.companyId, companies.id))
+        .where(eq(companyUsers.id, Number(user.sub.replace('company-user-', ''))))
         .limit(1);
-      companyName = company?.name ?? "";
+
+      companyName = row?.companyName ?? "";
+      photoUrl    = row?.photoUrl    ?? null;
+
+    } else {
+      // Usuario de plataforma — leer foto de platform_users
+      const [row] = await db
+        .select({ photoUrl: platformUsers.photoUrl })
+        .from(platformUsers)
+        .where(eq(platformUsers.id, Number(user.sub.replace('platform-user-', ''))))
+        .limit(1);
+
+      photoUrl = row?.photoUrl ?? null;
     }
 
     return res.json({
@@ -338,9 +354,10 @@ router.get("/session", authenticate, async (req, res, next) => {
       scope:             user.scope,
       companyId:         user.companyId ? String(user.companyId) : null,
       companyName,
-      companyModules:    user.companyModules ?? [],
+      companyModules:    user.companyModules    ?? [],
       modulePermissions: user.modulePermissions ?? {},
-      permissions:       user.permissions ?? {},
+      permissions:       user.permissions       ?? {},
+      photoUrl,                                          // ← NUEVO
     });
   } catch (err) {
     next(err);

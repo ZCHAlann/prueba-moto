@@ -23,6 +23,7 @@ const createInsuranceSchema = z.object({
   endDate:      z.string().min(1, 'La fecha de vencimiento es requerida'),
   status:       z.enum(['Vigente', 'Por vencer', 'Vencido']).default('Vigente'),
   notes:        z.string().optional().nullable(),
+  fileUrl: z.string().optional().nullable(),
 });
 
 const updateInsuranceSchema = createInsuranceSchema.partial();
@@ -41,6 +42,7 @@ function serializePolicy(p: typeof companyInsurancePolicies.$inferSelect) {
     endDate:      p.endDate,
     status:       p.status ?? 'Vigente',
     notes:        p.notes ?? '',
+    fileUrl: p.fileUrl ?? null,
     createdAt:    p.createdAt,
     updatedAt:    p.updatedAt,
   };
@@ -114,6 +116,7 @@ router.post(
           endDate:      body.endDate,
           status:       body.status,
           notes:        body.notes ?? null,
+          fileUrl: body.fileUrl ?? null,
         })
         .returning();
 
@@ -171,6 +174,7 @@ router.put(
       if (body.endDate      !== undefined) updateData.endDate      = body.endDate;
       if (body.status       !== undefined) updateData.status       = body.status;
       if (body.notes        !== undefined) updateData.notes        = body.notes ?? null;
+      if (body.fileUrl !== undefined) updateData.fileUrl = body.fileUrl ?? null;
 
       const [updated] = await db
         .update(companyInsurancePolicies)

@@ -163,10 +163,10 @@ export function ChecklistPage(){
 
   const inspectors=useMemo(()=>drivers.filter(d=>d.status==="Activo"),[drivers]);
 
-  const equipmentOptions=useMemo(()=>{
-    if(form.targetKind==="Motor") return motors.map(m=>({value:m.id,label:motorLabel(m)}));
-    return assets.map(a=>({value:a.id,label:assetLabel(a)}));
-  },[assets,motors,form.targetKind]);
+  const equipmentOptions = useMemo(() =>
+    assets.map(a => ({ value: a.id, label: assetLabel(a) })),
+    [assets]
+  );
 
   const selectedCategory=useMemo(()=>categories.find(c=>c.id===form.categoryId),[categories,form.categoryId]);
 
@@ -305,7 +305,7 @@ export function ChecklistPage(){
               <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <Field label="Tipo de equipo">
                   <Select value={form.targetKind} onChange={v=>{setForm({...initialForm,targetKind:v as ChecklistTargetKind});setItems([]);setDraft(initialDraft);}}
-                    options={[{value:"Vehiculo",label:`Vehículo (${assets.length})`},{value:"Motor",label:`Motor (${motors.length})`},{value:"Generador",label:"Generador"}]}/>
+                    options={[{value:"Vehiculo",label:`Vehículo (${assets.length})`},{value:"Generador",label:"Generador"}]}/>
                 </Field>
                 <Field label={form.targetKind} error={errors.targetId}>
                   <Select value={form.targetId} onChange={v=>{setForm(f=>({...f,targetId:v}));setErrors(e=>({...e,targetId:undefined}));}} error={!!errors.targetId}

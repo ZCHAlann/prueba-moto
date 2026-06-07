@@ -345,4 +345,54 @@ function serializeReport(r: typeof companyDriverReports.$inferSelect) {
   };
 }
 
+// ─── GET /company/:id/drivers/reports/all ─────────────────────────────────────
+router.get('/reports/all', requireModule('conductores'), async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+
+    const rows = await db
+      .select()
+      .from(companyDriverReports)
+      .where(eq(companyDriverReports.companyId, companyId))
+      .orderBy(desc(companyDriverReports.createdAt));
+
+    res.json({ data: rows.map(serializeReport), total: rows.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── DELETE /company/:id/drivers/:driverId/reports/:reportId ─────────────────
+
+router.delete('/:driverId/reports/:reportId', requireModule('conductores'), requireAdmin, async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const driverId  = parseId('driver', req.params.driverId);
+    const reportId  = parseId('driver-report', req.params.reportId);
+
+    const existing = await db
+      .select()
+      .from(companyDriverReports)
+      .where(and(
+        eq(companyDriverReports.id, reportId),
+        eq(companyDriverReports.driverId, driverId),
+        eq(companyDriverReports.companyId, companyId),
+      ))
+      .limit(1);
+
+    if (!existing.length) throw new NotFoundError('Reporte', req.params.reportId);
+
+    await db
+      .delete(companyDriverReports)
+      .where(and(
+        eq(companyDriverReports.id, reportId),
+        eq(companyDriverReports.companyId, companyId),
+      ));
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

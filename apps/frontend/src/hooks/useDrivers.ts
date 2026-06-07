@@ -6,7 +6,7 @@ import { useAuth } from "../context/AuthContext";
 export type ApiDriver = {
   id: string;
   companyId: number;
-  siteId: number | null;
+  siteId: string | null;
   code: string;
   name: string;
   firstName: string;
@@ -49,7 +49,7 @@ function mapApi(raw: Record<string, unknown>): ApiDriver {
   return {
     id: String(raw.id),
     companyId: raw.companyId as number,
-    siteId: (raw.siteId as number | null) ?? null,
+    siteId: (raw.siteId as string | null) ?? null,
     code: (raw.code as string) ?? "",
     name: `${firstName} ${lastName}`.trim(),
     firstName,

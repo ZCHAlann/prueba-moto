@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 export type InsuranceStatus = "Vigente" | "Por vencer" | "Vencido";
 
 export type InsurancePolicy = {
@@ -12,10 +10,11 @@ export type InsurancePolicy = {
   insurer: string;
   policyNumber: string;
   coverage: string;
-  startDate: string;   // 'YYYY-MM-DD'
-  endDate: string;     // 'YYYY-MM-DD'
+  startDate: string;
+  endDate: string;
   status: InsuranceStatus;
   notes: string;
+  fileUrl: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -23,7 +22,7 @@ export type InsurancePolicy = {
 type CreatePolicyInput = Omit<InsurancePolicy, "id" | "companyId" | "createdAt" | "updatedAt">;
 type UpdatePolicyInput = Omit<InsurancePolicy, "id" | "companyId" | "createdAt" | "updatedAt">;
 
-type UseInsurancePoliciesReturn = {
+export type UseInsurancePoliciesReturn = {
   policies: InsurancePolicy[];
   loading: boolean;
   error: string | null;
@@ -31,9 +30,8 @@ type UseInsurancePoliciesReturn = {
   createPolicy: (input: CreatePolicyInput) => Promise<string | null>;
   updatePolicy: (id: string, input: UpdatePolicyInput) => Promise<boolean>;
   deletePolicy: (id: string) => Promise<boolean>;
+  uploadPolicyFile: (file: File) => Promise<string | null>;
 };
-
-// ─── Mappers ──────────────────────────────────────────────────────────────────
 
 function mapApiToPolicy(data: Record<string, unknown>): InsurancePolicy {
   return {
@@ -47,6 +45,11 @@ function mapApiToPolicy(data: Record<string, unknown>): InsurancePolicy {
     endDate:      String(data.endDate ?? data.end_date ?? ""),
     status:       (data.status as InsuranceStatus) ?? "Vigente",
     notes:        String(data.notes ?? ""),
+    fileUrl:      data.fileUrl != null
+                    ? String(data.fileUrl)
+                    : data.file_url != null
+                    ? String(data.file_url)
+                    : null,
     createdAt:    String(data.createdAt ?? data.created_at ?? ""),
     updatedAt:    String(data.updatedAt ?? data.updated_at ?? ""),
   };
@@ -62,10 +65,9 @@ function mapPolicyToApi(input: CreatePolicyInput | UpdatePolicyInput) {
     endDate:      input.endDate,
     status:       input.status,
     notes:        input.notes,
+    fileUrl:      input.fileUrl ?? null,
   };
 }
-
-// ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useAssetCenter(): UseInsurancePoliciesReturn {
   const { session } = useAuth();
@@ -78,114 +80,97 @@ export function useAssetCenter(): UseInsurancePoliciesReturn {
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
 
-  // ── Fetch all ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!companyId) {
-      setLoading(false);
-      return;
-    }
-
+    if (!companyId) { setLoading(false); return; }
     setLoading(true);
     setError(null);
-
     fetch(`/api/company/${companyId}/insurance`, { cache: "no-store" })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Error ${res.status}`);
-        return res.json();
-      })
+      .then((res) => { if (!res.ok) throw new Error(`Error ${res.status}`); return res.json(); })
       .then((body: { data: Record<string, unknown>[] }) => {
         setPolicies((body.data ?? []).map(mapApiToPolicy));
       })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Error cargando pólizas");
-      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Error cargando pólizas"))
       .finally(() => setLoading(false));
   }, [companyId, tick]);
 
-  // ── Create ─────────────────────────────────────────────────────────────────
-  const createPolicy = useCallback(
-    async (input: CreatePolicyInput): Promise<string | null> => {
-      if (!companyId) return null;
+  // ── Upload: la ruta /insurance-files devuelve { url: string } (singular)
+  const uploadPolicyFile = useCallback(async (file: File): Promise<string | null> => {
+    if (!companyId) return null;
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`/api/upload/insurance-files?companyId=${companyId}`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) throw new Error(`Upload ${res.status}`);
+      const data = await res.json() as { url?: string; urls?: string[] };
+      // Soporta ambas formas por si acaso
+      return data.url ?? data.urls?.[0] ?? null;
+    } catch {
+      return null;
+    }
+  }, [companyId]);
 
-      try {
-        const res = await fetch(`/api/company/${companyId}/insurance`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(mapPolicyToApi(input)),
-        });
-
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
-        }
-
-        const data = await res.json() as Record<string, unknown>;
-        const newPolicy = mapApiToPolicy(data);
-        setPolicies((current) => [...current, newPolicy]);
-        return newPolicy.id;
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Error creando póliza");
-        return null;
+  const createPolicy = useCallback(async (input: CreatePolicyInput): Promise<string | null> => {
+    if (!companyId) return null;
+    try {
+      const res = await fetch(`/api/company/${companyId}/insurance`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(mapPolicyToApi(input)),
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error((b as { error?: string }).error ?? `Error ${res.status}`);
       }
-    },
-    [companyId]
-  );
+      const data = await res.json() as Record<string, unknown>;
+      const created = mapApiToPolicy(data);
+      setPolicies((prev) => [...prev, created]);
+      return created.id;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error creando póliza");
+      return null;
+    }
+  }, [companyId]);
 
-  // ── Update ─────────────────────────────────────────────────────────────────
-  const updatePolicy = useCallback(
-    async (id: string, input: UpdatePolicyInput): Promise<boolean> => {
-      if (!companyId) return false;
-
-      try {
-        const res = await fetch(`/api/company/${companyId}/insurance/${id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(mapPolicyToApi(input)),
-        });
-
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
-        }
-
-        const data = await res.json() as Record<string, unknown>;
-        const updated = mapApiToPolicy(data);
-        setPolicies((current) =>
-          current.map((policy) => (policy.id === id ? updated : policy))
-        );
-        return true;
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Error actualizando póliza");
-        return false;
+  const updatePolicy = useCallback(async (id: string, input: UpdatePolicyInput): Promise<boolean> => {
+    if (!companyId) return false;
+    try {
+      const res = await fetch(`/api/company/${companyId}/insurance/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(mapPolicyToApi(input)),
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error((b as { error?: string }).error ?? `Error ${res.status}`);
       }
-    },
-    [companyId]
-  );
+      const data = await res.json() as Record<string, unknown>;
+      const updated = mapApiToPolicy(data);
+      setPolicies((prev) => prev.map((p) => (p.id === id ? updated : p)));
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error actualizando póliza");
+      return false;
+    }
+  }, [companyId]);
 
-  // ── Delete ─────────────────────────────────────────────────────────────────
-  const deletePolicy = useCallback(
-    async (id: string): Promise<boolean> => {
-      if (!companyId) return false;
-
-      try {
-        const res = await fetch(`/api/company/${companyId}/insurance/${id}`, {
-          method: "DELETE",
-        });
-
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
-        }
-
-        setPolicies((current) => current.filter((policy) => policy.id !== id));
-        return true;
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Error eliminando póliza");
-        return false;
+  const deletePolicy = useCallback(async (id: string): Promise<boolean> => {
+    if (!companyId) return false;
+    try {
+      const res = await fetch(`/api/company/${companyId}/insurance/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error((b as { error?: string }).error ?? `Error ${res.status}`);
       }
-    },
-    [companyId]
-  );
+      setPolicies((prev) => prev.filter((p) => p.id !== id));
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error eliminando póliza");
+      return false;
+    }
+  }, [companyId]);
 
-  return { policies, loading, error, refresh, createPolicy, updatePolicy, deletePolicy };
+  return { policies, loading, error, refresh, createPolicy, updatePolicy, deletePolicy, uploadPolicyFile };
 }

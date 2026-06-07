@@ -21,6 +21,7 @@ import vehiculoRouter from './vehiculo';
 import profileRouter from './auth.me';
 import usersRouter from './user'; 
 import ticketsRouter from './ticket';
+import insurancesRouter from './insurance'
 
 const router = Router({ mergeParams: true });
 
@@ -47,5 +48,6 @@ router.use('/vehicle-cockpit', vehiculoRouter);
 router.use('/auth/me', profileRouter);
 router.use('/users', usersRouter);  
 router.use('/tickets', ticketsRouter);
+router.use('/insurance', insurancesRouter);
 
 export default router;

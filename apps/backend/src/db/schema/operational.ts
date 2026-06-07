@@ -577,6 +577,7 @@ export const companyInsurancePolicies = pgTable('company_insurance_policies', {
   endDate:   date('end_date').notNull(),
   status: varchar('status', { length: 40 }).default('Vigente'),
   notes: text('notes'),
+  fileUrl: text('file_url'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

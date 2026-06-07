@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import type { Asset } from "../types/activo";
 
-type Motor = Asset; // Motor es un Asset con assetType = "Motor"
+type Motor = Asset;
 type CreateMotorInput = Omit<Motor, "id" | "tenantId">;
 type UpdateMotorInput = Omit<Motor, "id" | "tenantId">;
 
@@ -28,7 +28,9 @@ function mapApiToMotor(data: Record<string, unknown>, companyId: string): Motor 
     assetType: "Motor",
     category: String(data.category ?? "") as Motor["category"],
     status: (data.status ?? "Operativo") as Motor["status"],
-    site: String(data.siteId ?? ""),
+    site: String(data.site ?? ""),
+    siteId: data.siteId ? String(data.siteId) : null,
+    garageId: data.garageId ? String(data.garageId) : null,
     responsible: String(data.responsible ?? ""),
     brand: String(data.brand ?? ""),
     model: String(data.model ?? ""),

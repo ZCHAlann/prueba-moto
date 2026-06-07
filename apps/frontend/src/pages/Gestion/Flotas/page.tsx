@@ -260,7 +260,7 @@ function CreateMaintenanceModal({ vehicle, onClose, onCreated }: {
 
 type VehicleFormData = {
   code: string; name: string; assetType: AssetType; category: AssetCategory;
-  status: AssetStatus; site: string; responsible: string; brand: string; model: string;
+  status: AssetStatus; site: string; siteId: string | null; responsible: string; brand: string; model: string;
   serial: string; plate: string; year: string; color: string; maxLoad: string;
   fuelType: AssetFuelType; oilType: string; oilCapacity: string; location: string;
   availability: string; observations: string; utilization: string; nextMaintenance: string;
@@ -269,7 +269,7 @@ type VehicleFormData = {
 
 const EMPTY_FORM: VehicleFormData = {
   code: "", name: "", assetType: "Vehiculo", category: "Camioneta", status: "Operativo",
-  site: "", responsible: "", brand: "", model: "", serial: "", plate: "", year: "", color: "",
+  site: "", responsible: "", siteId: null, brand: "", model: "", serial: "", plate: "", year: "", color: "",
   maxLoad: "", fuelType: "Diesel", oilType: "", oilCapacity: "", location: "",
   availability: "Disponible", observations: "", utilization: "0%",
   nextMaintenance: "", lastInspection: "", alerts: 0, photoUrls: [], garageId: null,
@@ -384,14 +384,6 @@ function VehicleFormFields({ form, set, inputCls, selectCls, labelCls, spanCls }
       <section>
         <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-gray-400">Operación</p>
         <div className="grid grid-cols-2 gap-3">
-          <label className={labelCls}>
-            <span className={spanCls}>Sede</span>
-            <select className={selectCls} value={form.site}
-              onChange={(e) => set("site", e.target.value)}>
-              <option value="">Sin sede</option>
-              {sites.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-            </select>
-          </label>
           <label className={labelCls}>
             <span className={spanCls}>Garaje</span>
             <select className={selectCls} value={form.garageId ?? ""}
@@ -511,7 +503,8 @@ function EditVehicleModal({ vehicle, onClose, onUpdated }: {
   const [form, setForm] = useState<VehicleFormData>({
     code: vehicle.code, name: vehicle.name, assetType: vehicle.assetType,
     category: vehicle.category, status: vehicle.status, site: vehicle.site,
-    responsible: vehicle.responsible, brand: vehicle.brand, model: vehicle.model,
+    siteId: vehicle.siteId ?? null, responsible: vehicle.responsible, 
+    brand: vehicle.brand, model: vehicle.model,
     serial: vehicle.serial, plate: vehicle.plate, year: vehicle.year, color: vehicle.color,
     maxLoad: vehicle.maxLoad, fuelType: vehicle.fuelType, oilType: vehicle.oilType,
     oilCapacity: vehicle.oilCapacity, location: vehicle.location, availability: vehicle.availability,
@@ -526,7 +519,7 @@ function EditVehicleModal({ vehicle, onClose, onUpdated }: {
   const handleSubmit = async () => {
     if (!form.plate.trim() && !form.name.trim()) { toast.error("Completá al menos la placa o el nombre"); return; }
     setSaving(true);
-    const ok = await updateAsset(vehicle.id, form as any);
+    const ok = await updateAsset(vehicle.id, form as Omit<Asset, "id" | "tenantId">);
     setSaving(false);
     if (!ok) { toast.error("No se pudo actualizar el vehículo"); return; }
     toast.success("Vehículo actualizado", { description: `${form.plate || form.name} guardado correctamente.` });
@@ -666,6 +659,14 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance, canEd
   const { maintenances } = useMaintenances();
   const { garages } = useGarages();
   const { drivers } = useDrivers();
+  const { sites } = useSites();
+  const siteName = useMemo(() => {
+    console.log("siteId del vehicle:", vehicle.siteId);
+    console.log("sites disponibles:", sites.map(s => ({ id: s.id, name: s.name })));
+    const found = sites.find(s => String(s.id) === vehicle.siteId?.replace("site-", ""));
+    console.log("match encontrado:", found);
+    return found?.name ?? vehicle.site ?? "—";
+  }, [sites, vehicle.siteId, vehicle.site]);
 
   const garage = useMemo(() => garages.find(g => g.id === vehicle.garageId), [garages, vehicle.garageId]);
 
@@ -752,13 +753,6 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance, canEd
           <section>
             <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">Ubicación y responsable</p>
             <div className="space-y-2">
-              <div className="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 dark:border-white/[0.05] dark:bg-white/[0.03]">
-                <MapPin size={13} className="shrink-0 text-gray-400" />
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Sede</p>
-                  <p className="truncate text-sm font-semibold text-gray-700 dark:text-gray-200">{vehicle.site || "—"}</p>
-                </div>
-              </div>
               <div className="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 dark:border-white/[0.05] dark:bg-white/[0.03]">
                 <Warehouse size={13} className="shrink-0 text-gray-400" />
                 <div className="min-w-0">

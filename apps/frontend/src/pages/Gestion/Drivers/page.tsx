@@ -6,6 +6,7 @@ import { useAssets } from "../../../hooks/useAssets";
 import { useSites } from "../../../hooks/useSites";
 import { usePermissions } from "../../../hooks/usePermissions";
 import { ModulePageHeader } from "../../../components/features/modules/ModulePageHeader";
+import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import {
   AlertTriangle, Car, ChevronDown, ChevronLeft, ChevronRight,
   Eye, Filter, Loader2, Mail, MapPin, MoreHorizontal, Pencil,
@@ -383,7 +384,11 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Fecha de vencimiento</label>
-                <input type="date" className={inputCls} value={form.licenseExpiry} onChange={e => set("licenseExpiry", e.target.value)} />
+                <DatePicker
+                  value={form.licenseExpiry}
+                  onChange={(v) => set("licenseExpiry", v)}
+                  placeholder="Vencimiento de licencia"
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Puntos</label>

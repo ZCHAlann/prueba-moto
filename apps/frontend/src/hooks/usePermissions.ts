@@ -9,11 +9,12 @@ export function usePermissions() {
   function can(module: string, submodule: string, action: ActionKey): boolean {
     if (!session) return false;
 
+    // Admins de empresa y propietarios tienen acceso total a los módulos
+    // de su compañía, sin depender de `companyModules` ni de las claves
+    // exactas del JWT. El backend refuerza con `requireModule` /
+    // `requireSupervisor` / `requireAdmin` donde corresponde.
     if (ADMIN_ROLES.includes(session.role)) {
-      return (
-        session.companyModules.includes(module) ||
-        ["dashboard", "cuenta", "accesos"].includes(module)
-      );
+      return true;
     }
 
     const perms = session.modulePermissions as unknown as PermissionMap;
@@ -25,16 +26,13 @@ export function usePermissions() {
     if (!session) return false;
 
     if (ADMIN_ROLES.includes(session.role)) {
-      return (
-        session.companyModules.includes(module) ||
-        ["dashboard", "cuenta", "accesos"].includes(module)
-      );
+      return true;
     }
 
     const perms = session.modulePermissions as unknown as PermissionMap;
     const modulePerm = perms[module] ?? {};
     return Object.values(modulePerm).some((actions) =>
-      actions.includes("ver")
+      Array.isArray(actions) && actions.includes("ver")
     );
   }
 

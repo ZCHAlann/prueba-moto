@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Polyline, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { useSelectionStore } from '../../store/selectionStore';
 import { formatDateTime, formatDistance, formatDuration } from '../../utils/formatters';
+import { STATUS_HEX } from '../../constants/carStatus';
 
 // Icono de inicio: círculo verde con "A"
 const startIcon = L.divIcon({
@@ -58,8 +59,33 @@ const FitToRoute = () => {
   return null;
 };
 
+/** Color del polyline y popup adaptado al tema activo. */
+const useThemeColors = () => {
+  const [isDark, setIsDark] = useState(() =>
+    document.documentElement.classList.contains('dark'),
+  );
+
+  useEffect(() => {
+    const obs = new MutationObserver(() =>
+      setIsDark(document.documentElement.classList.contains('dark')),
+    );
+    obs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+    return () => obs.disconnect();
+  }, []);
+
+  return {
+    isDark,
+    lineColor: isDark ? '#a5b4fc' : '#6366f1',
+    lineGlow:  isDark ? '#818cf8' : '#6366f1',
+  };
+};
+
 export const GhostRoute = () => {
   const route = useSelectionStore((s) => s.selectedRoute);
+  const { lineColor, lineGlow } = useThemeColors();
 
   if (!route || route.points.length < 2) return null;
 
@@ -71,12 +97,23 @@ export const GhostRoute = () => {
     <>
       <FitToRoute />
 
+      {/* Glow (línea más ancha, opaca) */}
       <Polyline
         positions={positions}
         pathOptions={{
-          color: '#6366f1',
+          color: lineGlow,
+          weight: 9,
+          opacity: 0.18,
+          lineCap: 'round',
+        }}
+      />
+      {/* Línea principal punteada */}
+      <Polyline
+        positions={positions}
+        pathOptions={{
+          color: lineColor,
           weight: 4,
-          opacity: 0.6,
+          opacity: 0.85,
           dashArray: '10 6',
           lineCap: 'round',
         }}
@@ -84,21 +121,45 @@ export const GhostRoute = () => {
 
       <Marker position={start} icon={startIcon}>
         <Popup>
-          <div className="min-w-[160px] text-sm">
-            <div className="font-bold text-emerald-700">A · Inicio</div>
-            <div className="text-xs text-slate-500">{formatDateTime(route.startedAt)}</div>
-            {route.startAddress && <div className="mt-1 text-slate-700">{route.startAddress}</div>}
+          <div className="min-w-[180px] text-sm">
+            <div className="flex items-center gap-2 font-bold text-emerald-700 dark:text-emerald-400">
+              <span
+                className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] text-white"
+                style={{ background: STATUS_HEX.active }}
+              >
+                A
+              </span>
+              Inicio
+            </div>
+            <div className="mt-0.5 text-xs text-slate-500 dark:text-gray-400">
+              {formatDateTime(route.startedAt)}
+            </div>
+            {route.startAddress && (
+              <div className="mt-1 text-slate-700 dark:text-gray-200">{route.startAddress}</div>
+            )}
           </div>
         </Popup>
       </Marker>
 
       <Marker position={end} icon={endIcon}>
         <Popup>
-          <div className="min-w-[160px] text-sm">
-            <div className="font-bold text-rose-700">B · Fin</div>
-            <div className="text-xs text-slate-500">{formatDateTime(route.endedAt)}</div>
-            {route.endAddress && <div className="mt-1 text-slate-700">{route.endAddress}</div>}
-            <div className="mt-1.5 text-xs text-slate-500">
+          <div className="min-w-[180px] text-sm">
+            <div className="flex items-center gap-2 font-bold text-rose-700 dark:text-rose-400">
+              <span
+                className="flex h-5 w-5 items-center justify-center rounded text-[10px] text-white"
+                style={{ background: STATUS_HEX.blocked }}
+              >
+                B
+              </span>
+              Fin
+            </div>
+            <div className="mt-0.5 text-xs text-slate-500 dark:text-gray-400">
+              {formatDateTime(route.endedAt)}
+            </div>
+            {route.endAddress && (
+              <div className="mt-1 text-slate-700 dark:text-gray-200">{route.endAddress}</div>
+            )}
+            <div className="mt-1.5 text-xs text-slate-500 dark:text-gray-400">
               {formatDistance(route.distanceMeters)} · {formatDuration(route.durationSec)}
             </div>
           </div>

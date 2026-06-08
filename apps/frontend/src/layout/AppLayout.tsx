@@ -1,7 +1,9 @@
 import { useEffect } from "react";
-import { useNavigate, Outlet } from "react-router";
+import { useLocation, useNavigate, Outlet } from "react-router";
 import { SidebarProvider, useSidebar } from "../context/SidebarContext";
 import { useAuth } from "../context/AuthContext";
+import { AlertsBellProvider } from "../context/AlertsBellContext";
+import { canAccessHref } from "../lib/access-control";
 import AppHeader from "./AppHeader";
 import Backdrop from "./Backdrop";
 import AppSidebar from "./AppSidebar";
@@ -10,18 +12,46 @@ const LayoutContent: React.FC = () => {
   const { isExpanded, isHovered, isMobileOpen } = useSidebar();
   const { ready, session } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
+  // 1) Si no hay sesión → /signin
   useEffect(() => {
     if (ready && !session) {
       navigate("/signin", { replace: true });
     }
   }, [ready, session, navigate]);
 
+  // 2) Si hay sesión pero el role + permisos granulares NO permiten
+  //    la ruta actual → redirigir al dashboard (sin history)
+  useEffect(() => {
+    if (!ready || !session) return;
+    const role = session.role;
+    const perms = (session.modulePermissions ?? {}) as unknown as Record<
+      string,
+      Record<string, string[]>
+    >;
+    if (!canAccessHref(role, location.pathname, perms)) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [ready, session, location.pathname, navigate]);
+
   // Mientras carga la sesión no renderizamos nada
   if (!ready) return null;
-
-  // Si no hay sesión tampoco (la navegación se dispara en el useEffect)
   if (!session) return null;
+
+  // Evita parpadear la UI destino mientras se redirige
+  if (
+    !canAccessHref(
+      session.role,
+      location.pathname,
+      (session.modulePermissions ?? {}) as unknown as Record<
+        string,
+        Record<string, string[]>
+      >,
+    )
+  ) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen xl:flex">
@@ -45,9 +75,11 @@ const LayoutContent: React.FC = () => {
 
 const AppLayout: React.FC = () => {
   return (
-    <SidebarProvider>
-      <LayoutContent />
-    </SidebarProvider>
+    <AlertsBellProvider>
+      <SidebarProvider>
+        <LayoutContent />
+      </SidebarProvider>
+    </AlertsBellProvider>
   );
 };
 

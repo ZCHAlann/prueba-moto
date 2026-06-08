@@ -20,8 +20,8 @@ export const TelemetryStatus = ({ timestamp }: Props) => {
         <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
       </span>
       <span className="font-bold tracking-wider text-emerald-400">EN VIVO</span>
-      <span className="text-slate-600">·</span>
-      <span className="text-slate-400">
+      <span className="text-slate-600 dark:text-slate-700">·</span>
+      <span className="text-slate-400 dark:text-slate-500">
         Actualizado {formatRelativeTime(timestamp)}
       </span>
     </div>

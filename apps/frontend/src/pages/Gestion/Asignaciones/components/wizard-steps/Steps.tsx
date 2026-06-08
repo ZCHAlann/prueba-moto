@@ -1,4 +1,5 @@
 import type { WizardData, NovedadesState, AccesoriosState } from "../../../../../hooks/useHandoverWizard";
+import { DatePicker } from "../../../../../components/ui/date-picker/DatePicker";
 
 // ─── Shared field components ──────────────────────────────────────────────────
 
@@ -16,15 +17,23 @@ function Field({
       <label className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
         {label}
       </label>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900
-          px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2
-          focus:ring-blue-500/40 transition"
-      />
+      {type === "date" ? (
+        <DatePicker
+          value={value}
+          onChange={onChange}
+          placeholder={placeholder ?? "Seleccionar fecha"}
+        />
+      ) : (
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900
+            px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2
+            focus:ring-blue-500/40 transition"
+        />
+      )}
     </div>
   );
 }

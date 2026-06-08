@@ -1,8 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Polyline, Marker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { useVehicleRoutes, Route } from '../hooks/useVehicleRoutes';
+import {
+  Route as RouteIcon,
+  MapPin,
+  Calendar,
+  Gauge,
+  Clock,
+  ChevronRight,
+  Route as RouteLineIcon,
+} from 'lucide-react';
+import { useVehicleRoutes, type Route } from '../hooks/useVehicleRoutes';
 
 const HQ_DEFAULT: [number, number] = [-2.170998, -79.922359];
 
@@ -38,11 +47,14 @@ function toLatLng(coords: any): [number, number][] {
   return [];
 }
 
-const th: React.CSSProperties = {
-  textAlign: 'left', padding: '10px 14px', fontWeight: 500,
-  fontSize: 11, textTransform: 'uppercase', color: '#94a3b8',
-};
-const td: React.CSSProperties = { padding: '10px 14px', color: '#0f172a', fontSize: 13 };
+function fmtDuration(min?: number | null) {
+  if (min == null) return "—";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
 
 type Props = { assetId: string; companyId: string };
 
@@ -54,10 +66,9 @@ export default function TabRutas({ assetId, companyId }: Props) {
   const selectedPoints = toLatLng(selectedRoute?.coordinates);
 
   return (
-    <div style={{ borderRadius: '20px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-
+    <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03]">
       {/* ── Mapa ── */}
-      <div style={{ height: '420px' }}>
+      <div className="h-[420px]">
         <MapContainer
           center={HQ_DEFAULT}
           zoom={12}
@@ -78,9 +89,9 @@ export default function TabRutas({ assetId, companyId }: Props) {
                 key={r.id}
                 positions={pts}
                 pathOptions={{
-                  color: isSel ? '#16a34a' : '#cbd5e1',
+                  color: isSel ? '#16a34a' : '#94a3b8',
                   weight: isSel ? 5 : 3,
-                  opacity: isSel ? 1 : 0.5,
+                  opacity: isSel ? 1 : 0.55,
                 }}
                 eventHandlers={{ click: () => setSelected(r.id) }}
               />
@@ -97,54 +108,101 @@ export default function TabRutas({ assetId, companyId }: Props) {
         </MapContainer>
       </div>
 
-      {/* ── Tabla — flujo normal debajo del mapa ── */}
-      <div style={{
-        background: '#fff',
-        borderTop: '1px solid #e2e8f0',
-        maxHeight: '220px',
-        overflowY: 'auto',
-      }}>
-        {loading ? (
-          <div style={{ padding: 20, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
-            Cargando rutas…
+      {/* ── Rutas registradas — con overflow visible ── */}
+      <div className="border-t border-gray-200 dark:border-white/[0.06]">
+        <div className="flex items-center justify-between gap-2 px-4 py-3 bg-gray-50 dark:bg-white/[0.02]">
+          <div className="flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <RouteIcon size={13} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-gray-800 dark:text-white">
+                Rutas registradas
+              </p>
+              <p className="text-[10px] text-gray-400 dark:text-gray-500">
+                {loading
+                  ? "Cargando…"
+                  : routes.length === 0
+                  ? "Sin rutas"
+                  : `${routes.length} ${routes.length === 1 ? "ruta" : "rutas"} · scroll para ver más`}
+              </p>
+            </div>
           </div>
-        ) : routes.length === 0 ? (
-          <div style={{ padding: 20, textAlign: 'center', color: '#94a3b8', fontSize: 13 }}>
-            No hay rutas registradas
-          </div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead style={{ position: 'sticky', top: 0, background: '#f8fafc', zIndex: 1 }}>
-              <tr>
-                <th style={th}>Fecha</th>
-                <th style={th}>Origen → Destino</th>
-                <th style={th}>Km</th>
-                <th style={th}>Duración</th>
-              </tr>
-            </thead>
-            <tbody>
-              {routes.map((r) => (
-                <tr
-                  key={r.id}
-                  onClick={() => setSelected(r.id)}
-                  style={{
-                    cursor: 'pointer',
-                    background: r.id === selected ? '#f0fdf4' : 'transparent',
-                    borderTop: '1px solid #f1f5f9',
-                    transition: 'background 0.1s',
-                  }}
-                  onMouseEnter={(e) => { if (r.id !== selected) e.currentTarget.style.background = '#f8fafc'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = r.id === selected ? '#f0fdf4' : 'transparent'; }}
-                >
-                  <td style={td}>{r.date}</td>
-                  <td style={td}>{r.origin ?? '—'} → {r.destination ?? '—'}</td>
-                  <td style={td}>{r.distanceKm != null ? `${r.distanceKm} km` : '—'}</td>
-                  <td style={td}>{r.durationMin != null ? `${Math.floor(r.durationMin / 60)}h ${r.durationMin % 60}m` : '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        </div>
+
+        <div className="max-h-[280px] overflow-y-auto custom-scrollbar">
+          {loading && routes.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-xs text-gray-400 dark:text-gray-500">
+              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-gray-500" />
+              Cargando rutas…
+            </div>
+          ) : routes.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-10 text-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100 dark:bg-white/[0.05] text-gray-400">
+                <MapPin size={16} />
+              </div>
+              <p className="text-xs text-gray-400 dark:text-gray-500">
+                No hay rutas registradas
+              </p>
+            </div>
+          ) : (
+            <ul className="divide-y divide-gray-100 dark:divide-white/[0.04]">
+              {routes.map((r) => {
+                const isSel = r.id === selected;
+                return (
+                  <li
+                    key={r.id}
+                    onClick={() => setSelected(r.id)}
+                    className={`group cursor-pointer transition-colors ${
+                      isSel
+                        ? "bg-emerald-50 dark:bg-emerald-500/[0.08]"
+                        : "hover:bg-gray-50 dark:hover:bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 px-4 py-3">
+                      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                        isSel
+                          ? "bg-emerald-500 text-white"
+                          : "bg-gray-100 dark:bg-white/[0.05] text-gray-500 dark:text-gray-400"
+                      }`}>
+                        <RouteLineIcon size={15} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-gray-800 dark:text-white">
+                          {r.origin ?? "—"} <span className="text-gray-300 dark:text-gray-600 mx-1">→</span> {r.destination ?? "—"}
+                        </p>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-gray-400 dark:text-gray-500">
+                          <span className="inline-flex items-center gap-1">
+                            <Calendar size={10} />
+                            {r.date || "—"}
+                          </span>
+                          {r.distanceKm != null && (
+                            <span className="inline-flex items-center gap-1">
+                              <Gauge size={10} />
+                              {r.distanceKm} km
+                            </span>
+                          )}
+                          <span className="inline-flex items-center gap-1">
+                            <Clock size={10} />
+                            {fmtDuration(r.durationMin)}
+                          </span>
+                        </div>
+                      </div>
+                      <ChevronRight
+                        size={14}
+                        className={`shrink-0 transition-transform ${
+                          isSel
+                            ? "translate-x-0.5 text-emerald-500"
+                            : "text-gray-300 dark:text-gray-600 group-hover:translate-x-0.5"
+                        }`}
+                      />
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   );

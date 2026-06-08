@@ -1,6 +1,58 @@
 import type { NavigationSection } from "../lib/navigation";
 import type { MasterNavItem } from "../lib/master-navigation";
-import type { PlatformModuleKey, PlatformRole } from "../types/platform";
+import type { PlatformRole } from "../types/platform";
+
+/* ── Mapeo: ruta → [módulo, submódulo] para chequear permisos granulares ── */
+
+type ModuleSub = [string, string];
+
+const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub: string }> = [
+  { test: (h) => h === "/dashboard",                                            mod: "dashboard",     sub: "dashboard" },
+  { test: (h) => h === "/motores" || h.startsWith("/motores/"),              mod: "motores",       sub: "lista_motores" },
+  { test: (h) => h === "/motores/mantenimientos",                              mod: "motores",       sub: "mantenimientos_motor" },
+  { test: (h) => h === "/motores/historial",                                   mod: "motores",       sub: "historial_motor" },
+  { test: (h) => h === "/aires-acondicionados",                               mod: "ac",            sub: "lista_ac" },
+  { test: (h) => h === "/aires-acondicionados/mantenimientos",                mod: "ac",            sub: "mantenimientos_ac" },
+  { test: (h) => h === "/flotas",                                              mod: "gestion",       sub: "flotas" },
+  { test: (h) => h.startsWith("/operaciones/conductores"),                    mod: "gestion",       sub: "conductores" },
+  { test: (h) => h.startsWith("/operaciones/asignaciones"),                    mod: "gestion",       sub: "asignaciones" },
+  { test: (h) => h.startsWith("/gestion/sedes"),                               mod: "gestion",       sub: "sedes" },
+  { test: (h) => h.startsWith("/gestion/garajes"),                             mod: "gestion",       sub: "garajes" },
+  { test: (h) => h.startsWith("/gestion/seguros"),                            mod: "gestion",       sub: "seguros" },
+  { test: (h) => h === "/checklist" || h.startsWith("/checklist/"),          mod: "checklist",     sub: "checklist" },
+  { test: (h) => h === "/alertas" || h.startsWith("/alertas/"),              mod: "alertas",       sub: "alertas" },
+  { test: (h) => h === "/mantenimiento",                                       mod: "mantenimiento", sub: "ordenes" },
+  { test: (h) => h === "/mantenimiento/inventario",                           mod: "mantenimiento", sub: "inventario" },
+  { test: (h) => h === "/mantenimiento/verificacion-aceite",                  mod: "mantenimiento", sub: "oil" },
+  { test: (h) => h === "/reportes" || h.startsWith("/reportes/"),             mod: "reportes",      sub: "reportes" },
+  { test: (h) => h === "/combustible" || h.startsWith("/combustible/"),       mod: "combustible",   sub: "combustible" },
+  { test: (h) => h === "/geolocalizacion" || h.startsWith("/geolocalizacion/"),mod: "geolocalizacion", sub: "geolocalizacion" },
+];
+
+function resolveModuleSub(href: string): ModuleSub | null {
+  const m = HREF_TO_MODULE_SUB.find((r) => r.test(href));
+  return m ? [m.mod, m.sub] : null;
+}
+
+function hasVer(
+  modulePermissions: Record<string, Record<string, string[]>>,
+  mod: string,
+  sub: string,
+): boolean {
+  const acts = modulePermissions?.[mod]?.[sub];
+  return Array.isArray(acts) && acts.includes("ver");
+}
+
+function canAccessItem(
+  role: PlatformRole,
+  href: string,
+  modulePermissions: Record<string, Record<string, string[]>>,
+): boolean {
+  if (isCompanyAdminRole(role)) return true;
+  const ms = resolveModuleSub(href);
+  if (!ms) return true; // ruta sin módulo asociado (ej. /perfil) — pasa
+  return hasVer(modulePermissions, ms[0], ms[1]);
+}
 
 export const PUBLIC_PATHS = [
   "/",
@@ -300,7 +352,7 @@ const SECTION_MODULE_MAP: Record<string, string[]> = {
   "gestion":              ["gestion", "garajes", "seguros", "conductores", "activos"],
   "motores":              ["motores"],
   "generadores":          ["generadores"],
-  "aires_acondicionados": ["ac"],
+  "aires_acondicionados": ["aires_acondicionados"],
   "mantenimiento":        ["mantenimiento", "inventario"],
   "checklist":            ["checklist"],
   "alertas":              ["alertas"],
@@ -326,7 +378,10 @@ export function filterOperationalNavigation(
 
   return sections
     .map((section) => {
-      const filteredItems = section.items.filter((item) => canAccessPath(role, item.href));
+      // 1) Filtrar items por permisos granulares (no por role)
+      const filteredItems = section.items.filter((item) =>
+        canAccessItem(role, item.href, modulePermissions)
+      );
       const sectionKey = section.label.toLowerCase().replace(/[\s/]+/g, "_");
 
       // Superadmin ve todo
@@ -334,32 +389,45 @@ export function filterOperationalNavigation(
         return { ...section, items: filteredItems };
       }
 
-      // Secciones siempre visibles
+      // Secciones siempre visibles para su rol
       const alwaysVisible = isAdmin ? ALWAYS_VISIBLE_ADMIN : ALWAYS_VISIBLE;
       if (alwaysVisible.includes(sectionKey)) {
         return { ...section, items: filteredItems };
       }
 
-      const mappedKeys = SECTION_MODULE_MAP[sectionKey] ?? [];
+      // Si ningún item del bloque quedó visible, ocultar la sección
+      if (filteredItems.length === 0) {
+        return { ...section, items: [] };
+      }
 
+      // Compat: admins de empresa también pasan por aquí
       if (isAdmin) {
-        // Admins: mostrar si alguno de los moduleKeys está en enabledModules de la empresa
-        const allowed = mappedKeys.some((key) => companyModules.includes(key));
-        if (!allowed) return { ...section, items: [] };
-      } else {
-        // Otros roles: necesitan "ver" en al menos un submódulo del módulo
-        const allowed = mappedKeys.some((key) => {
-          const modulePerm = modulePermissions[key] ?? {};
-          return Object.values(modulePerm).some(
-            (actions) => Array.isArray(actions) && actions.includes("ver")
-          );
-        });
-        if (!allowed) return { ...section, items: [] };
+        const hasModule  = (SECTION_MODULE_MAP[sectionKey] ?? []).some((key) =>
+          companyModules.includes(key),
+        );
+        if (!hasModule) return { ...section, items: [] };
       }
 
       return { ...section, items: filteredItems };
     })
     .filter((section) => section.items.length > 0);
+}
+
+/* ── Guard: chequea si el role + permisos granulares permiten acceder a un href ── */
+export function canAccessHref(
+  role: PlatformRole | null,
+  href: string,
+  modulePermissions: Record<string, Record<string, string[]>> = {},
+): boolean {
+  if (!role) return false;
+  if (isPublicPath(href)) return true;
+  if (!canAccessPath(role, href)) return false;
+  if (isCompanyAdminRole(role)) return true;
+  return canAccessItem(role, href, modulePermissions);
+}
+
+function isCompanyAdminRole(role: PlatformRole): boolean {
+  return ADMIN_ROLES.includes(role);
 }
 
 export function filterSuperadminNavigation(

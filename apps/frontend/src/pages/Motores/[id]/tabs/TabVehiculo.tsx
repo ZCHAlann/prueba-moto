@@ -1,5 +1,6 @@
 import { JSX, useState } from 'react';
 import { CockpitData } from '../hooks/useVehicleCockpit';
+import { useTheme } from '@/context/ThemeContext';
 import CardLocation from '../cards/CardLocation';
 import CardAcciones from '../cards/CardAcciones';
 import CardDailyUsage from '../cards/CardDailyUsage';
@@ -75,10 +76,45 @@ const AI_ACTIONS: { id: string; label: string; sublabel: string; icon: JSX.Eleme
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const [modal, setModal] = useState<'mantenimiento' | 'seguros' | 'conductor' | 'notas' | 'config' | null>(null);
 
   const a = data.asset;
   const photo = a.photoUrls?.[0];
+
+  // Solo cambian colores — posiciones, gaps, paddings, sizes se mantienen
+  const c = isDark
+    ? {
+        heroBg:         '#0f172a',
+        heroEmptyBg:    'radial-gradient(ellipse at 35% 60%, #1e293b 0%, #0f172a 70%)',
+        vignette:       'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, transparent 50%)',
+        glass:          'rgba(22,27,44,0.85)',
+        glassBorder:    'rgba(255,255,255,0.08)',
+        text:           '#f4f4f5',
+        muted:          '#a1a1aa',
+        iconColor:      '#a1a1aa',
+        actionBg:       'rgba(255,255,255,0.04)',
+        actionBgHover:  'rgba(255,255,255,0.08)',
+        actionBorder:   'rgba(255,255,255,0.08)',
+        actionLabel:    '#f4f4f5',
+        actionSub:      '#71717a',
+      }
+    : {
+        heroBg:         '#f6f9fc',
+        heroEmptyBg:    'radial-gradient(ellipse at 35% 60%, #d4dce8 0%, #e8edf4 70%)',
+        vignette:       'linear-gradient(135deg, rgba(0,0,0,0.04) 0%, transparent 50%)',
+        glass:          'rgba(255,255,255,0.88)',
+        glassBorder:    'transparent',
+        text:           '#0f172a',
+        muted:          '#64748b',
+        iconColor:      '#475569',
+        actionBg:       '#f8fafc',
+        actionBgHover:  '#f1f5f9',
+        actionBorder:   '#e2e8f0',
+        actionLabel:    '#0f172a',
+        actionSub:      '#94a3b8',
+      };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
@@ -93,7 +129,7 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
         borderRadius: '22px',
         height: '80vh',
         overflow: 'hidden',
-        background: '#f6f9fc',
+        background: c.heroBg,
       }}>
 
         {/* Background photo */}
@@ -111,28 +147,29 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
         ) : (
           <div style={{
             position: 'absolute', inset: 0,
-            background: 'radial-gradient(ellipse at 35% 60%, #d4dce8 0%, #e8edf4 70%)',
+            background: c.heroEmptyBg,
           }} />
         )}
 
         {/* Subtle vignette */}
         <div style={{
           position: 'absolute', inset: 0,
-          background: 'linear-gradient(135deg, rgba(0,0,0,0.04) 0%, transparent 50%)',
+          background: c.vignette,
           pointerEvents: 'none',
         }} />
 
         {/* ── Name pill — top left ── */}
         <div style={{
           position: 'absolute', top: 20, left: 20, zIndex: 10,
-          background: 'rgba(255,255,255,0.88)',
+          background: c.glass,
           backdropFilter: 'blur(10px)',
+          border: `1px solid ${c.glassBorder}`,
           borderRadius: '14px',
           padding: '10px 16px',
-          boxShadow: '0 2px 16px rgba(0,0,0,0.08)',
+          boxShadow: isDark ? '0 2px 16px rgba(0,0,0,0.4)' : '0 2px 16px rgba(0,0,0,0.08)',
         }}>
-          <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{a.name}</p>
-          <p style={{ margin: 0, fontSize: 11, color: '#64748b', marginTop: 2 }}>
+          <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: c.text }}>{a.name}</p>
+          <p style={{ margin: 0, fontSize: 11, color: c.muted, marginTop: 2 }}>
             {a.brand} {a.model} · {a.year}
           </p>
         </div>
@@ -142,13 +179,13 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
           onClick={() => setModal('config')}
           style={{
             position: 'absolute', top: 20, right: 20, zIndex: 10,
-            background: 'rgba(255,255,255,0.85)',
+            background: c.glass,
             backdropFilter: 'blur(8px)',
             border: 'none', borderRadius: '12px',
             width: 38, height: 38,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer', color: '#64748b',
-            boxShadow: '0 1px 6px rgba(0,0,0,0.08)',
+            cursor: 'pointer', color: c.muted,
+            boxShadow: isDark ? '0 1px 6px rgba(0,0,0,0.3)' : '0 1px 6px rgba(0,0,0,0.08)',
           }}
         >
           <IconSettings />
@@ -165,11 +202,12 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
         }}>
           {/* 2×2 grid */}
           <div style={{
-            background: 'rgba(255,255,255,0.92)',
+            background: c.glass,
             backdropFilter: 'blur(12px)',
+            border: `1px solid ${c.glassBorder}`,
             borderRadius: '18px',
             padding: '14px',
-            boxShadow: '0 4px 24px rgba(0,0,0,0.10)',
+            boxShadow: isDark ? '0 4px 24px rgba(0,0,0,0.5)' : '0 4px 24px rgba(0,0,0,0.10)',
             display: 'grid',
             gridTemplateColumns: '1fr 1fr',
             gap: 8,
@@ -185,18 +223,18 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
                   display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6,
                   padding: '10px 12px',
                   borderRadius: '12px',
-                  background: '#f8fafc',
-                  border: '1px solid #e2e8f0',
+                  background: c.actionBg,
+                  border: `1px solid ${c.actionBorder}`,
                   cursor: 'pointer',
                   transition: 'background 0.12s',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = '#f1f5f9')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = '#f8fafc')}
+                onMouseEnter={(e) => (e.currentTarget.style.background = c.actionBgHover)}
+                onMouseLeave={(e) => (e.currentTarget.style.background = c.actionBg)}
               >
-                <span style={{ color: '#475569' }}>{ac.icon}</span>
+                <span style={{ color: c.iconColor }}>{ac.icon}</span>
                 <div>
-                  <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>{ac.label}</p>
-                  <p style={{ margin: 0, fontSize: 10, color: '#94a3b8', marginTop: 1 }}>{ac.sublabel}</p>
+                  <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: c.actionLabel, lineHeight: 1.2 }}>{ac.label}</p>
+                  <p style={{ margin: 0, fontSize: 10, color: c.actionSub, marginTop: 1 }}>{ac.sublabel}</p>
                 </div>
               </button>
             ))}
@@ -207,18 +245,18 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
             onClick={() => setModal('notas')}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-              background: 'rgba(255,255,255,0.90)',
+              background: c.glass,
               backdropFilter: 'blur(8px)',
-              border: '1px solid rgba(226,232,240,0.8)',
+              border: `1px solid ${c.glassBorder}`,
               borderRadius: '12px',
               padding: '10px',
               cursor: 'pointer',
-              fontSize: 12, fontWeight: 500, color: '#0f172a',
-              boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
+              fontSize: 12, fontWeight: 500, color: c.text,
+              boxShadow: isDark ? '0 1px 6px rgba(0,0,0,0.3)' : '0 1px 6px rgba(0,0,0,0.06)',
               width: '100%',
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(241,245,249,0.95)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.90)')}
+            onMouseEnter={(e) => (e.currentTarget.style.background = c.actionBgHover)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = c.glass)}
           >
             <IconNote />
             Registrar nota

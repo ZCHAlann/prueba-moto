@@ -21,6 +21,8 @@ import MaintenanceGeneralPage from "./pages/Mantenimientos/page";
 import MaintenanceInventoryPage from "./pages/Mantenimientos/Inventario/page";
 import MaintenanceOilPage from "./pages/Mantenimientos/Oil/page";
 import MotorCockpitPage from "./pages/Motores/[id]/page";
+import AcPage from "./pages/AiresAcondicionados/page";
+import AcMaintenancesPage from "./pages/AiresAcondicionados/Mantenimientos/page";
 import { ChecklistPage } from "./pages/Checklist/page";
 import { AlertsPage } from "./pages/Alertas/page";
 import { ReportsPage } from "./pages/Reports/page";
@@ -170,6 +172,8 @@ export default function App() {
           <Route path="/accesos/roles" element={<RolesPage />} />
           <Route path="/soporte" element={<SoportePage />} />
           <Route path="/geolocalizacion" element={<GeolocationPage />} />
+          <Route path="/aires-acondicionados" element={<AcPage />} />
+          <Route path="/aires-acondicionados/mantenimientos" element={<AcMaintenancesPage />} />
         </Route>
 
         {/* ── Plataforma ── */}

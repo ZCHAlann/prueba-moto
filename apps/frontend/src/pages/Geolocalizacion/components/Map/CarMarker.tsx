@@ -3,95 +3,111 @@ import L from 'leaflet';
 import type { Car } from '../../types/car';
 import { STATUS_HEX } from '../../constants/carStatus';
 import { useSelectionStore } from '../../store/selectionStore';
+import { useCarStore } from '../../store/carStore';
 import { formatRelativeTime } from '../../utils/formatters';
+import {
+  bearingFromRoute,
+  rotationForBearing,
+} from '../../utils/heading';
+import { silhouetteForColor } from '../../data/carSilhouettes';
 
-const createCarIcon = (car: Car, isSelected: boolean) => {
+const buildCarIcon = (
+  car: Car,
+  isSelected: boolean,
+  rotationDeg: number,
+) => {
   const color = STATUS_HEX[car.state];
+  const photo =
+    car.photoUrl && car.photoUrl.length > 0
+      ? car.photoUrl
+      : silhouetteForColor(car.color);
+
+  // ── Wrapper ─────────────────────────────────────────────
+  // 80 × 76 px:
+  //   - 64 px de alto para la foto (con sombra)
+  //   - 12 px para la placa debajo
+  // el `iconAnchor` apunta al centro inferior (≈ punto GPS)
+  const wrapperSize = { w: 80, h: 76 };
+  const photoSize = { w: 64, h: 44 };
+
+  const selectionRing = isSelected
+    ? `box-shadow: 0 0 0 4px ${color}55, 0 6px 18px rgba(0,0,0,0.35);`
+    : `box-shadow: 0 4px 12px rgba(0,0,0,0.25);`;
+
+  // Rotación: la cabeza de la foto queda en la izquierda por
+  // defecto; `rotationDeg` la orienta al bearing de la ruta.
+  // El contenedor externo NO rota (mantiene la posición
+  // estable); sólo la foto interior rota.
+  const photoHtml = photo
+    ? `<img
+         src="${photo}"
+         alt="${car.brand} ${car.model}"
+         draggable="false"
+         style="
+           width: ${photoSize.w}px;
+           height: ${photoSize.h}px;
+           object-fit: contain;
+           display: block;
+           transform: rotate(${rotationDeg}deg);
+           transition: transform 0.5s cubic-bezier(.34,1.56,.64,1);
+           filter: drop-shadow(0 2px 4px rgba(0,0,0,0.25));
+           pointer-events: none;
+         "
+       />`
+    : `<div style="
+         width: ${photoSize.w}px; height: ${photoSize.h}px;
+         display: flex; align-items: center; justify-content: center;
+         background: ${color}22; border-radius: 8px;
+         color: ${color}; font-size: 22px; font-weight: 800;
+         font-family: ui-sans-serif, system-ui, sans-serif;
+       ">${car.plate.slice(0, 3)}</div>`;
 
   const html = `
-    <div style="position: relative; width: 54px; height: 62px;">
-      <!-- Badge con el carro + placa -->
+    <div style="
+      position: relative;
+      width: ${wrapperSize.w}px;
+      height: ${wrapperSize.h}px;
+      pointer-events: auto;
+    ">
+      <!-- Foto del vehículo (rotable) -->
       <div style="
         position: absolute;
-        top: 0; left: 0;
-        background: white;
+        top: 0; left: 50%;
+        transform: translateX(-50%);
+        width: ${photoSize.w}px;
+        height: ${photoSize.h}px;
+        background: #ffffff;
         border: 2.5px solid ${color};
         border-radius: 10px;
-        padding: 5px 7px 4px;
-        box-shadow: ${
-          isSelected
-            ? `0 0 0 4px ${color}33, 0 4px 14px rgba(0,0,0,0.22)`
-            : '0 3px 10px rgba(0,0,0,0.18)'
-        };
+        padding: 2px;
+        ${selectionRing}
         display: flex;
-        flex-direction: column;
         align-items: center;
-        gap: 1px;
-        min-width: 52px;
-        transition: box-shadow 0.2s ease;
+        justify-content: center;
+        overflow: hidden;
+        box-sizing: border-box;
       ">
-        <!-- Carro vectorial (vista superior) -->
-        <svg
-          width="28"
-          height="28"
-          viewBox="0 0 32 32"
-          xmlns="http://www.w3.org/2000/svg"
-          style="display: block;"
-        >
-          <!-- Llantas (capa de atrás) -->
-          <rect x="2"  y="9"  width="3" height="5" rx="1" fill="#1e293b" />
-          <rect x="27" y="9"  width="3" height="5" rx="1" fill="#1e293b" />
-          <rect x="2"  y="18" width="3" height="5" rx="1" fill="#1e293b" />
-          <rect x="27" y="18" width="3" height="5" rx="1" fill="#1e293b" />
-
-          <!-- Carrocería -->
-          <rect
-            x="5" y="5" width="22" height="22" rx="5"
-            fill="white"
-            stroke="${color}"
-            stroke-width="2"
-          />
-
-          <!-- Parabrisas delantero -->
-          <rect
-            x="8" y="8" width="16" height="5" rx="1.2"
-            fill="${color}" opacity="0.4"
-          />
-
-          <!-- Techo (línea central sutil) -->
-          <rect
-            x="9" y="15" width="14" height="2" rx="0.5"
-            fill="${color}" opacity="0.18"
-          />
-
-          <!-- Parabrisas trasero -->
-          <rect
-            x="8" y="19" width="16" height="5" rx="1.2"
-            fill="${color}" opacity="0.4"
-          />
-
-          <!-- Faros delanteros (puntitos) -->
-          <circle cx="10" cy="6.5" r="0.8" fill="${color}" />
-          <circle cx="22" cy="6.5" r="0.8" fill="${color}" />
-
-          <!-- Luces traseras -->
-          <circle cx="10" cy="25.5" r="0.8" fill="${color}" />
-          <circle cx="22" cy="25.5" r="0.8" fill="${color}" />
-        </svg>
-
-        <!-- Placa -->
-        <span style="
-          font-size: 8.5px;
-          font-weight: 700;
-          color: #0f172a;
-          letter-spacing: 0.4px;
-          font-family: ui-sans-serif, system-ui, sans-serif;
-          white-space: nowrap;
-          margin-top: 1px;
-        ">${car.plate}</span>
+        ${photoHtml}
       </div>
 
-      <!-- Triángulo apuntando a la posición exacta -->
+      <!-- Placa (debajo, no rota) -->
+      <div style="
+        position: absolute;
+        bottom: 8px; left: 50%;
+        transform: translateX(-50%);
+        background: ${color};
+        color: white;
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.6px;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        white-space: nowrap;
+        padding: 2.5px 7px;
+        border-radius: 6px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      ">${car.plate}</div>
+
+      <!-- Punta del GPS (ancla al coord exacto) -->
       <div style="
         position: absolute;
         bottom: 0; left: 50%;
@@ -107,8 +123,8 @@ const createCarIcon = (car: Car, isSelected: boolean) => {
   return L.divIcon({
     className: 'car-marker',
     html,
-    iconSize: [54, 62],
-    iconAnchor: [27, 62], // la punta del triángulo cae en el lat/lng exacto
+    iconSize: [wrapperSize.w, wrapperSize.h],
+    iconAnchor: [wrapperSize.w / 2, wrapperSize.h],
   });
 };
 
@@ -119,21 +135,46 @@ interface Props {
 export const CarMarker = ({ car }: Props) => {
   const selectedId = useSelectionStore((s) => s.selectedCar?.id);
   const selectCar  = useSelectionStore((s) => s.selectCar);
+  const route      = useSelectionStore((s) => s.selectedRoute);
   const isSelected = selectedId === car.id;
+
+  // Solo el carro cuya ruta está seleccionada rota con el
+  // heading; los demás quedan con la cabeza a la izquierda
+  // (comportamiento por defecto).
+  const rotationDeg =
+    isSelected && route && route.carId === car.id
+      ? rotationForBearing(bearingFromRoute(route))
+      : 0;
+
+  // toco useCarStore para forzar re-render cuando cambien
+  // los carros (no se usa el valor, sólo la suscripción)
+  useCarStore((s) => s.cars);
 
   return (
     <Marker
       position={[car.position.lat, car.position.lng]}
-      icon={createCarIcon(car, isSelected)}
+      icon={buildCarIcon(car, isSelected, rotationDeg)}
       eventHandlers={{ click: () => selectCar(car) }}
+      zIndexOffset={isSelected ? 1000 : 0}
     >
       <Popup>
-        <div className="min-w-[180px] text-sm">
-          <div className="font-bold text-slate-900">
-            {car.brand} {car.model}
-          </div>
-          <div className="text-xs text-slate-500">
-            {car.plate} · {car.year}
+        <div className="min-w-[200px] text-sm">
+          <div className="flex items-center gap-2.5">
+            {car.photoUrl && (
+              <img
+                src={car.photoUrl}
+                alt=""
+                className="h-10 w-14 rounded-md object-contain ring-1 ring-slate-200"
+              />
+            )}
+            <div>
+              <div className="font-bold text-slate-900">
+                {car.brand} {car.model}
+              </div>
+              <div className="text-[11px] text-slate-500">
+                {car.plate} · {car.year} · {car.color}
+              </div>
+            </div>
           </div>
           {car.driverName && (
             <div className="mt-1.5 text-xs text-slate-700">👤 {car.driverName}</div>

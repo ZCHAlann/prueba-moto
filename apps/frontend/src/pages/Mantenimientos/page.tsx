@@ -5,6 +5,7 @@ import { useAssets } from "../../hooks/useAssets";
 import { useDrivers } from "../../hooks/useDrivers";
 import { usePermissions } from "../../hooks/usePermissions";
 import { ModulePageHeader } from "../../components/features/modules/ModulePageHeader";
+import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import type { ApiMaintenance, MaintenancePriority, MaintenanceStatus, MaintenanceKind } from "../../hooks/useMaintenances";
 import type { Asset } from "../../types/activo";
 import {
@@ -342,10 +343,18 @@ function FormModal({ mode, initial, assets, drivers, driversLoading, onClose, on
               </div>
             </Field>
             <Field label="Fecha inicio">
-              <input className={inputCls} type="date" value={form.scheduledDate} onChange={e => set("scheduledDate", e.target.value)} />
+              <DatePicker
+                value={form.scheduledDate}
+                onChange={(v) => set("scheduledDate", v)}
+                placeholder="Seleccionar"
+              />
             </Field>
             <Field label="Fecha límite" required>
-              <input className={inputCls} type="date" value={form.dueDate} onChange={e => set("dueDate", e.target.value)} />
+              <DatePicker
+                value={form.dueDate}
+                onChange={(v) => set("dueDate", v)}
+                placeholder="Seleccionar"
+              />
             </Field>
             <Field label="Mano de obra (USD)">
               <input className={inputCls} type="number" min="0" step="0.01" value={form.laborCost} onChange={e => set("laborCost", e.target.value)} placeholder="0.00" />

@@ -4,6 +4,7 @@ import { useMotors } from "../../hooks/useMotors";
 import { useDrivers } from "../../hooks/useDrivers";
 import { useAssignments } from "../../hooks/useAssignments";
 import { X, ChevronRight, ChevronLeft, Loader2 } from "lucide-react";
+import { DatePicker } from "../ui/date-picker/DatePicker";
 import type { AssetFuelType, AssetStatus } from "../../types/activo";
 
 type VehicleFormValues = {
@@ -200,7 +201,13 @@ export function MotorCreateModal({ onClose }: Props) {
               <Field label="Tipo de aceite" error={errors.oilType}><input className={inputCls} value={values.oilType} onChange={(e) => set("oilType", e.target.value)} placeholder="15W-40" /></Field>
               <Field label="Capacidad de aceite" error={errors.oilCapacity}><input className={inputCls} value={values.oilCapacity} onChange={(e) => set("oilCapacity", e.target.value)} placeholder="15 L" /></Field>
               <Field label="Carga máxima" error={errors.maxLoad}><input className={inputCls} value={values.maxLoad} onChange={(e) => set("maxLoad", e.target.value)} placeholder="5000 kg" /></Field>
-              <Field label="Próximo mantenimiento"><input className={inputCls} type="date" value={values.nextMaintenance} onChange={(e) => set("nextMaintenance", e.target.value)} /></Field>
+              <Field label="Próximo mantenimiento">
+                <DatePicker
+                  value={values.nextMaintenance}
+                  onChange={(v) => set("nextMaintenance", v)}
+                  placeholder="Seleccionar fecha"
+                />
+              </Field>
             </div>
           )}
 

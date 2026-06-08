@@ -1,30 +1,34 @@
-// src/pages/AuthPages/SignIn.tsx
-// Login dark + esmeralda (consistente con la landing y el sistema).
-// Imagen a sangre completa de administracion/rastreo de flotas (no carros en si).
-// Card de form compacta con floating labels, password toggle, social buttons.
-
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "sonner";
 
-const QUOTES = [
-  { text: "Controla tu flota, motores y generadores.", subtext: "Una sola vista para toda tu operacion." },
-  { text: "Menos planilla, mas decisiones.", subtext: "Datos claros para tu equipo y tu gerencia." },
-  { text: "Trazabilidad en tiempo real.", subtext: "Vehiculos, mantenimientos, combustible y alertas." },
-];
-
-// Imagenes: administracion de flotas / rastreo GPS / dashboards (no carros en si)
-const CAROUSEL_IMAGES = [
-  "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80", // dashboard analytics
-  "https://images.unsplash.com/photo-1581094794329-c8112a89af12?auto=format&fit=crop&w=1600&q=80", // warehouse/fleet management
-  "https://images.unsplash.com/photo-1518186285589-2f7649de83e0?auto=format&fit=crop&w=1600&q=80", // logistics/data
+const SLIDES = [
+  {
+    image: "https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&w=1400&q=80",
+    headline: "Controla tu flota,",
+    accent: "en tiempo real.",
+    sub: "Una sola vista para toda tu operacion.",
+  },
+  {
+    image: "https://images.unsplash.com/photo-1581092921461-eab62e97a780?auto=format&fit=crop&w=1400&q=80",
+    headline: "Menos planilla,",
+    accent: "mas decisiones.",
+    sub: "Datos claros para tu equipo y tu gerencia.",
+  },
+  {
+    image: "https://images.unsplash.com/photo-1518186285589-2f7649de83e0?auto=format&fit=crop&w=1400&q=80",
+    headline: "Trazabilidad total,",
+    accent: "sin friccion.",
+    sub: "Vehiculos, combustible, mantenimientos y alertas.",
+  },
 ];
 
 export default function SignIn() {
   const { login, session, getHomePath, isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
   const [loginValue, setLoginValue] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -32,173 +36,336 @@ export default function SignIn() {
   const [submitting, setSubmitting] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [ripples, setRipples] = useState<{ x: number; y: number; id: number }[]>([]);
-  const [imageIndex, setImageIndex] = useState(0);
+  const [slideIndex, setSlideIndex] = useState(0);
+  const [fading, setFading] = useState(false);
   const rippleIdRef = useRef(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    const handleScroll = () => setScrolled(window.scrollY > 20);
-    handleScroll();
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  useEffect(() => {
-    const id = setInterval(() => {
-      setImageIndex((i) => (i + 1) % CAROUSEL_IMAGES.length);
-    }, 5000);
-    return () => clearInterval(id);
-  }, []);
-
-  const handleButtonClick = (e: React.MouseEvent<HTMLButtonElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const id = ++rippleIdRef.current;
-    setRipples((prev) => [...prev, { x, y, id }]);
+  const changeSlide = (next: number) => {
+    setFading(true);
     setTimeout(() => {
-      setRipples((prev) => prev.filter((r) => r.id !== id));
-    }, 800);
+      setSlideIndex(next);
+      setFading(false);
+    }, 500);
+  };
+
+  useEffect(() => {
+    intervalRef.current = setInterval(() => {
+      setSlideIndex((i) => {
+        const next = (i + 1) % SLIDES.length;
+        changeSlide(next);
+        return i;
+      });
+    }, 6000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, []);
+
+  const goTo = (i: number) => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    changeSlide(i);
+    intervalRef.current = setInterval(() => {
+      setSlideIndex((cur) => {
+        const next = (cur + 1) % SLIDES.length;
+        changeSlide(next);
+        return cur;
+      });
+    }, 6000);
+  };
+
+  const addRipple = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const id = ++rippleIdRef.current;
+    setRipples((p) => [...p, { x: e.clientX - rect.left, y: e.clientY - rect.top, id }]);
+    setTimeout(() => setRipples((p) => p.filter((r) => r.id !== id)), 900);
   };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (submitting) return;
     setSubmitting(true);
-
     const result = await login({ email: loginValue, password, remember });
     setSubmitting(false);
-
     if (!result.ok) {
       toast.error(result.title, { description: result.description });
       return;
     }
-
-    toast.success("Bienvenido", {
-      description: "Acceso concedido. Redirigiendo a tu panel...",
-    });
-
+    toast.success("Bienvenido", { description: "Acceso concedido." });
     const redirect = searchParams.get("redirect") || result.redirectTo;
-    setTimeout(() => navigate(redirect, { replace: true }), 600);
+    setTimeout(() => navigate(redirect, { replace: true }), 500);
   };
 
-  const nextImage = () => setImageIndex((i) => (i + 1) % CAROUSEL_IMAGES.length);
-  const prevImage = () => setImageIndex((i) => (i - 1 + CAROUSEL_IMAGES.length) % CAROUSEL_IMAGES.length);
+  const slide = SLIDES[slideIndex];
 
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-gray-950">
-      {/* Fondo dark con mesh gradient emerald */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950" />
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -left-32 top-1/4 h-96 w-96 rounded-full bg-emerald-500/10 blur-3xl animate-[meshMove1_18s_ease-in-out_infinite]" />
-        <div className="absolute right-1/4 bottom-1/4 h-96 w-96 rounded-full bg-cyan-500/5 blur-3xl animate-[meshMove2_22s_ease-in-out_infinite]" />
-      </div>
-      {/* Particulas */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        {Array.from({ length: 20 }).map((_, i) => (
-          <span
-            key={i}
-            className="absolute h-1 w-1 rounded-full bg-emerald-400/20 animate-[floatParticle_15s_linear_infinite]"
-            style={{
-              left: `${(i * 37) % 100}%`,
-              animationDelay: `${(i * 0.6) % 15}s`,
-              animationDuration: `${15 + (i % 5) * 2}s`,
-            }}
-          />
-        ))}
-      </div>
+    <div className="relative flex min-h-screen w-full overflow-hidden" style={{ background: "#07090d" }}>
 
-      {/* ── TOPBAR ── */}
+      {/* Keyframes */}
+      <style>{`
+        @keyframes fadeInRight { from { opacity:0; transform:translateX(24px); } to { opacity:1; transform:translateX(0); } }
+        @keyframes rippleKf   { 0% { transform:scale(0); opacity:.7; } 100% { transform:scale(24); opacity:0; } }
+        @keyframes shimmerKf  { 0% { transform:translateX(-100%); } 60%,100% { transform:translateX(200%); } }
+        @keyframes floatY     { 0%,100% { transform:translateY(0px); } 50% { transform:translateY(-14px); } }
+        @keyframes pulseDot   { 0%,100% { box-shadow:0 0 4px 1px rgba(16,185,129,.5); } 50% { box-shadow:0 0 10px 3px rgba(16,185,129,.9); } }
+        @keyframes fadeSlide  { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+        .form-item-1 { animation: fadeInRight .5s cubic-bezier(.22,1,.36,1) .05s both; }
+        .form-item-2 { animation: fadeInRight .5s cubic-bezier(.22,1,.36,1) .13s both; }
+        .form-item-3 { animation: fadeInRight .5s cubic-bezier(.22,1,.36,1) .20s both; }
+        .form-item-4 { animation: fadeInRight .5s cubic-bezier(.22,1,.36,1) .27s both; }
+        .form-item-5 { animation: fadeInRight .5s cubic-bezier(.22,1,.36,1) .33s both; }
+        .form-item-6 { animation: fadeInRight .5s cubic-bezier(.22,1,.36,1) .39s both; }
+        .apl-input:focus { border-color: rgba(16,185,129,.55) !important; box-shadow: 0 0 0 3px rgba(16,185,129,.09), 0 0 18px rgba(16,185,129,.07) !important; }
+        .apl-input { transition: border-color .22s, box-shadow .22s, background .22s; }
+        .apl-btn:hover { background: #34d399 !important; box-shadow: 0 8px 32px rgba(16,185,129,.45) !important; transform: translateY(-1px); }
+        .apl-btn:active { transform: translateY(0); }
+        .nav-link:hover { color: #10b981 !important; }
+        .forgot-link:hover { color: #10b981 !important; }
+        .demo-link:hover { color: #34d399 !important; }
+        .apl-dot-btn:hover { background: rgba(255,255,255,.35) !important; }
+      `}</style>
+
+      {/* ─── TOPBAR ─────────────────────────────────────────────── */}
       <header
-        className={`fixed inset-x-0 top-0 z-30 transition-all duration-500 ${
-          scrolled
-            ? "border-b border-white/10 bg-gray-950/80 backdrop-blur-xl"
-            : "border-b border-transparent bg-transparent"
-        }`}
+        className="fixed inset-x-0 top-0 z-50 flex items-center justify-between px-8 py-4 transition-all duration-500"
+        style={{
+          borderBottom: scrolled ? "1px solid rgba(255,255,255,.06)" : "1px solid transparent",
+          background: scrolled ? "rgba(7,9,13,.92)" : "transparent",
+          backdropFilter: scrolled ? "blur(18px)" : "none",
+        }}
       >
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-4 py-3 lg:px-6">
-          <Link to="/" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/20 ring-1 ring-emerald-400/30">
-              <svg viewBox="0 0 24 24" className="h-4 w-4 text-emerald-400" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M3 13l2-5h14l2 5M3 13v6h2v-2h14v2h2v-6M3 13h18" />
-                <circle cx="7" cy="17" r="1.5" fill="currentColor" />
-                <circle cx="17" cy="17" r="1.5" fill="currentColor" />
-              </svg>
-            </div>
-            <span className="text-sm font-bold text-white">ApliSmart Motors</span>
-          </Link>
-
-          <nav className="hidden items-center gap-6 md:flex">
-            <a href="/#beneficios" className="text-sm font-medium text-gray-300 transition hover:text-white">Beneficios</a>
-            <a href="/#modulos" className="text-sm font-medium text-gray-300 transition hover:text-white">Modulos</a>
-            <a href="/#planes" className="text-sm font-medium text-gray-300 transition hover:text-white">Planes</a>
-            <a href="/#faq" className="text-sm font-medium text-gray-300 transition hover:text-white">FAQ</a>
-          </nav>
-
-          <Link
-            to="/"
-            className="rounded-lg border border-white/20 bg-white/[0.05] px-4 py-2 text-sm font-medium text-white backdrop-blur-sm transition hover:bg-white/10"
+        <Link to="/" className="flex items-center gap-2.5">
+          <div
+            className="flex h-8 w-8 items-center justify-center rounded-lg"
+            style={{ background: "rgba(16,185,129,.15)", border: "1px solid rgba(16,185,129,.3)" }}
           >
-            Volver al inicio
-          </Link>
-        </div>
+            <svg viewBox="0 0 24 24" className="h-4 w-4" style={{ color: "#10b981" }} fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M3 13l2-5h14l2 5M3 13v6h2v-2h14v2h2v-6M3 13h18" />
+              <circle cx="7" cy="17" r="1.5" fill="currentColor" />
+              <circle cx="17" cy="17" r="1.5" fill="currentColor" />
+            </svg>
+          </div>
+          <span className="text-[13px] font-bold tracking-tight text-white">ApliSmart Motors</span>
+        </Link>
+
+        <nav className="hidden items-center gap-8 md:flex">
+          {["Beneficios", "Modulos", "Planes", "FAQ"].map((item) => (
+            <a
+              key={item}
+              href={`/#${item.toLowerCase()}`}
+              className="nav-link text-[12px] font-semibold uppercase transition-colors duration-200"
+              style={{ color: "rgba(255,255,255,.38)", letterSpacing: "0.08em" }}
+            >
+              {item}
+            </a>
+          ))}
+        </nav>
+
+        <Link
+          to="/"
+          className="rounded-lg px-4 py-2 text-[12px] font-semibold text-white transition-all"
+          style={{ border: "1px solid rgba(255,255,255,.12)", background: "rgba(255,255,255,.04)" }}
+        >
+          Volver al inicio
+        </Link>
       </header>
 
-      {/* ── CARD PRINCIPAL ── */}
-      <div className="relative z-10 flex min-h-screen w-full items-center justify-center px-4 py-24 sm:px-6">
-        <div className="grid w-full max-w-5xl grid-cols-1 overflow-hidden rounded-3xl border border-white/10 bg-gray-900/80 shadow-2xl shadow-emerald-500/5 backdrop-blur-xl lg:grid-cols-2">
-          {/* ═══ LADO IZQUIERDO: FORM ═══ */}
-          <div className="flex flex-col justify-center p-8 sm:p-10">
-            <div className="mb-3 inline-flex w-fit items-center gap-2 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300 ring-1 ring-emerald-500/20">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              Acceso unificado
+      {/* ─── LAYOUT PRINCIPAL ─────────────────────────────────────
+           Imagen izquierda | borde | Form derecha
+      ──────────────────────────────────────────────────────────── */}
+      <div className="flex min-h-screen w-full">
+
+        {/* ══ IZQUIERDA — IMAGEN ══ */}
+        <div className="relative hidden flex-1 overflow-hidden lg:block">
+
+          {/* Imágenes con crossfade */}
+          {SLIDES.map((s, i) => (
+            <div
+              key={i}
+              className="absolute inset-0 bg-cover bg-center"
+              style={{
+                backgroundImage: `url(${s.image})`,
+                opacity: i === slideIndex ? (fading ? 0 : 1) : 0,
+                transition: "opacity .6s ease-in-out",
+                filter: "brightness(.45) saturate(.7)",
+                transform: "scale(1.04)",
+              }}
+            />
+          ))}
+
+          {/* Gradientes de profundidad */}
+          <div className="absolute inset-0 pointer-events-none" style={{ background: "linear-gradient(to left, rgba(7,9,13,.95) 0%, rgba(7,9,13,.2) 40%, transparent 100%)" }} />
+          <div className="absolute inset-0 pointer-events-none" style={{ background: "linear-gradient(to top, rgba(7,9,13,.85) 0%, transparent 55%)" }} />
+          <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 35% 40%, rgba(16,185,129,.07) 0%, transparent 60%)" }} />
+
+          {/* Badge LIVE */}
+          <div
+            className="absolute left-6 top-6 flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-bold tracking-widest uppercase"
+            style={{
+              background: "rgba(0,0,0,.5)",
+              border: "1px solid rgba(255,255,255,.1)",
+              backdropFilter: "blur(10px)",
+              color: "rgba(255,255,255,.55)",
+            }}
+          >
+            <span
+              className="h-[7px] w-[7px] rounded-full"
+              style={{ background: "#f43f5e", animation: "pulseDot 1.5s ease-in-out infinite" }}
+            />
+            LIVE · 47 veh activos
+          </div>
+
+          {/* Contenido bottom */}
+          <div className="absolute bottom-0 inset-x-0 p-10">
+            <div key={slideIndex} style={{ animation: "fadeSlide .5s cubic-bezier(.22,1,.36,1) both" }}>
+              <p
+                className="mb-2 text-[30px] font-black leading-tight text-white"
+                style={{ letterSpacing: "-0.03em", textShadow: "0 2px 24px rgba(0,0,0,.6)" }}
+              >
+                {slide.headline}<br />
+                <span style={{ color: "#10b981" }}>{slide.accent}</span>
+              </p>
+              <p className="mb-8 text-[13px]" style={{ color: "rgba(255,255,255,.45)" }}>
+                {slide.sub}
+              </p>
             </div>
-            <h1 className="text-2xl font-bold leading-tight text-white sm:text-3xl">
-              Hola de nuevo
-            </h1>
-            <p className="mt-1 text-sm text-gray-400">
+
+            {/* Dots */}
+            <div className="flex items-center gap-2">
+              {SLIDES.map((_, i) => (
+                <button
+                  key={i}
+                  onClick={() => goTo(i)}
+                  className="apl-dot-btn h-[3px] rounded-full transition-all duration-300"
+                  style={{
+                    width: i === slideIndex ? 28 : 8,
+                    background: i === slideIndex ? "#10b981" : "rgba(255,255,255,.22)",
+                    border: "none",
+                    padding: 0,
+                    cursor: "pointer",
+                  }}
+                  aria-label={`Slide ${i + 1}`}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* ══ BORDE CENTRAL ══ */}
+        <div
+          className="hidden lg:block w-px flex-shrink-0"
+          style={{ background: "linear-gradient(to bottom, transparent, rgba(16,185,129,.15) 30%, rgba(16,185,129,.1) 70%, transparent)" }}
+        />
+
+        {/* ══ DERECHA — FORM ══ */}
+        <div
+          className="relative z-10 flex w-full flex-col justify-center px-10 py-28 lg:w-[46%] xl:w-[42%]"
+          style={{ background: "#07090d" }}
+        >
+          {/* Glow ambiental */}
+          <div
+            className="pointer-events-none absolute"
+            style={{
+              top: "10%", right: "-100px",
+              width: "400px", height: "400px",
+              background: "radial-gradient(circle, rgba(16,185,129,.07) 0%, transparent 65%)",
+              animation: "floatY 10s ease-in-out infinite",
+            }}
+          />
+          <div
+            className="pointer-events-none absolute"
+            style={{
+              bottom: "5%", left: "-60px",
+              width: "280px", height: "280px",
+              background: "radial-gradient(circle, rgba(6,182,212,.04) 0%, transparent 65%)",
+              animation: "floatY 13s ease-in-out infinite reverse",
+            }}
+          />
+
+          <div className="relative mx-auto w-full max-w-[360px]">
+
+            {/* Badge */}
+            <div className="form-item-1 mb-7">
+              <div
+                className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-bold tracking-widest uppercase"
+                style={{ background: "rgba(16,185,129,.1)", border: "1px solid rgba(16,185,129,.22)", color: "#10b981" }}
+              >
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{ background: "#10b981", animation: "pulseDot 2s ease-in-out infinite" }}
+                />
+                Acceso unificado
+              </div>
+            </div>
+
+            {/* Titulo */}
+            <div className="form-item-1 mb-2">
+              <h1 className="text-[36px] font-black leading-[1.08] text-white" style={{ letterSpacing: "-0.03em" }}>
+                Hola de<br />
+                <span style={{ color: "#10b981" }}>nuevo.</span>
+              </h1>
+            </div>
+            <p className="form-item-2 mb-9 text-[13px]" style={{ color: "rgba(255,255,255,.32)", lineHeight: 1.6 }}>
               Ingresa para continuar con tu operacion.
             </p>
 
             {/* Sesion activa */}
-            {isAuthenticated && session ? (
-              <div className="mt-5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
-                <p className="text-sm font-semibold text-emerald-300">Sesion activa</p>
-                <p className="mt-0.5 text-sm text-emerald-200">{session.name} / {session.roleLabel}</p>
-                <div className="mt-2.5 flex flex-wrap gap-2">
+            {isAuthenticated && session && (
+              <div
+                className="mb-6 rounded-xl p-4"
+                style={{ background: "rgba(16,185,129,.08)", border: "1px solid rgba(16,185,129,.22)" }}
+              >
+                <p className="text-[12px] font-bold" style={{ color: "#10b981" }}>Sesion activa</p>
+                <p className="mt-1 text-[12px]" style={{ color: "rgba(16,185,129,.75)" }}>
+                  {session.name} · {session.roleLabel}
+                </p>
+                <div className="mt-3 flex gap-2">
                   <button
                     onClick={() => navigate(getHomePath())}
-                    className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-medium text-gray-950 transition hover:bg-emerald-400"
+                    className="rounded-lg px-3 py-1.5 text-[11px] font-bold"
+                    style={{ background: "#10b981", color: "#07090d" }}
                   >
-                    Continuar en mi panel
+                    Ir a mi panel
                   </button>
                   <button
                     onClick={() => { logout(); toast.success("Sesion cerrada"); }}
-                    className="rounded-lg border border-white/10 px-3 py-1.5 text-xs font-medium text-gray-300 transition hover:bg-white/5"
+                    className="rounded-lg px-3 py-1.5 text-[11px] font-semibold"
+                    style={{ border: "1px solid rgba(255,255,255,.1)", color: "rgba(255,255,255,.5)" }}
                   >
                     Cerrar sesion
                   </button>
                 </div>
               </div>
-            ) : null}
+            )}
 
             {/* Form */}
-            <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
-              <FloatingInput
-                label="Correo o usuario"
-                type="text"
-                value={loginValue}
-                onChange={setLoginValue}
-                placeholder="correo@empresa.com o master"
-              />
-              <PasswordInput
-                value={password}
-                onChange={setPassword}
-                show={showPassword}
-                onToggle={() => setShowPassword((s) => !s)}
-              />
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <div className="form-item-3">
+                <FloatingInput
+                  label="Correo o usuario"
+                  type="text"
+                  value={loginValue}
+                  onChange={setLoginValue}
+                  placeholder="correo@empresa.com"
+                />
+              </div>
 
-              <div className="flex items-center justify-between text-xs">
-                <label className="flex cursor-pointer items-center gap-2 text-gray-400">
+              <div className="form-item-3">
+                <PasswordInput
+                  value={password}
+                  onChange={setPassword}
+                  show={showPassword}
+                  onToggle={() => setShowPassword((s) => !s)}
+                />
+              </div>
+
+              <div className="form-item-4 flex items-center justify-between pt-1">
+                <label className="flex cursor-pointer select-none items-center gap-2.5">
                   <span className="relative">
                     <input
                       type="checkbox"
@@ -206,181 +373,108 @@ export default function SignIn() {
                       onChange={(e) => setRemember(e.target.checked)}
                       className="peer sr-only"
                     />
-                    <span className="block h-4 w-7 rounded-full bg-gray-700 transition peer-checked:bg-emerald-500" />
-                    <span className="absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform peer-checked:translate-x-3" />
+                    <span
+                      className="block h-[18px] w-8 rounded-full transition-colors duration-200 peer-checked:bg-emerald-500"
+                      style={{ background: "rgba(255,255,255,.1)" }}
+                    />
+                    <span className="absolute left-[3px] top-[3px] h-3 w-3 rounded-full bg-white shadow-sm transition-transform duration-200 peer-checked:translate-x-[14px]" />
                   </span>
-                  Recordarme
+                  <span className="text-[11px] font-medium" style={{ color: "rgba(255,255,255,.38)" }}>
+                    Recordarme
+                  </span>
                 </label>
-                <Link to="/solicitar-demo" className="text-gray-500 transition hover:text-emerald-400">
+                <Link
+                  to="/solicitar-demo"
+                  className="forgot-link text-[11px] font-medium transition-colors duration-200"
+                  style={{ color: "rgba(255,255,255,.28)" }}
+                >
                   Olvide mi contrasena
                 </Link>
               </div>
 
-              {/* Submit */}
-              <button
-                type="submit"
-                onClick={handleButtonClick}
-                disabled={submitting}
-                className="group relative w-full overflow-hidden rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-gray-950 shadow-lg shadow-emerald-500/20 transition-all hover:bg-emerald-400 hover:shadow-emerald-400/30 disabled:opacity-60"
-              >
-                {submitting && (
-                  <span className="absolute inset-0 animate-[progress_1.5s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-white/30 to-transparent" />
-                )}
-                <span className="relative z-10 flex items-center justify-center gap-2">
-                  {submitting ? (
-                    <>
-                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-950/30 border-t-gray-950" />
-                      Ingresando...
-                    </>
-                  ) : (
-                    <>Ingresar</>
-                  )}
-                </span>
-                {ripples.map((r) => (
+              <div className="form-item-5 pt-2">
+                <button
+                  type="submit"
+                  onClick={addRipple}
+                  disabled={submitting}
+                  className="apl-btn relative w-full overflow-hidden rounded-xl py-[14px] text-[13px] font-bold text-[#07090d] transition-all duration-200 disabled:opacity-60"
+                  style={{ background: "#10b981", boxShadow: "0 4px 20px rgba(16,185,129,.28)" }}
+                >
                   <span
-                    key={r.id}
-                    className="pointer-events-none absolute h-4 w-4 rounded-full bg-white/50 animate-[ripple_0.8s_ease-out]"
-                    style={{ left: r.x - 8, top: r.y - 8 }}
+                    className="pointer-events-none absolute inset-0"
+                    style={{
+                      background: "linear-gradient(105deg,transparent 40%,rgba(255,255,255,.22) 50%,transparent 60%)",
+                      animation: "shimmerKf 3.5s ease-in-out infinite",
+                    }}
                   />
-                ))}
-              </button>
+                  <span className="relative z-10 flex items-center justify-center gap-2">
+                    {submitting ? (
+                      <>
+                        <span
+                          className="h-4 w-4 animate-spin rounded-full border-2"
+                          style={{ borderColor: "rgba(7,9,13,.2)", borderTopColor: "#07090d" }}
+                        />
+                        Ingresando...
+                      </>
+                    ) : (
+                      "Ingresar"
+                    )}
+                  </span>
+                  {ripples.map((r) => (
+                    <span
+                      key={r.id}
+                      className="pointer-events-none absolute rounded-full bg-white/30"
+                      style={{
+                        left: r.x - 8, top: r.y - 8, width: 16, height: 16,
+                        animation: "rippleKf .9s ease-out forwards",
+                      }}
+                    />
+                  ))}
+                </button>
+              </div>
             </form>
 
-            <p className="mt-5 text-center text-xs text-gray-500">
+            <p className="form-item-6 mt-7 text-center text-[11px]" style={{ color: "rgba(255,255,255,.22)" }}>
               No tienes cuenta?{" "}
-              <Link to="/solicitar-demo" className="font-semibold text-emerald-400 transition hover:text-emerald-300">
+              <Link
+                to="/solicitar-demo"
+                className="demo-link font-bold transition-colors duration-200"
+                style={{ color: "#10b981" }}
+              >
                 Solicita una demo
               </Link>
             </p>
           </div>
-
-          {/* ═══ LADO DERECHO: IMAGEN CON CAROUSEL ═══ */}
-          <div className="relative hidden min-h-[520px] overflow-hidden lg:block">
-            {/* Imagenes con crossfade */}
-            {CAROUSEL_IMAGES.map((src, i) => (
-              <div
-                key={i}
-                aria-hidden="true"
-                className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ease-in-out ${
-                  i === imageIndex ? "opacity-100" : "opacity-0"
-                }`}
-                style={{ backgroundImage: `url(${src})` }}
-              />
-            ))}
-            {/* Overlay gradient dark + emerald */}
-            <div className="absolute inset-0 bg-gradient-to-br from-gray-950/80 via-gray-950/50 to-emerald-950/60" />
-            <div className="absolute inset-0 bg-gradient-to-t from-gray-950/90 via-gray-950/30 to-transparent" />
-
-            {/* Contenido overlay */}
-            <div className="absolute inset-0 flex flex-col justify-between p-8 text-white">
-              <div>
-                <span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white backdrop-blur-md ring-1 ring-white/20">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Plataforma lider
-                </span>
-              </div>
-
-              <div>
-                <p className="text-xl font-semibold leading-snug transition-all duration-700 sm:text-2xl">
-                  {QUOTES[imageIndex].text}
-                </p>
-                {QUOTES[imageIndex].subtext && (
-                  <p className="mt-2 text-sm text-white/80 transition-all duration-700">
-                    {QUOTES[imageIndex].subtext}
-                  </p>
-                )}
-
-                {/* Carousel controls */}
-                <div className="mt-5 flex items-center gap-2.5">
-                  <button
-                    onClick={prevImage}
-                    aria-label="Imagen anterior"
-                    className="flex h-8 w-8 items-center justify-center rounded-full bg-white/15 backdrop-blur-md ring-1 ring-white/20 transition hover:bg-white/25"
-                  >
-                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path d="M15 18l-6-6 6-6" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={nextImage}
-                    aria-label="Siguiente imagen"
-                    className="flex h-8 w-8 items-center justify-center rounded-full bg-white/15 backdrop-blur-md ring-1 ring-white/20 transition hover:bg-white/25"
-                  >
-                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path d="M9 18l6-6-6-6" />
-                    </svg>
-                  </button>
-                  <div className="ml-2 flex gap-1.5">
-                    {CAROUSEL_IMAGES.map((_, i) => (
-                      <span
-                        key={i}
-                        className={`h-1.5 rounded-full transition-all ${
-                          i === imageIndex ? "w-5 bg-white" : "w-1.5 bg-white/40"
-                        }`}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
-      </div>
 
-      {/* CSS keyframes */}
-      <style>{`
-        @keyframes meshMove1 {
-          0%, 100% { transform: translate(0, 0) scale(1); }
-          33% { transform: translate(80px, -40px) scale(1.1); }
-          66% { transform: translate(-40px, 60px) scale(0.95); }
-        }
-        @keyframes meshMove2 {
-          0%, 100% { transform: translate(0, 0) scale(1); }
-          50% { transform: translate(-100px, 80px) scale(1.2); }
-        }
-        @keyframes floatParticle {
-          0% { transform: translateY(100vh) translateX(0); opacity: 0; }
-          10% { opacity: 1; }
-          90% { opacity: 1; }
-          100% { transform: translateY(-100vh) translateX(50px); opacity: 0; }
-        }
-        @keyframes ripple {
-          0% { transform: scale(0); opacity: 1; }
-          100% { transform: scale(20); opacity: 0; }
-        }
-        @keyframes progress {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(100%); }
-        }
-      `}</style>
+      </div>
     </div>
   );
 }
 
-// ─── Floating label input ───
+// ─── Floating label input ────────────────────────────────────────────────────
 function FloatingInput({
-  label,
-  type,
-  value,
-  onChange,
-  placeholder,
+  label, type, value, onChange, placeholder,
 }: {
-  label: string;
-  type: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
+  label: string; type: string; value: string; onChange: (v: string) => void; placeholder?: string;
 }) {
   const [focused, setFocused] = useState(false);
-  const filled = value.length > 0;
+  const raised = focused || value.length > 0;
+
   return (
     <label className="relative block">
       <span
-        className={`pointer-events-none absolute left-3 z-10 origin-left transition-all duration-300 ${
-          focused || filled
-            ? "top-0 -translate-y-1/2 scale-75 bg-gray-900 px-1.5 font-semibold text-emerald-400"
-            : "top-1/2 -translate-y-1/2 text-sm text-gray-500"
-        }`}
+        className="pointer-events-none absolute z-10 origin-left font-semibold transition-all duration-200"
+        style={{
+          left: raised ? 12 : 14,
+          top: raised ? 0 : "50%",
+          transform: raised ? "translateY(-50%) scale(.72)" : "translateY(-50%)",
+          background: raised ? "#07090d" : "transparent",
+          paddingLeft: raised ? 4 : 0,
+          paddingRight: raised ? 4 : 0,
+          fontSize: 13,
+          color: raised ? "#10b981" : "rgba(255,255,255,.25)",
+        }}
       >
         {label}
       </span>
@@ -392,34 +486,36 @@ function FloatingInput({
         onBlur={() => setFocused(false)}
         placeholder={focused ? placeholder : ""}
         autoComplete={type === "password" ? "current-password" : "username"}
-        className="w-full rounded-lg border border-white/10 bg-gray-950/50 px-3 py-2.5 text-sm text-white outline-none transition focus:border-emerald-500/60 focus:bg-gray-950 focus:shadow-lg focus:shadow-emerald-500/10"
+        className="apl-input w-full rounded-xl px-4 py-[13px] text-[13px] text-white outline-none"
+        style={{ background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.09)" }}
       />
     </label>
   );
 }
 
-// ─── Password input con toggle ───
+// ─── Password input ──────────────────────────────────────────────────────────
 function PasswordInput({
-  value,
-  onChange,
-  show,
-  onToggle,
+  value, onChange, show, onToggle,
 }: {
-  value: string;
-  onChange: (v: string) => void;
-  show: boolean;
-  onToggle: () => void;
+  value: string; onChange: (v: string) => void; show: boolean; onToggle: () => void;
 }) {
   const [focused, setFocused] = useState(false);
-  const filled = value.length > 0;
+  const raised = focused || value.length > 0;
+
   return (
     <label className="relative block">
       <span
-        className={`pointer-events-none absolute left-3 z-10 origin-left transition-all duration-300 ${
-          focused || filled
-            ? "top-0 -translate-y-1/2 scale-75 bg-gray-900 px-1.5 font-semibold text-emerald-400"
-            : "top-1/2 -translate-y-1/2 text-sm text-gray-500"
-        }`}
+        className="pointer-events-none absolute z-10 origin-left font-semibold transition-all duration-200"
+        style={{
+          left: raised ? 12 : 14,
+          top: raised ? 0 : "50%",
+          transform: raised ? "translateY(-50%) scale(.72)" : "translateY(-50%)",
+          background: raised ? "#07090d" : "transparent",
+          paddingLeft: raised ? 4 : 0,
+          paddingRight: raised ? 4 : 0,
+          fontSize: 13,
+          color: raised ? "#10b981" : "rgba(255,255,255,.25)",
+        }}
       >
         Contrasena
       </span>
@@ -429,15 +525,17 @@ function PasswordInput({
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
-        placeholder={focused ? "********" : ""}
+        placeholder={focused ? "••••••••" : ""}
         autoComplete="current-password"
-        className="w-full rounded-lg border border-white/10 bg-gray-950/50 px-3 py-2.5 pr-10 text-sm text-white outline-none transition focus:border-emerald-500/60 focus:bg-gray-950 focus:shadow-lg focus:shadow-emerald-500/10"
+        className="apl-input w-full rounded-xl px-4 py-[13px] pr-12 text-[13px] text-white outline-none"
+        style={{ background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.09)" }}
       />
       <button
         type="button"
         onClick={onToggle}
         aria-label={show ? "Ocultar contrasena" : "Mostrar contrasena"}
-        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-gray-500 transition hover:bg-white/5 hover:text-gray-300"
+        className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1.5 transition-colors duration-200"
+        style={{ color: "rgba(255,255,255,.25)" }}
       >
         {show ? (
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
@@ -452,24 +550,5 @@ function PasswordInput({
         )}
       </button>
     </label>
-  );
-}
-
-// ─── Social button ───
-function SocialButton({
-  children,
-  label,
-}: {
-  children: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      className="flex h-10 w-12 items-center justify-center rounded-lg border border-white/10 bg-gray-950/50 transition-all hover:border-emerald-500/40 hover:bg-gray-950 hover:-translate-y-0.5"
-    >
-      {children}
-    </button>
   );
 }

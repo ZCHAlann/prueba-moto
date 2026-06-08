@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import type { InventoryItem, OilType, Asset } from "./types";
 import type { ApiDriver } from "../../../hooks/useDrivers";
 import { createPortal } from "react-dom";
+import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 
 // ─── Shared ───────────────────────────────────────────────────────────────────
 
@@ -341,7 +342,11 @@ export function OilChangeModal({ oilTypes, assets, drivers, preselectedOil, onCl
           </Field>
 
           <Field label="Fecha" required>
-            <input className={inputCls} type="date" value={form.date} onChange={(e) => set("date", e.target.value)} />
+            <DatePicker
+              value={form.date}
+              onChange={(v) => set("date", v)}
+              placeholder="Seleccionar"
+            />
           </Field>
 
           <div className="grid grid-cols-3 gap-3">

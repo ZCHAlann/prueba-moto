@@ -5,6 +5,7 @@ import { useAssignments } from "../../../hooks/useAssignments";
 import { useMaintenances } from "../../../hooks/useMaintenances";
 import { useGarages } from "../../../hooks/useGarages";
 import { createPortal } from "react-dom";
+import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import type {
   CreateMaintenancePayload,
   MaintenanceKind,
@@ -215,10 +216,18 @@ function CreateMaintenanceModal({ vehicle, onClose, onCreated }: {
           </DarkField>
           <div className="grid grid-cols-2 gap-3">
             <DarkField label="Fecha programada" required>
-              <input className={darkInputCls} type="date" value={form.scheduledDate} onChange={(e) => set("scheduledDate", e.target.value)} />
+              <DatePicker
+                value={form.scheduledDate}
+                onChange={(v) => set("scheduledDate", v)}
+                placeholder="Seleccionar"
+              />
             </DarkField>
             <DarkField label="Fecha límite" required>
-              <input className={darkInputCls} type="date" value={form.dueDate} onChange={(e) => set("dueDate", e.target.value)} />
+              <DatePicker
+                value={form.dueDate}
+                onChange={(v) => set("dueDate", v)}
+                placeholder="Seleccionar"
+              />
             </DarkField>
           </div>
           <DarkField label="Técnico responsable">

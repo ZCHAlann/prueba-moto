@@ -10,9 +10,9 @@ export const CarStats = () => {
   if (!t) {
     return (
       <div className="flex flex-col items-center gap-2 rounded-2xl bg-slate-900 px-6 py-12 text-center text-slate-400">
-        <CarIcon className="h-8 w-8 text-slate-600" />
-        <div className="text-sm font-medium">Sin telemetría</div>
-        <div className="text-xs text-slate-500">
+        <CarIcon className="h-8 w-8 text-slate-600 dark:text-slate-700" />
+        <div className="text-sm font-medium text-slate-200">Sin telemetría</div>
+        <div className="text-xs text-slate-500 dark:text-slate-600">
           Selecciona un vehículo para ver los datos en vivo.
         </div>
       </div>
@@ -28,7 +28,7 @@ export const CarStats = () => {
   const mileageMax = Math.ceil(t.mileage / 15000) * 15000;
 
   return (
-    <div className="rounded-2xl bg-slate-900 p-4 shadow-inner">
+    <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 p-4 shadow-inner ring-1 ring-white/[0.04]">
       <div className="grid grid-cols-2 gap-3">
         <SmallGauge
           icon={<Fuel className="h-3 w-3" />}
@@ -46,7 +46,7 @@ export const CarStats = () => {
           max={mileageMax}
           unit="km"
           formatValue={(v) => Math.round(v).toLocaleString('es-ES')}
-          color="#64748b"  
+          color="#64748b"
         />
       </div>
 

@@ -7,6 +7,7 @@ import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
 import { requireSupervisor } from '../../middlewares/requireSupervisor';
+import { requirePermission } from '../../middlewares/requirePermission';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
@@ -129,6 +130,7 @@ router.get('/:unitId', requireModule('aires_acondicionados'), async (req, res, n
 router.post(
   '/',
   requireModule('aires_acondicionados'),
+  requirePermission('ac', 'lista_ac', 'crear'),
   requireSupervisor,
   validate(createAcUnitSchema),
   async (req, res, next) => {
@@ -166,6 +168,7 @@ router.post(
 router.put(
   '/:unitId',
   requireModule('aires_acondicionados'),
+  requirePermission('ac', 'lista_ac', 'editar'),
   requireSupervisor,
   validate(updateAcUnitSchema),
   async (req, res, next) => {
@@ -211,7 +214,7 @@ router.put(
 
 // ─── DELETE /company/:id/ac-units/:unitId ─────────────────────────────────────
 
-router.delete('/:unitId', requireModule('aires_acondicionados'), requireAdmin, async (req, res, next) => {
+router.delete('/:unitId', requireModule('aires_acondicionados'), requirePermission('ac', 'lista_ac', 'eliminar'), requireAdmin, async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const unitId = parseId('ac-unit', req.params.unitId);
@@ -248,6 +251,7 @@ router.delete('/:unitId', requireModule('aires_acondicionados'), requireAdmin, a
 router.post(
   '/:unitId/services',
   requireModule('aires_acondicionados'),
+  requirePermission('ac', 'mantenimientos_ac', 'crear'),
   requireSupervisor,
   validate(createServiceSchema),
   async (req, res, next) => {
@@ -296,6 +300,7 @@ router.post(
 router.post(
   '/:unitId/refrigerant-logs',
   requireModule('aires_acondicionados'),
+  requirePermission('ac', 'mantenimientos_ac', 'crear'),
   requireSupervisor,
   validate(createRefrigerantLogSchema),
   async (req, res, next) => {

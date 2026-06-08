@@ -5,279 +5,416 @@ import { useAuth } from "../context/AuthContext";
 import type {
   AirConditioningUnit,
   AirConditioningStatus,
-  AirConditioningType,
   AcServiceKind,
 } from "../types/fleet";
 
+/* ── Tipos espejo del backend (apps/backend/src/routes/company/ac-units.ts) ── */
+
 export type AcService = {
-  id: string;
+  id: number;
   unitId: string;
   date: string;
-  kind: AcServiceKind;
-  technician: string;
-  cost: string;
-  findings: string;
-  notes: string;
+  kind: AcServiceKind | null;
+  technician: string | null;
+  cost: number | null;
+  findings: string | null;
+  notes: string | null;
   photoUrls: string[];
+  createdAt: string;
 };
 
 export type AcRefrigerantLog = {
-  id: string;
+  id: number;
   unitId: string;
   date: string;
-  refrigerantType: string;
-  quantity: string;
-  unit: "kg" | "lb" | "oz";
-  technician: string;
-  reason: string;
-  notes: string;
+  refrigerantType: string | null;
+  quantity: number | null;
+  unit: string | null;
+  technician: string | null;
+  reason: string | null;
+  notes: string | null;
 };
 
-type CreateUnitInput = Omit<AirConditioningUnit, "id" | "tenantId">;
-type CreateServiceInput = Omit<AcService, "id">;
-type CreateRefLogInput = Omit<AcRefrigerantLog, "id">;
+export type AcUnitDetail = AirConditioningUnit & {
+  services: AcService[];
+  refrigerantLogs: AcRefrigerantLog[];
+};
 
-function mapUnit(u: Record<string, unknown>, companyId: string): AirConditioningUnit {
+type CreateUnitInput = Omit<AirConditioningUnit, "id" | "tenantId" | "site"> & {
+  siteId?: string | null;
+};
+type UpdateUnitInput = Partial<CreateUnitInput>;
+type CreateServiceInput = {
+  unitId: string;
+  date: string;
+  kind?: AcServiceKind | null;
+  technician?: string | null;
+  cost?: number | null;
+  findings?: string | null;
+  notes?: string | null;
+  photoUrls: string[];
+};
+
+/* ── Mappers ──────────────────────────────────────────────────────────────── */
+
+function mapUnit(raw: Record<string, unknown>): AirConditioningUnit {
   return {
-    id: String(u.id),
-    tenantId: `tenant-company-${companyId}`,
-    code: String(u.code ?? ""),
-    name: String(u.name ?? ""),
-    type: (u.type ?? "Split") as AirConditioningType,
-    site: String(u.site ?? u.site_id ?? ""),
-    floor: String(u.floor ?? ""),
-    area: String(u.area ?? ""),
-    serial: String(u.serial ?? ""),
-    brand: String(u.brand ?? ""),
-    model: String(u.model ?? ""),
-    capacityBtu: String(u.capacity_btu ?? u.capacityBtu ?? ""),
-    voltage: String(u.voltage ?? ""),
-    amperage: String(u.amperage ?? ""),
-    refrigerantType: String(u.refrigerant_type ?? u.refrigerantType ?? ""),
-    installDate: String(u.install_date ?? u.installDate ?? ""),
-    technician: String(u.technician ?? ""),
-    status: (u.status ?? "Operativo") as AirConditioningStatus,
-    lastService: String(u.last_service ?? u.lastService ?? ""),
-    nextService: String(u.next_service ?? u.nextService ?? ""),
-    photoUrls: Array.isArray(u.photo_urls ?? u.photoUrls)
-      ? (u.photo_urls ?? u.photoUrls) as string[]
-      : [],
-    notes: String(u.notes ?? ""),
+    id: String(raw.id ?? ""),
+    tenantId: "",
+    code: String(raw.code ?? ""),
+    name: String(raw.name ?? ""),
+    type: (raw.type ?? "Split") as AirConditioningUnit["type"],
+    site: "",
+    siteId: raw.siteId ? String(raw.siteId) : null,
+    floor: String(raw.floor ?? ""),
+    area: String(raw.area ?? ""),
+    serial: String(raw.serial ?? ""),
+    brand: String(raw.brand ?? ""),
+    model: String(raw.model ?? ""),
+    capacityBtu: String(raw.capacityBtu ?? ""),
+    voltage: String(raw.voltage ?? ""),
+    amperage: String(raw.amperage ?? ""),
+    refrigerantType: String(raw.refrigerantType ?? ""),
+    installDate: String(raw.installDate ?? ""),
+    technician: String(raw.technician ?? ""),
+    status: (raw.status ?? "Operativo") as AirConditioningStatus,
+    lastService: String(raw.lastService ?? ""),
+    nextService: String(raw.nextService ?? ""),
+    photoUrls: Array.isArray(raw.photoUrls) ? (raw.photoUrls as string[]) : [],
+    notes: String(raw.notes ?? ""),
   };
 }
 
-function mapService(s: Record<string, unknown>): AcService {
+function mapService(raw: Record<string, unknown>): AcService {
   return {
-    id: String(s.id),
-    unitId: s.unit_id ? String(s.unit_id) : String(s.unitId ?? ""),
-    date: String(s.date ?? ""),
-    kind: (s.kind ?? "Limpieza") as AcServiceKind,
-    technician: String(s.technician ?? ""),
-    cost: String(s.cost ?? ""),
-    findings: String(s.findings ?? ""),
-    notes: String(s.notes ?? ""),
-    photoUrls: Array.isArray(s.photo_urls ?? s.photoUrls)
-      ? (s.photo_urls ?? s.photoUrls) as string[]
-      : [],
+    id: Number(raw.id ?? 0),
+    unitId: String(raw.unitId ?? ""),
+    date: String(raw.date ?? ""),
+    kind: (raw.kind ?? null) as AcServiceKind | null,
+    technician: raw.technician ? String(raw.technician) : null,
+    cost: raw.cost != null ? Number(raw.cost) : null,
+    findings: raw.findings ? String(raw.findings) : null,
+    notes: raw.notes ? String(raw.notes) : null,
+    photoUrls: Array.isArray(raw.photoUrls) ? (raw.photoUrls as string[]) : [],
+    createdAt: String(raw.createdAt ?? ""),
   };
 }
 
-function mapRefLog(l: Record<string, unknown>): AcRefrigerantLog {
+function mapRefLog(raw: Record<string, unknown>): AcRefrigerantLog {
   return {
-    id: String(l.id),
-    unitId: l.unit_id ? String(l.unit_id) : String(l.unitId ?? ""),
-    date: String(l.date ?? ""),
-    refrigerantType: String(l.refrigerant_type ?? l.refrigerantType ?? ""),
-    quantity: String(l.quantity ?? ""),
-    unit: (l.unit ?? "kg") as "kg" | "lb" | "oz",
-    technician: String(l.technician ?? ""),
-    reason: String(l.reason ?? ""),
-    notes: String(l.notes ?? ""),
+    id: Number(raw.id ?? 0),
+    unitId: String(raw.unitId ?? ""),
+    date: String(raw.date ?? ""),
+    refrigerantType: raw.refrigerantType ? String(raw.refrigerantType) : null,
+    quantity: raw.quantity != null ? Number(raw.quantity) : null,
+    unit: raw.unit ? String(raw.unit) : null,
+    technician: raw.technician ? String(raw.technician) : null,
+    reason: raw.reason ? String(raw.reason) : null,
+    notes: raw.notes ? String(raw.notes) : null,
   };
 }
+
+/* ── Hook principal ───────────────────────────────────────────────────────── */
 
 export function useAcUnits() {
   const { session } = useAuth();
   const companyId = session?.companyId ? String(session.companyId) : null;
 
   const [units, setUnits] = useState<AirConditioningUnit[]>([]);
-  const [services, setServices] = useState<AcService[]>([]);
-  const [refrigerantLogs, setRefrigerantLogs] = useState<AcRefrigerantLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
 
+  /* Carga listado de unidades */
   useEffect(() => {
-    if (!companyId) { setLoading(false); return; }
+    if (!companyId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
 
-    Promise.all([
-      fetch(`/api/company/${companyId}/ac-units`, { cache: "no-store" }).then((r) => r.json()),
-      fetch(`/api/company/${companyId}/ac-units/services`, { cache: "no-store" })
-        .then((r) => r.ok ? r.json() : { data: [] }),
-      fetch(`/api/company/${companyId}/ac-units/refrigerant-logs`, { cache: "no-store" })
-        .then((r) => r.ok ? r.json() : { data: [] }),
-    ])
-      .then(([unitsBody, servicesBody, logsBody]) => {
-        setUnits((unitsBody.data ?? []).map((u: Record<string, unknown>) => mapUnit(u, companyId)));
-        setServices((servicesBody.data ?? []).map(mapService));
-        setRefrigerantLogs((logsBody.data ?? []).map(mapRefLog));
+    fetch(`/api/company/${companyId}/ac-units`, { cache: "no-store" })
+      .then((r) => {
+        if (!r.ok) throw new Error(`Error ${r.status}`);
+        return r.json();
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Error cargando A/C"))
+      .then((body: { data: Record<string, unknown>[] }) => {
+        setUnits((body.data ?? []).map(mapUnit));
+      })
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : "Error cargando aires acondicionados")
+      )
       .finally(() => setLoading(false));
   }, [companyId, tick]);
 
-  const createUnit = useCallback(async (input: CreateUnitInput): Promise<boolean> => {
-    if (!companyId) return false;
-    try {
-      const res = await fetch(`/api/company/${companyId}/ac-units`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+  /* Detalle de una unidad (incluye servicios + recargas) */
+  const getUnitDetail = useCallback(
+    async (id: string): Promise<AcUnitDetail | null> => {
+      if (!companyId) return null;
+      try {
+        const res = await fetch(`/api/company/${companyId}/ac-units/${id}`, {
+          cache: "no-store",
+        });
+        if (!res.ok) throw new Error(`Error ${res.status}`);
+        const raw = (await res.json()) as Record<string, unknown>;
+        const unit = mapUnit(raw);
+        return {
+          ...unit,
+          services: Array.isArray(raw.services)
+            ? (raw.services as Record<string, unknown>[]).map(mapService)
+            : [],
+          refrigerantLogs: Array.isArray(raw.refrigerantLogs)
+            ? (raw.refrigerantLogs as Record<string, unknown>[]).map(mapRefLog)
+            : [],
+        };
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Error cargando detalle de A/C"
+        );
+        return null;
+      }
+    },
+    [companyId]
+  );
+
+  /* Crear unidad */
+  const createUnit = useCallback(
+    async (input: CreateUnitInput): Promise<string | null> => {
+      if (!companyId) return null;
+      try {
+        const body: Record<string, unknown> = {
           code: input.code,
           name: input.name,
           type: input.type,
-          site: input.site,
           floor: input.floor,
           area: input.area,
           serial: input.serial,
           brand: input.brand,
           model: input.model,
-          capacity_btu: input.capacityBtu,
+          capacityBtu: input.capacityBtu,
           voltage: input.voltage,
           amperage: input.amperage,
-          refrigerant_type: input.refrigerantType,
-          install_date: input.installDate || null,
+          refrigerantType: input.refrigerantType,
+          installDate: input.installDate || null,
           technician: input.technician,
           status: input.status,
-          last_service: input.lastService || null,
-          next_service: input.nextService || null,
-          photo_urls: input.photoUrls,
+          lastService: input.lastService || null,
+          nextService: input.nextService || null,
+          photoUrls: input.photoUrls,
           notes: input.notes,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
-      }
-      refresh();
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error creando unidad A/C");
-      return false;
-    }
-  }, [companyId, refresh]);
+        };
+        if (input.siteId) body.siteId = input.siteId;
 
-  const updateUnit = useCallback(async (id: string, input: Partial<CreateUnitInput>): Promise<boolean> => {
-    if (!companyId) return false;
-    try {
-      const res = await fetch(`/api/company/${companyId}/ac-units/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...(input.code !== undefined && { code: input.code }),
-          ...(input.name !== undefined && { name: input.name }),
-          ...(input.type !== undefined && { type: input.type }),
-          ...(input.site !== undefined && { site: input.site }),
-          ...(input.floor !== undefined && { floor: input.floor }),
-          ...(input.area !== undefined && { area: input.area }),
-          ...(input.serial !== undefined && { serial: input.serial }),
-          ...(input.brand !== undefined && { brand: input.brand }),
-          ...(input.model !== undefined && { model: input.model }),
-          ...(input.capacityBtu !== undefined && { capacity_btu: input.capacityBtu }),
-          ...(input.voltage !== undefined && { voltage: input.voltage }),
-          ...(input.amperage !== undefined && { amperage: input.amperage }),
-          ...(input.refrigerantType !== undefined && { refrigerant_type: input.refrigerantType }),
-          ...(input.installDate !== undefined && { install_date: input.installDate || null }),
-          ...(input.technician !== undefined && { technician: input.technician }),
-          ...(input.status !== undefined && { status: input.status }),
-          ...(input.lastService !== undefined && { last_service: input.lastService || null }),
-          ...(input.nextService !== undefined && { next_service: input.nextService || null }),
-          ...(input.photoUrls !== undefined && { photo_urls: input.photoUrls }),
-          ...(input.notes !== undefined && { notes: input.notes }),
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+        const res = await fetch(`/api/company/${companyId}/ac-units`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(
+            (errBody as { message?: string }).message ?? `Error ${res.status}`
+          );
+        }
+        const data = (await res.json()) as Record<string, unknown>;
+        refresh();
+        return String(data.id ?? null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Error creando A/C");
+        return null;
       }
-      refresh();
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error actualizando unidad A/C");
-      return false;
-    }
-  }, [companyId, refresh]);
+    },
+    [companyId, refresh]
+  );
 
-  const createService = useCallback(async (input: CreateServiceInput): Promise<boolean> => {
-    if (!companyId) return false;
-    try {
-      const res = await fetch(`/api/company/${companyId}/ac-units/${input.unitId}/services`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+  /* Actualizar unidad */
+  const updateUnit = useCallback(
+    async (id: string, input: UpdateUnitInput): Promise<boolean> => {
+      if (!companyId) return false;
+      try {
+        const body: Record<string, unknown> = {};
+        const fields: (keyof UpdateUnitInput)[] = [
+          "code", "name", "type", "floor", "area", "serial", "brand", "model",
+          "capacityBtu", "voltage", "amperage", "refrigerantType",
+          "installDate", "technician", "status", "lastService",
+          "nextService", "photoUrls", "notes", "siteId",
+        ];
+        for (const f of fields) {
+          if (input[f] !== undefined) {
+            if (f === "installDate" || f === "lastService" || f === "nextService") {
+              body[f] = (input[f] as string) || null;
+            } else if (f === "siteId") {
+              body.siteId = input[f] ?? null;
+            } else {
+              body[f] = input[f];
+            }
+          }
+        }
+
+        const res = await fetch(`/api/company/${companyId}/ac-units/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(
+            (errBody as { message?: string }).message ?? `Error ${res.status}`
+          );
+        }
+        refresh();
+        return true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Error actualizando A/C");
+        return false;
+      }
+    },
+    [companyId, refresh]
+  );
+
+  /* Eliminar unidad */
+  const deleteUnit = useCallback(
+    async (id: string): Promise<boolean> => {
+      if (!companyId) return false;
+      try {
+        const res = await fetch(`/api/company/${companyId}/ac-units/${id}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(
+            (errBody as { message?: string }).message ?? `Error ${res.status}`
+          );
+        }
+        setUnits((current) => current.filter((u) => u.id !== id));
+        return true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Error eliminando A/C");
+        return false;
+      }
+    },
+    [companyId]
+  );
+
+  /* Crear mantenimiento (servicio) con evidencia en fotos */
+  const createService = useCallback(
+    async (input: CreateServiceInput): Promise<boolean> => {
+      if (!companyId) return false;
+      try {
+        const body = {
           date: input.date,
-          kind: input.kind,
-          technician: input.technician,
-          cost: input.cost ? parseFloat(input.cost) : null,
-          findings: input.findings,
-          notes: input.notes,
-          photo_urls: input.photoUrls,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+          kind: input.kind ?? null,
+          technician: input.technician ?? null,
+          cost: input.cost ?? null,
+          findings: input.findings ?? null,
+          notes: input.notes ?? null,
+          photoUrls: input.photoUrls,
+        };
+        const res = await fetch(
+          `/api/company/${companyId}/ac-units/${input.unitId}/services`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }
+        );
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(
+            (errBody as { message?: string }).message ?? `Error ${res.status}`
+          );
+        }
+        refresh();
+        return true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Error registrando mantenimiento");
+        return false;
       }
-      refresh();
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error creando servicio A/C");
-      return false;
-    }
-  }, [companyId, refresh]);
+    },
+    [companyId, refresh]
+  );
 
-  const createRefrigerantLog = useCallback(async (input: CreateRefLogInput): Promise<boolean> => {
-    if (!companyId) return false;
-    try {
-      const res = await fetch(`/api/company/${companyId}/ac-units/${input.unitId}/refrigerant-logs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date: input.date,
-          refrigerant_type: input.refrigerantType,
-          quantity: parseFloat(input.quantity),
-          unit: input.unit,
-          technician: input.technician,
-          reason: input.reason,
-          notes: input.notes,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+  /* Crear log de recarga de refrigerante */
+  const createRefrigerantLog = useCallback(
+    async (input: {
+      unitId: string;
+      date: string;
+      refrigerantType?: string | null;
+      quantity?: number | null;
+      unit?: string | null;
+      technician?: string | null;
+      reason?: string | null;
+      notes?: string | null;
+    }): Promise<boolean> => {
+      if (!companyId) return false;
+      try {
+        const res = await fetch(
+          `/api/company/${companyId}/ac-units/${input.unitId}/refrigerant-logs`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              date: input.date,
+              refrigerantType: input.refrigerantType ?? null,
+              quantity: input.quantity ?? null,
+              unit: input.unit ?? null,
+              technician: input.technician ?? null,
+              reason: input.reason ?? null,
+              notes: input.notes ?? null,
+            }),
+          }
+        );
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(
+            (errBody as { message?: string }).message ?? `Error ${res.status}`
+          );
+        }
+        refresh();
+        return true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Error registrando recarga");
+        return false;
       }
-      refresh();
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error creando log de refrigerante");
-      return false;
-    }
-  }, [companyId, refresh]);
+    },
+    [companyId, refresh]
+  );
+
+  /* Subir fotos a la unidad (POST /upload/ac-photos) */
+  const uploadAcPhotos = useCallback(
+    async (files: File[]): Promise<string[]> => {
+      if (!companyId || files.length === 0) return [];
+      try {
+        const form = new FormData();
+        files.forEach((f) => form.append("photos", f));
+        const res = await fetch(
+          `/api/upload/ac-photos?companyId=${companyId}`,
+          { method: "POST", body: form }
+        );
+        if (!res.ok) throw new Error(`Upload ${res.status}`);
+        const data = (await res.json()) as { urls?: string[] };
+        return Array.isArray(data.urls) ? data.urls : [];
+      } catch {
+        return [];
+      }
+    },
+    [companyId]
+  );
 
   return {
     units,
-    services,
-    refrigerantLogs,
     loading,
     error,
     refresh,
+    getUnitDetail,
     createUnit,
     updateUnit,
+    deleteUnit,
     createService,
     createRefrigerantLog,
+    uploadAcPhotos,
   };
 }

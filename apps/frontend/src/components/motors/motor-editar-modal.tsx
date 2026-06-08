@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
  import { toast } from "sonner";
 import { useMotors } from "../../hooks/useMotors";
 import { X, ChevronRight, ChevronLeft } from "lucide-react";
+import { DatePicker } from "../ui/date-picker/DatePicker";
 import type { Asset, AssetFuelType, AssetStatus } from "../../types/activo";
 import { useDrivers } from "../../hooks/useDrivers";
 
@@ -331,7 +332,11 @@ export function MotorEditModal({ motor, onClose }: Props) {
                 <input className={inputCls} value={values.oilCapacity} onChange={(e) => set("oilCapacity", e.target.value)} placeholder="15L" />
               </Field>
               <Field label="Próximo mantenimiento">
-                <input className={inputCls} type="date" value={values.nextMaintenance} onChange={(e) => set("nextMaintenance", e.target.value)} />
+                <DatePicker
+                  value={values.nextMaintenance}
+                  onChange={(v) => set("nextMaintenance", v)}
+                  placeholder="Seleccionar fecha"
+                />
               </Field>
             </div>
           )}

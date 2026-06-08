@@ -1,5 +1,6 @@
 import { useState, ReactNode } from 'react';
 import CockpitModal from '../common/CockpitModal';
+import { DatePicker } from '../../../../components/ui/date-picker/DatePicker';
 import { Insurance } from '../hooks/useVehicleCockpit';
 
 type Props = {
@@ -111,10 +112,18 @@ export default function ModalSeguros({ open, onClose, insurance, assetId, compan
           </Field>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <Field label="Inicio">
-              <input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} style={input} />
+              <DatePicker
+                value={form.startDate}
+                onChange={(v) => setForm({ ...form, startDate: v })}
+                placeholder="Seleccionar"
+              />
             </Field>
             <Field label="Fin">
-              <input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} style={input} />
+              <DatePicker
+                value={form.endDate}
+                onChange={(v) => setForm({ ...form, endDate: v })}
+                placeholder="Seleccionar"
+              />
             </Field>
           </div>
         </>

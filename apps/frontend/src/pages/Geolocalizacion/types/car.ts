@@ -17,4 +17,11 @@ export interface Car {
   position: { lat: number; lng: number };
   address?: string;
   lastUpdate: string; // ISO
+  /**
+   * Foto del activo (tabla `assets.photoUrls[0]`).
+   * Si no se provee, el marker usa un ícono de fallback.
+   * La foto debe estar en vista lateral con la **cabeza del carro
+   * apuntando hacia la IZQUIERDA** (heading 270° / oeste).
+   */
+  photoUrl?: string;
 }

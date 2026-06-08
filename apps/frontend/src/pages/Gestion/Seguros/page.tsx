@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useAssetCenter } from "../../../hooks/useInsurancesPolicies";
 import { useAssets } from "@/hooks/useAssets";
 import { usePermissions } from "@/hooks/usePermissions";
+import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import type { Asset } from "@/types/activo";
 import type { InsurancePolicy, InsuranceStatus } from "../../../hooks/useInsurancesPolicies";
 
@@ -531,10 +532,18 @@ function PolicyFormModal({
 
                   <div className="grid grid-cols-2 gap-4">
                     <FormField label="Fecha de inicio" error={errors.startDate}>
-                      <input type="date" className={inputCls} value={form.startDate} onChange={set("startDate")} />
+                      <DatePicker
+                        value={form.startDate}
+                        onChange={(v) => setForm((p) => ({ ...p, startDate: v }))}
+                        placeholder="Seleccionar"
+                      />
                     </FormField>
                     <FormField label="Fecha de vencimiento" error={errors.endDate}>
-                      <input type="date" className={inputCls} value={form.endDate} onChange={set("endDate")} />
+                      <DatePicker
+                        value={form.endDate}
+                        onChange={(v) => setForm((p) => ({ ...p, endDate: v }))}
+                        placeholder="Seleccionar"
+                      />
                     </FormField>
                   </div>
 

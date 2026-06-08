@@ -203,6 +203,35 @@ layer(base);
   html {
     @apply font-sans;
   }
+
+  /* ─────────────────────────────────────────────────────────────
+   * Color scheme hints para que los form controls nativos
+   * (select, input, button, textarea) rendericen correctamente
+   * con el tema actual. Sin esto, los `<select>` muestran el
+   * dropdown con fondo blanco y texto oscuro aunque el tema sea dark.
+   * ─────────────────────────────────────────────────────────── */
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
+
+  /* El dropdown de <select> es nativo del navegador. Forzamos los
+   * colores del option list cuando estamos en dark, para que las
+   * opciones no se vean blancas. */
+  html.dark select option,
+  html.dark select optgroup,
+  .dark select option,
+  .dark select optgroup {
+    background-color: #1a2231;
+    color: #ffffff;
+  }
+  html.dark select option:checked,
+  .dark select option:checked {
+    background-color: #2a31d8;
+    color: #ffffff;
+  }
 }
 
 @utility menu-item {

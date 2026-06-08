@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Map, { Marker, Source, Layer, MapRef } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { useTheme } from '@/context/ThemeContext';
 import { useVehicleLocation, Location } from '../hooks/useVehicleLocation';
 import CockpitModal from '../common/CockpitModal';
 
@@ -13,6 +14,19 @@ const LIGHT_STYLE = {
     carto: {
       type: 'raster' as const,
       tiles: ['https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png'],
+      tileSize: 256,
+      attribution: '&copy; OpenStreetMap &copy; CARTO',
+    },
+  },
+  layers: [{ id: 'carto', type: 'raster' as const, source: 'carto' }],
+};
+
+const DARK_STYLE = {
+  version: 8 as const,
+  sources: {
+    carto: {
+      type: 'raster' as const,
+      tiles: ['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png'],
       tileSize: 256,
       attribution: '&copy; OpenStreetMap &copy; CARTO',
     },
@@ -45,14 +59,15 @@ type MapViewProps = {
   location: Location;
   trail: [number, number][];
   fullscreen?: boolean;
+  isDark: boolean;
 };
 
-function MapView({ location, trail, fullscreen }: MapViewProps) {
+function MapView({ location, trail, fullscreen, isDark }: MapViewProps) {
   const mapRef = useRef<MapRef>(null);
   const lng = location?.lng ?? HQ_DEFAULT.lng;
   const lat = location?.lat ?? HQ_DEFAULT.lat;
 
-  // Fly to new position smoothly
+  // Fly to new position suavemente
   useEffect(() => {
     const map = mapRef.current;
     if (!map || location?.lat == null) return;
@@ -79,7 +94,7 @@ function MapView({ location, trail, fullscreen }: MapViewProps) {
         bearing: 0,
       }}
       style={{ width: '100%', height: '100%', borderRadius: fullscreen ? 0 : '10px' }}
-      mapStyle={LIGHT_STYLE}
+      mapStyle={isDark ? DARK_STYLE : LIGHT_STYLE}
       scrollZoom={fullscreen}
       dragRotate
       touchZoomRotate
@@ -159,6 +174,8 @@ type Props = {
 
 export default function CardLocation({ assetId, companyId, fallbackText }: Props) {
   const { location } = useVehicleLocation(assetId, companyId, 5000);
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const [expanded, setExpanded]   = useState(false);
   const [trail, setTrail]         = useState<[number, number][]>([]);
 
@@ -173,14 +190,19 @@ export default function CardLocation({ assetId, companyId, fallbackText }: Props
 
   const hasGPS = location?.lat != null && location?.lng != null;
 
+  // Solo cambian colores — dimensiones (height, padding, border-radius) se mantienen
+  const c = isDark
+    ? { surface: '#161b2c', border: 'rgba(255,255,255,0.08)', text: '#f4f4f5', muted: '#71717a', shadow: '0 1px 3px rgba(0,0,0,0.3)' }
+    : { surface: '#fff',     border: '#e7e3e3',               text: '#0f172a', muted: '#94a3b8', shadow: '0 1px 3px rgba(0,0,0,0.07)' };
+
   return (
     <>
       <div style={{
-        background: '#fff',
+        background: c.surface,
         borderRadius: '16px',
-        border: '1px solid #e7e3e3',
+        border: `1px solid ${c.border}`,
         padding: '14px 16px',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.07)',
+        boxShadow: c.shadow,
         display: 'flex',
         flexDirection: 'column',
         gap: '10px',
@@ -189,22 +211,22 @@ export default function CardLocation({ assetId, companyId, fallbackText }: Props
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
             <IconPin />
-            <h3 style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: '#0f172a' }}>Mi Ubicación</h3>
+            <h3 style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: c.text }}>Mi Ubicación</h3>
           </div>
           <button
             onClick={() => setExpanded(true)}
-            style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 2 }}
+            style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: c.muted, padding: 2 }}
           >
             <IconExpand />
           </button>
         </div>
 
         <div style={{ flex: 1, borderRadius: '10px', overflow: 'hidden', minHeight: 0 }}>
-          <MapView location={location} trail={trail} />
+          <MapView location={location} trail={trail} isDark={isDark} />
         </div>
 
         {!hasGPS && fallbackText && (
-          <p style={{ margin: 0, fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>{fallbackText}</p>
+          <p style={{ margin: 0, fontSize: '11px', color: c.muted, textAlign: 'center' }}>{fallbackText}</p>
         )}
       </div>
 
@@ -215,7 +237,7 @@ export default function CardLocation({ assetId, companyId, fallbackText }: Props
         maxWidth="95vw"
       >
         <div style={{ height: '75vh' }}>
-          <MapView location={location} trail={trail} fullscreen />
+          <MapView location={location} trail={trail} fullscreen isDark={isDark} />
         </div>
       </CockpitModal>
     </>

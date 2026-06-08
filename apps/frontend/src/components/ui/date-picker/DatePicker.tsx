@@ -116,7 +116,7 @@ function CalendarPopup({ value, minDate, maxDate, onChange, onClose, style }: Ca
       className="date-picker-popup"
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <style>{`
+        <style>{`
         .date-picker-popup {
           background: var(--dp-bg, #18181b);
           border: 1px solid var(--dp-border, rgba(255,255,255,0.08));
@@ -127,22 +127,26 @@ function CalendarPopup({ value, minDate, maxDate, onChange, onClose, style }: Ca
           font-family: inherit;
           animation: dp-in 0.15s ease;
         }
-        @media (prefers-color-scheme: light) {
-          .date-picker-popup {
-            --dp-bg: #ffffff;
-            --dp-border: rgba(0,0,0,0.08);
-            --dp-text: #111;
-            --dp-muted: #888;
-            --dp-cell-hover: rgba(99,102,241,0.08);
-            --dp-selected-bg: #6366f1;
-            --dp-selected-text: #fff;
-            --dp-today-border: #6366f1;
-            --dp-disabled: #ccc;
-            --dp-header-btn: rgba(0,0,0,0.05);
-            --dp-header-btn-hover: rgba(0,0,0,0.10);
-          }
+        /* Light theme: se aplica cuando NO hay .dark en <html> */
+        :root:not(.dark) .date-picker-popup,
+        html:not(.dark) .date-picker-popup {
+          --dp-bg: #ffffff;
+          --dp-border: rgba(0,0,0,0.08);
+          --dp-text: #111;
+          --dp-muted: #888;
+          --dp-cell-hover: rgba(99,102,241,0.08);
+          --dp-selected-bg: #6366f1;
+          --dp-selected-text: #fff;
+          --dp-today-border: #6366f1;
+          --dp-disabled: #ccc;
+          --dp-header-btn: rgba(0,0,0,0.05);
+          --dp-header-btn-hover: rgba(0,0,0,0.10);
+          box-shadow: 0 24px 48px rgba(0,0,0,0.12);
         }
-        .date-picker-popup {
+        /* Dark theme: cuando <html> tiene la clase .dark */
+        :root.dark .date-picker-popup,
+        html.dark .date-picker-popup,
+        .dark .date-picker-popup {
           --dp-text: #f4f4f5;
           --dp-muted: #71717a;
           --dp-cell-hover: rgba(129,140,248,0.15);
@@ -426,34 +430,54 @@ export function DatePicker({
           white-space: nowrap;
           min-width: 180px;
         }
-        @media (prefers-color-scheme: light) {
-          .dp-trigger {
-            background: #ffffff;
-            border-color: rgba(0,0,0,0.12);
-            color: #111;
-          }
-          .dp-trigger:hover { border-color: rgba(99,102,241,0.5); }
-          .dp-trigger.dp-open { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
-          .dp-trigger-placeholder { color: #aaa; }
-          .dp-clear-btn { color: #aaa; }
+        /* Light theme */
+        :root:not(.dark) .dp-trigger,
+        html:not(.dark) .dp-trigger {
+          background: #ffffff;
+          border-color: rgba(0,0,0,0.12);
+          color: #111;
         }
-        .dp-trigger {
+        :root:not(.dark) .dp-trigger:hover,
+        html:not(.dark) .dp-trigger:hover { border-color: rgba(99,102,241,0.5); }
+        :root:not(.dark) .dp-trigger.dp-open,
+        html:not(.dark) .dp-trigger.dp-open { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.12); }
+        :root:not(.dark) .dp-trigger-placeholder,
+        html:not(.dark) .dp-trigger-placeholder { color: #aaa; }
+        :root:not(.dark) .dp-clear-btn,
+        html:not(.dark) .dp-clear-btn { color: #aaa; }
+
+        /* Dark theme */
+        :root.dark .dp-trigger,
+        html.dark .dp-trigger,
+        .dark .dp-trigger {
           background: rgba(255,255,255,0.04);
           border-color: rgba(255,255,255,0.08);
           color: #f4f4f5;
         }
-        .dp-trigger:hover { border-color: rgba(129,140,248,0.4); }
-        .dp-trigger.dp-open { border-color: #818cf8; box-shadow: 0 0 0 3px rgba(129,140,248,0.15); }
-        .dp-trigger-placeholder { color: #52525b; }
+        :root.dark .dp-trigger:hover,
+        html.dark .dp-trigger:hover,
+        .dark .dp-trigger:hover { border-color: rgba(129,140,248,0.4); }
+        :root.dark .dp-trigger.dp-open,
+        html.dark .dp-trigger.dp-open,
+        .dark .dp-trigger.dp-open { border-color: #818cf8; box-shadow: 0 0 0 3px rgba(129,140,248,0.15); }
+        :root.dark .dp-trigger-placeholder,
+        html.dark .dp-trigger-placeholder,
+        .dark .dp-trigger-placeholder { color: #52525b; }
+        :root.dark .dp-clear-btn,
+        html.dark .dp-clear-btn,
+        .dark .dp-clear-btn { color: #52525b; }
+        :root.dark .dp-clear-btn:hover,
+        html.dark .dp-clear-btn:hover,
+        .dark .dp-clear-btn:hover { color: #e24b4a; }
+
         .dp-trigger-icon { opacity: 0.5; flex-shrink: 0; }
         .dp-trigger-text { flex: 1; }
         .dp-clear-btn {
           background: none; border: none; cursor: pointer;
-          color: #52525b; display: flex; align-items: center;
+          display: flex; align-items: center;
           padding: 0; border-radius: 4px;
           transition: color 0.12s;
         }
-        .dp-clear-btn:hover { color: #e24b4a; }
         .dp-label {
           display: block;
           font-size: 11px;

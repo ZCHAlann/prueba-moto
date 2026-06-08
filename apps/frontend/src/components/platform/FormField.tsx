@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { DatePicker } from "../ui/date-picker/DatePicker";
 
 // Clases base reutilizables — expórtelas para casos especiales (ej. input con icono)
 export const inputCls =
@@ -16,7 +17,28 @@ interface InputFieldProps extends React.InputHTMLAttributes<HTMLInputElement> {
   colSpan?: "full";
 }
 
-export function InputField({ label, prefix, colSpan, className, ...rest }: InputFieldProps) {
+export function InputField({ label, prefix, colSpan, className, type, value, onChange, ...rest }: InputFieldProps) {
+  // Cuando el campo es de fecha, usamos el DatePicker para que se vea
+  // consistente en dark/light y traiga el calendario custom.
+  if (type === "date") {
+    return (
+      <div className={colSpan === "full" ? "sm:col-span-2" : ""}>
+        <label className={labelCls}>{label}</label>
+        <DatePicker
+          value={typeof value === "string" ? value : ""}
+          onChange={(v) => {
+            if (!onChange) return;
+            // Simulamos un evento change para mantener la firma
+            (onChange as (e: React.ChangeEvent<HTMLInputElement>) => void)({
+              target: { value: v },
+            } as React.ChangeEvent<HTMLInputElement>);
+          }}
+          placeholder="Seleccionar"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className={colSpan === "full" ? "sm:col-span-2" : ""}>
       <label className={labelCls}>{label}</label>
@@ -28,6 +50,9 @@ export function InputField({ label, prefix, colSpan, className, ...rest }: Input
         )}
         <input
           {...rest}
+          type={type}
+          value={value}
+          onChange={onChange}
           className={`${inputCls} ${prefix ? "pl-9" : ""} ${className ?? ""}`}
         />
       </div>

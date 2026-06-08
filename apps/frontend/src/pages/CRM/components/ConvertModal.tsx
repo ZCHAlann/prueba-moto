@@ -7,6 +7,7 @@ import {
   Calendar, Package,
 } from "lucide-react";
 import { toast } from "sonner";
+import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import type { CRMDeal, CRMConvertInput } from "../../../types/platform";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -412,22 +413,20 @@ export function ConvertModal({ open, deal, onClose, onConvert }: ConvertModalPro
                           <p className={`${labelCls} flex items-center gap-1.5`}>
                             <Calendar size={10} /> Inicio contrato
                           </p>
-                          <input
-                            type="date"
-                            className={inputCls}
+                          <DatePicker
                             value={form.contractStartAt}
-                            onChange={e => set("contractStartAt", e.target.value)}
+                            onChange={(v) => set("contractStartAt", v)}
+                            placeholder="Seleccionar"
                           />
                         </div>
                         <div>
                           <p className={`${labelCls} flex items-center gap-1.5`}>
                             <Calendar size={10} /> Fin contrato
                           </p>
-                          <input
-                            type="date"
-                            className={inputCls}
+                          <DatePicker
                             value={form.contractEndAt}
-                            onChange={e => set("contractEndAt", e.target.value)}
+                            onChange={(v) => set("contractEndAt", v)}
+                            placeholder="Seleccionar"
                           />
                         </div>
                       </div>

@@ -3,17 +3,18 @@ import { Link, useLocation } from "react-router";
 import { ChevronDown, MoreHorizontal, Pin, PinOff } from "lucide-react";
 import { useSidebar } from "../context/SidebarContext";
 import { useAuth } from "../context/AuthContext";
+import { useAlertsBell } from "../context/AlertsBellContext";
 import { filterOperationalNavigation } from "../lib/access-control";
 import { navigationSections, isRouteActive } from "../lib/navigation";
 import type { NavigationSection } from "../lib/navigation";
 import {
   LayoutGrid, User, List, Table2, MapPin, PieChart,
   FileText, Box, Plug, Calendar, Bell, BookOpen,
-  ClipboardList, Folder, Package, Zap, Users,
+  ClipboardList, Folder, Package, Zap, Users, Wind,
 } from "lucide-react";
 
 const ICON_MAP: Record<string, React.ElementType> = {
-  DB: LayoutGrid, AC: User,    GS: Package,  MT: Zap,
+  DB: LayoutGrid, AC: Wind,    GS: Package,  MT: Zap,
   GE: Zap,        MN: ClipboardList, CK: List, AL: Bell,
   RP: PieChart,   CB: BookOpen, GL: MapPin,   CT: Users,
   US: User,       RL: List,    FL: Box,       CD: User,
@@ -46,6 +47,7 @@ type AppSidebarProps = {
 const AppSidebar: React.FC<AppSidebarProps> = ({ sections: sectionsProp, homeHref = "/dashboard" }) => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered, toggleSidebar } = useSidebar();
   const { session } = useAuth();
+  const { openCount: alertsOpenCount } = useAlertsBell();
   const location = useLocation();
 
   const operationSections = useMemo(
@@ -60,6 +62,16 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ sections: sectionsProp, homeHre
   );
 
   const sections = sectionsProp ?? operationSections;
+
+  // Mapa de href → badge numérico. Solo cargamos contadores de cosas que
+  // queremos resaltar (ej. alertas abiertas).
+  const badgeForHref = useCallback(
+    (href: string): number | null => {
+      if (href === "/alertas") return alertsOpenCount > 0 ? alertsOpenCount : null;
+      return null;
+    },
+    [alertsOpenCount],
+  );
 
   const [openSubmenu, setOpenSubmenu] = useState<number | null>(null);
 
@@ -171,16 +183,31 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ sections: sectionsProp, homeHre
               if (singleItem) {
                 const item   = section.items[0];
                 const active = isActive(item.href);
+                const badge  = badgeForHref(item.href);
                 return (
                   <li key={section.label}>
                     <Link
                       to={item.href}
                       className={`menu-item group ${active ? "menu-item-active" : "menu-item-inactive"} ${showLabels ? "justify-start" : "lg:justify-center"}`}
                     >
-                      <span className={active ? "menu-item-icon-active" : "menu-item-icon-inactive"}>
+                      <span className={`relative ${active ? "menu-item-icon-active" : "menu-item-icon-inactive"}`}>
                         {getIcon(section.icon)}
+                        {badge !== null && !showLabels && (
+                          <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-bold leading-none text-white ring-2 ring-white dark:ring-gray-900">
+                            {badge > 99 ? "99+" : badge}
+                          </span>
+                        )}
                       </span>
-                      {showLabels && <span className="menu-item-text">{section.label}</span>}
+                      {showLabels && (
+                        <>
+                          <span className="menu-item-text flex-1">{section.label}</span>
+                          {badge !== null && (
+                            <span className="ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-rose-500 px-1.5 text-[10px] font-bold leading-none text-white shadow-sm shadow-rose-500/30">
+                              {badge > 99 ? "99+" : badge}
+                            </span>
+                          )}
+                        </>
+                      )}
                     </Link>
                   </li>
                 );

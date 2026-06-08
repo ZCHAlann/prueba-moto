@@ -1,5 +1,6 @@
 import { useState, ReactNode } from 'react';
 import CockpitModal from '../common/CockpitModal';
+import { DatePicker } from '../../../../components/ui/date-picker/DatePicker';
 
 type Props = { open: boolean; onClose: () => void; assetId: string; companyId: string };
 
@@ -52,7 +53,11 @@ export default function ModalAgendarMantenimiento({ open, onClose, assetId, comp
         <input value={title} onChange={(e) => setTitle(e.target.value)} style={input} />
       </Field>
       <Field label="Fecha programada">
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={input} />
+        <DatePicker
+          value={date}
+          onChange={setDate}
+          placeholder="Seleccionar fecha"
+        />
       </Field>
       <Field label="Prioridad">
         <select value={priority} onChange={(e) => setPriority(e.target.value)} style={input}>

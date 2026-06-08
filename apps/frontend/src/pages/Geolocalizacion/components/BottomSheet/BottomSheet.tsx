@@ -2,15 +2,13 @@ import { useState } from 'react';
 import { X, Car as CarIcon } from 'lucide-react';
 import { useSelectionStore } from '../../store/selectionStore';
 import { CarControls } from './CarControls';
-import { Tabs } from '../Tabs/Tabs';
 import { RouteHistory } from '../RouteHistory';
 import { CarStats } from '../CarStats';
 import { STATUS_LABELS } from '../../constants/carStatus';
 import { STATUS_TW } from '../../utils/statusColors';
-import type { TabItem } from '../Tabs/Tabs';
 import { useUiStore } from '../../store/uiStore';
 
-const TABS: TabItem[] = [
+const TABS: Array<{ id: string; label: string }> = [
   { id: 'stats',   label: 'Estadísticas' },
   { id: 'history', label: 'Historial' },
 ];
@@ -19,13 +17,8 @@ export const BottomSheet = () => {
   const selectedCar = useSelectionStore((s) => s.selectedCar);
   const clear       = useSelectionStore((s) => s.clear);
   const [activeTab, setActiveTab] = useState<string>('stats');
-  const isCarSelectorOpen = useUiStore(
-    (s) => s.isCarSelectorOpen
-  );
-  const isOpen =
-    selectedCar !== null &&
-    !isCarSelectorOpen;
-  
+  const isCarSelectorOpen = useUiStore((s) => s.isCarSelectorOpen);
+  const isOpen = selectedCar !== null && !isCarSelectorOpen;
 
   return (
     <div
@@ -48,8 +41,10 @@ export const BottomSheet = () => {
                 className={`
                   rounded-md px-3 py-1 text-xs font-bold transition
                   ${isActive
-                    ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
-                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700'}
+                    ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200 ' +
+                      'dark:bg-[#0d1320] dark:text-white dark:ring-white/[0.08]'
+                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 ' +
+                      'dark:bg-white/[0.05] dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-200'}
                 `}
               >
                 {tab.label}
@@ -59,18 +54,29 @@ export const BottomSheet = () => {
         </div>
 
         {/* Panel principal */}
-        <div className="overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200">
+        <div className="overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200 dark:bg-[#0d1320] dark:ring-white/[0.08]">
           {selectedCar && (
             <>
-              {/* Header compacto con info del carro + cerrar */}
-              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-4 py-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100">
-                    <CarIcon className="h-3.5 w-3.5 text-slate-600" />
-                  </div>
+              {/* Header con info del carro + cerrar */}
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-4 py-2 dark:border-white/[0.06]">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  {selectedCar.photoUrl ? (
+                    <div className="flex h-9 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-50 ring-1 ring-slate-200 dark:bg-white/[0.04] dark:ring-white/[0.06]">
+                      <img
+                        src={selectedCar.photoUrl}
+                        alt=""
+                        className="h-full w-full object-contain"
+                        draggable={false}
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-white/[0.05]">
+                      <CarIcon className="h-3.5 w-3.5 text-slate-600 dark:text-gray-300" />
+                    </div>
+                  )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate text-xs font-bold text-slate-900">
+                      <span className="truncate text-xs font-bold text-slate-900 dark:text-white">
                         {selectedCar.brand} {selectedCar.model}
                       </span>
                       <span
@@ -84,11 +90,11 @@ export const BottomSheet = () => {
                         {STATUS_LABELS[selectedCar.state]}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                    <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-gray-400">
                       <span className="font-mono">{selectedCar.plate}</span>
                       {selectedCar.driverName && (
                         <>
-                          <span className="text-slate-300">·</span>
+                          <span className="text-slate-300 dark:text-gray-600">·</span>
                           <span className="truncate">{selectedCar.driverName}</span>
                         </>
                       )}
@@ -97,7 +103,7 @@ export const BottomSheet = () => {
                 </div>
                 <button
                   onClick={clear}
-                  className="shrink-0 rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  className="shrink-0 rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
                   aria-label="Cerrar"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -105,9 +111,9 @@ export const BottomSheet = () => {
               </div>
 
               {/* Body: layout horizontal | controles | contenido (scrollable) */}
-              <div className="grid max-h-[200px] grid-cols-[160px_1fr] divide-x divide-slate-100 overflow-hidden">
+              <div className="grid max-h-[260px] grid-cols-[180px_1fr] divide-x divide-slate-100 overflow-hidden dark:divide-white/[0.06]">
                 {/* Izquierda: controles (stacked vertical) */}
-                <div className="overflow-y-auto p-3">
+                <div className="overflow-y-auto bg-slate-50/50 p-3 dark:bg-white/[0.02]">
                   <CarControls />
                 </div>
 

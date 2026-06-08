@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { CarSelectorButton } from './CarSelectorButton';
 import { CarSelectorDropdown } from './CarSelectorDropdown';
 import { useCarStore } from '../../store/carStore';

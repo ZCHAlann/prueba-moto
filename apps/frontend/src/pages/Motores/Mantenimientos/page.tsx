@@ -5,6 +5,7 @@ import { useMaintenances } from "../../../hooks/useMaintenances";
 import { useDrivers } from "../../../hooks/useDrivers";
 import { usePermissions } from "../../../hooks/usePermissions";
 import { ModulePageHeader } from "../../../components/features/modules/ModulePageHeader";
+import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import {
   Plus, Search, Wrench, AlertTriangle, Clock, CheckCircle2,
   Calendar, User, MoreVertical, Pencil, Trash2, CheckCheck,
@@ -765,11 +766,19 @@ function MaintenanceModal({
             </Field>
 
             <Field label="Fecha inicio">
-              <input className={inputCls} type="date" value={form.scheduledDate} onChange={e => set("scheduledDate", e.target.value)} />
+              <DatePicker
+                value={form.scheduledDate}
+                onChange={(v) => set("scheduledDate", v)}
+                placeholder="Seleccionar"
+              />
             </Field>
 
             <Field label="Fecha límite" required>
-              <input className={inputCls} type="date" value={form.dueDate} onChange={e => set("dueDate", e.target.value)} />
+              <DatePicker
+                value={form.dueDate}
+                onChange={(v) => set("dueDate", v)}
+                placeholder="Seleccionar"
+              />
             </Field>
 
             <div className="sm:col-span-2">

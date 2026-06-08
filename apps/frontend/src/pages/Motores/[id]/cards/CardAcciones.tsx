@@ -1,5 +1,6 @@
 import { useToggleEngine } from '../hooks/useToggleEngine';
 import { useToggleLock } from '../hooks/useToggleLock';
+import { useTheme } from '@/context/ThemeContext';
 
 type Props = {
   assetId: string;
@@ -9,7 +10,7 @@ type Props = {
   onChange?: (partial: { engineOn?: boolean; locked?: boolean }) => void;
 };
 
-function IconEngine({ on }: { on: boolean }) {
+function IconEngine({ on: _on }: { on: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <rect x="2" y="7" width="20" height="10" rx="2"/>
@@ -43,8 +44,31 @@ function IconZap() {
 }
 
 export default function CardAcciones({ assetId, companyId, engineOn, locked, onChange }: Props) {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const { toggle: toggleEngine, loading: loadingE } = useToggleEngine(assetId, companyId);
   const { toggle: toggleLock,   loading: loadingL } = useToggleLock(assetId, companyId);
+
+  // Solo cambian colores — el layout (padding, height, gap, border-radius) se mantiene
+  const c = isDark
+    ? {
+        surface:      '#161b2c',
+        border:       'rgba(255,255,255,0.08)',
+        text:         '#f4f4f5',
+        engineOn:     { bg: 'rgba(34,197,94,0.15)',  text: '#22c55e' },
+        engineOff:    { bg: 'rgba(255,255,255,0.05)', text: '#a1a1aa' },
+        lockedOn:     { bg: 'rgba(244,63,94,0.15)',   text: '#fb7185' },
+        lockedOff:    { bg: 'rgba(255,255,255,0.05)', text: '#a1a1aa' },
+      }
+    : {
+        surface:      '#fff',
+        border:       '#e2d7d7',
+        text:         '#0f172a',
+        engineOn:     { bg: '#dcfce7', text: '#15803d' },
+        engineOff:    { bg: '#f1f5f9', text: '#475569' },
+        lockedOn:     { bg: '#fee2e2', text: '#dc2626' },
+        lockedOff:    { bg: '#f1f5f9', text: '#475569' },
+      };
 
   const onEngine = async () => {
     const r = await toggleEngine();
@@ -55,15 +79,18 @@ export default function CardAcciones({ assetId, companyId, engineOn, locked, onC
     if (r) onChange?.({ locked: r.locked });
   };
 
+  const engineStyle = engineOn ? c.engineOn : c.engineOff;
+  const lockedStyle = locked ? c.lockedOn : c.lockedOff;
+
   return (
     <div style={{
-      background: '#fff',
+      background: c.surface,
       borderRadius: '16px',
-      borderColor: '#e2d7d7',
+      borderColor: c.border,
       borderWidth: '1px',
       borderStyle: 'solid',
       padding: '14px 16px',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.07)',
+      boxShadow: isDark ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.07)',
       display: 'flex',
       flexDirection: 'column',
       gap: '12px',
@@ -72,7 +99,7 @@ export default function CardAcciones({ assetId, companyId, engineOn, locked, onC
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ color: '#16a34a' }}><IconZap /></span>
-        <h3 style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: '#0f172a' }}>Acciones</h3>
+        <h3 style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: c.text }}>Acciones</h3>
       </div>
 
       {/* Buttons */}
@@ -86,8 +113,8 @@ export default function CardAcciones({ assetId, companyId, engineOn, locked, onC
             borderRadius: '12px',
             border: 'none',
             cursor: loadingE ? 'not-allowed' : 'pointer',
-            background: engineOn ? '#dcfce7' : '#f1f5f9',
-            color: engineOn ? '#15803d' : '#475569',
+            background: engineStyle.bg,
+            color: engineStyle.text,
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '6px',
             fontWeight: 600, fontSize: '13px',
             opacity: loadingE ? 0.6 : 1,
@@ -110,8 +137,8 @@ export default function CardAcciones({ assetId, companyId, engineOn, locked, onC
             borderRadius: '12px',
             border: 'none',
             cursor: loadingL ? 'not-allowed' : 'pointer',
-            background: locked ? '#fee2e2' : '#f1f5f9',
-            color: locked ? '#dc2626' : '#475569',
+            background: lockedStyle.bg,
+            color: lockedStyle.text,
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '6px',
             fontWeight: 600, fontSize: '13px',
             opacity: loadingL ? 0.6 : 1,

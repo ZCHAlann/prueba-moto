@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useAlerts, type ApiAlert, type AlertSeverity, type AlertStatus, type AlertType } from "../../hooks/useAlerts";
 import { useAssets } from "../../hooks/useAssets";
 import { usePermissions } from "../../hooks/usePermissions";
+import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -368,12 +369,13 @@ function CreateDrawer({
 
               <div>
                 <FieldLabel>Fecha límite</FieldLabel>
-                <input
-                  type="date"
-                  value={form.dueDate}
-                  onChange={e => { setForm(f => ({ ...f, dueDate: e.target.value })); setErrors(er => ({ ...er, dueDate: undefined })); }}
-                  className={`${inputCls} ${errors.dueDate ? "border-error-300 focus:border-error-500 focus:ring-error-500/10" : ""}`}
-                />
+                <div className={errors.dueDate ? "rounded-xl ring-1 ring-error-500/30" : ""}>
+                  <DatePicker
+                    value={form.dueDate}
+                    onChange={(v) => { setForm(f => ({ ...f, dueDate: v })); setErrors(er => ({ ...er, dueDate: undefined })); }}
+                    placeholder="Seleccionar fecha"
+                  />
+                </div>
                 {errors.dueDate && <p className="mt-1 text-xs text-error-500">{errors.dueDate}</p>}
               </div>
 

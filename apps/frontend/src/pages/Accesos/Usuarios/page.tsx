@@ -6,8 +6,9 @@ import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { useSites } from "@/hooks/useSites";
 import { useCompanyUsers, type CompanyUser, type CreateCompanyUserInput, type UpdateCompanyUserInput } from "@/hooks/useCompanyUsers";
-import type { PlatformModuleKey, PlatformRole } from "@/types/platform";
-import { MODULE_TREE, ACTION_LABELS, ACTION_COLORS, type ActionKey, type PermissionMap } from "@/lib/module-tree";
+import type { PlatformRole } from "@/types/platform";
+import { MODULE_TREE, type ActionKey, type PermissionMap } from "@/lib/module-tree";
+import { PermissionEditor } from "@/components/users/PermissionEditor";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -19,15 +20,9 @@ const ROLE_LABELS: Record<string, string> = {
   conductor:      "Conductor",
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  active:   "Activo",
-  inactive: "Inactivo",
-};
-
 // ─── Permisos por defecto por rol ─────────────────────────────────────────────
 
 const ALL_ACTIONS: ActionKey[] = ["ver", "crear", "editar", "eliminar"];
-const VIEW_ONLY:  ActionKey[] = ["ver"];
 
 function buildFullPermissions(): PermissionMap {
   const result: PermissionMap = {};
@@ -35,17 +30,6 @@ function buildFullPermissions(): PermissionMap {
     result[mod] = {};
     for (const sub of Object.keys(def.submodules)) {
       result[mod][sub] = [...ALL_ACTIONS];
-    }
-  }
-  return result;
-}
-
-function buildViewOnlyPermissions(): PermissionMap {
-  const result: PermissionMap = {};
-  for (const [mod, def] of Object.entries(MODULE_TREE)) {
-    result[mod] = {};
-    for (const sub of Object.keys(def.submodules)) {
-      result[mod][sub] = [...VIEW_ONLY];
     }
   }
   return result;
@@ -465,155 +449,6 @@ function DeleteConfirmModal({
   );
 }
 
-// ─── Permission Editor ────────────────────────────────────────────────────────
-
-function PermissionEditor({
-  permissions,
-  onChange,
-}: {
-  permissions: PermissionMap;
-  onChange: (next: PermissionMap) => void;
-}) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-
-  const toggleAction = (mod: string, sub: string, action: ActionKey) => {
-    const current = permissions[mod]?.[sub] ?? [];
-    let next: ActionKey[];
-
-    if (action === "ver") {
-      next = current.includes("ver") ? [] : ["ver"];
-    } else {
-      if (current.includes(action)) {
-        next = current.filter((a) => a !== action);
-      } else {
-        next = current.includes("ver")
-          ? [...current, action]
-          : ["ver", ...current, action];
-      }
-    }
-
-    onChange({
-      ...permissions,
-      [mod]: {
-        ...(permissions[mod] ?? {}),
-        [sub]: next,
-      },
-    });
-  };
-
-  const setModuleAll = (mod: string, all: boolean) => {
-    const modDef = MODULE_TREE[mod as keyof typeof MODULE_TREE];
-    if (!modDef) return;
-    const updated: Record<string, ActionKey[]> = {};
-    for (const sub of Object.keys(modDef.submodules)) {
-      updated[sub] = all ? [...ALL_ACTIONS] : [];
-    }
-    onChange({ ...permissions, [mod]: updated });
-  };
-
-  const isModuleAll = (mod: string): boolean => {
-    const modDef = MODULE_TREE[mod as keyof typeof MODULE_TREE];
-    if (!modDef) return false;
-    return Object.keys(modDef.submodules).every((sub) =>
-      ALL_ACTIONS.every((a) => permissions[mod]?.[sub]?.includes(a))
-    );
-  };
-
-  return (
-    <div className="space-y-2">
-      {Object.entries(MODULE_TREE).map(([modKey, modDef]) => {
-        const isOpen = collapsed[modKey] !== true;
-        return (
-          <div
-            key={modKey}
-            className="rounded-xl border border-gray-200 dark:border-white/[0.06] overflow-hidden"
-          >
-            <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 dark:bg-white/[0.03]">
-              <button
-                type="button"
-                onClick={() => setCollapsed((prev) => ({ ...prev, [modKey]: isOpen }))}
-                className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300"
-              >
-                <svg
-                  width="12" height="12" viewBox="0 0 12 12" fill="currentColor"
-                  className={`transition-transform text-gray-400 ${isOpen ? "rotate-90" : ""}`}
-                >
-                  <path d="M4 2l4 4-4 4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                {modDef.label}
-              </button>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setModuleAll(modKey, true)}
-                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                >
-                  Todos
-                </button>
-                <span className="text-gray-300 dark:text-white/20">·</span>
-                <button
-                  type="button"
-                  onClick={() => setModuleAll(modKey, false)}
-                  className="text-xs text-gray-400 dark:text-gray-500 hover:underline"
-                >
-                  Ninguno
-                </button>
-              </div>
-            </div>
-
-            <AnimatePresence initial={false}>
-              {isOpen && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.18 }}
-                  className="overflow-hidden"
-                >
-                  <div className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                    {Object.entries(modDef.submodules).map(([subKey, subLabel]) => {
-                      const activeActions = permissions[modKey]?.[subKey] ?? [];
-                      return (
-                        <div
-                          key={subKey}
-                          className="flex items-center justify-between px-4 py-2.5"
-                        >
-                          <span className="text-sm text-gray-600 dark:text-gray-400 w-44 shrink-0">
-                            {subLabel}
-                          </span>
-                          <div className="flex gap-1.5 flex-wrap justify-end">
-                            {(["ver", "crear", "editar", "eliminar"] as ActionKey[]).map((action) => {
-                              const isActive = activeActions.includes(action);
-                              return (
-                                <button
-                                  key={action}
-                                  type="button"
-                                  onClick={() => toggleAction(modKey, subKey, action)}
-                                  className={`rounded-md border px-2.5 py-1 text-xs font-medium transition ${
-                                    isActive
-                                      ? ACTION_COLORS[action].active
-                                      : ACTION_COLORS[action].inactive
-                                  }`}
-                                >
-                                  {ACTION_LABELS[action]}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 // ─── User Form Modal ──────────────────────────────────────────────────────────
 
 function UserFormModal({
@@ -888,26 +723,16 @@ function UserFormModal({
 
                   {/* ── Permisos granulares ── */}
                   <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                        Permisos por módulo
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setForm((prev) => ({
-                            ...prev,
-                            permissions: ROLE_DEFAULT_PERMISSIONS[prev.role] ?? {},
-                          }))
-                        }
-                        className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
-                      >
-                        Restaurar plantilla
-                      </button>
-                    </div>
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
+                      Permisos por módulo
+                    </p>
                     <PermissionEditor
                       permissions={form.permissions}
                       onChange={(next) => setForm((prev) => ({ ...prev, permissions: next }))}
+                      defaultPermissions={ROLE_DEFAULT_PERMISSIONS[form.role]}
+                      readOnlyWithFullAccess={
+                        form.role === "owner_empresa" || form.role === "admin_empresa"
+                      }
                     />
                   </div>
 

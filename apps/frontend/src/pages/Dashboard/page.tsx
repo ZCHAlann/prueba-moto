@@ -1,4 +1,4 @@
-import { useMemo, lazy, Suspense } from "react";
+import { useMemo, lazy, Suspense, useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { KpiCard } from "../../components/dashboard/kpi-card";
 import { AlertsFeed } from "../../components/dashboard/alerts-feed";
@@ -47,10 +47,9 @@ function Sk({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-gray-200 dark:bg-white/[0.06] ${className}`} />;
 }
 
-// Skeleton de chart — se muestra mientras ApexCharts carga (lazy) o datos cargan
 function ChartSkeleton({ height }: { height: string }) {
   return (
-    <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-[#0F172A] p-5">
+    <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
       <Sk className="h-5 w-40 mb-5" />
       <Sk className={height} />
     </div>
@@ -60,7 +59,7 @@ function ChartSkeleton({ height }: { height: string }) {
 /* ─── ChartCard ──────────────────────────────────────────────────────────── */
 function ChartCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-white/[0.06] bg-white dark:bg-[#0F172A] px-5 pb-5 pt-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
+    <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] px-5 pb-5 pt-5">
       <div className="mb-5">
         <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">{title}</h3>
         {subtitle && <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{subtitle}</p>}
@@ -83,12 +82,13 @@ function getEventMeta(entity: string) {
   return map[entity] ?? { icon: <Circle size={11} />, color: "#6b7280", bgColor: "rgba(107,114,128,0.15)", textColor: "#9ca3af", label: entity };
 }
 
-/* ─── Memoized ApexOptions (fuera del componente = nunca se recrean) ─────── */
+/* ─── Shared axis styles ─────────────────────────────────────────────────── */
 const BASE_AXIS_STYLE = { fontSize: "12px", colors: "#e5e7eb" as string | string[] };
 const BASE_YAXIS_STYLE = { fontSize: "12px", colors: ["#6B7280"] };
 const GRID_BORDER = "rgba(156,163,175,0.12)";
 
-function makeAreaOptions(categories: string[]): ApexOptions {
+/* ─── Chart option factories — all accept `theme` now ───────────────────── */
+function makeAreaOptions(categories: string[], theme: "dark" | "light"): ApexOptions {
   return {
     legend: { show: false },
     colors: ["#465FFF", "#10b981"],
@@ -100,11 +100,11 @@ function makeAreaOptions(categories: string[]): ApexOptions {
     dataLabels: { enabled: false },
     xaxis: { type: "category", categories, axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: BASE_AXIS_STYLE } },
     yaxis: { labels: { style: BASE_YAXIS_STYLE } },
-    tooltip: { theme: "dark" },
+    tooltip: { theme },
   };
 }
 
-function makeBarOptions(categories: string[]): ApexOptions {
+function makeBarOptions(categories: string[], theme: "dark" | "light"): ApexOptions {
   return {
     colors: ["#465fff"],
     chart: { fontFamily: "Outfit, sans-serif", type: "bar", height: 180, toolbar: { show: false }, background: "transparent" },
@@ -115,11 +115,11 @@ function makeBarOptions(categories: string[]): ApexOptions {
     yaxis: { labels: { style: BASE_YAXIS_STYLE } },
     grid: { yaxis: { lines: { show: true } }, borderColor: GRID_BORDER },
     fill: { opacity: 1 },
-    tooltip: { theme: "dark", x: { show: false } },
+    tooltip: { theme, x: { show: false } },
   };
 }
 
-function makeDonutOptions(labels: string[]): ApexOptions {
+function makeDonutOptions(labels: string[], theme: "dark" | "light"): ApexOptions {
   return {
     chart: { type: "donut", background: "transparent", fontFamily: "Outfit, sans-serif" },
     colors: ["#10b981", "#f59e0b", "#ef4444", "#9ca3af"],
@@ -128,20 +128,28 @@ function makeDonutOptions(labels: string[]): ApexOptions {
     dataLabels: { enabled: false },
     plotOptions: { pie: { donut: { size: "65%", labels: { show: true, total: { show: true, label: "Total", color: "#9ca3af", fontSize: "13px" } } } } },
     stroke: { width: 0 },
-    tooltip: { theme: "dark" },
+    tooltip: { theme },
   };
 }
 
-const H_BAR_OPTIONS: ApexOptions = {
-  colors: ["#465fff"],
-  chart: { fontFamily: "Outfit, sans-serif", type: "bar", height: 180, toolbar: { show: false }, background: "transparent" },
-  plotOptions: { bar: { horizontal: true, borderRadius: 4, barHeight: "55%" } },
-  dataLabels: { enabled: false },
-  xaxis: { axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: BASE_YAXIS_STYLE } },
-  yaxis: { labels: { style: BASE_YAXIS_STYLE } },
-  grid: { xaxis: { lines: { show: true } }, yaxis: { lines: { show: false } }, borderColor: GRID_BORDER },
-  tooltip: { theme: "dark" },
-};
+function makeHBarOptions(categories: string[], theme: "dark" | "light"): ApexOptions {
+  return {
+    colors: ["#465fff"],
+    chart: { fontFamily: "Outfit, sans-serif", type: "bar", height: 180, toolbar: { show: false }, background: "transparent" },
+    plotOptions: { bar: { horizontal: true, borderRadius: 4, barHeight: "55%" } },
+    dataLabels: { enabled: false },
+    // En barras horizontales, las categorías van en xaxis pero se renderizan en el eje Y visual
+    xaxis: {
+      categories,
+      axisBorder: { show: false },
+      axisTicks: { show: false },
+      labels: { style: BASE_YAXIS_STYLE },
+    },
+    yaxis: { labels: { style: BASE_YAXIS_STYLE } },
+    grid: { xaxis: { lines: { show: true } }, yaxis: { lines: { show: false } }, borderColor: GRID_BORDER },
+    tooltip: { theme },
+  };
+}
 
 /* ─── KPI skeleton ───────────────────────────────────────────────────────── */
 const SkeletonKpi = (
@@ -159,13 +167,25 @@ export function DashboardOverview() {
   const { session } = useAuth();
   const companyId = session?.companyId ?? null;
 
-  // Único hook crítico para el primer paint (KPIs + charts + actividad)
   const { data: an, loading } = useDashboardAnalytics(companyId);
-
-  // Alerts: solo para el feed — se difiere con su propio loading
   const { alerts } = useAlerts();
 
-  // ── KPIs — memoizados sobre an.kpis, no sobre `an` entero ───────────────
+  // ── Detectar tema dinámicamente (Tailwind dark mode = class en <html>) ───
+  const [isDark, setIsDark] = useState(
+    () => document.documentElement.classList.contains("dark")
+  );
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setIsDark(document.documentElement.classList.contains("dark"));
+    });
+    observer.observe(document.documentElement, { attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+
+  const theme = isDark ? "dark" : "light";
+
+  // ── KPIs ─────────────────────────────────────────────────────────────────
   const kpiCards = useMemo(() => {
     const k = an?.kpis;
     if (!k) return [];
@@ -178,17 +198,21 @@ export function DashboardOverview() {
     ];
   }, [an?.kpis]);
 
-  // ── Chart options — memoizadas sobre sus categorías ──────────────────────
+  // ── Chart options — todas memoizadas con `theme` como dependencia ────────
   const c = an?.charts;
 
-  const areaOptions  = useMemo(() => makeAreaOptions(c?.fuelOverTime.categories ?? []),  [c?.fuelOverTime.categories]);
-  const barOptions   = useMemo(() => makeBarOptions(c?.maintenancesByMonth.categories ?? []), [c?.maintenancesByMonth.categories]);
+  const areaOptions  = useMemo(() => makeAreaOptions(c?.fuelOverTime.categories ?? [], theme),        [c?.fuelOverTime.categories, theme]);
+  const barOptions   = useMemo(() => makeBarOptions(c?.maintenancesByMonth.categories ?? [], theme),  [c?.maintenancesByMonth.categories, theme]);
   const donutOptions = useMemo(
-    () => makeDonutOptions(c?.assetsByStatus.filter(d => d.value > 0).map(d => d.name) ?? []),
-    [c?.assetsByStatus]
+    () => makeDonutOptions(c?.assetsByStatus.filter(d => d.value > 0).map(d => d.name) ?? [], theme),
+    [c?.assetsByStatus, theme]
+  );
+  const hBarOptions  = useMemo(
+    () => makeHBarOptions(c?.driversByLicense.map(d => d.name) ?? [], theme),
+    [c?.driversByLicense, theme]
   );
 
-  // ── Alert feed — memoizado sobre alerts ──────────────────────────────────
+  // ── Alert feed ───────────────────────────────────────────────────────────
   const alertItems = useMemo<AlertItem[]>(() =>
     alerts.filter(a => a.status !== "Cerrada").slice(0, 6).map(a => ({
       title:       a.title,
@@ -207,7 +231,7 @@ export function DashboardOverview() {
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Visibilidad operativa: flota, mantenimiento y combustible.</p>
       </div>
 
-      {/* KPIs — render inmediato con skeleton */}
+      {/* KPIs */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 md:gap-6">
         {loading
           ? Array.from({ length: 4 }).map((_, i) => <div key={i}>{SkeletonKpi}</div>)
@@ -290,7 +314,7 @@ export function DashboardOverview() {
               <ChartCard title="Conductores por licencia">
                 <Suspense fallback={<Sk className="h-[180px]" />}>
                   <ReactApexChart
-                    options={H_BAR_OPTIONS}
+                    options={hBarOptions}
                     series={[{ name: "Conductores", data: c.driversByLicense.map(d => d.value) }]}
                     type="bar"
                     height={180}
@@ -311,7 +335,7 @@ export function DashboardOverview() {
         <div>
           <h2 className="mb-3 text-lg font-semibold text-gray-800 dark:text-white/90">Actividad reciente</h2>
           {an?.recentActivity && an.recentActivity.length > 0 && (
-            <div className="rounded-2xl border border-gray-200 dark:border-gray-100 bg-white dark:bg-white/[0.03] px-5 py-5 overflow-y-auto max-h-[480px]">
+            <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-white/[0.03] px-5 py-5 overflow-y-auto max-h-[480px]">
               {an.recentActivity.slice(0, 8).map((e, i) => {
                 const isLast = i === Math.min(an.recentActivity.length - 1, 7);
                 const { icon, color, bgColor, textColor, label } = getEventMeta(e.entity);
@@ -342,7 +366,7 @@ export function DashboardOverview() {
         </div>
       </div>
 
-      {/* Próximos mantenimientos — al fondo, carga last */}
+      {/* Próximos mantenimientos */}
       <section>
         <MaintenanceTable />
       </section>

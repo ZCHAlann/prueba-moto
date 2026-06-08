@@ -30,7 +30,7 @@ const updateGarageSchema = createGarageSchema.partial();
 
 // ─── GET /company/:id/garages ─────────────────────────────────────────────────
 
-router.get('/', requireModule('flotas'), async (req, res, next) => {
+router.get('/', requireModule('gestion', 'flotas'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
 
@@ -50,7 +50,7 @@ router.get('/', requireModule('flotas'), async (req, res, next) => {
 
 router.post(
   '/',
-  requireModule('flotas'),
+  requireModule('gestion', 'garages'),
   requireAdmin,
   validate(createGarageSchema),
   async (req, res, next) => {
@@ -83,7 +83,7 @@ router.post(
 
 router.put(
   '/:garageId',
-  requireModule('flotas'),
+  requireModule('gestion', 'garages'),
   requireAdmin,
   validate(updateGarageSchema),
   async (req, res, next) => {
@@ -124,7 +124,7 @@ router.put(
 
 // ─── DELETE /company/:id/garages/:garageId ────────────────────────────────────
 
-router.delete('/:garageId', requireModule('flotas'), requireAdmin, async (req, res, next) => {
+router.delete('/:garageId', requireModule('gestion', 'garages'), requireAdmin, async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const garageId = parseId('garage', req.params.garageId);

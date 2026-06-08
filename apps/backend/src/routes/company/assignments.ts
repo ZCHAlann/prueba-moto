@@ -28,7 +28,7 @@ const updateAssignmentSchema = createAssignmentSchema.partial();
 // ─── GET /company/:id/assignments ─────────────────────────────────────────────
 // Query: ?status=Activa &assetId=asset-1 &driverId=driver-1
 
-router.get('/', requireModule('asignaciones'), async (req, res, next) => {
+router.get('/', requireModule('gestion', 'asignaciones'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const { status, assetId, driverId } = req.query;
@@ -53,7 +53,23 @@ router.get('/', requireModule('asignaciones'), async (req, res, next) => {
       rows = rows.filter((a) => a.driverId === parsedDriverId);
     }
 
-    res.json({ data: rows.map(serializeAssignment), total: rows.length });
+    // ── Enrichment: cargar nombres de activo y conductor ────────────────────
+    const [assetsRows, driversRows] = await Promise.all([
+      db.select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate, brand: companyAssets.brand })
+        .from(companyAssets)
+        .where(eq(companyAssets.companyId, companyId)),
+      db.select({ id: companyDrivers.id, firstName: companyDrivers.firstName, lastName: companyDrivers.lastName, code: companyDrivers.code })
+        .from(companyDrivers)
+        .where(eq(companyDrivers.companyId, companyId)),
+    ]);
+
+    const assetMap  = new Map(assetsRows.map(a  => [a.id, { name: a.name, plate: a.plate, brand: a.brand }]));
+    const driverMap = new Map(driversRows.map(d => [d.id, { firstName: d.firstName, lastName: d.lastName, code: d.code }]));
+
+    res.json({
+      data: rows.map((a) => serializeAssignment(a, assetMap.get(a.assetId), driverMap.get(a.driverId))),
+      total: rows.length,
+    });
   } catch (err) {
     next(err);
   }
@@ -63,7 +79,7 @@ router.get('/', requireModule('asignaciones'), async (req, res, next) => {
 
 router.post(
   '/',
-  requireModule('asignaciones'),
+  requireModule('gestion', 'asignaciones'),
   requireSupervisor,
   validate(createAssignmentSchema),
   async (req, res, next) => {
@@ -129,7 +145,7 @@ router.post(
         description: `Asignación creada: "${asset[0].name}" → "${driver[0].firstName} ${driver[0].lastName}".`,
       });
 
-      res.status(201).json(serializeAssignment(created));
+      res.status(201).json(serializeAssignment(created, { name: asset[0].name, plate: asset[0].plate ?? '', brand: asset[0].brand ?? '' }, { firstName: driver[0].firstName, lastName: driver[0].lastName, code: driver[0].code }));
     } catch (err) {
       next(err);
     }
@@ -140,7 +156,7 @@ router.post(
 
 router.put(
   '/:assignId',
-  requireModule('asignaciones'),
+  requireModule('gestion', 'asignaciones'),
   requireSupervisor,
   validate(updateAssignmentSchema),
   async (req, res, next) => {
@@ -188,7 +204,13 @@ router.put(
         description: `Asignación "${toId('assignment', updated.id)}" actualizada.`,
       });
 
-      res.json(serializeAssignment(updated));
+      // ── Enrichment: recargar info de asset y driver para la respuesta ──────
+      const [assetInfo] = await db.select({ name: companyAssets.name, plate: companyAssets.plate, brand: companyAssets.brand })
+        .from(companyAssets).where(eq(companyAssets.id, updated.assetId)).limit(1);
+      const [driverInfo] = await db.select({ firstName: companyDrivers.firstName, lastName: companyDrivers.lastName, code: companyDrivers.code })
+        .from(companyDrivers).where(eq(companyDrivers.id, updated.driverId)).limit(1);
+
+      res.json(serializeAssignment(updated, assetInfo ?? null, driverInfo ?? null));
     } catch (err) {
       next(err);
     }
@@ -199,7 +221,7 @@ router.put(
 
 router.post(
   '/:assignId/finalize',
-  requireModule('asignaciones'),
+  requireModule('gestion', 'asignaciones'),
   requireSupervisor,
   async (req, res, next) => {
     try {
@@ -249,7 +271,13 @@ router.post(
         description: `Asignación "${toId('assignment', updated.id)}" finalizada.`,
       });
 
-      res.json(serializeAssignment(updated));
+      // ── Enrichment ────────────────────────────────────────────────────────────
+      const [assetInfo] = await db.select({ name: companyAssets.name, plate: companyAssets.plate, brand: companyAssets.brand })
+        .from(companyAssets).where(eq(companyAssets.id, updated.assetId)).limit(1);
+      const [driverInfo] = await db.select({ firstName: companyDrivers.firstName, lastName: companyDrivers.lastName, code: companyDrivers.code })
+        .from(companyDrivers).where(eq(companyDrivers.id, updated.driverId)).limit(1);
+
+      res.json(serializeAssignment(updated, assetInfo ?? null, driverInfo ?? null));
     } catch (err) {
       next(err);
     }
@@ -258,7 +286,11 @@ router.post(
 
 // ─── Serializer ───────────────────────────────────────────────────────────────
 
-function serializeAssignment(a: typeof companyAssignments.$inferSelect) {
+function serializeAssignment(
+  a: typeof companyAssignments.$inferSelect,
+  assetInfo?: { name: string; plate: string; brand: string } | null,
+  driverInfo?: { firstName: string; lastName: string; code: string } | null,
+) {
   return {
     id: toId('assignment', a.id),
     companyId: toId('company', a.companyId),
@@ -269,6 +301,12 @@ function serializeAssignment(a: typeof companyAssignments.$inferSelect) {
     status: a.status,
     notes: a.notes,
     handoverUrl: a.handoverUrl,
+    // ── Enrichment: nombres para display sin hooks externos ──────────────────
+    assetName:  assetInfo?.name  ?? null,
+    assetPlate: assetInfo?.plate ?? null,
+    assetBrand: assetInfo?.brand ?? null,
+    driverName: driverInfo ? `${driverInfo.firstName} ${driverInfo.lastName}`.trim() : null,
+    driverCode: driverInfo?.code ?? null,
     // ── Acta ──────────────────────────────────
     actaNumber:       a.actaNumber,
     actaDate:         a.actaDate,
@@ -317,7 +355,7 @@ const handoverSchema = z.object({
 
 router.put(
   '/:assignId/handover',
-  requireModule('asignaciones'),
+  requireModule('gestion', 'asignaciones'),
   requireSupervisor,
   validate(handoverSchema),
   async (req, res, next) => {
@@ -355,7 +393,13 @@ router.put(
         description: `Acta de entrega registrada para asignación "${toId('assignment', updated.id)}".`,
       });
 
-      res.json(serializeAssignment(updated));
+      // ── Enrichment ────────────────────────────────────────────────────────────
+      const [assetInfo] = await db.select({ name: companyAssets.name, plate: companyAssets.plate, brand: companyAssets.brand })
+        .from(companyAssets).where(eq(companyAssets.id, updated.assetId)).limit(1);
+      const [driverInfo] = await db.select({ firstName: companyDrivers.firstName, lastName: companyDrivers.lastName, code: companyDrivers.code })
+        .from(companyDrivers).where(eq(companyDrivers.id, updated.driverId)).limit(1);
+
+      res.json(serializeAssignment(updated, assetInfo ?? null, driverInfo ?? null));
     } catch (err) {
       next(err);
     }

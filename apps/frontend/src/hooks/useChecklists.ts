@@ -18,6 +18,11 @@ export type Checklist = {
   summary: string;
   findings: string;
   items: ChecklistInspectionItem[];
+  // ── Backend enrichment (display-only) ──────────────────────────────────────
+  /** Vehicle name — avoids separate useAssets() call */
+  assetName: string | null;
+  /** Driver name — avoids separate useDrivers() call */
+  driverName: string | null;
 };
 
 export type CreateChecklistInput = {
@@ -61,18 +66,21 @@ export function useChecklists() {
       setChecklists(
         raw.map((c) => ({
           id: String(c.id),
-          targetKind: (c.target_kind as ChecklistTargetKind) ?? "Vehiculo",
-          targetLabel: String(c.target_label ?? ""),
-          assetId: c.asset_id ? `asset-${c.asset_id}` : "",
-          inspector: String(c.inspector_name ?? ""),
-          inspectorId: c.driver_id ? `driver-${c.driver_id}` : "",
-          categoryId: c.category_id ? `checklist-category-${c.category_id}` : "",
-          categoryName: String(c.category_name ?? ""),
+          targetKind: (c.targetKind as ChecklistTargetKind) ?? "Vehiculo",
+          targetLabel: String(c.targetLabel ?? c.target_label ?? ""),
+          assetId: c.assetId ? String(c.assetId) : (c.asset_id ? `asset-${c.asset_id}` : ""),
+          inspector: String(c.inspectorName ?? c.inspector_name ?? ""),
+          inspectorId: c.inspectorId ? String(c.inspectorId) : (c.driver_id ? `driver-${c.driver_id}` : ""),
+          categoryId: c.categoryId ? String(c.categoryId) : (c.category_id ? `checklist-category-${c.category_id}` : ""),
+          categoryName: String(c.categoryName ?? c.category_name ?? ""),
           date: String(c.date ?? "").slice(0, 16).replace("T", " "),
           status: (c.status as ChecklistStatus) ?? "Pendiente",
           summary: String(c.summary ?? ""),
           findings: String(c.findings ?? ""),
           items: Array.isArray(c.items) ? (c.items as ChecklistInspectionItem[]) : [],
+          // ── Backend enrichment ─────────────────────────────────────────────
+          assetName: (c.assetName as string | null) ?? null,
+          driverName: (c.driverName as string | null) ?? null,
         }))
       );
     } catch (err) {

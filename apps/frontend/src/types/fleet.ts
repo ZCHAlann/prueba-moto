@@ -154,6 +154,9 @@ export type AirConditioningUnit = {
   notes?: string;
   // legacy compat
   assetId?: string;
+  // ── Backend enrichment (display-only) ──────────────────────────────────────
+  /** Site name — avoids separate useSites() call */
+  siteName?: string | null;
 };
 
 export type AcServiceKind = "Limpieza" | "Recarga" | "Reparacion" | "Inspeccion" | "Preventivo" | "Correctivo";

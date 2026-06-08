@@ -17,6 +17,11 @@ export type ApiFuelEntry = {
   notes: string;
   createdAt: string;
   updatedAt: string;
+  // ── Backend enrichment (display-only) ──────────────────────────────────────
+  /** Vehicle plate — avoids separate useAssets() call */
+  assetPlate: string | null;
+  assetBrand: string | null;
+  assetModel: string | null;
 };
 
 export type CreateFuelPayload = {
@@ -44,6 +49,10 @@ function mapApi(raw: Record<string, unknown>): ApiFuelEntry {
     notes: (raw.notes as string) ?? "",
     createdAt: (raw.createdAt as string) ?? "",
     updatedAt: (raw.updatedAt as string) ?? "",
+    // ── Backend enrichment ──────────────────────────────────────────────────────
+    assetPlate: (raw.assetPlate as string | null) ?? null,
+    assetBrand: (raw.assetBrand as string | null) ?? null,
+    assetModel: (raw.assetModel as string | null) ?? null,
   };
 }
 

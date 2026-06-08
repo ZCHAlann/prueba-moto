@@ -474,7 +474,6 @@ function UserFormModal({
   useEffect(() => {
     if (open) {
       if (user) {
-        console.log("userToForm input:", user)
         setForm(userToForm(user));
         setUsernameTouched(true);
       } else {

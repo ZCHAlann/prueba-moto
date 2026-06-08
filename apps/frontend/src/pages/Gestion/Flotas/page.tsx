@@ -667,13 +667,9 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance, canEd
   const { assignments } = useAssignments();
   const { maintenances } = useMaintenances();
   const { garages } = useGarages();
-  const { drivers } = useDrivers();
   const { sites } = useSites();
   const siteName = useMemo(() => {
-    console.log("siteId del vehicle:", vehicle.siteId);
-    console.log("sites disponibles:", sites.map(s => ({ id: s.id, name: s.name })));
     const found = sites.find(s => String(s.id) === vehicle.siteId?.replace("site-", ""));
-    console.log("match encontrado:", found);
     return found?.name ?? vehicle.site ?? "—";
   }, [sites, vehicle.siteId, vehicle.site]);
 
@@ -682,11 +678,6 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance, canEd
   const activeAssignment = useMemo(
     () => assignments.find(a => a.assetId === vehicle.id && a.status === "Activa"),
     [assignments, vehicle.id]
-  );
-
-  const assignedDriver = useMemo(
-    () => drivers.find(d => d.id === activeAssignment?.driverId),
-    [drivers, activeAssignment]
   );
 
   const vehicleMaintenances = useMemo(
@@ -792,7 +783,7 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance, canEd
                 </div>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold text-sky-700 dark:text-sky-300">
-                    {assignedDriver?.name ?? activeAssignment.driverId}
+                    {vehicle.currentDriver?.name ?? activeAssignment.driverId}
                   </p>
                   <p className="text-xs text-sky-500">Asignado desde {fmtDate(activeAssignment.startDate)}</p>
                 </div>

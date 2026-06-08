@@ -81,7 +81,7 @@ function KpiCardInner({ label, value, badge, tone = "brand", icon, sparkline }: 
   const iconTone: KpiCardTone = tone ?? "brand";
 
   return (
-    <div className="rounded-2xl bg-white border border-gray-200 dark:border-gray-100 p-5 dark:bg-white/[0.03] md:p-6">
+    <div className="rounded-2xl bg-white border border-gray-100 dark:border-white/[0.04] p-5 dark:bg-white/[0.03] md:p-6">
       <div className={`flex items-center justify-center w-12 h-12 rounded-xl ${iconBg[iconTone]}`}>
         <span className={iconColor[iconTone]}>{icon}</span>
       </div>

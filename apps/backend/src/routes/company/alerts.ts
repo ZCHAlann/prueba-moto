@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../../db/client';
-import { companyAlerts } from '../../db/schema/operational';
+import { companyAlerts, companyAssets } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
@@ -60,7 +60,15 @@ router.get('/', requireModule('alertas'), async (req, res, next) => {
       rows = rows.filter((a) => a.assetId === parsedAssetId);
     }
 
-    res.json({ data: rows.map(serializeAlert), total: rows.length });
+    // ── Enrichment: cargar nombres de activos ─────────────────────────────────
+    const assetsRows = await db
+      .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate })
+      .from(companyAssets)
+      .where(eq(companyAssets.companyId, companyId));
+
+    const assetMap = new Map(assetsRows.map(a => [a.id, { name: a.name, plate: a.plate }]));
+
+    res.json({ data: rows.map(a => serializeAlert(a, assetMap.get(a.assetId))), total: rows.length });
   } catch (err) {
     next(err);
   }
@@ -81,7 +89,18 @@ router.get('/:alertId', requireModule('alertas'), async (req, res, next) => {
 
     if (!rows.length) throw new NotFoundError('Alerta', req.params.alertId);
 
-    res.json(serializeAlert(rows[0]));
+    // ── Enrichment ────────────────────────────────────────────────────────────
+    let assetInfo: { name: string | null; plate: string | null } | null = null;
+    if (rows[0].assetId) {
+      const [asset] = await db
+        .select({ name: companyAssets.name, plate: companyAssets.plate })
+        .from(companyAssets)
+        .where(and(eq(companyAssets.id, rows[0].assetId), eq(companyAssets.companyId, companyId)))
+        .limit(1);
+      assetInfo = asset ?? null;
+    }
+
+    res.json(serializeAlert(rows[0], assetInfo));
   } catch (err) {
     next(err);
   }
@@ -115,7 +134,18 @@ router.post(
         description: `Alerta "${created.title}" creada (${created.severity}).`,
       });
 
-      res.status(201).json(serializeAlert(created));
+      // ── Enrichment ────────────────────────────────────────────────────────────
+      let assetInfo: { name: string | null; plate: string | null } | null = null;
+      if (created.assetId) {
+        const [asset] = await db
+          .select({ name: companyAssets.name, plate: companyAssets.plate })
+          .from(companyAssets)
+          .where(and(eq(companyAssets.id, created.assetId), eq(companyAssets.companyId, companyId)))
+          .limit(1);
+        assetInfo = asset ?? null;
+      }
+
+      res.status(201).json(serializeAlert(created, assetInfo));
     } catch (err) {
       next(err);
     }
@@ -257,7 +287,10 @@ router.delete(
 
 // ─── Serializer ───────────────────────────────────────────────────────────────
 
-function serializeAlert(a: typeof companyAlerts.$inferSelect) {
+function serializeAlert(
+  a: typeof companyAlerts.$inferSelect,
+  assetInfo?: { name: string | null; plate: string | null } | null
+) {
   return {
     id: toId('alert', a.id),
     companyId: toId('company', a.companyId),
@@ -268,6 +301,9 @@ function serializeAlert(a: typeof companyAlerts.$inferSelect) {
     status: a.status,
     dueDate: a.dueDate,
     notes: a.notes,
+    // ── Enrichment: datos del activo para display sin hooks externos ─────────
+    assetName: assetInfo?.name ?? null,
+    assetPlate: assetInfo?.plate ?? null,
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
   };

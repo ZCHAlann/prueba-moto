@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../../db/client';
-import { companyDrivers } from '../../db/schema/operational';
+import { companyDrivers, companySites } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
@@ -37,7 +37,7 @@ const updateDriverSchema = createDriverSchema.partial();
 
 // ─── GET /company/:id/drivers ─────────────────────────────────────────────────
 
-router.get('/', requireModule('conductores'), async (req, res, next) => {
+router.get('/', requireModule('gestion', 'conductores'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const { status, siteId, search } = req.query;
@@ -68,7 +68,15 @@ router.get('/', requireModule('conductores'), async (req, res, next) => {
       );
     }
 
-    res.json({ data: rows.map(serializeDriver), total: rows.length });
+    // ── Enrichment: cargar nombres de sedes ────────────────────────────────────
+    const sitesRows = await db
+      .select({ id: companySites.id, name: companySites.name })
+      .from(companySites)
+      .where(eq(companySites.companyId, companyId));
+
+    const siteMap = new Map(sitesRows.map(s => [s.id, s.name]));
+
+    res.json({ data: rows.map(d => serializeDriver(d, siteMap.get(d.siteId) ?? null)), total: rows.length });
   } catch (err) {
     next(err);
   }
@@ -76,7 +84,7 @@ router.get('/', requireModule('conductores'), async (req, res, next) => {
 
 // ─── GET /company/:id/drivers/:driverId ──────────────────────────────────────
 
-router.get('/:driverId', requireModule('conductores'), async (req, res, next) => {
+router.get('/:driverId', requireModule('gestion', 'conductores'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const driverId = parseId('driver', req.params.driverId);
@@ -89,7 +97,18 @@ router.get('/:driverId', requireModule('conductores'), async (req, res, next) =>
 
     if (!rows.length) throw new NotFoundError('Conductor', req.params.driverId);
 
-    res.json(serializeDriver(rows[0]));
+    // ── Enrichment: cargar nombre de sede ──────────────────────────────────────
+    let siteName: string | null = null;
+    if (rows[0].siteId) {
+      const [site] = await db
+        .select({ name: companySites.name })
+        .from(companySites)
+        .where(and(eq(companySites.id, rows[0].siteId!), eq(companySites.companyId, companyId)))
+        .limit(1);
+      siteName = site?.name ?? null;
+    }
+
+    res.json(serializeDriver(rows[0], siteName));
   } catch (err) {
     next(err);
   }
@@ -99,7 +118,7 @@ router.get('/:driverId', requireModule('conductores'), async (req, res, next) =>
 
 router.post(
   '/',
-  requireModule('conductores'),
+  requireModule('gestion', 'conductores'),
   requireAdmin,
   validate(createDriverSchema),
   async (req, res, next) => {
@@ -129,7 +148,18 @@ router.post(
         description: `Conductor "${created.firstName} ${created.lastName}" creado.`,
       });
 
-      res.status(201).json(serializeDriver(created));
+      // ── Enrichment: cargar nombre de sede ──────────────────────────────────────
+      let siteName: string | null = null;
+      if (created.siteId) {
+        const [site] = await db
+          .select({ name: companySites.name })
+          .from(companySites)
+          .where(and(eq(companySites.id, created.siteId), eq(companySites.companyId, companyId)))
+          .limit(1);
+        siteName = site?.name ?? null;
+      }
+
+      res.status(201).json(serializeDriver(created, siteName));
     } catch (err) {
       next(err);
     }
@@ -140,7 +170,7 @@ router.post(
 
 router.put(
   '/:driverId',
-  requireModule('conductores'),
+  requireModule('gestion', 'conductores'),
   requireAdmin,
   validate(updateDriverSchema),
   async (req, res, next) => {
@@ -176,7 +206,18 @@ router.put(
         description: `Conductor "${updated.firstName} ${updated.lastName}" actualizado.`,
       });
 
-      res.json(serializeDriver(updated));
+      // ── Enrichment: cargar nombre de sede ──────────────────────────────────────
+      let siteName: string | null = null;
+      if (updated.siteId) {
+        const [site] = await db
+          .select({ name: companySites.name })
+          .from(companySites)
+          .where(and(eq(companySites.id, updated.siteId), eq(companySites.companyId, companyId)))
+          .limit(1);
+        siteName = site?.name ?? null;
+      }
+
+      res.json(serializeDriver(updated, siteName));
     } catch (err) {
       next(err);
     }
@@ -187,7 +228,7 @@ router.put(
 
 router.delete(
   '/:driverId',
-  requireModule('conductores'),
+  requireModule('gestion', 'conductores'),
   requireAdmin,
   async (req, res, next) => {
     try {
@@ -224,7 +265,7 @@ router.delete(
 
 // ─── Serializer ───────────────────────────────────────────────────────────────
 
-function serializeDriver(d: typeof companyDrivers.$inferSelect) {
+function serializeDriver(d: typeof companyDrivers.$inferSelect, siteName?: string | null) {
   return {
     id: toId('driver', d.id),
     companyId: toId('company', d.companyId),
@@ -241,6 +282,7 @@ function serializeDriver(d: typeof companyDrivers.$inferSelect) {
     licenseExpiry: d.licenseExpiry,
     licensePoints: d.licensePoints,
     status: d.status,
+    site: siteName ?? d.site ?? null,
     notes: d.notes,
     photoUrl: d.photoUrl,
     createdAt: d.createdAt,
@@ -265,7 +307,7 @@ const createReportSchema = z.object({
 
 // ─── GET /company/:id/drivers/:driverId/reports ───────────────────────────────
 
-router.get('/:driverId/reports', requireModule('conductores'), async (req, res, next) => {
+router.get('/:driverId/reports', requireModule('gestion', 'conductores'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const driverId  = parseId('driver', req.params.driverId);
@@ -289,7 +331,7 @@ router.get('/:driverId/reports', requireModule('conductores'), async (req, res, 
 
 router.post(
   '/:driverId/reports',
-  requireModule('conductores'),
+  requireModule('gestion', 'conductores'),
   validate(createReportSchema),
   async (req, res, next) => {
     try {
@@ -346,7 +388,7 @@ function serializeReport(r: typeof companyDriverReports.$inferSelect) {
 }
 
 // ─── GET /company/:id/drivers/reports/all ─────────────────────────────────────
-router.get('/reports/all', requireModule('conductores'), async (req, res, next) => {
+router.get('/reports/all', requireModule('gestion', 'conductores'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
 
@@ -364,7 +406,7 @@ router.get('/reports/all', requireModule('conductores'), async (req, res, next) 
 
 // ─── DELETE /company/:id/drivers/:driverId/reports/:reportId ─────────────────
 
-router.delete('/:driverId/reports/:reportId', requireModule('conductores'), requireAdmin, async (req, res, next) => {
+router.delete('/:driverId/reports/:reportId', requireModule('gestion', 'conductores'), requireAdmin, async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const driverId  = parseId('driver', req.params.driverId);

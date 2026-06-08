@@ -47,6 +47,8 @@ function mapApiToAsset(data: Record<string, unknown>, companyId: string): Asset 
     oilCapacity: String(data.oilCapacity ?? data.oil_capacity ?? ""),
     garageId: data.garageId ? String(data.garageId) : null,
     photoUrls: Array.isArray(data.photoUrls ?? data.photo_urls) ? (data.photoUrls ?? data.photo_urls) as string[] : [],
+    // ── Backend enrichment ──────────────────────────────────────────────────────
+    currentDriver: (data.currentDriver as { name: string; code: string; phone: string; photoUrl: string | null } | null) ?? null,
   };
 }
 
@@ -107,7 +109,6 @@ export function useAssets(): UseAssetsReturn {
         return res.json();
       })
       .then((body: { data: Record<string, unknown>[] }) => {
-        console.log("assets raw:", body.data?.[0]); // ← aquí
         setAssets((body.data ?? []).map((item) => mapApiToAsset(item, companyId)));
       })
       .catch((err: unknown) => {

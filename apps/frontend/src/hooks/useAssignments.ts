@@ -31,6 +31,14 @@ export type ApiAssignment = {
   vehiclePhotoUrls: string[];
   createdAt: string;
   updatedAt: string;
+  // ── Backend enrichment (display-only) ──────────────────────────────────────
+  /** Asset name for display without a separate useAssets() call */
+  assetName: string | null;
+  assetPlate: string | null;
+  assetBrand: string | null;
+  /** Driver name for display without a separate useDrivers() call */
+  driverName: string | null;
+  driverCode: string | null;
 };
 
 export type HandoverPayload = {
@@ -92,6 +100,12 @@ function mapApi(raw: Record<string, unknown>): ApiAssignment {
     vehiclePhotoUrls: (raw.vehiclePhotoUrls as string[]) ?? [],
     createdAt:        (raw.createdAt as string) ?? "",
     updatedAt:        (raw.updatedAt as string) ?? "",
+    // ── Backend enrichment ──────────────────────────────────────────────────────
+    assetName:    (raw.assetName as string | null) ?? null,
+    assetPlate:   (raw.assetPlate as string | null) ?? null,
+    assetBrand:   (raw.assetBrand as string | null) ?? null,
+    driverName:   (raw.driverName as string | null) ?? null,
+    driverCode:   (raw.driverCode as string | null) ?? null,
   };
 }
 

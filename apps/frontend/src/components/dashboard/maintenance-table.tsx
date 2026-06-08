@@ -151,23 +151,23 @@ export function MaintenanceTable() {
 
   return (
     <>
-      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white px-4 pb-3 pt-4 dark:border-gray-200 dark:bg-white/[0.03] sm:px-6">
+      <div className="overflow-hidden rounded-2xl border border-gray-100 dark:border-white/[0.05] bg-white dark:bg-white/[0.02] px-4 pb-3 pt-4 sm:px-6 shadow-sm">
         <div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
-          <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">
+          <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
             Próximos mantenimientos
           </h3>
           <div className="flex items-center gap-3">
             <div className="relative">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar mantenimiento..."
-                className="h-9 w-52 rounded-lg border border-gray-200 bg-gray-50 pl-8 pr-3 text-sm text-gray-700 placeholder-gray-400 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 dark:border-gray-200 dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder-gray-500 dark:focus:border-brand-500 dark:focus:ring-brand-500/20 transition-all"
+                placeholder="Buscar..."
+                className="h-8 w-44 rounded-lg border border-gray-200 bg-gray-50 pl-8 pr-3 text-sm text-gray-700 placeholder-gray-400 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-100 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder-gray-500 dark:focus:border-brand-500 transition-all"
               />
             </div>
-            <button className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.03] transition-colors">
+            <button className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400 dark:hover:bg-white/[0.05] transition-colors">
               Ver todos
             </button>
           </div>
@@ -176,66 +176,68 @@ export function MaintenanceTable() {
         <div className="max-w-full overflow-x-auto">
           <table className="w-full text-left">
             <thead>
-              <tr className="border-y border-gray-100 dark:border-gray-300">
-                <th className="w-10 py-3" />
-                <th className="py-3 text-xs font-medium text-gray-500 dark:text-gray-400">Unidad</th>
-                <th className="py-3 text-xs font-medium text-gray-500 dark:text-gray-400">Servicio</th>
-                <th className="py-3 text-xs font-medium text-gray-500 dark:text-gray-400">Fecha</th>
-                <th className="py-3 text-xs font-medium text-gray-500 dark:text-gray-400">Estado</th>
+              <tr className="border-y border-gray-100 dark:border-white/[0.05]">
+                <th className="w-9 py-2.5" />
+                <th className="py-2.5 text-[11px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Unidad</th>
+                <th className="py-2.5 text-[11px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Servicio</th>
+                <th className="py-2.5 text-[11px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Fecha</th>
+                <th className="py-2.5 text-[11px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Estado</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+            <tbody className="divide-y divide-gray-50 dark:divide-white/[0.03]">
               {hookLoading ? (
                 <tr>
-                  <td className="py-12 text-center" colSpan={5}>
+                  <td className="py-10 text-center" colSpan={5}>
                     <div className="flex items-center justify-center gap-2 text-gray-400">
-                      <Loader2 size={16} className="animate-spin" />
-                      <span className="text-sm">Cargando mantenimientos...</span>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span className="text-sm">Cargando...</span>
                     </div>
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td className="py-12 text-center" colSpan={5}>
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                      {search ? "Sin resultados para tu búsqueda" : "Sin mantenimientos programados"}
+                  <td className="py-10 text-center" colSpan={5}>
+                    <p className="text-sm font-medium text-gray-400 dark:text-gray-500">
+                      {search ? "Sin resultados" : "Sin mantenimientos programados"}
                     </p>
-                    <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">
-                      {search ? "Intenta con otro término." : "Las próximas órdenes aparecerán cuando se registren desde el módulo de mantenimiento."}
-                    </p>
+                    {!search && (
+                      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                        Las órdenes aparecerán cuando se registren desde el módulo de mantenimiento.
+                      </p>
+                    )}
                   </td>
                 </tr>
               ) : (
                 items.map((m) => {
                   const done = completedIds.has(m.id);
                   return (
-                    <tr key={m.id} className={done ? "opacity-50" : ""}>
-                      <td className="py-3 w-10">
+                    <tr key={m.id} className={`group hover:bg-gray-50/50 dark:hover:bg-white/[0.02] transition-colors ${done ? "opacity-40" : ""}`}>
+                      <td className="py-2.5 w-9">
                         <button
                           type="button"
                           onClick={() => handleCheck(m)}
                           disabled={done}
-                          title={done ? "Ya completado" : "Marcar como realizado"}
+                          title={done ? "Completado" : "Marcar como realizado"}
                           aria-label="Marcar mantenimiento como realizado"
-                          className="flex h-5 w-5 items-center justify-center rounded border-2 transition-colors disabled:cursor-not-allowed border-gray-300 hover:border-green-400 dark:border-gray-600 dark:hover:border-green-500 bg-white dark:bg-transparent"
+                          className="flex h-4 w-4 items-center justify-center rounded border-2 transition-colors disabled:cursor-not-allowed border-gray-200 hover:border-green-400 dark:border-gray-600 dark:hover:border-green-500 bg-white dark:bg-transparent"
                         >
                           {done && (
-                            <svg viewBox="0 0 10 8" className="w-3 h-3 text-green-500 fill-current">
+                            <svg viewBox="0 0 10 8" className="w-2.5 h-2.5 text-green-500 fill-current">
                               <path d="M1 4l3 3 5-6" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
                             </svg>
                           )}
                         </button>
                       </td>
-                      <td className="py-3">
-                        <span className="font-medium text-sm text-gray-800 dark:text-white/90">{assetLabel(m.assetId)}</span>
+                      <td className="py-2.5">
+                        <span className="font-medium text-sm text-gray-700 dark:text-white/80">{assetLabel(m.assetId)}</span>
                       </td>
-                      <td className="py-3 text-sm text-gray-500 dark:text-gray-400">
-                        {m.title} ({m.kind})
+                      <td className="py-2.5 text-sm text-gray-500 dark:text-gray-400">
+                        {m.title} <span className="text-gray-400 dark:text-gray-500">({m.kind})</span>
                       </td>
-                      <td className="py-3 text-sm text-gray-500 dark:text-gray-400">
-                        {m.scheduledDate || m.dueDate || "Sin fecha"}
+                      <td className="py-2.5 text-sm text-gray-400 dark:text-gray-500">
+                        {m.scheduledDate || m.dueDate || "—"}
                       </td>
-                      <td className="py-3">
+                      <td className="py-2.5">
                         <Badge color={getStatusColor(m.status)}>
                           {m.status}
                         </Badge>
@@ -258,11 +260,11 @@ export function MaintenanceTable() {
           onConfirm={handleConfirm}
           onCancel={() => !completing && setConfirming(null)}
         >
-          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-white/[0.03]">
-            <p className="text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">Unidad</p>
-            <p className="mt-0.5 text-sm font-semibold text-gray-800 dark:text-white/90">{confirming.asset}</p>
-            <p className="mt-2 text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">Servicio</p>
-            <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-300">{confirming.service}</p>
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 dark:border-white/[0.05] dark:bg-white/[0.03]">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">Unidad</p>
+            <p className="mt-0.5 text-sm font-semibold text-gray-700 dark:text-white/80">{confirming.asset}</p>
+            <p className="mt-2 text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">Servicio</p>
+            <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">{confirming.service}</p>
           </div>
         </ConfirmModal>
       )}

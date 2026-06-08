@@ -442,8 +442,7 @@ export function GaragesPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 dark:border-brand-500/20 bg-brand-50 dark:bg-brand-500/10 px-2.5 py-0.5 text-xs font-semibold text-brand-600 dark:text-brand-400">
-            <IconGarage className="h-3 w-3" />
-            Gestión
+            Garajes
           </span>
           <h1 className="mt-2 text-2xl font-bold text-gray-800 dark:text-white">Garajes</h1>
           <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">

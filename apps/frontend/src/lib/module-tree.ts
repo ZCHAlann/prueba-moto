@@ -24,6 +24,12 @@ export const MODULE_TREE = {
       historial_motor:      "Historial de motor",
     },
   },
+  generadores: {
+    label: "Generadores",
+    submodules: {
+      generadores: "Generadores eléctricos",
+    },
+  },
   ac: {
     label: "Aires acondicionados",
     submodules: {

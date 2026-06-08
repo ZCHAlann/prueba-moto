@@ -17,6 +17,10 @@ export type ApiAlert = {
   notes: string;
   createdAt: string;
   updatedAt: string;
+  // ── Backend enrichment (display-only) ──────────────────────────────────────
+  /** Asset name — avoids separate useAssets() call */
+  assetName: string | null;
+  assetPlate: string | null;
 };
 
 export type CreateAlertPayload = {
@@ -34,16 +38,19 @@ export type UpdateAlertPayload = Partial<CreateAlertPayload>;
 function mapApi(raw: Record<string, unknown>): ApiAlert {
   return {
     id: String(raw.id),
-    companyId: raw.company_id as number,
-    assetId: raw.asset_id ? String(raw.asset_id) : null,
+    companyId: (raw.companyId as number) ?? (raw.company_id as number),
+    assetId: raw.assetId ? String(raw.assetId) : (raw.asset_id ? String(raw.asset_id) : null),
     title: (raw.title as string) ?? "",
     type: (raw.type as AlertType) ?? "Manual",
     severity: (raw.severity as AlertSeverity) ?? "Media",
     status: (raw.status as AlertStatus) ?? "Abierta",
-    dueDate: (raw.due_date as string) ?? "",
+    dueDate: (raw.dueDate as string) ?? (raw.due_date as string) ?? "",
     notes: (raw.notes as string) ?? "",
-    createdAt: (raw.created_at as string) ?? "",
-    updatedAt: (raw.updated_at as string) ?? "",
+    createdAt: (raw.createdAt as string) ?? (raw.created_at as string) ?? "",
+    updatedAt: (raw.updatedAt as string) ?? (raw.updated_at as string) ?? "",
+    // ── Backend enrichment ──────────────────────────────────────────────────────
+    assetName: (raw.assetName as string | null) ?? null,
+    assetPlate: (raw.assetPlate as string | null) ?? null,
   };
 }
 

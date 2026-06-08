@@ -892,7 +892,9 @@ export function InsuranceManagementPage() {
         {/* Header */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-blue-500 mb-1">Gestión</p>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 dark:border-brand-500/20 bg-brand-50 dark:bg-brand-500/10 px-2.5 py-0.5 text-xs font-semibold text-brand-600 dark:text-brand-400">
+              Garajes
+            </span>
             <h1 className="text-2xl font-black text-gray-800 dark:text-white">Seguros vehiculares</h1>
             <p className="mt-1 text-sm text-gray-400">Control central de pólizas por vehículo.</p>
           </div>

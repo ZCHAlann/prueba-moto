@@ -23,6 +23,10 @@ export type ApiMaintenance = {
   updatedAt: string;
   laborCost: number | null;
   partsCost: number | null;
+  // ── Backend enrichment (display-only) ──────────────────────────────────────
+  /** Vehicle name — avoids separate useAssets() call */
+  assetName: string | null;
+  assetPlate: string | null;
 };
 
 export type CreateMaintenancePayload = {
@@ -46,7 +50,7 @@ export type UpdateMaintenancePayload = Partial<CreateMaintenancePayload>;
 function mapApi(raw: Record<string, unknown>): ApiMaintenance {
   return {
     id: String(raw.id),
-    companyId: raw.company_id as number,
+    companyId: (raw.companyId as number) ?? (raw.company_id as number),
     assetId: String(raw.assetId ?? raw.asset_id),
     title: (raw.title as string) ?? "",
     kind: (raw.kind as MaintenanceKind) ?? "Preventivo",
@@ -60,10 +64,13 @@ function mapApi(raw: Record<string, unknown>): ApiMaintenance {
       ? (raw.photoUrls ?? raw.photo_urls) as string[] 
       : [],
     notes: (raw.notes as string) ?? "",
-    createdAt: (raw.created_at as string) ?? "",
+    createdAt: (raw.createdAt as string) ?? (raw.created_at as string) ?? "",
     laborCost: raw.laborCost != null ? Number(raw.laborCost) : null,
     partsCost: raw.partsCost != null ? Number(raw.partsCost) : null,
-    updatedAt: (raw.updated_at as string) ?? "",
+    updatedAt: (raw.updatedAt as string) ?? (raw.updated_at as string) ?? "",
+    // ── Backend enrichment ──────────────────────────────────────────────────────
+    assetName: (raw.assetName as string | null) ?? null,
+    assetPlate: (raw.assetPlate as string | null) ?? null,
   };
 }
 

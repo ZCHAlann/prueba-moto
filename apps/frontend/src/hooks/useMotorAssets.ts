@@ -70,7 +70,7 @@ export function useMotorAssets(): UseMotorAssetsReturn {
     setLoading(true);
     setError(null);
 
-    fetch(`/api/company/${companyId}/assets?assetType=Motor`, { cache: "no-store" })
+    fetch(`/api/company/${companyId}/assets?assetType=Vehiculo`, { cache: "no-store" })
       .then((res) => {
         if (!res.ok) throw new Error(`Error ${res.status}`);
         return res.json();

@@ -66,12 +66,28 @@ function IconSettings() {
   );
 }
 
-const AI_ACTIONS: { id: string; label: string; sublabel: string; icon: JSX.Element }[] = [
-  { id: 'mantenimiento', label: 'Mantenimiento', sublabel: 'Agendar',       icon: <IconWrench /> },
-  { id: 'seguros',       label: 'Seguros',       sublabel: 'Ver plan',      icon: <IconShield /> },
-  { id: 'conductor',     label: 'Conductor',     sublabel: 'Gestionar',     icon: <IconUser />   },
-  { id: 'toggle',        label: 'Estado',        sublabel: 'Activar / Des', icon: <IconZap />    },
-];
+// AI_ACTIONS are now built dynamically inside the component using live data
+
+// ─── Insurance status helper ─────────────────────────────────────────────────
+
+function insuranceStatus(insurance: import('../hooks/useVehicleCockpit').Insurance): {
+  label: string; color: string; bg: string;
+} {
+  if (!insurance) return { label: 'Sin seguro', color: '#ef4444', bg: 'rgba(239,68,68,0.12)' };
+  const today = new Date();
+  const end   = new Date(insurance.endDate);
+  const daysLeft = Math.ceil((end.getTime() - today.getTime()) / 86_400_000);
+  const s = (insurance.status ?? '').toLowerCase();
+  if (s === 'vencido' || daysLeft < 0)
+    return { label: 'Vencido',  color: '#ef4444', bg: 'rgba(239,68,68,0.12)' };
+  if (daysLeft <= 30)
+    return { label: `Vence en ${daysLeft}d`, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' };
+  return { label: 'Vigente', color: '#16a34a', bg: 'rgba(22,163,74,0.12)' };
+}
+
+// ─── Detail rows helper ───────────────────────────────────────────────────────
+
+type DetailItem = { label: string; value: string | null | undefined };
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -79,192 +95,386 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const [modal, setModal] = useState<'mantenimiento' | 'seguros' | 'conductor' | 'notas' | 'config' | null>(null);
+  const [detailTab, setDetailTab] = useState<'vehiculo' | 'mantenimientos'>('vehiculo');
+  const [toggling, setToggling] = useState(false);
 
   const a = data.asset;
   const photo = a.photoUrls?.[0];
 
-  // Solo cambian colores — posiciones, gaps, paddings, sizes se mantienen
   const c = isDark
     ? {
-        heroBg:         '#0f172a',
-        heroEmptyBg:    'radial-gradient(ellipse at 35% 60%, #1e293b 0%, #0f172a 70%)',
-        vignette:       'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, transparent 50%)',
-        glass:          'rgba(22,27,44,0.85)',
-        glassBorder:    'rgba(255,255,255,0.08)',
-        text:           '#f4f4f5',
-        muted:          '#a1a1aa',
-        iconColor:      '#a1a1aa',
-        actionBg:       'rgba(255,255,255,0.04)',
-        actionBgHover:  'rgba(255,255,255,0.08)',
-        actionBorder:   'rgba(255,255,255,0.08)',
-        actionLabel:    '#f4f4f5',
-        actionSub:      '#71717a',
+        heroBg:        '#0d1321',
+        heroEmptyBg:   'radial-gradient(ellipse at 35% 60%, #1e293b 0%, #0f172a 70%)',
+        panelBg:       '#111827',
+        panelBorder:   'rgba(255,255,255,0.07)',
+        text:          '#f4f4f5',
+        muted:         '#a1a1aa',
+        mutedLight:    '#71717a',
+        iconColor:     '#a1a1aa',
+        actionBg:      'rgba(255,255,255,0.04)',
+        actionBgHover: 'rgba(255,255,255,0.08)',
+        actionBorder:  'rgba(255,255,255,0.08)',
+        tabActive:     '#16a34a',
+        tabActiveTxt:  '#fff',
+        tabInactive:   'transparent',
+        tabInactiveTxt:'#71717a',
+        divider:       'rgba(255,255,255,0.07)',
+        labelColor:    '#52525b',
+        valueColor:    '#e4e4e7',
+        noteBg:        'rgba(255,255,255,0.04)',
       }
     : {
-        heroBg:         '#f6f9fc',
-        heroEmptyBg:    'radial-gradient(ellipse at 35% 60%, #d4dce8 0%, #e8edf4 70%)',
-        vignette:       'linear-gradient(135deg, rgba(0,0,0,0.04) 0%, transparent 50%)',
-        glass:          'rgba(255,255,255,0.88)',
-        glassBorder:    'transparent',
-        text:           '#0f172a',
-        muted:          '#64748b',
-        iconColor:      '#475569',
-        actionBg:       '#f8fafc',
-        actionBgHover:  '#f1f5f9',
-        actionBorder:   '#e2e8f0',
-        actionLabel:    '#0f172a',
-        actionSub:      '#94a3b8',
+        heroBg:        '#f0f4f8',
+        heroEmptyBg:   'radial-gradient(ellipse at 35% 60%, #d4dce8 0%, #e8edf4 70%)',
+        panelBg:       '#ffffff',
+        panelBorder:   '#e2e8f0',
+        text:          '#0f172a',
+        muted:         '#64748b',
+        mutedLight:    '#94a3b8',
+        iconColor:     '#475569',
+        actionBg:      '#f8fafc',
+        actionBgHover: '#f1f5f9',
+        actionBorder:  '#e2e8f0',
+        tabActive:     '#16a34a',
+        tabActiveTxt:  '#fff',
+        tabInactive:   'transparent',
+        tabInactiveTxt:'#94a3b8',
+        divider:       '#e2e8f0',
+        labelColor:    '#94a3b8',
+        valueColor:    '#0f172a',
+        noteBg:        '#f8fafc',
       };
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
+  // ── Detail rows ──────────────────────────────────────────────────────────────
+  const vehicleDetails: DetailItem[] = [
+    { label: 'Código',       value: a.code },
+    { label: 'Tipo',         value: a.assetType },
+    { label: 'Categoría',    value: a.category },
+    { label: 'Placa',        value: a.plate },
+    { label: 'Serie',        value: a.serial },
+    { label: 'Color',        value: a.color },
+    { label: 'Carga máx.',   value: a.maxLoad },
+    { label: 'Combustible',  value: a.fuelType },
+    { label: 'Aceite',       value: a.oilType },
+    { label: 'Cap. aceite',  value: a.oilCapacity },
+    { label: 'Estado',       value: a.status },
+    { label: 'Disponib.',    value: a.availability },
+  ].filter(d => d.value);
 
-      {/* ── HERO ─────────────────────────────────────────────────────────────
-          Photo as background. Name pill top-left. Settings top-right.
-          AI 2x2 grid + Notes button anchored to right side.
-          Cards are NOT here — they live below in normal flow.
-      ──────────────────────────────────────────────────────────────────── */}
+  const maintenanceDetails: DetailItem[] = data.maintenances?.length
+    ? data.maintenances.slice(0, 8).map(m => ({
+        label: m.scheduledDate ?? m.createdAt ?? '—',
+        value: `${m.title} · ${m.status}`,
+      }))
+    : [{ label: 'Sin registros', value: 'No hay mantenimientos' }];
+
+  const activeDetails = detailTab === 'vehiculo' ? vehicleDetails : maintenanceDetails;
+
+  // ── Toggle asset status ──────────────────────────────────────────────────────
+  const handleToggle = async () => {
+    if (toggling) return;
+    setToggling(true);
+    try {
+      const res = await fetch(`/api/company/${companyId}/assets/${a.id}/toggle`, { method: 'PATCH' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await onRefresh();
+    } catch (err) {
+      console.error('Error al cambiar estado del activo:', err);
+      alert('No se pudo cambiar el estado. Intenta de nuevo.');
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+
+      {/* ── TOP ROW: Photo (left) + Details panel (right) ─────────────────── */}
       <div style={{
-        position: 'relative',
-        borderRadius: '22px',
-        height: '80vh',
-        overflow: 'hidden',
-        background: c.heroBg,
+        display: 'grid',
+        gridTemplateColumns: '1fr 380px',
+        gap: 14,
+        alignItems: 'stretch',
       }}>
 
-        {/* Background photo */}
-        {photo ? (
-          <img
-            src={photo}
-            alt={a.name}
-            style={{
-              position: 'absolute', inset: 0,
-              width: '100%', height: '100%',
-              objectFit: 'cover',
-              objectPosition: 'center 30%'
-            }}
-          />
-        ) : (
-          <div style={{
-            position: 'absolute', inset: 0,
-            background: c.heroEmptyBg,
-          }} />
-        )}
-
-        {/* Subtle vignette */}
+        {/* ── LEFT: Vehicle photo ──────────────────────────────────────────── */}
         <div style={{
-          position: 'absolute', inset: 0,
-          background: c.vignette,
-          pointerEvents: 'none',
-        }} />
-
-        {/* ── Name pill — top left ── */}
-        <div style={{
-          position: 'absolute', top: 20, left: 20, zIndex: 10,
-          background: c.glass,
-          backdropFilter: 'blur(10px)',
-          border: `1px solid ${c.glassBorder}`,
-          borderRadius: '14px',
-          padding: '10px 16px',
-          boxShadow: isDark ? '0 2px 16px rgba(0,0,0,0.4)' : '0 2px 16px rgba(0,0,0,0.08)',
+          position: 'relative',
+          borderRadius: '18px',
+          overflow: 'hidden',
+          background: c.heroBg,
+          minHeight: '340px',
         }}>
-          <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: c.text }}>{a.name}</p>
-          <p style={{ margin: 0, fontSize: 11, color: c.muted, marginTop: 2 }}>
-            {a.brand} {a.model} · {a.year}
-          </p>
+          {photo ? (
+            <img
+              src={photo}
+              alt={a.name}
+              style={{
+                width: '100%', height: '100%',
+                objectFit: 'contain',
+                objectPosition: 'center 35%',
+                display: 'block',
+              }}
+            />
+          ) : (
+            <div style={{
+              width: '100%', height: '100%',
+              minHeight: '340px',
+              background: c.heroEmptyBg,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <span style={{ fontSize: 48, opacity: 0.2 }}>🚗</span>
+            </div>
+          )}
+
+          {/* Settings button — top right corner of photo */}
+          <button
+            onClick={() => setModal('config')}
+            style={{
+              position: 'absolute', top: 14, right: 14,
+              background: 'rgba(0,0,0,0.45)',
+              backdropFilter: 'blur(8px)',
+              border: 'none', borderRadius: '10px',
+              width: 34, height: 34,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', color: '#fff',
+            }}
+          >
+            <IconSettings />
+          </button>
         </div>
 
-        {/* ── Settings — top right ── */}
-        <button
-          onClick={() => setModal('config')}
-          style={{
-            position: 'absolute', top: 20, right: 20, zIndex: 10,
-            background: c.glass,
-            backdropFilter: 'blur(8px)',
-            border: 'none', borderRadius: '12px',
-            width: 38, height: 38,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer', color: c.muted,
-            boxShadow: isDark ? '0 1px 6px rgba(0,0,0,0.3)' : '0 1px 6px rgba(0,0,0,0.08)',
-          }}
-        >
-          <IconSettings />
-        </button>
-
-        {/* ── AI panel — right side, vertically centered ── */}
+        {/* ── RIGHT: Details panel ─────────────────────────────────────────── */}
         <div style={{
-          position: 'absolute',
-          top: '50%', right: 20,
-          transform: 'translateY(-50%)',
-          zIndex: 10,
-          width: 236,
-          display: 'flex', flexDirection: 'column', gap: 8,
+          borderRadius: '18px',
+          background: c.panelBg,
+          border: `1px solid ${c.panelBorder}`,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
         }}>
-          {/* 2×2 grid */}
+
+          {/* Tab bar */}
           <div style={{
-            background: c.glass,
-            backdropFilter: 'blur(12px)',
-            border: `1px solid ${c.glassBorder}`,
-            borderRadius: '18px',
-            padding: '14px',
-            boxShadow: isDark ? '0 4px 24px rgba(0,0,0,0.5)' : '0 4px 24px rgba(0,0,0,0.10)',
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: 8,
+            display: 'flex',
+            borderBottom: `1px solid ${c.divider}`,
+            padding: '10px 14px 0',
+            gap: 4,
           }}>
-            {AI_ACTIONS.map((ac) => (
+            {(['vehiculo', 'mantenimientos'] as const).map((t) => (
               <button
-                key={ac.id}
-                onClick={() => {
-                  if (ac.id === 'toggle') { alert('Activar / Desactivar — pendiente'); return; }
-                  setModal(ac.id as 'mantenimiento' | 'seguros' | 'conductor');
-                }}
+                key={t}
+                onClick={() => setDetailTab(t)}
                 style={{
-                  display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6,
-                  padding: '10px 12px',
-                  borderRadius: '12px',
-                  background: c.actionBg,
-                  border: `1px solid ${c.actionBorder}`,
+                  padding: '6px 14px',
+                  borderRadius: '8px 8px 0 0',
+                  border: 'none',
                   cursor: 'pointer',
-                  transition: 'background 0.12s',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  background: detailTab === t ? c.tabActive : c.tabInactive,
+                  color: detailTab === t ? c.tabActiveTxt : c.tabInactiveTxt,
+                  transition: 'all 0.12s',
+                  letterSpacing: '0.01em',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = c.actionBgHover)}
-                onMouseLeave={(e) => (e.currentTarget.style.background = c.actionBg)}
               >
-                <span style={{ color: c.iconColor }}>{ac.icon}</span>
-                <div>
-                  <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: c.actionLabel, lineHeight: 1.2 }}>{ac.label}</p>
-                  <p style={{ margin: 0, fontSize: 10, color: c.actionSub, marginTop: 1 }}>{ac.sublabel}</p>
-                </div>
+                {t === 'vehiculo' ? 'Vehículo' : 'Mantenimientos'}
               </button>
             ))}
           </div>
 
-          {/* Notes button */}
-          <button
-            onClick={() => setModal('notas')}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-              background: c.glass,
-              backdropFilter: 'blur(8px)',
-              border: `1px solid ${c.glassBorder}`,
-              borderRadius: '12px',
-              padding: '10px',
-              cursor: 'pointer',
-              fontSize: 12, fontWeight: 500, color: c.text,
-              boxShadow: isDark ? '0 1px 6px rgba(0,0,0,0.3)' : '0 1px 6px rgba(0,0,0,0.06)',
-              width: '100%',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = c.actionBgHover)}
-            onMouseLeave={(e) => (e.currentTarget.style.background = c.glass)}
-          >
-            <IconNote />
-            Registrar nota
-          </button>
+          {/* Title */}
+          <div style={{ padding: '14px 16px 10px' }}>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: c.text }}>
+              {detailTab === 'vehiculo' ? 'Detalles del vehículo' : 'Historial de mantenimientos'}
+            </p>
+          </div>
+
+          {/* Detail rows — scrollable */}
+          <div style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: '0 16px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 1,
+          }}>
+            {activeDetails.map((d, i) => (
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 8,
+                  padding: '7px 0',
+                  borderBottom: i < activeDetails.length - 1 ? `1px solid ${c.divider}` : 'none',
+                }}
+              >
+                <span style={{
+                  fontSize: 11,
+                  color: c.labelColor,
+                  fontWeight: 500,
+                  minWidth: 90,
+                  flexShrink: 0,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                }}>
+                  {d.label}
+                </span>
+                <span style={{
+                  fontSize: 12,
+                  color: c.valueColor,
+                  fontWeight: 500,
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {d.value}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Actions grid — pinned to bottom */}
+          {(() => {
+            const driverName = data.driver
+              ? `${data.driver.firstName} ${data.driver.lastName}`
+              : 'Sin conductor';
+
+            const ins = insuranceStatus(data.insurance);
+
+            const assetActive = a.status === 'Operativo';
+            const estadoLabel  = assetActive ? 'Operativo'     : a.status === 'En mantenimiento' ? 'En mant.' : 'Fuera serv.';
+            const estadoColor  = assetActive ? '#16a34a'        : a.status === 'En mantenimiento' ? '#f59e0b'  : '#ef4444';
+            const estadoBg     = assetActive ? 'rgba(22,163,74,0.12)' : a.status === 'En mantenimiento' ? 'rgba(245,158,11,0.12)' : 'rgba(239,68,68,0.12)';
+
+            const ACTIONS: {
+              id: string;
+              icon: JSX.Element;
+              label: string;
+              badge: string;
+              badgeColor: string;
+              badgeBg: string;
+            }[] = [
+              {
+                id: 'mantenimiento',
+                icon: <IconWrench />,
+                label: 'Mantenimiento',
+                badge: 'Agendar',
+                badgeColor: c.mutedLight,
+                badgeBg: 'transparent',
+              },
+              {
+                id: 'seguros',
+                icon: <IconShield />,
+                label: 'Seguros',
+                badge: ins.label,
+                badgeColor: ins.color,
+                badgeBg: ins.bg,
+              },
+              {
+                id: 'conductor',
+                icon: <IconUser />,
+                label: 'Conductor',
+                badge: driverName,
+                badgeColor: data.driver ? '#16a34a' : '#ef4444',
+                badgeBg: data.driver ? 'rgba(22,163,74,0.12)' : 'rgba(239,68,68,0.12)',
+              },
+              {
+                id: 'toggle',
+                icon: <IconZap />,
+                label: 'Estado',
+                badge: toggling ? 'Cambiando...' : estadoLabel,
+                badgeColor: toggling ? '#6366f1' : estadoColor,
+                badgeBg: toggling ? 'rgba(99,102,241,0.12)' : estadoBg,
+              },
+            ];
+
+            return (
+              <div style={{
+                borderTop: `1px solid ${c.divider}`,
+                padding: '12px 14px',
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: 8,
+              }}>
+                {ACTIONS.map((ac) => (
+                  <button
+                    key={ac.id}
+                    onClick={() => {
+                      if (ac.id === 'toggle') { handleToggle(); return; }
+                      setModal(ac.id as 'mantenimiento' | 'seguros' | 'conductor');
+                    }}
+                    disabled={toggling && ac.id === 'toggle'}
+                    style={{
+                      display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 5,
+                      padding: '9px 11px',
+                      borderRadius: '10px',
+                      background: c.actionBg,
+                      border: `1px solid ${c.actionBorder}`,
+                      cursor: toggling && ac.id === 'toggle' ? 'wait' : 'pointer',
+                      opacity: toggling && ac.id === 'toggle' ? 0.7 : 1,
+                      transition: 'background 0.12s',
+                      textAlign: 'left',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = c.actionBgHover)}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = c.actionBg)}
+                  >
+                    <span style={{ color: c.iconColor }}>{ac.icon}</span>
+                    <p style={{ margin: 0, fontSize: 11, fontWeight: 600, color: c.text, lineHeight: 1.2 }}>
+                      {ac.label}
+                    </p>
+                    {/* Contextual badge */}
+                    <span style={{
+                      fontSize: 9,
+                      fontWeight: 600,
+                      color: ac.badgeColor,
+                      background: ac.badgeBg,
+                      borderRadius: '4px',
+                      padding: ac.badgeBg !== 'transparent' ? '1px 5px' : '0',
+                      maxWidth: '100%',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      display: 'block',
+                      letterSpacing: '0.02em',
+                    }}>
+                      {ac.badge}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* Note button */}
+          <div style={{ padding: '0 14px 14px' }}>
+            <button
+              onClick={() => setModal('notas')}
+              style={{
+                width: '100%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                background: c.noteBg,
+                border: `1px solid ${c.actionBorder}`,
+                borderRadius: '10px',
+                padding: '9px',
+                cursor: 'pointer',
+                fontSize: 12, fontWeight: 500, color: c.muted,
+                transition: 'background 0.12s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = c.actionBgHover)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = c.noteBg)}
+            >
+              <IconNote />
+              Registrar nota
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* ── 3 CARDS — normal flow, below the hero ────────────────────────── */}
+      {/* ── BOTTOM ROW: 3 Cards ───────────────────────────────────────────── */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(3, 1fr)',

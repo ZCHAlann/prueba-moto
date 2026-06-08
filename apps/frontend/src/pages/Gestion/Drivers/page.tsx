@@ -433,9 +433,6 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
 }) {
   const { assignments } = useAssignments();
   const { assets }      = useAssets();
-  const { sites }       = useSites();
-
-  const siteNameById = (id: string) => sites.find(s => s.id === id)?.name ?? "—";
 
   const activeAssignment = useMemo(
     () => assignments.find(a => a.driverId === driver.id && a.status === "Activa"),
@@ -498,7 +495,7 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
               {[
                 { icon: <Phone size={12} />,  label: "Teléfono", value: driver.phone || "—" },
                 { icon: <Mail size={12} />,   label: "Correo",   value: driver.email || "—" },
-                { icon: <MapPin size={12} />, label: "Sede",     value: siteNameById(driver.siteId ?? "") },
+                { icon: <MapPin size={12} />, label: "Sede",     value: driver.siteName ?? "—" },
               ].map(({ icon, label, value }) => (
                 <div key={label} className="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 dark:border-white/[0.05] dark:bg-white/[0.03]">
                   <span className="text-gray-400">{icon}</span>
@@ -843,10 +840,9 @@ function DeleteConfirm({ driver, onConfirm, onCancel }: { driver: ApiDriver; onC
 
 // ─── Table Row ────────────────────────────────────────────────────────────────
 
-function DriverRow({ driver, index, canEdit, canDelete, onView, onEdit, onReport, onAssign, onDelete, siteNameById }: {
+function DriverRow({ driver, index, canEdit, canDelete, onView, onEdit, onReport, onAssign, onDelete }: {
   driver: ApiDriver; index: number; canEdit: boolean; canDelete: boolean;
   onView: () => void; onEdit: () => void; onReport: () => void; onAssign: () => void; onDelete: () => void;
-  siteNameById: (id: string) => string;
 }) {
   return (
     <tr className="group cursor-pointer border-b border-gray-100 transition-colors hover:bg-gray-50/80 dark:border-white/[0.04] dark:hover:bg-white/[0.02]" onClick={onView}>
@@ -879,7 +875,7 @@ function DriverRow({ driver, index, canEdit, canDelete, onView, onEdit, onReport
         <p className="mt-0.5 text-xs text-gray-400 truncate max-w-[140px]">{driver.email || "Sin correo"}</p>
       </td>
       <td className="px-4 py-3.5">
-        <p className="text-sm text-gray-700 dark:text-gray-300">{siteNameById(driver.siteId) || "—"}</p>
+        <p className="text-sm text-gray-700 dark:text-gray-300">{driver.siteName ?? "—"}</p>
       </td>
       <td className="px-4 py-3.5"><StatusBadge status={driver.status} /></td>
       <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
@@ -1116,14 +1112,8 @@ export default function DriversPage() {
   const [reportDrawer, setReportDrawer]           = useState<ApiDriverReport | null>(null);
   const [reportSearch, setReportSearch]           = useState("");
 
-  const { sites } = useSites();
   const { allReports, loadingAll, fetchAll } = useDriverReports(null);
   useEffect(() => { fetchAll(); }, [fetchAll]);
-
-  const siteNameById = (id: string | number | null) => {
-    if (!id) return "—";
-    return sites.find(s => s.id === String(id))?.name ?? "—";
-  };
 
   const openCreateModal = () => { setDriverModalTarget(null); setDriverModalOpen(true); };
   const openEditModal   = (driver: ApiDriver) => { setDriverModalTarget(driver); setDriverModalOpen(true); setDrawerDriver(null); };
@@ -1135,14 +1125,14 @@ export default function DriversPage() {
     const q = search.trim().toLowerCase();
     return drivers.filter(d => {
       const fullName = `${d.firstName} ${d.lastName}`.toLowerCase();
-      const siteName = siteNameById(d.siteId ?? "").toLowerCase();
+      const siteName = d.siteName?.toLowerCase() ?? "";
       const matchQ = !q || fullName.includes(q) || d.licenseNumber.toLowerCase().includes(q)
         || d.email.toLowerCase().includes(q) || siteName.includes(q)
         || d.phone.toLowerCase().includes(q) || d.licenseType.toLowerCase().includes(q);
       const matchS = !filterStatus || d.status === filterStatus;
       return matchQ && matchS;
     });
-  }, [drivers, search, filterStatus, sites]);
+  }, [drivers, search, filterStatus]);
 
   const filteredReports = useMemo(() => {
     const q = reportSearch.trim().toLowerCase();
@@ -1259,7 +1249,7 @@ export default function DriversPage() {
                     <tbody>
                       {paginated.map((driver, index) => (
                         <DriverRow key={driver.id} driver={driver} index={(page - 1) * PAGE_SIZE + index}
-                          canEdit={canEdit} canDelete={canDelete} siteNameById={siteNameById}
+                          canEdit={canEdit} canDelete={canDelete}
                           onView={() => setDrawerDriver(driver)}
                           onEdit={() => openEditModal(driver)}
                           onReport={() => openReport(driver)}

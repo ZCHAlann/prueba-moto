@@ -82,6 +82,8 @@ function mapUnit(raw: Record<string, unknown>): AirConditioningUnit {
     nextService: String(raw.nextService ?? ""),
     photoUrls: Array.isArray(raw.photoUrls) ? (raw.photoUrls as string[]) : [],
     notes: String(raw.notes ?? ""),
+    // ── Backend enrichment ──────────────────────────────────────────────────────
+    siteName: (raw.siteName as string | null) ?? null,
   };
 }
 

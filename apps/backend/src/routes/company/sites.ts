@@ -28,7 +28,7 @@ const updateSiteSchema = createSiteSchema.partial();
 
 // ─── GET /company/:id/sites ───────────────────────────────────────────────────
 
-router.get('/', requireModule('configuracion'), async (req, res, next) => {
+router.get('/', requireModule('gestion', 'sedes'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
 
@@ -48,7 +48,7 @@ router.get('/', requireModule('configuracion'), async (req, res, next) => {
 
 router.post(
   '/',
-  requireModule('configuracion'),
+  requireModule('gestion', 'sedes'),
   requireAdmin,
   validate(createSiteSchema),
   async (req, res, next) => {
@@ -81,7 +81,7 @@ router.post(
 
 router.put(
   '/:siteId',
-  requireModule('configuracion'),
+  requireModule('gestion', 'sedes'),
   requireAdmin,
   validate(updateSiteSchema),
   async (req, res, next) => {
@@ -124,7 +124,7 @@ router.put(
 
 router.delete(
   '/:siteId',
-  requireModule('configuracion'),
+  requireModule('gestion', 'sedes'),
   requireAdmin,
   async (req, res, next) => {
     try {

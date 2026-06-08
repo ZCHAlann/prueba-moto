@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, ilike, or } from 'drizzle-orm';
+import { eq, and, ilike, or, desc } from 'drizzle-orm';
 import { db } from '../../db/client';
-import { companyAssets } from '../../db/schema/operational';
+import { companyAssets, companyAssignments, companyDrivers } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
@@ -47,7 +47,7 @@ const updateAssetSchema = createAssetSchema.partial();
 // ─── GET /company/:id/assets ──────────────────────────────────────────────────
 // Query: ?status=Operativo &siteId=site-1 &search=placa
 
-router.get('/', requireModule('flotas'), async (req, res, next) => {
+router.get('/', requireModule('gestion', 'flotas'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const { status, siteId, search, assetType } = req.query;
@@ -84,7 +84,38 @@ router.get('/', requireModule('flotas'), async (req, res, next) => {
       );
     }
 
-    res.json({ data: rows.map(serializeAsset), total: rows.length });
+    // ── Enrichment: cargar conductor actual via asignación activa ──────────────
+    const activeAssignments = await db
+      .select({
+        assetId:    companyAssignments.assetId,
+        driverId:   companyAssignments.driverId,
+        driverName: companyDrivers.firstName,
+      })
+      .from(companyAssignments)
+      .leftJoin(companyDrivers, eq(companyAssignments.driverId, companyDrivers.id))
+      .where(and(
+        eq(companyAssignments.companyId, companyId),
+        eq(companyAssignments.status, 'Activa')
+      ))
+      .orderBy(desc(companyAssignments.createdAt));
+
+    // Quedarse con la asignación más reciente por assetId
+    const driverMap = new Map<number, { id: string; firstName: string; lastName: string; phone: string | null }>();
+    for (const a of activeAssignments) {
+      if (a.assetId && !driverMap.has(a.assetId)) {
+        driverMap.set(a.assetId, {
+          id:        toId('driver', a.driverId),
+          firstName: a.driverName ?? '',
+          lastName:  '',
+          phone:     null,
+        });
+      }
+    }
+
+    res.json({
+      data: rows.map((a) => serializeAsset(a, driverMap.get(a.id))),
+      total: rows.length,
+    });
   } catch (err) {
     next(err);
   }
@@ -92,7 +123,7 @@ router.get('/', requireModule('flotas'), async (req, res, next) => {
 
 // ─── GET /company/:id/assets/:assetId ────────────────────────────────────────
 
-router.get('/:assetId', requireModule('flotas'), async (req, res, next) => {
+router.get('/:assetId', requireModule('gestion', 'flotas'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const assetId = parseId('asset', req.params.assetId);
@@ -105,7 +136,27 @@ router.get('/:assetId', requireModule('flotas'), async (req, res, next) => {
 
     if (!rows.length) throw new NotFoundError('Activo', req.params.assetId);
 
-    res.json(serializeAsset(rows[0]));
+    // ── Enrichment: cargar conductor actual via asignación activa ──────────────
+    const [assignment] = await db
+      .select({
+        driverId:   companyAssignments.driverId,
+        driverName: companyDrivers.firstName,
+      })
+      .from(companyAssignments)
+      .leftJoin(companyDrivers, eq(companyAssignments.driverId, companyDrivers.id))
+      .where(and(
+        eq(companyAssignments.assetId, assetId),
+        eq(companyAssignments.companyId, companyId),
+        eq(companyAssignments.status, 'Activa')
+      ))
+      .orderBy(desc(companyAssignments.createdAt))
+      .limit(1);
+
+    const currentDriver = assignment?.driverId
+      ? { id: toId('driver', assignment.driverId), firstName: assignment.driverName ?? '', lastName: '', phone: null }
+      : null;
+
+    res.json(serializeAsset(rows[0], currentDriver));
   } catch (err) {
     next(err);
   }
@@ -115,7 +166,7 @@ router.get('/:assetId', requireModule('flotas'), async (req, res, next) => {
 
 router.post(
   '/',
-  requireModule('flotas'),
+  requireModule('gestion', 'flotas'),
   requireAdmin,
   validate(createAssetSchema),
   async (req, res, next) => {
@@ -152,7 +203,7 @@ router.post(
 
 router.put(
   '/:assetId',
-  requireModule('flotas'),
+  requireModule('gestion', 'flotas'),
   requireAdmin,
   validate(updateAssetSchema),
   async (req, res, next) => {
@@ -201,11 +252,56 @@ router.put(
   }
 );
 
+// ─── PATCH /company/:id/assets/:assetId/toggle ────────────────────────────────
+
+router.patch(
+  '/:assetId/toggle',
+  requireModule('gestion', 'flotas'),
+  requireAdmin,
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const assetId = parseId('asset', req.params.assetId);
+
+      const existing = await db
+        .select()
+        .from(companyAssets)
+        .where(and(eq(companyAssets.id, assetId), eq(companyAssets.companyId, companyId)))
+        .limit(1);
+
+      if (!existing.length) throw new NotFoundError('Activo', req.params.assetId);
+
+      const current = existing[0];
+      // Toggle between "Operativo" and "Fuera de servicio"
+      const newStatus = current.status === 'Operativo' ? 'Fuera de servicio' : 'Operativo';
+
+      const [updated] = await db
+        .update(companyAssets)
+        .set({ status: newStatus, updatedAt: new Date() })
+        .where(and(eq(companyAssets.id, assetId), eq(companyAssets.companyId, companyId)))
+        .returning();
+
+      await logAudit(db, companyId, {
+        entity: 'assets',
+        entityId: toId('asset', updated.id),
+        action: newStatus === 'Operativo' ? 'activate' : 'deactivate',
+        actorId: req.user!.sub,
+        actorName: req.user!.name,
+        description: `Activo "${updated.name}" ${newStatus === 'Operativo' ? 'activado' : 'desactivado'}.`,
+      });
+
+      res.json(serializeAsset(updated));
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // ─── DELETE /company/:id/assets/:assetId ─────────────────────────────────────
 
 router.delete(
   '/:assetId',
-  requireModule('flotas'),
+  requireModule('gestion', 'flotas'),
   requireAdmin,
   async (req, res, next) => {
     try {
@@ -242,8 +338,10 @@ router.delete(
 
 // ─── Serializer ───────────────────────────────────────────────────────────────
 
-function serializeAsset(a: typeof companyAssets.$inferSelect) {
-  console.log("serialize siteId:", a.siteId);
+function serializeAsset(
+  a: typeof companyAssets.$inferSelect,
+  currentDriver?: { id: string; firstName: string; lastName: string; phone: string | null } | null
+) {
   return {
     id: toId('asset', a.id),
     companyId: toId('company', a.companyId),
@@ -271,6 +369,8 @@ function serializeAsset(a: typeof companyAssets.$inferSelect) {
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
     garageId: a.garageId ? toId('garage', a.garageId) : null,
+    // ── Enrichment: conductor asignado actualmente ──────────────────────────
+    currentDriver: currentDriver ?? null,
   };
 }
 

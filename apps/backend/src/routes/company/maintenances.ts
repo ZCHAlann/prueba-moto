@@ -73,7 +73,14 @@ router.get('/', requireModule('mantenimiento'), async (req, res, next) => {
       rows = rows.filter((m) => m.assetId === parsedAssetId);
     }
 
-    res.json({ data: rows.map(serializeMaintenance), total: rows.length });
+    // ── Enrichment: batch-load asset names + plates ────────────────────────────
+    const assetsRows = await db
+      .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate })
+      .from(companyAssets)
+      .where(eq(companyAssets.companyId, companyId));
+    const assetMap = new Map(assetsRows.map(a => [a.id, { name: a.name, plate: a.plate }]));
+
+    res.json({ data: rows.map(m => serializeMaintenance(m, assetMap.get(m.assetId) ?? null)), total: rows.length });
   } catch (err) {
     next(err);
   }
@@ -99,7 +106,14 @@ router.get('/:maintId', requireModule('mantenimiento'), async (req, res, next) =
 
     if (!rows.length) throw new NotFoundError('Mantenimiento', req.params.maintId);
 
-    res.json(serializeMaintenance(rows[0]));
+    // ── Enrichment ────────────────────────────────────────────────────────────
+    const [asset] = await db
+      .select({ name: companyAssets.name, plate: companyAssets.plate })
+      .from(companyAssets)
+      .where(and(eq(companyAssets.id, rows[0].assetId), eq(companyAssets.companyId, companyId)))
+      .limit(1);
+
+    res.json(serializeMaintenance(rows[0], asset ?? null));
   } catch (err) {
     next(err);
   }
@@ -153,7 +167,7 @@ router.post(
         },
       });
 
-      res.status(201).json(serializeMaintenance(created));
+      res.status(201).json(serializeMaintenance(created, { name: asset[0].name, plate: asset[0].plate }));
     } catch (err) {
       next(err);
     }
@@ -204,7 +218,7 @@ router.put(
         .select()
         .from(companyAssets)
         .where(eq(companyAssets.id, updated.assetId))
-        .limit(1)
+        .limit(1);
 
       await logAudit(db, companyId, {
         entity: 'maintenances',
@@ -228,7 +242,7 @@ router.put(
         },
       });
 
-      res.json(serializeMaintenance(updated));
+      res.json(serializeMaintenance(updated, updatedAsset[0] ? { name: updatedAsset[0].name, plate: updatedAsset[0].plate } : null));
     } catch (err) {
       next(err);
     }
@@ -355,7 +369,15 @@ router.post(
           notes: updated.notes,
         },
       });
-      res.json(serializeMaintenance(updated));
+
+      // ── Enrichment ────────────────────────────────────────────────────────────
+      const [asset] = await db
+        .select({ name: companyAssets.name, plate: companyAssets.plate })
+        .from(companyAssets)
+        .where(and(eq(companyAssets.id, updated.assetId), eq(companyAssets.companyId, companyId)))
+        .limit(1);
+
+      res.json(serializeMaintenance(updated, asset ?? null));
     } catch (err) {
       next(err);
     }
@@ -364,7 +386,10 @@ router.post(
 
 // ─── Serializer ───────────────────────────────────────────────────────────────
 
-function serializeMaintenance(m: typeof companyMaintenances.$inferSelect) {
+function serializeMaintenance(
+  m: typeof companyMaintenances.$inferSelect,
+  assetInfo?: { name: string | null; plate: string | null } | null
+) {
   return {
     id: toId('maintenance', m.id),
     companyId: toId('company', m.companyId),
@@ -382,6 +407,9 @@ function serializeMaintenance(m: typeof companyMaintenances.$inferSelect) {
     partsCost: m.partsCost ? Number(m.partsCost) : null,
     photoUrls: m.photoUrls ?? [],
     notes: m.notes,
+    // ── Enrichment ─────────────────────────────────────────────────────────────
+    assetName: assetInfo?.name ?? null,
+    assetPlate: assetInfo?.plate ?? null,
     createdAt: m.createdAt,
     updatedAt: m.updatedAt,
   };

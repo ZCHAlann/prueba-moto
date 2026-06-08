@@ -31,7 +31,7 @@ const updateInventorySchema = createInventorySchema.partial();
 // ─── GET /company/:id/inventory ───────────────────────────────────────────────
 // Query: ?category=Filtros &lowStock=true &search=filtro
 
-router.get('/', requireModule('inventario'), async (req, res, next) => {
+router.get('/', requireModule('mantenimiento', 'inventario'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const { category, lowStock, search } = req.query;
@@ -76,7 +76,7 @@ router.get('/', requireModule('inventario'), async (req, res, next) => {
 
 router.post(
   '/',
-  requireModule('inventario'),
+  requireModule('mantenimiento', 'inventario'),
   requireSupervisor,
   validate(createInventorySchema),
   async (req, res, next) => {
@@ -114,7 +114,7 @@ router.post(
 
 router.put(
   '/:itemId',
-  requireModule('inventario'),
+  requireModule('mantenimiento', 'inventario'),
   requireSupervisor,
   validate(updateInventorySchema),
   async (req, res, next) => {
@@ -161,7 +161,7 @@ router.put(
 
 router.delete(
   '/:itemId',
-  requireModule('inventario'),
+  requireModule('mantenimiento', 'inventario'),
   requireAdmin,
   async (req, res, next) => {
     try {

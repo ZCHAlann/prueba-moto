@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../../db/client';
-import { companyChecklists, companyChecklistCategories } from '../../db/schema/operational';
+import { companyChecklists, companyChecklistCategories, companyAssets, companyDrivers } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
@@ -240,7 +240,22 @@ router.get('/', requireModule('checklist'), async (req, res, next) => {
       rows = rows.filter((c) => c.categoryId === id);
     }
 
-    res.json({ data: rows.map(serializeChecklist), total: rows.length });
+    // ── Enrichment: batch-load asset, driver, category names ───────────────────
+    const [assetsRows, driversRows, categoriesRows] = await Promise.all([
+      db.select({ id: companyAssets.id, name: companyAssets.name }).from(companyAssets).where(eq(companyAssets.companyId, companyId)),
+      db.select({ id: companyDrivers.id, name: companyDrivers.name }).from(companyDrivers).where(eq(companyDrivers.companyId, companyId)),
+      db.select({ id: companyChecklistCategories.id, name: companyChecklistCategories.name }).from(companyChecklistCategories).where(eq(companyChecklistCategories.companyId, companyId)),
+    ]);
+
+    const assetMap = new Map(assetsRows.map(a => [a.id, a.name]));
+    const driverMap = new Map(driversRows.map(d => [d.id, d.name]));
+    const categoryMap = new Map(categoriesRows.map(c => [c.id, c.name]));
+
+    res.json({ data: rows.map(c => serializeChecklist(c, {
+      assetName: c.assetId ? assetMap.get(c.assetId) ?? null : null,
+      driverName: c.driverId ? driverMap.get(c.driverId) ?? null : null,
+      categoryName: c.categoryId ? categoryMap.get(c.categoryId) ?? null : null,
+    })), total: rows.length });
   } catch (err) {
     next(err);
   }
@@ -263,7 +278,26 @@ router.get('/checklists/:checkId', requireModule('checklist'), async (req, res, 
 
     if (!rows.length) throw new NotFoundError('Checklist', req.params.checkId);
 
-    res.json(serializeChecklist(rows[0]));
+    // ── Enrichment ────────────────────────────────────────────────────────────
+    const c = rows[0];
+    let assetName: string | null = null;
+    let driverName: string | null = null;
+    let categoryName: string | null = null;
+
+    if (c.assetId) {
+      const [a] = await db.select({ name: companyAssets.name }).from(companyAssets).where(and(eq(companyAssets.id, c.assetId), eq(companyAssets.companyId, companyId))).limit(1);
+      assetName = a?.name ?? null;
+    }
+    if (c.driverId) {
+      const [d] = await db.select({ name: companyDrivers.name }).from(companyDrivers).where(and(eq(companyDrivers.id, c.driverId), eq(companyDrivers.companyId, companyId))).limit(1);
+      driverName = d?.name ?? null;
+    }
+    if (c.categoryId) {
+      const [cat] = await db.select({ name: companyChecklistCategories.name }).from(companyChecklistCategories).where(and(eq(companyChecklistCategories.id, c.categoryId), eq(companyChecklistCategories.companyId, companyId))).limit(1);
+      categoryName = cat?.name ?? null;
+    }
+
+    res.json(serializeChecklist(c, { assetName, driverName, categoryName }));
   } catch (err) {
     next(err);
   }
@@ -306,7 +340,16 @@ router.post(
         description: `Checklist creado (${created.status})${body.targetLabel ? ` para "${body.targetLabel}"` : ''}.`,
       });
 
-      res.status(201).json(serializeChecklist(created));
+      // ── Enrichment ────────────────────────────────────────────────────────────
+      const c = created;
+      let assetName: string | null = null;
+      let driverName: string | null = null;
+      let categoryName: string | null = null;
+      if (c.assetId) { const [a] = await db.select({ name: companyAssets.name }).from(companyAssets).where(and(eq(companyAssets.id, c.assetId), eq(companyAssets.companyId, companyId))).limit(1); assetName = a?.name ?? null; }
+      if (c.driverId) { const [d] = await db.select({ name: companyDrivers.name }).from(companyDrivers).where(and(eq(companyDrivers.id, c.driverId), eq(companyDrivers.companyId, companyId))).limit(1); driverName = d?.name ?? null; }
+      if (c.categoryId) { const [cat] = await db.select({ name: companyChecklistCategories.name }).from(companyChecklistCategories).where(and(eq(companyChecklistCategories.id, c.categoryId), eq(companyChecklistCategories.companyId, companyId))).limit(1); categoryName = cat?.name ?? null; }
+
+      res.status(201).json(serializeChecklist(c, { assetName, driverName, categoryName }));
     } catch (err) {
       next(err);
     }
@@ -357,7 +400,16 @@ router.put(
         description: `Checklist "${toId('checklist', updated.id)}" actualizado a "${updated.status}".`,
       });
 
-      res.json(serializeChecklist(updated));
+      // ── Enrichment ────────────────────────────────────────────────────────────
+      const c = updated;
+      let assetName: string | null = null;
+      let driverName: string | null = null;
+      let categoryName: string | null = null;
+      if (c.assetId) { const [a] = await db.select({ name: companyAssets.name }).from(companyAssets).where(and(eq(companyAssets.id, c.assetId), eq(companyAssets.companyId, companyId))).limit(1); assetName = a?.name ?? null; }
+      if (c.driverId) { const [d] = await db.select({ name: companyDrivers.name }).from(companyDrivers).where(and(eq(companyDrivers.id, c.driverId), eq(companyDrivers.companyId, companyId))).limit(1); driverName = d?.name ?? null; }
+      if (c.categoryId) { const [cat] = await db.select({ name: companyChecklistCategories.name }).from(companyChecklistCategories).where(and(eq(companyChecklistCategories.id, c.categoryId), eq(companyChecklistCategories.companyId, companyId))).limit(1); categoryName = cat?.name ?? null; }
+
+      res.json(serializeChecklist(c, { assetName, driverName, categoryName }));
     } catch (err) {
       next(err);
     }
@@ -378,7 +430,10 @@ function serializeCategory(c: typeof companyChecklistCategories.$inferSelect) {
   };
 }
 
-function serializeChecklist(c: typeof companyChecklists.$inferSelect) {
+function serializeChecklist(
+  c: typeof companyChecklists.$inferSelect,
+  info?: { assetName: string | null; driverName: string | null; categoryName: string | null } | null
+) {
   return {
     id: toId('checklist', c.id),
     companyId: toId('company', c.companyId),
@@ -394,6 +449,10 @@ function serializeChecklist(c: typeof companyChecklists.$inferSelect) {
     findings: c.findings,
     items: c.items ?? [],
     photoUrls: c.photoUrls ?? [],
+    // ── Enrichment ─────────────────────────────────────────────────────────────
+    assetName: info?.assetName ?? null,
+    driverName: info?.driverName ?? null,
+    categoryName: info?.categoryName ?? null,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   };

@@ -61,7 +61,18 @@ router.get('/', requireModule('combustible'), async (req, res, next) => {
       rows = rows.filter((f) => f.date <= to);
     }
 
-    res.json({ data: rows.map(serializeFuel), total: rows.length });
+    // ── Enrichment: cargar nombres de activos ─────────────────────────────────
+    const assetsRows = await db
+      .select({ id: companyAssets.id, plate: companyAssets.plate, brand: companyAssets.brand, model: companyAssets.model })
+      .from(companyAssets)
+      .where(eq(companyAssets.companyId, companyId));
+
+    const assetMap = new Map(assetsRows.map(a => [a.id, { plate: a.plate, brand: a.brand, model: a.model }]));
+
+    res.json({
+      data: rows.map(f => serializeFuel(f, assetMap.get(f.assetId))),
+      total: rows.length,
+    });
   } catch (err) {
     next(err);
   }
@@ -82,7 +93,14 @@ router.get('/:fuelId', requireModule('combustible'), async (req, res, next) => {
 
     if (!rows.length) throw new NotFoundError('Registro de combustible', req.params.fuelId);
 
-    res.json(serializeFuel(rows[0]));
+    // ── Enrichment ────────────────────────────────────────────────────────────
+    const [assetInfo] = await db
+      .select({ plate: companyAssets.plate, brand: companyAssets.brand, model: companyAssets.model })
+      .from(companyAssets)
+      .where(eq(companyAssets.id, rows[0].assetId))
+      .limit(1);
+
+    res.json(serializeFuel(rows[0], assetInfo ?? null));
   } catch (err) {
     next(err);
   }
@@ -143,7 +161,7 @@ router.post(
         description: `Carga de combustible registrada: ${body.liters}L para "${asset[0].name}".`,
       });
 
-      res.status(201).json(serializeFuel(created));
+      res.status(201).json(serializeFuel(created, { plate: asset[0].plate, brand: asset[0].brand, model: asset[0].model }));
     } catch (err) {
       next(err);
     }
@@ -193,7 +211,14 @@ router.put(
         description: `Registro de combustible "${toId('fuel', updated.id)}" actualizado.`,
       });
 
-      res.json(serializeFuel(updated));
+      // ── Enrichment ────────────────────────────────────────────────────────────
+      const [assetInfo] = await db
+        .select({ plate: companyAssets.plate, brand: companyAssets.brand, model: companyAssets.model })
+        .from(companyAssets)
+        .where(eq(companyAssets.id, updated.assetId))
+        .limit(1);
+
+      res.json(serializeFuel(updated, assetInfo ?? null));
     } catch (err) {
       next(err);
     }
@@ -241,7 +266,10 @@ router.delete(
 
 // ─── Serializer ───────────────────────────────────────────────────────────────
 
-function serializeFuel(f: typeof companyFuelEntries.$inferSelect) {
+function serializeFuel(
+  f: typeof companyFuelEntries.$inferSelect,
+  assetInfo?: { plate: string | null; brand: string | null; model: string | null } | null
+) {
   return {
     id: toId('fuel', f.id),
     companyId: toId('company', f.companyId),
@@ -254,6 +282,10 @@ function serializeFuel(f: typeof companyFuelEntries.$inferSelect) {
     station: f.station,
     fuelType: f.fuelType,
     notes: f.notes,
+    // ── Enrichment: datos del activo para display sin hooks externos ─────────
+    assetPlate: assetInfo?.plate ?? null,
+    assetBrand: assetInfo?.brand ?? null,
+    assetModel: assetInfo?.model ?? null,
     createdAt: f.createdAt,
     updatedAt: f.updatedAt,
   };

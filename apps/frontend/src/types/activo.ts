@@ -43,6 +43,9 @@ export type Asset = {
   oilCapacity: string;
   photoUrls: string[]; 
   garageId: string | null;
+  // ── Backend enrichment (display-only) ──────────────────────────────────────
+  /** Current active driver via assignment — avoids separate useDrivers() call */
+  currentDriver: { name: string; code: string; phone: string; photoUrl: string | null } | null;
 };
 
 export type AssetDocumentStatus = "Vigente" | "Por vencer" | "Vencido";

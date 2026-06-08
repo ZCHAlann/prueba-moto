@@ -762,7 +762,7 @@ export function SitesManagementPage() {
           <div>
             <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-blue-200 dark:border-blue-500/20 bg-blue-50 dark:bg-blue-500/10 px-2.5 py-1">
               <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-              <span className="text-xs font-medium text-blue-700 dark:text-blue-400">Gestión</span>
+              <span className="text-xs font-medium text-blue-700 dark:text-blue-400">Sedes</span>
             </div>
             <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Sedes</h1>
             <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">

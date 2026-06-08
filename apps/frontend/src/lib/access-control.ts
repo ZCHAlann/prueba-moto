@@ -7,26 +7,34 @@ import type { PlatformRole } from "../types/platform";
 type ModuleSub = [string, string];
 
 const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub: string }> = [
-  { test: (h) => h === "/dashboard",                                            mod: "dashboard",     sub: "dashboard" },
-  { test: (h) => h === "/motores" || h.startsWith("/motores/"),              mod: "motores",       sub: "lista_motores" },
-  { test: (h) => h === "/motores/mantenimientos",                              mod: "motores",       sub: "mantenimientos_motor" },
-  { test: (h) => h === "/motores/historial",                                   mod: "motores",       sub: "historial_motor" },
-  { test: (h) => h === "/aires-acondicionados",                               mod: "ac",            sub: "lista_ac" },
-  { test: (h) => h === "/aires-acondicionados/mantenimientos",                mod: "ac",            sub: "mantenimientos_ac" },
-  { test: (h) => h === "/flotas",                                              mod: "gestion",       sub: "flotas" },
-  { test: (h) => h.startsWith("/operaciones/conductores"),                    mod: "gestion",       sub: "conductores" },
-  { test: (h) => h.startsWith("/operaciones/asignaciones"),                    mod: "gestion",       sub: "asignaciones" },
-  { test: (h) => h.startsWith("/gestion/sedes"),                               mod: "gestion",       sub: "sedes" },
-  { test: (h) => h.startsWith("/gestion/garajes"),                             mod: "gestion",       sub: "garajes" },
-  { test: (h) => h.startsWith("/gestion/seguros"),                            mod: "gestion",       sub: "seguros" },
-  { test: (h) => h === "/checklist" || h.startsWith("/checklist/"),          mod: "checklist",     sub: "checklist" },
-  { test: (h) => h === "/alertas" || h.startsWith("/alertas/"),              mod: "alertas",       sub: "alertas" },
-  { test: (h) => h === "/mantenimiento",                                       mod: "mantenimiento", sub: "ordenes" },
-  { test: (h) => h === "/mantenimiento/inventario",                           mod: "mantenimiento", sub: "inventario" },
-  { test: (h) => h === "/mantenimiento/verificacion-aceite",                  mod: "mantenimiento", sub: "oil" },
-  { test: (h) => h === "/reportes" || h.startsWith("/reportes/"),             mod: "reportes",      sub: "reportes" },
-  { test: (h) => h === "/combustible" || h.startsWith("/combustible/"),       mod: "combustible",   sub: "combustible" },
-  { test: (h) => h === "/geolocalizacion" || h.startsWith("/geolocalizacion/"),mod: "geolocalizacion", sub: "geolocalizacion" },
+  // ── Sub-routes FIRST (most specific wins via find — first match wins) ─────────
+  // A/C sub-routes
+  { test: (h) => h === "/aires-acondicionados/mantenimientos",                                             mod: "ac", sub: "mantenimientos_ac" },
+  // Mantenimiento sub-routes
+  { test: (h) => h === "/mantenimiento/inventario",                                                         mod: "mantenimiento", sub: "inventario" },
+  { test: (h) => h === "/mantenimiento/verificacion-aceite",                                              mod: "mantenimiento", sub: "oil" },
+  // Motores sub-routes
+  { test: (h) => h === "/motores/mantenimientos",                                                          mod: "motores", sub: "mantenimientos_motor" },
+  { test: (h) => h === "/motores/historial",                                                               mod: "motores", sub: "historial_motor" },
+  // ── Parent / catch-all routes ──────────────────────────────────────────────────
+  { test: (h) => h === "/dashboard" || h.startsWith("/dashboard"),                                        mod: "dashboard",     sub: "dashboard" },
+  { test: (h) => h === "/flotas" || h.startsWith("/flotas"),                                              mod: "gestion",       sub: "flotas" },
+  { test: (h) => h.startsWith("/operaciones/conductores"),                                                 mod: "gestion",       sub: "conductores" },
+  { test: (h) => h.startsWith("/operaciones/asignaciones"),                                                 mod: "gestion",       sub: "asignaciones" },
+  { test: (h) => h.startsWith("/gestion/sedes"),                                                          mod: "gestion",       sub: "sedes" },
+  { test: (h) => h.startsWith("/gestion/garajes"),                                                        mod: "gestion",       sub: "garajes" },
+  { test: (h) => h.startsWith("/gestion/seguros"),                                                        mod: "gestion",       sub: "seguros" },
+  { test: (h) => h === "/motores" || h.startsWith("/motores"),                                            mod: "motores",       sub: "lista_motores" },
+  { test: (h) => h === "/generadores" || h.startsWith("/generadores"),                                    mod: "generadores",   sub: "generadores" },
+  { test: (h) => h === "/aires-acondicionados" || h.startsWith("/aires-acondicionados"),                  mod: "ac",            sub: "lista_ac" },
+  { test: (h) => h === "/mantenimiento" || h.startsWith("/mantenimiento"),                                 mod: "mantenimiento", sub: "ordenes" },
+  { test: (h) => h === "/checklist" || h.startsWith("/checklist"),                                        mod: "checklist",     sub: "checklist" },
+  { test: (h) => h === "/alertas" || h.startsWith("/alertas"),                                             mod: "alertas",       sub: "alertas" },
+  { test: (h) => h === "/reportes" || h.startsWith("/reportes"),                                          mod: "reportes",      sub: "reportes" },
+  { test: (h) => h === "/combustible" || h.startsWith("/combustible"),                                    mod: "combustible",   sub: "combustible" },
+  { test: (h) => h === "/geolocalizacion" || h.startsWith("/geolocalizacion"),                            mod: "geolocalizacion", sub: "geolocalizacion" },
+  { test: (h) => h === "/accesos" || h.startsWith("/accesos/"),                                            mod: "accesos",       sub: "accesos" },
+  { test: (h) => h === "/soporte" || h.startsWith("/soporte"),                                            mod: "soporte",       sub: "soporte" },
 ];
 
 function resolveModuleSub(href: string): ModuleSub | null {
@@ -49,6 +57,7 @@ function canAccessItem(
   modulePermissions: Record<string, Record<string, string[]>>,
 ): boolean {
   if (isCompanyAdminRole(role)) return true;
+
   const ms = resolveModuleSub(href);
   if (!ms) return true; // ruta sin módulo asociado (ej. /perfil) — pasa
   return hasVer(modulePermissions, ms[0], ms[1]);
@@ -346,20 +355,22 @@ export function getAccessMessage(role: PlatformRole, pathname: string) {
 }
 
 // Mapa explícito sectionKey → moduleKeys del JWT
+// Keys deben coincidir exactamente con las keys de MODULE_TREE (module-tree.ts)
 const SECTION_MODULE_MAP: Record<string, string[]> = {
-  "dashboard":            ["dashboard"],
-  "accesos":              ["accesos"],
-  "gestion":              ["gestion", "garajes", "seguros", "conductores", "activos"],
-  "motores":              ["motores"],
-  "generadores":          ["generadores"],
-  "aires_acondicionados": ["aires_acondicionados"],
-  "mantenimiento":        ["mantenimiento", "inventario"],
-  "checklist":            ["checklist"],
-  "alertas":              ["alertas"],
-  "reportes":             ["reportes"],
-  "combustible":          ["combustible"],
-  "geolocalizacion":      ["geolocalizacion"],
-  "cuenta":               [],
+  "dashboard":       ["dashboard"],
+  "accesos":         ["accesos"],
+  "gestion":          ["gestion"],
+  "motores":          ["motores"],
+  "generadores":      ["generadores"],
+  "ac":               ["ac"],                        // "aires acondicionados" en navigation → "ac" en MODULE_TREE
+  "mantenimiento":    ["mantenimiento"],
+  "checklist":        ["checklist"],
+  "alertas":          ["alertas"],
+  "reportes":         ["reportes"],
+  "combustible":      ["combustible"],
+  "geolocalizacion":  ["geolocalizacion"],
+  "soporte":          ["soporte"],
+  "cuenta":           [],
 };
 
 const ADMIN_ROLES = ["superadmin", "owner_empresa", "admin_empresa"];

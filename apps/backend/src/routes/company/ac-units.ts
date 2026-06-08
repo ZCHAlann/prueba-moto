@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../../db/client';
-import { companyAcUnits, companyAcServices, companyAcRefrigerantLogs } from '../../db/schema/operational';
+import { companyAcUnits, companyAcServices, companyAcRefrigerantLogs, companySites } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
@@ -63,7 +63,7 @@ const createRefrigerantLogSchema = z.object({
 
 // ─── GET /company/:id/ac-units ────────────────────────────────────────────────
 
-router.get('/', requireModule('aires_acondicionados'), async (req, res, next) => {
+router.get('/', requireModule('ac'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const { status, siteId } = req.query;
@@ -82,7 +82,14 @@ router.get('/', requireModule('aires_acondicionados'), async (req, res, next) =>
       rows = rows.filter((u) => u.siteId === parsedSiteId);
     }
 
-    res.json({ data: rows.map(serializeUnit), total: rows.length });
+    // ── Enrichment: batch-load site names ─────────────────────────────────────
+    const sitesRows = await db
+      .select({ id: companySites.id, name: companySites.name })
+      .from(companySites)
+      .where(eq(companySites.companyId, companyId));
+    const siteMap = new Map(sitesRows.map(s => [s.id, s.name]));
+
+    res.json({ data: rows.map(u => serializeUnit(u, u.siteId ? siteMap.get(u.siteId) ?? null : null)), total: rows.length });
   } catch (err) {
     next(err);
   }
@@ -90,7 +97,7 @@ router.get('/', requireModule('aires_acondicionados'), async (req, res, next) =>
 
 // ─── GET /company/:id/ac-units/:unitId ────────────────────────────────────────
 
-router.get('/:unitId', requireModule('aires_acondicionados'), async (req, res, next) => {
+router.get('/:unitId', requireModule('ac'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const unitId = parseId('ac-unit', req.params.unitId);
@@ -115,8 +122,16 @@ router.get('/:unitId', requireModule('aires_acondicionados'), async (req, res, n
       .where(and(eq(companyAcRefrigerantLogs.unitId, unitId), eq(companyAcRefrigerantLogs.companyId, companyId)))
       .orderBy(companyAcRefrigerantLogs.date);
 
+    const u = rows[0];
+    // ── Enrichment: site name ────────────────────────────────────────────────────
+    let siteName: string | null = null;
+    if (u.siteId) {
+      const [site] = await db.select({ name: companySites.name }).from(companySites).where(and(eq(companySites.id, u.siteId), eq(companySites.companyId, companyId))).limit(1);
+      siteName = site?.name ?? null;
+    }
+
     res.json({
-      ...serializeUnit(rows[0]),
+      ...serializeUnit(u, siteName),
       services: services.map(serializeService),
       refrigerantLogs: refrigerantLogs.map(serializeRefrigerantLog),
     });
@@ -129,7 +144,7 @@ router.get('/:unitId', requireModule('aires_acondicionados'), async (req, res, n
 
 router.post(
   '/',
-  requireModule('aires_acondicionados'),
+  requireModule('ac'),
   requirePermission('ac', 'lista_ac', 'crear'),
   requireSupervisor,
   validate(createAcUnitSchema),
@@ -156,7 +171,14 @@ router.post(
         description: `Unidad AC "${created.name}" creada.`,
       });
 
-      res.status(201).json(serializeUnit(created));
+      // ── Enrichment: site name ─────────────────────────────────────────────────
+      let siteName: string | null = null;
+      if (created.siteId) {
+        const [site] = await db.select({ name: companySites.name }).from(companySites).where(and(eq(companySites.id, created.siteId), eq(companySites.companyId, companyId))).limit(1);
+        siteName = site?.name ?? null;
+      }
+
+      res.status(201).json(serializeUnit(created, siteName));
     } catch (err) {
       next(err);
     }
@@ -167,7 +189,7 @@ router.post(
 
 router.put(
   '/:unitId',
-  requireModule('aires_acondicionados'),
+  requireModule('ac'),
   requirePermission('ac', 'lista_ac', 'editar'),
   requireSupervisor,
   validate(updateAcUnitSchema),
@@ -205,7 +227,14 @@ router.put(
         description: `Unidad AC "${updated.name}" actualizada.`,
       });
 
-      res.json(serializeUnit(updated));
+      // ── Enrichment: site name ─────────────────────────────────────────────────
+      let siteName: string | null = null;
+      if (updated.siteId) {
+        const [site] = await db.select({ name: companySites.name }).from(companySites).where(and(eq(companySites.id, updated.siteId), eq(companySites.companyId, companyId))).limit(1);
+        siteName = site?.name ?? null;
+      }
+
+      res.json(serializeUnit(updated, siteName));
     } catch (err) {
       next(err);
     }
@@ -214,7 +243,7 @@ router.put(
 
 // ─── DELETE /company/:id/ac-units/:unitId ─────────────────────────────────────
 
-router.delete('/:unitId', requireModule('aires_acondicionados'), requirePermission('ac', 'lista_ac', 'eliminar'), requireAdmin, async (req, res, next) => {
+router.delete('/:unitId', requireModule('ac'), requirePermission('ac', 'lista_ac', 'eliminar'), requireAdmin, async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const unitId = parseId('ac-unit', req.params.unitId);
@@ -250,7 +279,7 @@ router.delete('/:unitId', requireModule('aires_acondicionados'), requirePermissi
 
 router.post(
   '/:unitId/services',
-  requireModule('aires_acondicionados'),
+  requireModule('ac'),
   requirePermission('ac', 'mantenimientos_ac', 'crear'),
   requireSupervisor,
   validate(createServiceSchema),
@@ -299,7 +328,7 @@ router.post(
 
 router.post(
   '/:unitId/refrigerant-logs',
-  requireModule('aires_acondicionados'),
+  requireModule('ac'),
   requirePermission('ac', 'mantenimientos_ac', 'crear'),
   requireSupervisor,
   validate(createRefrigerantLogSchema),
@@ -347,7 +376,7 @@ router.post(
 
 // ─── Serializers ──────────────────────────────────────────────────────────────
 
-function serializeUnit(u: typeof companyAcUnits.$inferSelect) {
+function serializeUnit(u: typeof companyAcUnits.$inferSelect, siteName?: string | null) {
   return {
     id: toId('ac-unit', u.id),
     companyId: toId('company', u.companyId),
@@ -363,7 +392,7 @@ function serializeUnit(u: typeof companyAcUnits.$inferSelect) {
     capacityBtu: u.capacityBtu,
     voltage: u.voltage,
     amperage: u.amperage,
-    refrigerantType: u.refrigerantType,
+    refrigerantType: u.refrigerantLogType,
     installDate: u.installDate,
     technician: u.technician,
     status: u.status,
@@ -371,6 +400,8 @@ function serializeUnit(u: typeof companyAcUnits.$inferSelect) {
     nextService: u.nextService,
     photoUrls: u.photoUrls ?? [],
     notes: u.notes,
+    // ── Enrichment ─────────────────────────────────────────────────────────────
+    siteName: siteName ?? null,
     createdAt: u.createdAt,
     updatedAt: u.updatedAt,
   };

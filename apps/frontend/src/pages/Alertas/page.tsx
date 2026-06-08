@@ -437,14 +437,12 @@ export function AlertsPage() {
   const [search, setSearch]       = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const assetMap = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const a of assets) {
-      const label = [a.plate || a.code || a.name, a.brand && a.model ? `${a.brand} ${a.model}` : ""].filter(Boolean).join(" — ");
-      m[a.id] = label;
-    }
-    return m;
-  }, [assets]);
+  // ── Asset label from backend enrichment (avoids useAssets() call) ──────────────
+  const assetLabel = (alert: ApiAlert) => {
+    if (!alert.assetName && !alert.assetPlate) return "";
+    const parts = [alert.assetPlate, alert.assetName].filter(Boolean);
+    return parts.join(" — ");
+  };
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
@@ -456,8 +454,8 @@ export function AlertsPage() {
         return sevOrder[a.severity] - sevOrder[b.severity];
       })
       .filter(a => filter === "Todas" || a.status === filter)
-      .filter(a => !q || a.title.toLowerCase().includes(q) || (a.notes ?? "").toLowerCase().includes(q) || (assetMap[a.assetId ?? ""] ?? "").toLowerCase().includes(q));
-  }, [alerts, filter, search, assetMap]);
+      .filter(a => !q || a.title.toLowerCase().includes(q) || (a.notes ?? "").toLowerCase().includes(q) || assetLabel(a).toLowerCase().includes(q));
+  }, [alerts, filter, search]);
 
   async function handleStatusChange(id: string, status: AlertStatus) {
     try {
@@ -577,7 +575,7 @@ export function AlertsPage() {
                   <AlertCard
                     key={alert.id}
                     alert={alert}
-                    assetLabel={assetMap[alert.assetId ?? ""] ?? ""}
+                    assetLabel={assetLabel(alert)}
                     canEdit={canEdit}
                     canDelete={canDelete}
                     onStatusChange={handleStatusChange}

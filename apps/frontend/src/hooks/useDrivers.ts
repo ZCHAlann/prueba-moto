@@ -23,6 +23,9 @@ export type ApiDriver = {
   photoUrl: string | null;
   createdAt: string;
   updatedAt: string;
+  // ── Backend enrichment (display-only) ──────────────────────────────────────
+  /** Site name — avoids separate useSites() call */
+  siteName: string | null;
 };
 
 type CreateDriverPayload = {
@@ -66,6 +69,8 @@ function mapApi(raw: Record<string, unknown>): ApiDriver {
     photoUrl: (raw.photoUrl as string | null) ?? null,
     createdAt: (raw.createdAt as string) ?? "",
     updatedAt: (raw.updatedAt as string) ?? "",
+    // ── Backend enrichment ──────────────────────────────────────────────────────
+    siteName: (raw.siteName as string | null) ?? null,
   };
 }
 

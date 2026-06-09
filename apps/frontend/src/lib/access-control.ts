@@ -229,7 +229,7 @@ const rules: RouteRule[] = [
   },
   {
     test: (pathname) => pathname.startsWith("/gestion/sedes"),
-    roles: [...companyAdminRoles],
+    roles: [...companyAdminRoles, "supervisor", "operador"],
   },
   {
     test: (pathname) =>
@@ -377,6 +377,11 @@ const ADMIN_ROLES = ["superadmin", "owner_empresa", "admin_empresa"];
 const ALWAYS_VISIBLE = ["dashboard", "cuenta"];
 const ALWAYS_VISIBLE_ADMIN = ["dashboard", "cuenta", "accesos"];
 
+// Hrefs que solo deben mostrarse a admins_empresa / owner_empresa / superadmin
+const ADMIN_ONLY_HREFS = new Set<string>([
+  "/configuracion",
+]);
+
 export function filterOperationalNavigation(
   sections: NavigationSection[],
   role: PlatformRole | null,
@@ -390,9 +395,11 @@ export function filterOperationalNavigation(
   return sections
     .map((section) => {
       // 1) Filtrar items por permisos granulares (no por role)
-      const filteredItems = section.items.filter((item) =>
-        canAccessItem(role, item.href, modulePermissions)
-      );
+      //    y, si el item es admin-only, por rol
+      const filteredItems = section.items.filter((item) => {
+        if (ADMIN_ONLY_HREFS.has(item.href) && !isAdmin) return false;
+        return canAccessItem(role, item.href, modulePermissions);
+      });
       const sectionKey = section.label.toLowerCase().replace(/[\s/]+/g, "_");
 
       // Superadmin ve todo

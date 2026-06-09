@@ -122,7 +122,7 @@ export function MotorCreateModal({ onClose }: Props) {
       }
 
       onClose();
-      navigate(`/vehiculos/${assetId}`);
+      navigate(`/motores/${assetId}`);
     } catch (err) {
       setGlobalError(err instanceof Error ? err.message : "Error al guardar.");
     } finally {
@@ -180,14 +180,21 @@ export function MotorCreateModal({ onClose }: Props) {
 
           {step === 0 && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="Código" error={errors.code}><input className={inputCls} value={values.code} onChange={(e) => set("code", e.target.value)} placeholder="VEH-001" /></Field>
-              <Field label="Nombre" error={errors.name}><input className={inputCls} value={values.name} onChange={(e) => set("name", e.target.value)} placeholder="Camión Freightliner #1" /></Field>
-              <Field label="Marca" error={errors.brand}><input className={inputCls} value={values.brand} onChange={(e) => set("brand", e.target.value)} placeholder="Mercedes-Benz" /></Field>
-              <Field label="Modelo" error={errors.model}><input className={inputCls} value={values.model} onChange={(e) => set("model", e.target.value)} placeholder="Actros 2651" /></Field>
-              <Field label="Placa" error={errors.plate}><input className={inputCls} value={values.plate} onChange={(e) => set("plate", e.target.value.toUpperCase())} placeholder="ABC-1234" /></Field>
-              <Field label="Serie"><input className={inputCls} value={values.serial} onChange={(e) => set("serial", e.target.value)} placeholder="SN-123456" /></Field>
+              <Field label="Código" error={errors.code}><input className={inputCls} value={values.code} maxLength={40}
+                onChange={(e) => set("code", e.target.value.toUpperCase().slice(0, 40))} placeholder="VEH-001" /></Field>
+              <Field label="Nombre" error={errors.name}><input className={inputCls} value={values.name} maxLength={120}
+                onChange={(e) => set("name", e.target.value.slice(0, 120))} placeholder="Camión Freightliner #1" /></Field>
+              <Field label="Marca" error={errors.brand}><input className={inputCls} value={values.brand} maxLength={80}
+                onChange={(e) => set("brand", e.target.value.slice(0, 80))} placeholder="Mercedes-Benz" /></Field>
+              <Field label="Modelo" error={errors.model}><input className={inputCls} value={values.model} maxLength={80}
+                onChange={(e) => set("model", e.target.value.slice(0, 80))} placeholder="Actros 2651" /></Field>
+              <Field label="Placa" error={errors.plate}><input className={inputCls} value={values.plate} maxLength={8}
+                onChange={(e) => set("plate", e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 8))} placeholder="ABC-1234" /></Field>
+              <Field label="Serie"><input className={inputCls} value={values.serial} maxLength={60}
+                onChange={(e) => set("serial", e.target.value.slice(0, 60))} placeholder="SN-123456" /></Field>
               <Field label="Año" error={errors.year}><input className={inputCls} value={values.year} onChange={(e) => set("year", e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="2021" inputMode="numeric" maxLength={4} /></Field>
-              <Field label="Color"><input className={inputCls} value={values.color} onChange={(e) => set("color", e.target.value)} placeholder="Blanco" /></Field>
+              <Field label="Color"><input className={inputCls} value={values.color} maxLength={40}
+                onChange={(e) => set("color", e.target.value.slice(0, 40))} placeholder="Blanco" /></Field>
             </div>
           )}
 
@@ -198,9 +205,12 @@ export function MotorCreateModal({ onClose }: Props) {
                   {FUEL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
               </Field>
-              <Field label="Tipo de aceite" error={errors.oilType}><input className={inputCls} value={values.oilType} onChange={(e) => set("oilType", e.target.value)} placeholder="15W-40" /></Field>
-              <Field label="Capacidad de aceite" error={errors.oilCapacity}><input className={inputCls} value={values.oilCapacity} onChange={(e) => set("oilCapacity", e.target.value)} placeholder="15 L" /></Field>
-              <Field label="Carga máxima" error={errors.maxLoad}><input className={inputCls} value={values.maxLoad} onChange={(e) => set("maxLoad", e.target.value)} placeholder="5000 kg" /></Field>
+              <Field label="Tipo de aceite" error={errors.oilType}><input className={inputCls} value={values.oilType} maxLength={60}
+                onChange={(e) => set("oilType", e.target.value.slice(0, 60))} placeholder="15W-40" /></Field>
+              <Field label="Capacidad de aceite" error={errors.oilCapacity}><input className={inputCls} value={values.oilCapacity} maxLength={20}
+                onChange={(e) => set("oilCapacity", e.target.value.slice(0, 20))} placeholder="15 L" /></Field>
+              <Field label="Carga máxima" error={errors.maxLoad}><input className={inputCls} value={values.maxLoad} maxLength={20}
+                onChange={(e) => set("maxLoad", e.target.value.slice(0, 20))} placeholder="5000 kg" /></Field>
               <Field label="Próximo mantenimiento">
                 <DatePicker
                   value={values.nextMaintenance}
@@ -218,7 +228,8 @@ export function MotorCreateModal({ onClose }: Props) {
                   {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </Field>
-              <Field label="Ubicación"><input className={inputCls} value={values.location} onChange={(e) => set("location", e.target.value)} placeholder="Patio principal" /></Field>
+              <Field label="Ubicación"><input className={inputCls} value={values.location} maxLength={200}
+                onChange={(e) => set("location", e.target.value.slice(0, 200))} placeholder="Patio principal" /></Field>
               <Field label="Conductor asignado">
                 {driversLoading ? (
                   <div className="flex h-10 items-center gap-2 rounded-xl border border-gray-200 px-3 dark:border-white/[0.08]">
@@ -236,7 +247,7 @@ export function MotorCreateModal({ onClose }: Props) {
                 )}
               </Field>
               <Field label="Observaciones">
-                <textarea className="w-full resize-none rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.05] px-3 py-2.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition" rows={3} value={values.observations} onChange={(e) => set("observations", e.target.value)} placeholder="Notas adicionales…" />
+                <textarea className="w-full resize-none rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.05] px-3 py-2.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition" rows={3} maxLength={2000} value={values.observations} onChange={(e) => set("observations", e.target.value.slice(0, 2000))} placeholder="Notas adicionales…" />
               </Field>
             </div>
           )}

@@ -10,18 +10,19 @@ import { requireSupervisor } from '../../middlewares/requireSupervisor';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
 const createOilChangeSchema = z.object({
   assetId: z.string().min(1, 'El activo es requerido'),
   oilTypeId: z.string().min(1, 'El tipo de aceite es requerido'),
-  date: z.string().min(1, 'La fecha es requerida'),
-  reading: z.number().nonnegative(),
-  nextReading: z.number().nonnegative(),
-  quantity: z.number().positive(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)'),
+  reading: z.number().nonnegative().max(10_000_000),
+  nextReading: z.number().nonnegative().max(10_000_000),
+  quantity: z.number().positive().max(10_000),
   technician: z.string().optional().nullable(),
-  notes: z.string().optional().nullable(),
+  notes: validators.longTextOptional,
 });
 
 // GET /company/:id/oil-changes

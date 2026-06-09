@@ -11,26 +11,27 @@ import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { companyDriverReports } from '../../db/schema/operational';
 import { desc } from 'drizzle-orm';
+import { validators, safeString } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
 const createDriverSchema = z.object({
-  code: z.string().min(1, 'El código es requerido'),
-  firstName: z.string().min(1, 'El nombre es requerido'),
-  lastName: z.string().min(1, 'El apellido es requerido'),
-  email: z.string().email().optional().nullable(),
-  phone: z.string().optional().nullable(),
+  code: z.string().trim().min(1, 'El código es requerido').max(40),
+  firstName: validators.name,
+  lastName: validators.name,
+  email: validators.emailOptional,
+  phone: validators.phoneOptional,
   siteId: z.string().optional().nullable(),       // "site-N" | null
   userId: z.string().optional().nullable(),       // "company-user-N" | null
-  licenseNumber: z.string().optional().nullable(),
-  licenseType: z.string().optional().nullable(),
-  licenseExpiry: z.string().optional().nullable(), // ISO date "YYYY-MM-DD"
-  licensePoints: z.number().int().min(0).optional(),
+  licenseNumber: validators.digits10Optional,
+  licenseType: z.enum(['A', 'B', 'C', 'D', 'E', 'F']).optional().nullable(),
+  licenseExpiry: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional().nullable(),
+  licensePoints: z.number().int().min(0).max(30).optional(),
   status: z.enum(['Activo', 'Inactivo']).default('Activo'),
-  notes: z.string().optional().nullable(),
-  photoUrl: z.string().optional().nullable(),
+  notes: validators.longTextOptional,
+  photoUrl: z.string().max(2_000_000).optional().nullable(), // ~1.5 MB base64
 });
 
 const updateDriverSchema = createDriverSchema.partial();
@@ -294,15 +295,15 @@ function serializeDriver(d: typeof companyDrivers.$inferSelect, siteName?: strin
 // ─── Schemas reports ──────────────────────────────────────────────────────────
 
 const createReportSchema = z.object({
-  fuelLevel:     z.string().optional().nullable(),
-  oilLevel:      z.string().optional().nullable(),
-  vehicleFaults: z.string().min(1, 'Describe las novedades'),
+  fuelLevel:     z.enum(['1/4', '1/2', '3/4', 'Lleno']).optional().nullable(),
+  oilLevel:      z.enum(['Bajo', 'Medio', 'Alto']).optional().nullable(),
+  vehicleFaults: validators.longText,
   invoices: z.array(z.object({
-    receiptNumber: z.string(),
-    description:   z.string(),
-    fileUrl:       z.string().optional().nullable(),
-  })).default([]),
-  fileUrls: z.array(z.string()).default([]),
+    receiptNumber: safeString({ min: 1, max: 60, fieldLabel: 'Número de recibo' }),
+    description:   safeString({ min: 1, max: 200, fieldLabel: 'Descripción' }),
+    fileUrl:       z.string().max(2_000_000).optional().nullable(),
+  })).max(20).default([]),
+  fileUrls: z.array(z.string().max(2_000_000)).max(20).default([]),
 });
 
 // ─── GET /company/:id/drivers/:driverId/reports ───────────────────────────────

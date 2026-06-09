@@ -113,10 +113,28 @@ function createEmptyForm(defaultSite: string): UserFormState {
 function validateForm(form: UserFormState): UserFormErrors {
   const errors: UserFormErrors = {};
   if (!form.email.trim())    errors.email    = "El correo es obligatorio.";
+  else if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(form.email.trim())) errors.email = "Formato de correo inválido.";
   if (!form.username.trim()) errors.username = "El usuario es obligatorio.";
+  else if (form.username.length < 3) errors.username = "Mínimo 3 caracteres.";
+  else if (form.username.length > 40) errors.username = "Máximo 40 caracteres.";
+  else if (!/^[a-zA-Z0-9_.-]+$/.test(form.username)) errors.username = "Solo letras, números, guion, guion bajo y punto.";
   if (!form.password.trim()) errors.password = "La contraseña es obligatoria.";
-  if (form.password && form.password.length < 8) errors.password = "Mínimo 8 caracteres.";
+  else if (form.password.length < 8) errors.password = "Mínimo 8 caracteres.";
+  else if (form.password.length > 128) errors.password = "Máximo 128 caracteres.";
   if (!form.fullName.trim()) errors.fullName = "El nombre es obligatorio.";
+  else if (form.fullName.trim().length < 2) errors.fullName = "Mínimo 2 caracteres.";
+  else if (form.fullName.trim().length > 80) errors.fullName = "Máximo 80 caracteres.";
+  else if (/\d/.test(form.fullName)) errors.fullName = "El nombre no puede contener números.";
+  if (form.lastName && form.lastName.trim()) {
+    if (form.lastName.trim().length > 80) errors.lastName = "Máximo 80 caracteres.";
+    else if (/\d/.test(form.lastName)) errors.lastName = "El apellido no puede contener números.";
+  }
+  if (form.documentNumber && form.documentNumber.trim()) {
+    if (!/^\d{10}$/.test(form.documentNumber)) errors.documentNumber = "La cédula debe tener exactamente 10 dígitos.";
+  }
+  if (form.phone && form.phone.trim()) {
+    if (!/^\d{10}$/.test(form.phone)) errors.phone = "El teléfono debe tener exactamente 10 dígitos.";
+  }
   if (!form.role)            errors.role     = "El rol es obligatorio.";
   return errors;
 }
@@ -124,9 +142,29 @@ function validateForm(form: UserFormState): UserFormErrors {
 function validateEditForm(form: UserFormState): UserFormErrors {
   const errors: UserFormErrors = {};
   if (!form.email.trim())    errors.email    = "El correo es obligatorio.";
+  else if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(form.email.trim())) errors.email = "Formato de correo inválido.";
   if (!form.username.trim()) errors.username = "El usuario es obligatorio.";
-  if (form.password && form.password.length < 8) errors.password = "Mínimo 8 caracteres.";
+  else if (form.username.length < 3) errors.username = "Mínimo 3 caracteres.";
+  else if (form.username.length > 40) errors.username = "Máximo 40 caracteres.";
+  else if (!/^[a-zA-Z0-9_.-]+$/.test(form.username)) errors.username = "Solo letras, números, guion, guion bajo y punto.";
+  if (form.password && form.password.length > 0) {
+    if (form.password.length < 8) errors.password = "Mínimo 8 caracteres.";
+    else if (form.password.length > 128) errors.password = "Máximo 128 caracteres.";
+  }
   if (!form.fullName.trim()) errors.fullName = "El nombre es obligatorio.";
+  else if (form.fullName.trim().length < 2) errors.fullName = "Mínimo 2 caracteres.";
+  else if (form.fullName.trim().length > 80) errors.fullName = "Máximo 80 caracteres.";
+  else if (/\d/.test(form.fullName)) errors.fullName = "El nombre no puede contener números.";
+  if (form.lastName && form.lastName.trim()) {
+    if (form.lastName.trim().length > 80) errors.lastName = "Máximo 80 caracteres.";
+    else if (/\d/.test(form.lastName)) errors.lastName = "El apellido no puede contener números.";
+  }
+  if (form.documentNumber && form.documentNumber.trim()) {
+    if (!/^\d{10}$/.test(form.documentNumber)) errors.documentNumber = "La cédula debe tener exactamente 10 dígitos.";
+  }
+  if (form.phone && form.phone.trim()) {
+    if (!/^\d{10}$/.test(form.phone)) errors.phone = "El teléfono debe tener exactamente 10 dígitos.";
+  }
   if (!form.role)            errors.role     = "El rol es obligatorio.";
   return errors;
 }
@@ -593,32 +631,40 @@ function UserFormModal({
                         <input
                           className={inputCls}
                           placeholder="Nombres completos"
+                          maxLength={80}
                           value={form.fullName}
+                          onKeyDown={(e) => { if (/\d/.test(e.key)) e.preventDefault(); }}
                           onChange={(e) => set("fullName", e.target.value)}
                         />
                       </FormField>
-                      <FormField label="Apellidos">
+                      <FormField label="Apellidos" error={errors.lastName}>
                         <input
                           className={inputCls}
                           placeholder="Apellidos"
+                          maxLength={80}
                           value={form.lastName}
+                          onKeyDown={(e) => { if (/\d/.test(e.key)) e.preventDefault(); }}
                           onChange={(e) => set("lastName", e.target.value)}
                         />
                       </FormField>
-                      <FormField label="Documento de identidad">
+                      <FormField label="Documento de identidad" error={errors.documentNumber}>
                         <input
                           className={inputCls}
-                          placeholder="Cédula / DNI"
+                          placeholder="Cédula / DNI (10 dígitos)"
+                          maxLength={10}
                           value={form.documentNumber}
-                          onChange={(e) => set("documentNumber", e.target.value)}
+                          onKeyDown={(e) => { if (!/[0-9]/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key)) e.preventDefault(); }}
+                          onChange={(e) => set("documentNumber", e.target.value.replace(/\D/g, '').slice(0, 10))}
                         />
                       </FormField>
-                      <FormField label="Teléfono">
+                      <FormField label="Teléfono" error={errors.phone}>
                         <input
                           className={inputCls}
-                          placeholder="Número de contacto"
+                          placeholder="Número de contacto (10 dígitos)"
+                          maxLength={10}
                           value={form.phone}
-                          onChange={(e) => set("phone", e.target.value)}
+                          onKeyDown={(e) => { if (!/[0-9]/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key)) e.preventDefault(); }}
+                          onChange={(e) => set("phone", e.target.value.replace(/\D/g, '').slice(0, 10))}
                         />
                       </FormField>
                     </div>
@@ -685,8 +731,9 @@ function UserFormModal({
                           type="email"
                           className={inputCls}
                           placeholder="correo@empresa.com"
+                          maxLength={120}
                           value={form.email}
-                          onChange={(e) => set("email", e.target.value)}
+                          onChange={(e) => set("email", e.target.value.toLowerCase().trim())}
                         />
                       </FormField>
                       <FormField
@@ -697,10 +744,11 @@ function UserFormModal({
                         <input
                           className={inputCls}
                           placeholder="nombre de usuario"
+                          maxLength={40}
                           value={form.username}
                           onChange={(e) => {
                             setUsernameTouched(true);
-                            set("username", e.target.value.toLowerCase().replace(/\s/g, ""));
+                            set("username", e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''));
                           }}
                         />
                       </FormField>
@@ -713,6 +761,7 @@ function UserFormModal({
                           type="password"
                           className={inputCls}
                           placeholder={user ? "Dejar vacío para mantener" : "Mínimo 8 caracteres"}
+                          maxLength={128}
                           value={form.password}
                           onChange={(e) => set("password", e.target.value)}
                         />

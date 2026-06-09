@@ -7,6 +7,7 @@ import { hashPassword, verifyPassword } from '../../services/auth.service';
 import { logAudit } from '../../lib/audit';
 import { toId, parseId } from '../../lib/ids';
 import { AppError, NotFoundError } from '../../lib/errors';
+import { validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
@@ -29,23 +30,24 @@ function getJwtIdentity(req: Express.Request): { userId: number; companyId: numb
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const updateProfileSchema = z.object({
-  firstName : z.string().min(1).max(80).optional(),
-  lastName  : z.string().min(1).max(80).optional(),
-  username  : z.string().min(3).max(80).optional(),
+  firstName : validators.nameOptional,
+  lastName  : validators.nameOptional,
+  username  : z.string().trim().min(3, 'Mín. 3 caracteres').max(40)
+                 .regex(/^[a-zA-Z0-9_.-]+$/, 'Solo letras, números, guion, guion bajo y punto').optional(),
   // photoUrl: columna real — puede ser data-URI (base64) o URL externa, o null para eliminar
-  photoUrl  : z.string().max(5_000_000).nullable().optional(),  // ~3.75 MB en base64
+  photoUrl  : z.string().max(2_000_000).nullable().optional(),  // ~1.5 MB en base64
   // avatarUrl legado en profileData — se sigue aceptando por compatibilidad
   avatarUrl : z.string().max(2048).optional(),
-  phone     : z.string().max(30).optional(),
+  phone     : validators.phoneOptional,
   timezone  : z.string().max(60).optional(),
   language  : z.string().max(10).optional(),
 });
 
 const changePasswordSchema = z
   .object({
-    currentPassword : z.string().min(1, 'Ingresa tu contraseña actual.'),
-    newPassword     : z.string().min(8, 'La nueva contraseña debe tener al menos 8 caracteres.'),
-    confirmPassword : z.string().min(1, 'Confirma la nueva contraseña.'),
+    currentPassword : z.string().min(1, 'Ingresa tu contraseña actual.').max(128),
+    newPassword     : z.string().min(8, 'La nueva contraseña debe tener al menos 8 caracteres.').max(128),
+    confirmPassword : z.string().min(1, 'Confirma la nueva contraseña.').max(128),
   })
   .refine((d) => d.newPassword === d.confirmPassword, {
     message : 'Las contraseñas no coinciden.',

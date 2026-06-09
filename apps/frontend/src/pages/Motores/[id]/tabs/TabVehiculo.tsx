@@ -9,6 +9,7 @@ import ModalSeguros from '../modals/ModalSeguros';
 import ModalConductor from '../modals/ModalConductor';
 import ModalNotas from '../modals/ModalNotas';
 import ModalConfigVehiculo from '../modals/ModalConfigVehiculo';
+import { usePermissions } from "../../../../hooks/usePermissions";
 
 type Props = {
   data: CockpitData;
@@ -97,6 +98,8 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
   const [modal, setModal] = useState<'mantenimiento' | 'seguros' | 'conductor' | 'notas' | 'config' | null>(null);
   const [detailTab, setDetailTab] = useState<'vehiculo' | 'mantenimientos'>('vehiculo');
   const [toggling, setToggling] = useState(false);
+  const { can } = usePermissions();
+  const canEdit   = can("motores", "lista_motores", "editar");
 
   const a = data.asset;
   const photo = a.photoUrls?.[0];
@@ -228,20 +231,22 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
           )}
 
           {/* Settings button — top right corner of photo */}
-          <button
-            onClick={() => setModal('config')}
-            style={{
-              position: 'absolute', top: 14, right: 14,
-              background: 'rgba(0,0,0,0.45)',
-              backdropFilter: 'blur(8px)',
-              border: 'none', borderRadius: '10px',
-              width: 34, height: 34,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              cursor: 'pointer', color: '#fff',
-            }}
-          >
-            <IconSettings />
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => setModal('config')}
+              style={{
+                position: 'absolute', top: 14, right: 14,
+                background: 'rgba(0,0,0,0.45)',
+                backdropFilter: 'blur(8px)',
+                border: 'none', borderRadius: '10px',
+                width: 34, height: 34,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer', color: '#fff',
+              }}
+            >
+              <IconSettings />
+            </button>
+          )}
         </div>
 
         {/* ── RIGHT: Details panel ─────────────────────────────────────────── */}

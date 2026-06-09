@@ -10,20 +10,21 @@ import { requireSupervisor } from '../../middlewares/requireSupervisor';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { safeString, validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
 const createInventorySchema = z.object({
-  code: z.string().min(1, 'El código es requerido'),
-  name: z.string().min(1, 'El nombre es requerido'),
-  category: z.string().optional().nullable(),
-  stock: z.number().nonnegative().optional().nullable(),
-  minStock: z.number().nonnegative().optional().nullable(),
-  location: z.string().optional().nullable(),
-  unit: z.string().optional().nullable(),
-  notes: z.string().optional().nullable(),
+  code: z.string().trim().min(1, 'El código es requerido').max(40),
+  name: safeString({ min: 2, max: 120, fieldLabel: 'Nombre', allowEmpty: false }),
+  category: safeString({ max: 80, fieldLabel: 'Categoría', allowEmpty: true }).nullable().optional(),
+  stock: z.number().nonnegative().max(1_000_000).optional().nullable(),
+  minStock: z.number().nonnegative().max(1_000_000).optional().nullable(),
+  location: safeString({ max: 120, fieldLabel: 'Ubicación', allowEmpty: true }).nullable().optional(),
+  unit: z.string().max(20).optional().nullable(),
+  notes: validators.longTextOptional,
 });
 
 const updateInventorySchema = createInventorySchema.partial();

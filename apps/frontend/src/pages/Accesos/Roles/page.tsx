@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { Plus, X, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { usePermissions } from "@/hooks/usePermissions";
 import {
@@ -14,6 +15,7 @@ import {
 
 const ALL_ACTIONS: ActionKey[] = ["ver", "crear", "editar", "eliminar"];
 const STORAGE_KEY = "aplismart_role_permissions";
+const CUSTOM_ROLES_STORAGE_KEY = "aplismart_custom_roles_v1";
 
 const ACTION_CONFIG: Record<ActionKey, { label: string; color: string; ring: string; dot: string }> = {
   ver:      { label: "Ver",      color: "bg-blue-500/10 text-blue-600 dark:text-blue-400",                 ring: "ring-blue-500/30",    dot: "bg-blue-500"    },
@@ -51,6 +53,22 @@ const COMPANY_ROLES: Array<{
     countCls: "bg-white/20 text-white",
   },
 ];
+
+// Paletas disponibles para roles personalizados
+const CUSTOM_ROLE_PALETTES: Array<{ name: string; activeCls: string; countCls: string }> = [
+  { name: "Esmeralda", activeCls: "bg-emerald-600 text-white border-emerald-600 shadow-sm", countCls: "bg-white/20 text-white" },
+  { name: "Rosa",      activeCls: "bg-pink-600 text-white border-pink-600 shadow-sm",       countCls: "bg-white/20 text-white" },
+  { name: "Púrpura",   activeCls: "bg-purple-600 text-white border-purple-600 shadow-sm",   countCls: "bg-white/20 text-white" },
+  { name: "Naranja",   activeCls: "bg-orange-600 text-white border-orange-600 shadow-sm",   countCls: "bg-white/20 text-white" },
+  { name: "Indigo",    activeCls: "bg-indigo-600 text-white border-indigo-600 shadow-sm",    countCls: "bg-white/20 text-white" },
+];
+
+type CustomRoleDef = {
+  key: string;
+  label: string;
+  description: string;
+  palette: string; // nombre de la paleta
+};
 
 const PLATFORM_ROLES = [
   { key: "owner_empresa", label: "Propietario" },
@@ -97,6 +115,19 @@ function saveStored(data: Record<string, PermissionMap>) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch { /* silent */ }
 }
 
+function loadCustomRoles(): CustomRoleDef[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_ROLES_STORAGE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+
+function saveCustomRoles(roles: CustomRoleDef[]) {
+  try { localStorage.setItem(CUSTOM_ROLES_STORAGE_KEY, JSON.stringify(roles)); } catch { /* silent */ }
+}
+
 function getPerms(roleKey: string, stored: Record<string, PermissionMap>): PermissionMap {
   return stored[roleKey] ?? DEFAULT_PERMISSIONS[roleKey] ?? {};
 }
@@ -105,6 +136,16 @@ function countPerms(p: PermissionMap): number {
   return Object.values(p).reduce(
     (a, subs) => a + Object.values(subs).reduce((b, acts) => b + acts.length, 0), 0,
   );
+}
+
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
 }
 
 // ─── Toggle Switch ────────────────────────────────────────────────────────────
@@ -203,17 +244,37 @@ export function RolesPage() {
   const canManage = can("accesos", "accesos", "editar");
 
   const [stored, setStored]             = useState<Record<string, PermissionMap>>({});
+  const [customRoles, setCustomRoles]   = useState<CustomRoleDef[]>([]);
   const [selectedRole, setSelectedRole] = useState<string>(COMPANY_ROLES[0].key);
   const [permissions, setPermissions]   = useState<PermissionMap>({});
   const [dirty, setDirty]               = useState(false);
   const [saving, setSaving]             = useState(false);
+  const [showNewRoleModal, setShowNewRoleModal] = useState(false);
 
   useEffect(() => {
     const data = loadStored();
+    const customs = loadCustomRoles();
     setStored(data);
+    setCustomRoles(customs);
     setPermissions(getPerms(COMPANY_ROLES[0].key, data));
     setDirty(false);
   }, []);
+
+  // Lista unificada de roles (default + custom)
+  const allCompanyRoles = [
+    ...COMPANY_ROLES,
+    ...customRoles.map((cr) => {
+      const palette = CUSTOM_ROLE_PALETTES.find((p) => p.name === cr.palette) ?? CUSTOM_ROLE_PALETTES[0];
+      return {
+        key: cr.key,
+        label: cr.label,
+        description: cr.description,
+        activeCls: palette.activeCls,
+        countCls: palette.countCls,
+        isCustom: true,
+      };
+    }),
+  ];
 
   const handleSelectRole = (roleKey: string) => {
     setSelectedRole(roleKey);
@@ -264,8 +325,9 @@ export function RolesPage() {
     saveStored(next);
     setDirty(false);
     setSaving(false);
+    const roleLabel = allCompanyRoles.find((r) => r.key === selectedRole)?.label ?? selectedRole;
     toast.success("Plantilla guardada", {
-      description: `Permisos de "${COMPANY_ROLES.find((r) => r.key === selectedRole)?.label}" actualizados.`,
+      description: `Permisos de "${roleLabel}" actualizados.`,
     });
   };
 
@@ -275,7 +337,64 @@ export function RolesPage() {
     setDirty(true);
   };
 
-  const activeRole = COMPANY_ROLES.find((r) => r.key === selectedRole);
+  const handleCreateRole = (def: { label: string; description: string; sourceKey: string; palette: string }) => {
+    if (!canManage) return;
+    // Generar key única
+    let key = slugify(def.label) || `rol_${Date.now()}`;
+    const existingKeys = new Set([
+      ...COMPANY_ROLES.map((r) => r.key),
+      ...customRoles.map((r) => r.key),
+    ]);
+    let suffix = 1;
+    while (existingKeys.has(key)) {
+      key = `${slugify(def.label) || "rol"}_${suffix++}`;
+    }
+    const newRole: CustomRoleDef = {
+      key,
+      label: def.label.trim(),
+      description: def.description.trim(),
+      palette: def.palette,
+    };
+    const next = [...customRoles, newRole];
+    setCustomRoles(next);
+    saveCustomRoles(next);
+    // Sembrar permisos desde la fuente
+    const seed = getPerms(def.sourceKey, stored);
+    const newStored = { ...stored, [key]: seed };
+    setStored(newStored);
+    saveStored(newStored);
+    setSelectedRole(key);
+    setPermissions(seed);
+    setDirty(false);
+    setShowNewRoleModal(false);
+    toast.success("Rol creado", {
+      description: `"${newRole.label}" se agregó a las plantillas.`,
+    });
+  };
+
+  const handleDeleteRole = (roleKey: string) => {
+    if (!canManage) return;
+    const role = customRoles.find((r) => r.key === roleKey);
+    if (!role) return;
+    if (!confirm(`¿Eliminar la plantilla "${role.label}"? Los permisos asignados a usuarios con este rol no se verán afectados.`)) return;
+    const next = customRoles.filter((r) => r.key !== roleKey);
+    setCustomRoles(next);
+    saveCustomRoles(next);
+    // Limpiar permisos del rol eliminado
+    const { [roleKey]: _, ...rest } = stored;
+    setStored(rest);
+    saveStored(rest);
+    if (selectedRole === roleKey) {
+      setSelectedRole(COMPANY_ROLES[0].key);
+      setPermissions(getPerms(COMPANY_ROLES[0].key, rest));
+      setDirty(false);
+    }
+    toast.success("Plantilla eliminada", {
+      description: `"${role.label}" se quitó de la lista.`,
+    });
+  };
+
+  const activeRole = allCompanyRoles.find((r) => r.key === selectedRole);
   const totalPerms = countPerms(permissions);
 
   return (
@@ -300,36 +419,61 @@ export function RolesPage() {
             Rol
           </span>
 
-          {/* Editable role chips */}
+          {/* Editable role chips (default + custom) */}
           <div className="flex gap-2 flex-wrap">
-            {COMPANY_ROLES.map((role) => {
+            {allCompanyRoles.map((role) => {
               const isActive = selectedRole === role.key;
               const count    = countPerms(getPerms(role.key, stored));
               return (
-                <motion.button
-                  key={role.key}
-                  type="button"
-                  onClick={() => handleSelectRole(role.key)}
-                  whileTap={{ scale: 0.94 }}
-                  className={[
-                    "inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-all duration-200",
-                    isActive
-                      ? role.activeCls
-                      : "border-gray-200 dark:border-white/[0.08] text-gray-600 dark:text-gray-400 bg-transparent hover:bg-gray-50 dark:hover:bg-white/[0.04]",
-                  ].join(" ")}
-                >
-                  {role.label}
-                  {count > 0 && (
-                    <span className={[
-                      "text-[10px] font-bold tabular-nums rounded-full px-1.5 py-0.5 leading-none",
-                      isActive ? role.countCls : "bg-gray-100 dark:bg-white/[0.08] text-gray-500 dark:text-gray-400",
-                    ].join(" ")}>
-                      {count}
-                    </span>
-                  )}
-                </motion.button>
+                <div key={role.key} className="relative group">
+                  <motion.button
+                    type="button"
+                    onClick={() => handleSelectRole(role.key)}
+                    whileTap={{ scale: 0.94 }}
+                    className={[
+                      "inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-all duration-200",
+                      isActive
+                        ? role.activeCls
+                        : "border-gray-200 dark:border-white/[0.08] text-gray-600 dark:text-gray-400 bg-transparent hover:bg-gray-50 dark:hover:bg-white/[0.04]",
+                    ].join(" ")}
+                  >
+                    {role.label}
+                    {count > 0 && (
+                      <span className={[
+                        "text-[10px] font-bold tabular-nums rounded-full px-1.5 py-0.5 leading-none",
+                        isActive ? role.countCls : "bg-gray-100 dark:bg-white/[0.08] text-gray-500 dark:text-gray-400",
+                      ].join(" ")}>
+                        {count}
+                      </span>
+                    )}
+                    {(role as any).isCustom && canManage && (
+                      <span
+                        role="button"
+                        tabIndex={-1}
+                        onClick={(e) => { e.stopPropagation(); handleDeleteRole(role.key); }}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleDeleteRole(role.key); }}}
+                        className="ml-0.5 -mr-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-black/15 hover:bg-red-500 hover:text-white cursor-pointer transition-colors"
+                        title="Eliminar plantilla"
+                      >
+                        <X size={9} strokeWidth={3} />
+                      </span>
+                    )}
+                  </motion.button>
+                </div>
               );
             })}
+
+            {/* Botón "+ Nuevo rol" */}
+            {canManage && (
+              <button
+                type="button"
+                onClick={() => setShowNewRoleModal(true)}
+                className="inline-flex items-center gap-1 rounded-full border border-dashed border-gray-300 dark:border-white/[0.12] px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:border-blue-400 dark:hover:border-blue-500/50 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/5 transition-all"
+              >
+                <Plus size={13} />
+                Nuevo rol
+              </button>
+            )}
           </div>
 
           <div className="h-5 w-px bg-gray-200 dark:bg-white/[0.08] shrink-0" />
@@ -562,6 +706,187 @@ export function RolesPage() {
           Solo administradores pueden modificar las plantillas de permisos.
         </div>
       )}
+
+      {/* ── New role modal ── */}
+      <NewRoleModal
+        open={showNewRoleModal}
+        onClose={() => setShowNewRoleModal(false)}
+        existingCount={allCompanyRoles.length}
+        defaultSourceKey={COMPANY_ROLES[0].key}
+        onCreate={handleCreateRole}
+      />
     </div>
+  );
+}
+
+// ─── New Role Modal ─────────────────────────────────────────────────────────
+
+function NewRoleModal({
+  open, onClose, existingCount, defaultSourceKey, onCreate,
+}: {
+  open: boolean;
+  onClose: () => void;
+  existingCount: number;
+  defaultSourceKey: string;
+  onCreate: (def: { label: string; description: string; sourceKey: string; palette: string }) => void;
+}) {
+  const [label, setLabel]         = useState("");
+  const [description, setDescription] = useState("");
+  const [sourceKey, setSourceKey] = useState(defaultSourceKey);
+  const [palette, setPalette]     = useState(CUSTOM_ROLE_PALETTES[0].name);
+  const [touched, setTouched]     = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setLabel("");
+      setDescription("");
+      setSourceKey(defaultSourceKey);
+      setPalette(CUSTOM_ROLE_PALETTES[0].name);
+      setTouched(false);
+    }
+  }, [open, defaultSourceKey]);
+
+  const trimmed = label.trim();
+  const isValid = trimmed.length >= 2 && trimmed.length <= 60;
+  const willShowError = touched && !isValid;
+
+  const handleSubmit = () => {
+    setTouched(true);
+    if (!isValid) return;
+    onCreate({ label: trimmed, description: description.trim(), sourceKey, palette });
+  };
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
+            onClick={onClose}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 12 }}
+            transition={{ type: "spring", stiffness: 380, damping: 30 }}
+            className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2"
+          >
+            <div className="rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-white/[0.06]">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500">Nueva plantilla</p>
+                  <h2 className="mt-0.5 text-base font-semibold text-gray-800 dark:text-white">Crear rol personalizado</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              <div className="px-5 py-4 space-y-3.5">
+                <div>
+                  <label className="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
+                    Nombre del rol *
+                  </label>
+                  <input
+                    type="text"
+                    value={label}
+                    maxLength={60}
+                    onChange={(e) => setLabel(e.target.value.slice(0, 60))}
+                    placeholder="Ej. Mecánico líder"
+                    autoFocus
+                    onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+                    className="w-full h-10 px-3 rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition"
+                  />
+                  {willShowError && (
+                    <p className="mt-1 text-xs text-rose-500">El nombre debe tener entre 2 y 60 caracteres.</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
+                    Descripción
+                  </label>
+                  <textarea
+                    value={description}
+                    maxLength={250}
+                    onChange={(e) => setDescription(e.target.value.slice(0, 250))}
+                    placeholder="Responsabilidades o alcance del rol (opcional)"
+                    rows={2}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition resize-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
+                      Copiar permisos de
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={sourceKey}
+                        onChange={(e) => setSourceKey(e.target.value)}
+                        className="w-full h-10 px-3 pr-8 rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] text-sm text-gray-800 dark:text-white focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 appearance-none transition"
+                      >
+                        {COMPANY_ROLES.map((r) => (
+                          <option key={r.key} value={r.key}>{r.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
+                      Color
+                    </label>
+                    <div className="flex gap-1.5">
+                      {CUSTOM_ROLE_PALETTES.map((p) => (
+                        <button
+                          key={p.name}
+                          type="button"
+                          onClick={() => setPalette(p.name)}
+                          className={`h-10 flex-1 rounded-lg ${p.activeCls} text-[10px] font-semibold uppercase tracking-wider ring-2 ${palette === p.name ? "ring-blue-500" : "ring-transparent hover:ring-gray-300 dark:hover:ring-white/20"} transition`}
+                          title={p.name}
+                        >
+                          {p.name.slice(0, 1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-gray-400 dark:text-gray-500">
+                  Se creará la plantilla <code className="px-1 py-0.5 rounded bg-gray-100 dark:bg-white/[0.06]">{slugify(label) || "rol"}</code> con {existingCount + 1}º orden en la lista.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 px-5 py-3.5 border-t border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02]">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-lg border border-gray-200 dark:border-white/[0.08] px-3.5 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.04] transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={!isValid}
+                  className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-1.5 text-sm font-medium text-white transition"
+                >
+                  Crear plantilla
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
   );
 }

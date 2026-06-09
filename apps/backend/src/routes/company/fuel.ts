@@ -10,6 +10,7 @@ import { requireSupervisor } from '../../middlewares/requireSupervisor';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { safeString, validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
@@ -18,13 +19,13 @@ const router = Router({ mergeParams: true });
 const createFuelSchema = z.object({
   assetId: z.string().min(1, 'El activo es requerido'),
   driverId: z.string().optional().nullable(),
-  date: z.string().min(1, 'La fecha es requerida'),
-  liters: z.number().positive('Los litros deben ser mayores a 0'),
-  cost: z.number().nonnegative().optional().nullable(),
-  odometer: z.number().nonnegative().optional().nullable(),
-  station: z.string().optional().nullable(),
-  fuelType: z.string().optional().nullable(),
-  notes: z.string().optional().nullable(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)'),
+  liters: z.number().positive('Los litros deben ser mayores a 0').max(100_000),
+  cost: z.number().nonnegative().max(10_000_000).optional().nullable(),
+  odometer: z.number().nonnegative().max(10_000_000).optional().nullable(),
+  station: safeString({ max: 120, fieldLabel: 'Estación', allowEmpty: true }).nullable().optional(),
+  fuelType: z.enum(['Diesel', 'Gasolina', 'Electrico', 'Hibrido']).optional().nullable(),
+  notes: validators.longTextOptional,
 });
 
 const updateFuelSchema = createFuelSchema.partial();

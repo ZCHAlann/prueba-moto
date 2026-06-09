@@ -597,14 +597,21 @@ export function FuelPage() {
 
                     <div>
                       <label className={labelCls}>Estación de servicio</label>
-                      <input type="text" value={form.station} onChange={(e) => setForm((f) => ({ ...f, station: e.target.value }))} placeholder="Ej. Petroecuador El Recreo" className={inputCls} required />
+                      <input type="text" value={form.station} maxLength={120}
+                        onChange={(e) => setForm((f) => ({ ...f, station: e.target.value.slice(0, 120) }))}
+                        placeholder="Ej. Petroecuador El Recreo" className={inputCls} required />
                     </div>
 
                     <div>
                       <label className={labelCls}>Litros cargados</label>
                       <div className="relative">
                         <Droplets size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input type="number" min={0} step={0.01} value={form.liters || ""} onChange={(e) => setForm((f) => ({ ...f, liters: Number(e.target.value) }))} placeholder="0.00" className={`${inputCls} pl-9`} required />
+                        <input type="number" min={0} max={100000} step={0.01} value={form.liters || ""}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            setForm((f) => ({ ...f, liters: Number.isFinite(n) ? Math.max(0, Math.min(100000, n)) : 0 }));
+                          }}
+                          placeholder="0.00" className={`${inputCls} pl-9`} required />
                       </div>
                     </div>
 
@@ -612,7 +619,12 @@ export function FuelPage() {
                       <label className={labelCls}>Costo total (USD)</label>
                       <div className="relative">
                         <DollarSign size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input type="number" min={0} step={0.01} value={form.cost || ""} onChange={(e) => setForm((f) => ({ ...f, cost: Number(e.target.value) }))} placeholder="0.00" className={`${inputCls} pl-9`} required />
+                        <input type="number" min={0} max={10000000} step={0.01} value={form.cost || ""}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            setForm((f) => ({ ...f, cost: Number.isFinite(n) ? Math.max(0, Math.min(10000000, n)) : 0 }));
+                          }}
+                          placeholder="0.00" className={`${inputCls} pl-9`} required />
                       </div>
                     </div>
 
@@ -620,13 +632,21 @@ export function FuelPage() {
                       <label className={labelCls}>Lectura de odómetro / horómetro (km)</label>
                       <div className="relative">
                         <Gauge size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input type="number" min={0} value={form.odometer || ""} onChange={(e) => setForm((f) => ({ ...f, odometer: Number(e.target.value) }))} placeholder="0" className={`${inputCls} pl-9`} required />
+                        <input type="number" min={0} max={10000000} value={form.odometer || ""}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            setForm((f) => ({ ...f, odometer: Number.isFinite(n) ? Math.max(0, Math.min(10000000, n)) : 0 }));
+                          }}
+                          placeholder="0" className={`${inputCls} pl-9`} required />
                       </div>
                     </div>
 
                     <div className="sm:col-span-2">
                       <label className={labelCls}>Notas (opcional)</label>
-                      <textarea rows={2} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Observaciones adicionales…" className="w-full resize-none rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-700 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200 dark:placeholder:text-gray-500" />
+                      <textarea rows={2} value={form.notes} maxLength={2000}
+                        onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value.slice(0, 2000) }))}
+                        placeholder="Observaciones adicionales…"
+                        className="w-full resize-none rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-700 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200 dark:placeholder:text-gray-500" />
                     </div>
                   </div>
 

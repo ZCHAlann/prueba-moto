@@ -10,6 +10,7 @@ import { requireSupervisor } from '../../middlewares/requireSupervisor';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { safeString, validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
@@ -17,22 +18,23 @@ const router = Router({ mergeParams: true });
 
 const ALERT_SEVERITIES = ['Alta', 'Media', 'Baja'] as const;
 const ALERT_STATUSES = ['Abierta', 'En seguimiento', 'Cerrada'] as const;
+const ALERT_TYPES = ['Vencimiento', 'Mantenimiento', 'Documento', 'Manual'] as const;
 
 const createAlertSchema = z.object({
-  title: z.string().min(1, 'El título es requerido'),
-  type: z.string().optional().nullable(),
+  title: safeString({ min: 3, max: 200, fieldLabel: 'Título', allowEmpty: false }),
+  type: z.enum(ALERT_TYPES).optional().nullable(),
   severity: z.enum(ALERT_SEVERITIES).default('Media'),
   status: z.enum(ALERT_STATUSES).default('Abierta'),
   assetId: z.string().optional().nullable(),
-  dueDate: z.string().optional().nullable(),
-  notes: z.string().optional().nullable(),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional().nullable(),
+  notes: validators.longTextOptional,
 });
 
 const updateAlertSchema = createAlertSchema.partial();
 
 const patchStatusSchema = z.object({
   status: z.enum(ALERT_STATUSES),
-  notes: z.string().optional().nullable(),
+  notes: validators.longTextOptional,
 });
 
 // ─── GET /company/:id/alerts ──────────────────────────────────────────────────

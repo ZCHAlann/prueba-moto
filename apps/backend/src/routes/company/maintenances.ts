@@ -10,6 +10,7 @@ import { requireSupervisor } from '../../middlewares/requireSupervisor';
 import { NotFoundError, AppError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { safeString, validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
@@ -19,30 +20,32 @@ const MAINTENANCE_KINDS = ['Preventivo', 'Correctivo', 'Predictivo', 'Emergencia
 const MAINTENANCE_PRIORITIES = ['Normal', 'Alta', 'Emergente'] as const;
 const MAINTENANCE_STATUSES = ['Pendiente', 'En proceso', 'Completado'] as const;
 
+const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional().nullable();
+
 const createMaintenanceSchema = z.object({
-  assetId: z.string().min(1, 'El activo es requerido'),  // "asset-N"
-  title: z.string().min(1, 'El título es requerido'),
+  assetId: z.string().min(1, 'El activo es requerido'),
+  title: safeString({ min: 3, max: 200, fieldLabel: 'Título', allowEmpty: false }),
   kind: z.enum(MAINTENANCE_KINDS).optional(),
   priority: z.enum(MAINTENANCE_PRIORITIES).default('Normal'),
   status: z.enum(MAINTENANCE_STATUSES).default('Pendiente'),
-  scheduledDate: z.string().optional().nullable(),  // "YYYY-MM-DD"
-  dueDate: z.string().optional().nullable(),
+  scheduledDate: dateString,
+  dueDate: dateString,
   technician: z.string().optional().nullable(),
-  cost: z.number().nonnegative().optional().nullable(),
-  laborCost: z.number().nonnegative().optional().nullable(),
-  partsCost: z.number().nonnegative().optional().nullable(),
-  photoUrls: z.array(z.string()).default([]),
-  notes: z.string().optional().nullable(),
+  cost: z.number().nonnegative().max(1_000_000).optional().nullable(),
+  laborCost: z.number().nonnegative().max(1_000_000).optional().nullable(),
+  partsCost: z.number().nonnegative().max(1_000_000).optional().nullable(),
+  photoUrls: z.array(z.string().max(2_000_000)).max(20).default([]),
+  notes: validators.longTextOptional,
 });
 
 const updateMaintenanceSchema = createMaintenanceSchema.partial();
 
 const completeMaintenanceSchema = z.object({
-  completedDate: z.string().optional(), // "YYYY-MM-DD", default hoy
-  cost: z.number().nonnegative().optional().nullable(),
+  completedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional(),
+  cost: z.number().nonnegative().max(1_000_000).optional().nullable(),
   technician: z.string().optional().nullable(),
-  notes: z.string().optional().nullable(),
-  photoUrls: z.array(z.string()).optional(),
+  notes: validators.longTextOptional,
+  photoUrls: z.array(z.string().max(2_000_000)).max(20).optional(),
 });
 
 // ─── GET /company/:id/maintenances ────────────────────────────────────────────

@@ -306,17 +306,17 @@ function VehicleFormFields({ form, set, inputCls, selectCls, labelCls, spanCls }
         <div className="grid grid-cols-2 gap-3">
           <label className={labelCls}>
             <span className={spanCls}>Placa *</span>
-            <input className={inputCls} placeholder="Ej. ABC-1234" value={form.plate}
-              onChange={(e) => set("plate", e.target.value.toUpperCase())} />
+            <input className={inputCls} placeholder="Ej. ABC-1234" maxLength={8} value={form.plate}
+              onChange={(e) => set("plate", e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))} />
           </label>
           <label className={labelCls}>
             <span className={spanCls}>Código interno</span>
-            <input className={inputCls} placeholder="Ej. VH-001" value={form.code}
-              onChange={(e) => set("code", e.target.value)} />
+            <input className={inputCls} placeholder="Ej. VH-001" maxLength={40} value={form.code}
+              onChange={(e) => set("code", e.target.value.toUpperCase())} />
           </label>
           <label className={`${labelCls} col-span-2`}>
             <span className={spanCls}>Nombre / descripción</span>
-            <input className={inputCls} placeholder="Ej. Camioneta de reparto Guayaquil" value={form.name}
+            <input className={inputCls} placeholder="Ej. Camioneta de reparto Guayaquil" maxLength={120} value={form.name}
               onChange={(e) => set("name", e.target.value)} />
           </label>
         </div>
@@ -338,8 +338,9 @@ function VehicleFormFields({ form, set, inputCls, selectCls, labelCls, spanCls }
           </label>
           <label className={labelCls}>
             <span className={spanCls}>Año</span>
-            <input className={inputCls} placeholder="2022" value={form.year}
-              onChange={(e) => set("year", e.target.value)} />
+            <input className={inputCls} placeholder="2022" maxLength={4} value={form.year}
+              onKeyDown={(e) => { if (!/[0-9]/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key)) e.preventDefault(); }}
+              onChange={(e) => set("year", e.target.value.replace(/\D/g, '').slice(0, 4))} />
           </label>
           <label className={labelCls}>
             <span className={spanCls}>N° chasis / serie</span>
@@ -451,6 +452,20 @@ function CreateVehicleModal({ onClose, onCreated }: { onClose: () => void; onCre
 
   const handleSubmit = async () => {
     if (!form.plate.trim() && !form.name.trim()) { toast.error("Completá al menos la placa o el nombre"); return; }
+    // Validación de placa (si está llena)
+    if (form.plate.trim() && !/^[A-Z]{3}-?\d{3,4}$/.test(form.plate.trim().toUpperCase())) {
+      toast.error("Formato de placa inválido", { description: "Use el formato ABC-1234 o ABC1234." });
+      return;
+    }
+    // Validación de año
+    if (form.year.trim()) {
+      const y = Number(form.year);
+      const now = new Date().getFullYear();
+      if (!Number.isInteger(y) || y < 1900 || y > now + 1) {
+        toast.error("Año inválido", { description: `Use un año entre 1900 y ${now + 1}.` });
+        return;
+      }
+    }
     setSaving(true);
     const id = await createAsset(form);
     setSaving(false);

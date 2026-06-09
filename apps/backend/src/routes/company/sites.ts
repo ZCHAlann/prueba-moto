@@ -9,19 +9,20 @@ import { requireAdmin } from '../../middlewares/requireAdmin';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { safeString, validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
 const createSiteSchema = z.object({
-  code: z.string().min(1, 'El código es requerido'),
-  name: z.string().min(1, 'El nombre es requerido'),
-  city: z.string().optional(),
-  address: z.string().optional(),
-  contact: z.string().optional(),
+  code: z.string().trim().min(1, 'El código es requerido').max(40),
+  name: safeString({ min: 2, max: 120, fieldLabel: 'Nombre', allowEmpty: false }),
+  city: safeString({ min: 2, max: 100, fieldLabel: 'Ciudad', allowEmpty: false }),
+  address: safeString({ min: 5, max: 250, fieldLabel: 'Dirección', allowEmpty: false }),
+  contact: validators.phone,
   status: z.enum(['Activa', 'Inactiva']).default('Activa'),
-  notes: z.string().optional(),
+  notes: validators.longTextOptional,
 });
 
 const updateSiteSchema = createSiteSchema.partial();

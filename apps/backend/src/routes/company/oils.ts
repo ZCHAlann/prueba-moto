@@ -10,18 +10,21 @@ import { requireSupervisor } from '../../middlewares/requireSupervisor';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { safeString, validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
+const OIL_UNITS = ['gal', 'lt', 'ml', 'oz'] as const;
+
 const createOilSchema = z.object({
-  name: z.string().min(1, 'El nombre es requerido'),
-  brand: z.string().optional().nullable(),
-  viscosity: z.string().optional().nullable(),
-  application: z.string().optional().nullable(),
-  unit: z.string().optional().nullable(),
-  stock: z.number().nonnegative().optional().nullable(),
-  minStock: z.number().nonnegative().optional().nullable(),
-  notes: z.string().optional().nullable(),
+  name: safeString({ min: 2, max: 120, fieldLabel: 'Nombre', allowEmpty: false }),
+  brand: safeString({ max: 80, fieldLabel: 'Marca', allowEmpty: true }).nullable().optional(),
+  viscosity: safeString({ max: 40, fieldLabel: 'Viscosidad', allowEmpty: true }).nullable().optional(),
+  application: safeString({ max: 200, fieldLabel: 'Aplicación', allowEmpty: true }).nullable().optional(),
+  unit: z.enum(OIL_UNITS).optional().nullable(),
+  stock: z.number().nonnegative().max(1_000_000).optional().nullable(),
+  minStock: z.number().nonnegative().max(1_000_000).optional().nullable(),
+  notes: validators.longTextOptional,
 });
 
 const updateOilSchema = createOilSchema.partial();
@@ -44,8 +47,6 @@ router.get('/', requireModule('inventario'), async (req, res, next) => {
 
 // POST /company/:id/oils
 router.post('/', requireModule('inventario'), requireSupervisor, validate(createOilSchema), async (req, res, next) => {
-  console.log('user:', req.user);
-  console.log('companyId:', req.companyId);
     try {
       const companyId = req.companyId!;
       const body = req.body as z.infer<typeof createOilSchema>;

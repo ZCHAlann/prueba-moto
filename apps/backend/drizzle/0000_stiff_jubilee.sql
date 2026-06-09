@@ -42,8 +42,10 @@ CREATE TABLE "company_users" (
 	"role" varchar(40) NOT NULL,
 	"status" varchar(40) DEFAULT 'active' NOT NULL,
 	"profile_data" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"module_permissions" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"failed_login_attempts" integer DEFAULT 0,
 	"locked_until" timestamp,
+	"photo_url" text,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT "company_users_company_id_email" UNIQUE("company_id","email"),
@@ -184,10 +186,37 @@ CREATE TABLE "platform_users" (
 	"status" varchar(40) DEFAULT 'active' NOT NULL,
 	"failed_login_attempts" integer DEFAULT 0,
 	"locked_until" timestamp,
+	"photo_url" text,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT "platform_users_email_unique" UNIQUE("email"),
 	CONSTRAINT "platform_users_username_unique" UNIQUE("username")
+);
+--> statement-breakpoint
+CREATE TABLE "asset_notes" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"company_id" integer NOT NULL,
+	"asset_id" integer NOT NULL,
+	"author_id" integer,
+	"author_name" varchar(160),
+	"body" text NOT NULL,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "asset_routes" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"company_id" integer NOT NULL,
+	"asset_id" integer NOT NULL,
+	"driver_id" integer,
+	"date" date NOT NULL,
+	"origin" varchar(255),
+	"destination" varchar(255),
+	"distance_km" double precision,
+	"duration_min" integer,
+	"coordinates" jsonb DEFAULT '[]'::jsonb,
+	"notes" text,
+	"created_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "company_ac_refrigerant_logs" (
@@ -264,6 +293,7 @@ CREATE TABLE "company_assets" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"company_id" serial NOT NULL,
 	"site_id" integer,
+	"garage_id" integer,
 	"code" varchar(40) NOT NULL,
 	"name" varchar(160) NOT NULL,
 	"asset_type" "asset_type_enum",
@@ -284,6 +314,11 @@ CREATE TABLE "company_assets" (
 	"availability" "asset_availability_enum",
 	"observations" text,
 	"photo_urls" text[] DEFAULT '{}',
+	"engine_on" boolean DEFAULT false,
+	"locked" boolean DEFAULT false,
+	"last_lat" double precision,
+	"last_lng" double precision,
+	"last_gps_at" timestamp,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT "company_assets_company_id_code" UNIQUE("company_id","code")
@@ -299,6 +334,23 @@ CREATE TABLE "company_assignments" (
 	"status" varchar(40) DEFAULT 'Activa',
 	"notes" text,
 	"handover_url" text,
+	"acta_number" varchar(40),
+	"acta_date" date,
+	"acta_time" varchar(10),
+	"acta_place" varchar(160),
+	"acta_area" varchar(120),
+	"driver_dni" varchar(40),
+	"driver_phone" varchar(40),
+	"driver_role" varchar(120),
+	"vehicle_odometer" varchar(40),
+	"vehicle_fuel_level" varchar(40),
+	"vehicle_condition" varchar(80),
+	"novedades" jsonb DEFAULT '{}'::jsonb,
+	"accesorios" jsonb DEFAULT '{}'::jsonb,
+	"novedades_text" text,
+	"signature_log_url" text,
+	"signature_resp_url" text,
+	"vehicle_photo_urls" text[] DEFAULT '{}',
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
@@ -341,6 +393,20 @@ CREATE TABLE "company_checklists" (
 	"findings" text,
 	"items" jsonb DEFAULT '[]'::jsonb,
 	"photo_urls" text[] DEFAULT '{}',
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "company_driver_reports" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"company_id" serial NOT NULL,
+	"driver_id" serial NOT NULL,
+	"driver_name" varchar(160),
+	"fuel_level" varchar(20),
+	"oil_level" varchar(20),
+	"vehicle_faults" text,
+	"invoices" jsonb DEFAULT '[]'::jsonb,
+	"file_urls" text[] DEFAULT '{}',
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
@@ -411,6 +477,7 @@ CREATE TABLE "company_insurance_policies" (
 	"end_date" date NOT NULL,
 	"status" varchar(40) DEFAULT 'Vigente',
 	"notes" text,
+	"file_url" text,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
@@ -536,6 +603,12 @@ ALTER TABLE "platform_ticket_messages" ADD CONSTRAINT "platform_ticket_messages_
 ALTER TABLE "platform_tickets" ADD CONSTRAINT "platform_tickets_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "platform_tickets" ADD CONSTRAINT "platform_tickets_created_by_company_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."company_users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "platform_tickets" ADD CONSTRAINT "platform_tickets_assigned_to_platform_users_id_fk" FOREIGN KEY ("assigned_to") REFERENCES "public"."platform_users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "asset_notes" ADD CONSTRAINT "asset_notes_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "asset_notes" ADD CONSTRAINT "asset_notes_asset_id_company_assets_id_fk" FOREIGN KEY ("asset_id") REFERENCES "public"."company_assets"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "asset_notes" ADD CONSTRAINT "asset_notes_author_id_company_users_id_fk" FOREIGN KEY ("author_id") REFERENCES "public"."company_users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "asset_routes" ADD CONSTRAINT "asset_routes_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "asset_routes" ADD CONSTRAINT "asset_routes_asset_id_company_assets_id_fk" FOREIGN KEY ("asset_id") REFERENCES "public"."company_assets"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "asset_routes" ADD CONSTRAINT "asset_routes_driver_id_company_drivers_id_fk" FOREIGN KEY ("driver_id") REFERENCES "public"."company_drivers"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_ac_refrigerant_logs" ADD CONSTRAINT "company_ac_refrigerant_logs_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_ac_refrigerant_logs" ADD CONSTRAINT "company_ac_refrigerant_logs_unit_id_company_ac_units_id_fk" FOREIGN KEY ("unit_id") REFERENCES "public"."company_ac_units"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_ac_services" ADD CONSTRAINT "company_ac_services_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -546,6 +619,7 @@ ALTER TABLE "company_alerts" ADD CONSTRAINT "company_alerts_company_id_companies
 ALTER TABLE "company_alerts" ADD CONSTRAINT "company_alerts_asset_id_company_assets_id_fk" FOREIGN KEY ("asset_id") REFERENCES "public"."company_assets"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_assets" ADD CONSTRAINT "company_assets_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_assets" ADD CONSTRAINT "company_assets_site_id_company_sites_id_fk" FOREIGN KEY ("site_id") REFERENCES "public"."company_sites"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "company_assets" ADD CONSTRAINT "company_assets_garage_id_company_garages_id_fk" FOREIGN KEY ("garage_id") REFERENCES "public"."company_garages"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_assignments" ADD CONSTRAINT "company_assignments_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_assignments" ADD CONSTRAINT "company_assignments_asset_id_company_assets_id_fk" FOREIGN KEY ("asset_id") REFERENCES "public"."company_assets"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_assignments" ADD CONSTRAINT "company_assignments_driver_id_company_drivers_id_fk" FOREIGN KEY ("driver_id") REFERENCES "public"."company_drivers"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -556,6 +630,8 @@ ALTER TABLE "company_checklists" ADD CONSTRAINT "company_checklists_category_id_
 ALTER TABLE "company_checklists" ADD CONSTRAINT "company_checklists_asset_id_company_assets_id_fk" FOREIGN KEY ("asset_id") REFERENCES "public"."company_assets"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_checklists" ADD CONSTRAINT "company_checklists_driver_id_company_drivers_id_fk" FOREIGN KEY ("driver_id") REFERENCES "public"."company_drivers"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_checklists" ADD CONSTRAINT "company_checklists_inspector_id_company_users_id_fk" FOREIGN KEY ("inspector_id") REFERENCES "public"."company_users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "company_driver_reports" ADD CONSTRAINT "company_driver_reports_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "company_driver_reports" ADD CONSTRAINT "company_driver_reports_driver_id_company_drivers_id_fk" FOREIGN KEY ("driver_id") REFERENCES "public"."company_drivers"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_drivers" ADD CONSTRAINT "company_drivers_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_drivers" ADD CONSTRAINT "company_drivers_site_id_company_sites_id_fk" FOREIGN KEY ("site_id") REFERENCES "public"."company_sites"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_drivers" ADD CONSTRAINT "company_drivers_user_id_company_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."company_users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint

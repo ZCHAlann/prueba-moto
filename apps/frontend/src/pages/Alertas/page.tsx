@@ -314,8 +314,9 @@ function CreateDrawer({
                 <FieldLabel>Título</FieldLabel>
                 <input
                   value={form.title}
-                  onChange={e => { setForm(f => ({ ...f, title: e.target.value })); setErrors(er => ({ ...er, title: undefined })); }}
+                  onChange={e => { setForm(f => ({ ...f, title: e.target.value.slice(0, 200) })); setErrors(er => ({ ...er, title: undefined })); }}
                   placeholder="Ej. Vencimiento SOAT"
+                  maxLength={200}
                   className={`${inputCls} ${errors.title ? "border-error-300 focus:border-error-500 focus:ring-error-500/10" : ""}`}
                 />
                 {errors.title && <p className="mt-1 text-xs text-error-500">{errors.title}</p>}
@@ -383,9 +384,10 @@ function CreateDrawer({
                 <FieldLabel>Notas (opcional)</FieldLabel>
                 <textarea
                   value={form.notes}
-                  onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                  onChange={e => setForm(f => ({ ...f, notes: e.target.value.slice(0, 2000) }))}
                   placeholder="Detalle adicional sobre esta alerta…"
                   rows={4}
+                  maxLength={2000}
                   className={`${inputCls} resize-none`}
                 />
               </div>

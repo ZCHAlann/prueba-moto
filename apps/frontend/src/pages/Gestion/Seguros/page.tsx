@@ -41,9 +41,13 @@ function validatePolicy(form: PolicyForm): PolicyFormErrors {
   const errors: PolicyFormErrors = {};
   if (!form.assetId)             errors.assetId      = "Selecciona un vehículo.";
   if (!form.insurer.trim())      errors.insurer      = "La aseguradora es obligatoria.";
+  else if (form.insurer.length > 120) errors.insurer = "Máximo 120 caracteres.";
   if (!form.policyNumber.trim()) errors.policyNumber = "El número de póliza es obligatorio.";
+  else if (form.policyNumber.length > 60) errors.policyNumber = "Máximo 60 caracteres.";
   if (!form.startDate)           errors.startDate    = "La fecha de inicio es obligatoria.";
   if (!form.endDate)             errors.endDate      = "La fecha de vencimiento es obligatoria.";
+  if (form.coverage && form.coverage.length > 250) errors.coverage = "Máximo 250 caracteres.";
+  if (form.notes && form.notes.length > 2000) errors.notes = "Máximo 2000 caracteres.";
   return errors;
 }
 
@@ -519,15 +523,15 @@ function PolicyFormModal({
 
                   <div className="grid grid-cols-2 gap-4">
                     <FormField label="Aseguradora" error={errors.insurer}>
-                      <input className={inputCls} placeholder="Ej. Seguros Equinoccial" value={form.insurer} onChange={set("insurer")} />
+                      <input className={inputCls} placeholder="Ej. Seguros Equinoccial" maxLength={120} value={form.insurer} onChange={set("insurer")} />
                     </FormField>
                     <FormField label="Número de póliza" error={errors.policyNumber}>
-                      <input className={inputCls} placeholder="POL-000000" value={form.policyNumber} onChange={set("policyNumber")} />
+                      <input className={inputCls} placeholder="POL-000000" maxLength={60} value={form.policyNumber} onChange={set("policyNumber")} />
                     </FormField>
                   </div>
 
-                  <FormField label="Cobertura">
-                    <input className={inputCls} placeholder="Ej. Todo riesgo, Responsabilidad civil…" value={form.coverage} onChange={set("coverage")} />
+                  <FormField label="Cobertura" error={errors.coverage}>
+                    <input className={inputCls} placeholder="Ej. Todo riesgo, Responsabilidad civil…" maxLength={250} value={form.coverage} onChange={set("coverage")} />
                   </FormField>
 
                   <div className="grid grid-cols-2 gap-4">
@@ -555,8 +559,8 @@ function PolicyFormModal({
                     </select>
                   </FormField>
 
-                  <FormField label="Notas">
-                    <textarea rows={3} className={`${inputCls} resize-none`}
+                  <FormField label="Notas" error={errors.notes}>
+                    <textarea rows={3} className={`${inputCls} resize-none`} maxLength={2000}
                       placeholder="Observaciones adicionales sobre la póliza."
                       value={form.notes} onChange={set("notes")} />
                   </FormField>

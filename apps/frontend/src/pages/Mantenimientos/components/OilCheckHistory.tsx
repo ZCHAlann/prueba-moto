@@ -1,11 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { UseOilCheckReturn, OilCheckResult } from "../../../hooks/useOilCheck";
 
-// ─── Config ───────────────────────────────────────────────────────────────────
-
 const PAGE_SIZE = 7;
-
-// ─── SVG Icons ────────────────────────────────────────────────────────────────
 
 function IconSearch({ size = 16 }: { size?: number }) {
   return (
@@ -15,7 +11,6 @@ function IconSearch({ size = 16 }: { size?: number }) {
     </svg>
   );
 }
-
 function IconFilter({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -24,7 +19,6 @@ function IconFilter({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
-
 function IconChevronDown({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -33,7 +27,6 @@ function IconChevronDown({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
-
 function IconChevronLeft({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -42,7 +35,6 @@ function IconChevronLeft({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
-
 function IconChevronRight({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -51,7 +43,6 @@ function IconChevronRight({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
-
 function IconCalendar({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -62,7 +53,6 @@ function IconCalendar({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
-
 function IconUser({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -72,7 +62,6 @@ function IconUser({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
-
 function IconTruck({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -83,7 +72,6 @@ function IconTruck({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
-
 function IconBrain({ size = 12 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -93,7 +81,6 @@ function IconBrain({ size = 12 }: { size?: number }) {
     </svg>
   );
 }
-
 function IconCameraOff({ size = 24 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -105,8 +92,6 @@ function IconCameraOff({ size = 24 }: { size?: number }) {
   );
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 function nivelFromString(nivel: string): "Normal" | "Bajo" | "Crítico" {
   const n = nivel?.toLowerCase();
   if (n?.includes("normal") || n?.includes("bueno") || n?.includes("ok")) return "Normal";
@@ -116,15 +101,25 @@ function nivelFromString(nivel: string): "Normal" | "Bajo" | "Crítico" {
 
 function levelColors(nivel: string) {
   const n = nivelFromString(nivel);
-  if (n === "Normal")  return { bar: "bg-emerald-400", badge: "bg-emerald-400/15 text-emerald-300 border border-emerald-400/25", text: "text-emerald-300" };
-  if (n === "Bajo")    return { bar: "bg-amber-400",   badge: "bg-amber-400/15 text-amber-300 border border-amber-400/25",     text: "text-amber-300"   };
-  return                      { bar: "bg-red-400",     badge: "bg-red-400/15 text-red-300 border border-red-400/25",           text: "text-red-300"     };
+  if (n === "Normal") return {
+    bar:   "bg-emerald-400",
+    badge: "bg-emerald-100 dark:bg-emerald-400/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-400/25",
+    text:  "text-emerald-700 dark:text-emerald-300",
+  };
+  if (n === "Bajo") return {
+    bar:   "bg-amber-400",
+    badge: "bg-amber-100 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-400/25",
+    text:  "text-amber-700 dark:text-amber-300",
+  };
+  return {
+    bar:   "bg-red-400",
+    badge: "bg-red-100 dark:bg-red-400/15 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-400/25",
+    text:  "text-red-700 dark:text-red-300",
+  };
 }
 
-/** Parsea ISO o timestamps sin timezone — evita NaN */
 function parseDate(iso: string): Date {
   if (!iso) return new Date(NaN);
-  // Si no tiene indicador de zona horaria, asumir UTC agregando Z
   const s = /[Z+]/.test(iso) || iso.includes("-", 10) ? iso : iso + "Z";
   return new Date(s);
 }
@@ -136,9 +131,9 @@ function timeAgo(iso: string) {
   const min  = Math.floor(diff / 60000);
   const hr   = Math.floor(min / 60);
   const day  = Math.floor(hr  / 24);
-  if (min < 1)   return "Ahora mismo";
-  if (min < 60)  return `Hace ${min} min`;
-  if (hr  < 24)  return `Hace ${hr} h`;
+  if (min < 1)  return "Ahora mismo";
+  if (min < 60) return `Hace ${min} min`;
+  if (hr  < 24) return `Hace ${hr} h`;
   return `Hace ${day} día${day > 1 ? "s" : ""}`;
 }
 
@@ -151,18 +146,14 @@ function formatFull(iso: string) {
   });
 }
 
-// ─── KPI Card ─────────────────────────────────────────────────────────────────
-
 function KpiCard({ label, value, valueClass }: { label: string; value: number; valueClass: string }) {
   return (
-    <div className="px-4 py-3.5 rounded-xl bg-white/4 border border-white/8">
-      <p className="text-white/30 text-xs uppercase tracking-widest mb-1">{label}</p>
+    <div className="px-4 py-3.5 rounded-xl bg-gray-50 dark:bg-white/[0.04] border border-gray-200 dark:border-white/[0.08]">
+      <p className="text-gray-400 dark:text-white/30 text-xs uppercase tracking-widest mb-1">{label}</p>
       <p className={`text-2xl font-bold ${valueClass}`}>{value}</p>
     </div>
   );
 }
-
-// ─── Record Row ───────────────────────────────────────────────────────────────
 
 function RecordRow({ record }: { record: OilCheckResult }) {
   const [expanded, setExpanded] = useState(false);
@@ -170,9 +161,7 @@ function RecordRow({ record }: { record: OilCheckResult }) {
   const colors = levelColors(record.nivel);
   const nivel  = nivelFromString(record.nivel);
 
-  // Label para mostrar en fila: placa si existe, sino nombre de activo, sino ID
   const assetLabel      = record.assetPlate ?? record.assetName ?? record.assetId;
-  // Nombre del técnico o fallback al ID
   const technicianLabel = record.technicianName ?? record.technicianId;
 
   useEffect(() => {
@@ -184,145 +173,109 @@ function RecordRow({ record }: { record: OilCheckResult }) {
   }, [expanded]);
 
   return (
-    <div
-      className={`
-        rounded-xl border transition-all duration-200
-        ${expanded
-          ? "border-amber-400/30 bg-amber-400/4"
-          : "border-white/8 bg-white/2 hover:border-white/15 hover:bg-white/4"
-        }
-      `}
-    >
-      {/* Main row */}
-      <button
-        onClick={() => setExpanded((p) => !p)}
+    <div className={`rounded-xl border transition-all duration-200 ${
+      expanded
+        ? "border-amber-300 dark:border-amber-400/30 bg-amber-50/60 dark:bg-amber-400/[0.04]"
+        : "border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.02] hover:border-gray-300 dark:hover:border-white/15 hover:bg-gray-50 dark:hover:bg-white/[0.04]"
+    }`}>
+      <button onClick={() => setExpanded((p) => !p)}
         className="w-full flex items-center gap-3 sm:gap-4 px-4 sm:px-5 py-4 text-left cursor-pointer"
-        aria-expanded={expanded}
-      >
-        {/* Color bar */}
+        aria-expanded={expanded}>
         <div className={`w-1 h-8 rounded-full flex-shrink-0 ${colors.bar}`} />
-
-        {/* Info */}
         <div className="flex-1 min-w-0">
-          {/* Placa arriba */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mb-0.5">
-            <span className="font-mono font-semibold text-amber-300 text-sm tracking-wide">
+            <span className="font-mono font-semibold text-amber-600 dark:text-amber-300 text-sm tracking-wide">
               {assetLabel}
             </span>
           </div>
-          {/* Nombre del técnico + tiempo */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <span className="text-white/40 text-xs truncate max-w-[180px]">{technicianLabel}</span>
-            <span className="text-white/20 text-xs">·</span>
-            <span className="text-white/30 text-xs">{timeAgo(record.createdAt)}</span>
+            <span className="text-gray-400 dark:text-white/40 text-xs truncate max-w-[180px]">{technicianLabel}</span>
+            <span className="text-gray-300 dark:text-white/20 text-xs">·</span>
+            <span className="text-gray-400 dark:text-white/30 text-xs">{timeAgo(record.createdAt)}</span>
           </div>
         </div>
-
-        {/* Badges */}
         <div className="flex items-center gap-2 flex-shrink-0">
-          <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${colors.badge}`}>
-            {nivel}
-          </span>
-          <span className={`text-xs font-medium hidden sm:inline ${colors.text}`}>
-            {record.color}
-          </span>
-          <span className={`text-white/25 text-sm transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}>
+          <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${colors.badge}`}>{nivel}</span>
+          <span className={`text-xs font-medium hidden sm:inline ${colors.text}`}>{record.color}</span>
+          <span className={`text-gray-400 dark:text-white/25 text-sm transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}>
             <IconChevronDown size={14} />
           </span>
         </div>
       </button>
 
-      {/* Expanded panel */}
       {expanded && (
-        <div
-          ref={expandedRef}
-          className="border-t border-white/8 px-4 sm:px-5 pb-5 pt-4"
-        >
+        <div ref={expandedRef}
+          className="border-t border-gray-200 dark:border-white/[0.08] px-4 sm:px-5 pb-5 pt-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-
-            {/* Photo */}
             {record.photo_url ? (
-              <div className="rounded-xl overflow-hidden border border-white/10 bg-black/20 flex items-center justify-center">
-                <img
-                  src={record.photo_url}
-                  alt={`Verificación ${assetLabel}`}
-                  className="w-full max-h-64 object-contain"
-                />
+              <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-white/10 bg-gray-100 dark:bg-black/20 flex items-center justify-center">
+                <img src={record.photo_url} alt={`Verificación ${assetLabel}`}
+                  className="w-full max-h-64 object-contain" />
               </div>
             ) : (
-              <div className="rounded-xl border border-white/8 bg-white/3 h-40 sm:h-48 flex flex-col items-center justify-center gap-2 text-white/20">
+              <div className="rounded-xl border border-gray-200 dark:border-white/[0.08] bg-gray-50 dark:bg-white/[0.03] h-40 sm:h-48 flex flex-col items-center justify-center gap-2 text-gray-300 dark:text-white/20">
                 <IconCameraOff size={24} />
                 <span className="text-xs">Sin foto registrada</span>
               </div>
             )}
 
-            {/* Details */}
             <div className="flex flex-col gap-3">
-
-              {/* Full date */}
-              <div className="flex items-center gap-2 text-white/35 text-xs">
-                <IconCalendar size={14} />
-                {formatFull(record.createdAt)}
+              <div className="flex items-center gap-2 text-gray-400 dark:text-white/35 text-xs">
+                <IconCalendar size={14} />{formatFull(record.createdAt)}
               </div>
 
-              {/* Metrics */}
               <div className="grid grid-cols-2 gap-2">
-                <div className="px-3 py-3 rounded-lg bg-white/4 border border-white/8">
-                  <p className="text-white/30 text-xs uppercase tracking-widest mb-1">Nivel</p>
-                  <p className={`text-base font-semibold ${colors.text}`}>{record.nivel}</p>
-                </div>
-                <div className="px-3 py-3 rounded-lg bg-white/4 border border-white/8">
-                  <p className="text-white/30 text-xs uppercase tracking-widest mb-1">Color</p>
-                  <p className={`text-base font-semibold ${colors.text}`}>{record.color}</p>
+                {[{ label: "Nivel", value: record.nivel }, { label: "Color", value: record.color }].map(({ label, value }) => (
+                  <div key={label} className="px-3 py-3 rounded-lg bg-gray-50 dark:bg-white/[0.04] border border-gray-200 dark:border-white/[0.08]">
+                    <p className="text-gray-400 dark:text-white/30 text-xs uppercase tracking-widest mb-1">{label}</p>
+                    <p className={`text-base font-semibold ${colors.text}`}>{value}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-white/[0.04] border border-gray-200 dark:border-white/[0.08]">
+                <span className="text-gray-400 dark:text-white/30 flex-shrink-0"><IconUser size={14} /></span>
+                <div className="min-w-0">
+                  <p className="text-gray-400 dark:text-white/25 text-xs">Técnico</p>
+                  <p className="text-gray-600 dark:text-white/65 text-xs font-medium truncate">{technicianLabel}</p>
                 </div>
               </div>
 
-              {/* Technician */}
-              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-white/4 border border-white/8">
-                <span className="text-white/30 flex-shrink-0"><IconUser size={14} /></span>
+              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-white/[0.04] border border-gray-200 dark:border-white/[0.08]">
+                <span className="text-gray-400 dark:text-white/30 flex-shrink-0"><IconTruck size={14} /></span>
                 <div className="min-w-0">
-                  <p className="text-white/25 text-xs">Técnico</p>
-                  <p className="text-white/65 text-xs font-medium truncate">{technicianLabel}</p>
-                </div>
-              </div>
-
-              {/* Asset */}
-              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-white/4 border border-white/8">
-                <span className="text-white/30 flex-shrink-0"><IconTruck size={14} /></span>
-                <div className="min-w-0">
-                  <p className="text-white/25 text-xs">Activo</p>
+                  <p className="text-gray-400 dark:text-white/25 text-xs">Activo</p>
                   <div className="flex items-center gap-1.5">
-                    <p className="text-white/65 text-xs font-mono font-medium">{record.assetPlate ?? record.assetId}</p>
+                    <p className="text-gray-600 dark:text-white/65 text-xs font-mono font-medium">{record.assetPlate ?? record.assetId}</p>
                     {record.assetName && (
-                      <p className="text-white/35 text-xs truncate">· {record.assetName}</p>
+                      <p className="text-gray-400 dark:text-white/35 text-xs truncate">· {record.assetName}</p>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* Confianza */}
-              <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-white/4 border border-white/8">
-                <span className="text-white/35 text-xs">Confianza</span>
-                <span className="text-white/70 text-xs font-semibold">{record.confianza}</span>
+              <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-gray-50 dark:bg-white/[0.04] border border-gray-200 dark:border-white/[0.08]">
+                <span className="text-gray-400 dark:text-white/35 text-xs">Confianza</span>
+                <span className="text-gray-700 dark:text-white/70 text-xs font-semibold">{record.confianza}</span>
               </div>
 
-              {/* Observaciones */}
               {record.observaciones && (
-                <div className="px-3 py-3 rounded-lg bg-white/4 border border-white/8">
-                  <p className="text-white/30 text-xs font-semibold uppercase tracking-widest mb-1.5">Observaciones</p>
-                  <p className="text-white/60 text-xs leading-relaxed">{record.observaciones}</p>
+                <div className="px-3 py-3 rounded-lg bg-gray-50 dark:bg-white/[0.04] border border-gray-200 dark:border-white/[0.08]">
+                  <p className="text-gray-400 dark:text-white/30 text-xs font-semibold uppercase tracking-widest mb-1.5">Observaciones</p>
+                  <p className="text-gray-600 dark:text-white/60 text-xs leading-relaxed">
+                    {String(record.observaciones ?? "").replace(/[<>]/g, "").slice(0, 1000)}
+                  </p>
                 </div>
               )}
 
-              {/* IA recommendation */}
-              <div className="px-3 py-3 rounded-lg bg-amber-400/6 border border-amber-400/15">
+              <div className="px-3 py-3 rounded-lg bg-amber-50 dark:bg-amber-400/[0.06] border border-amber-200 dark:border-amber-400/15">
                 <div className="flex items-center gap-1.5 mb-1.5">
-                  <span className="text-amber-400/60"><IconBrain size={12} /></span>
-                  <p className="text-amber-400/60 text-xs font-semibold uppercase tracking-widest">
-                    Recomendación IA
-                  </p>
+                  <span className="text-amber-500 dark:text-amber-400/60"><IconBrain size={12} /></span>
+                  <p className="text-amber-600 dark:text-amber-400/60 text-xs font-semibold uppercase tracking-widest">Recomendación IA</p>
                 </div>
-                <p className="text-white/60 text-xs leading-relaxed">{record.accion_recomendada}</p>
+                <p className="text-gray-600 dark:text-white/60 text-xs leading-relaxed">
+                  {String(record.accion_recomendada ?? "").replace(/[<>]/g, "").slice(0, 1000)}
+                </p>
               </div>
             </div>
           </div>
@@ -332,8 +285,6 @@ function RecordRow({ record }: { record: OilCheckResult }) {
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
-
 type Props = { oilCheck: UseOilCheckReturn };
 
 export default function OilCheckHistory({ oilCheck }: Props) {
@@ -342,22 +293,16 @@ export default function OilCheckHistory({ oilCheck }: Props) {
   const [filterAsset, setFilterAsset] = useState("");
   const [page, setPage]               = useState(1);
 
-  // Ordenar de más reciente a más antiguo
   const sorted = [...records].sort(
     (a, b) => parseDate(b.createdAt).getTime() - parseDate(a.createdAt).getTime()
   );
+  const filtered = sorted.filter((r) => filterAsset ? r.assetId === filterAsset : true);
 
-  const filtered = sorted.filter((r) =>
-    filterAsset ? r.assetId === filterAsset : true,
-  );
-
-  // Reset a página 1 cuando cambia el filtro
   useEffect(() => { setPage(1); }, [filterAsset]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  // Opciones del filtro: mostrar placa o nombre si están disponibles
   const assetOptions = [...new Map(
     records.map((r) => [r.assetId, { id: r.assetId, label: r.assetPlate ?? r.assetName ?? r.assetId }])
   ).values()];
@@ -367,30 +312,19 @@ export default function OilCheckHistory({ oilCheck }: Props) {
   const critical = records.filter((r) => nivelFromString(r.nivel) === "Crítico").length;
 
   return (
-    <div className="w-full h-full overflow-y-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div className="w-full h-full overflow-y-auto px-4 sm:px-6 lg:px-8 py-6 bg-white dark:bg-[transparent]">
 
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
-          <h2 className="text-xl font-bold text-white">Historial de verificaciones</h2>
-          <p className="text-white/35 text-sm mt-1">
+          <h2 className="text-xl font-bold text-gray-800 dark:text-white">Historial de verificaciones</h2>
+          <p className="text-gray-400 dark:text-white/35 text-sm mt-1">
             {total} registros · solo visible para supervisores y administradores
           </p>
         </div>
-
-        {/* Filter */}
         <div className="flex items-center gap-2">
-          <span className="text-white/30"><IconFilter size={14} /></span>
-          <select
-            value={filterAsset}
-            onChange={(e) => setFilterAsset(e.target.value)}
-            className="
-              bg-white/5 border border-white/10 text-white/70 text-sm
-              rounded-lg px-3 py-2 outline-none cursor-pointer
-              hover:border-white/20 focus:border-amber-400/50 transition-colors
-              min-w-[160px]
-            "
-          >
+          <span className="text-gray-400 dark:text-white/30"><IconFilter size={14} /></span>
+          <select value={filterAsset} onChange={(e) => setFilterAsset(e.target.value)}
+            className="bg-gray-50 dark:bg-white/[0.05] border border-gray-200 dark:border-white/10 text-gray-700 dark:text-white/70 text-sm rounded-lg px-3 py-2 outline-none cursor-pointer hover:border-gray-300 dark:hover:border-white/20 focus:border-amber-400/50 transition-colors min-w-[160px]">
             <option value="">Todos los activos</option>
             {assetOptions.map((a) => (
               <option key={a.id} value={a.id}>{a.label}</option>
@@ -399,27 +333,24 @@ export default function OilCheckHistory({ oilCheck }: Props) {
         </div>
       </div>
 
-      {/* KPIs */}
       <div className="grid grid-cols-3 gap-3 mb-6">
-        <KpiCard label="Total"      value={total}    valueClass="text-white"       />
-        <KpiCard label="Con alerta" value={alerts}   valueClass="text-amber-300"   />
-        <KpiCard label="Críticos"   value={critical} valueClass="text-red-300"     />
+        <KpiCard label="Total"      value={total}    valueClass="text-gray-800 dark:text-white" />
+        <KpiCard label="Con alerta" value={alerts}   valueClass="text-amber-600 dark:text-amber-300" />
+        <KpiCard label="Críticos"   value={critical} valueClass="text-red-600 dark:text-red-300" />
       </div>
 
-      {/* Error */}
       {historyError && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-400/10 border border-red-400/20 mb-4 text-red-300 text-xs">
+        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-50 dark:bg-red-400/10 border border-red-200 dark:border-red-400/20 mb-4 text-red-600 dark:text-red-300 text-xs">
           {historyError}
         </div>
       )}
 
-      {/* List */}
       {loading ? (
         <div className="flex items-center justify-center py-24">
-          <div className="w-8 h-8 rounded-full border-2 border-amber-400 border-t-transparent animate-spin" />
+          <div className="w-8 h-8 rounded-full border-2 border-amber-500 dark:border-amber-400 border-t-transparent animate-spin" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 text-white/25">
+        <div className="flex flex-col items-center justify-center py-24 text-gray-300 dark:text-white/25">
           <IconSearch size={32} />
           <p className="text-sm mt-3">
             {filterAsset ? "Sin registros para este activo" : "Sin registros aún"}
@@ -433,22 +364,16 @@ export default function OilCheckHistory({ oilCheck }: Props) {
             ))}
           </div>
 
-          {/* Pagination */}
           {totalPages > 1 && (
-            <div className="flex items-center justify-between mt-5 pt-4 border-t border-white/8">
-              <span className="text-white/30 text-xs">
+            <div className="flex items-center justify-between mt-5 pt-4 border-t border-gray-200 dark:border-white/[0.08]">
+              <span className="text-gray-400 dark:text-white/30 text-xs">
                 {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} de {filtered.length}
               </span>
               <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                  className="flex items-center justify-center w-8 h-8 rounded-lg border border-white/10 text-white/40 hover:border-white/20 hover:text-white/60 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
-                >
+                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
+                  className="flex items-center justify-center w-8 h-8 rounded-lg border border-gray-200 dark:border-white/10 text-gray-400 dark:text-white/40 hover:border-gray-300 dark:hover:border-white/20 hover:text-gray-600 dark:hover:text-white/60 disabled:opacity-25 disabled:cursor-not-allowed transition-colors">
                   <IconChevronLeft size={14} />
                 </button>
-
-                {/* Page numbers */}
                 {Array.from({ length: totalPages }, (_, i) => i + 1)
                   .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
                   .reduce<(number | "…")[]>((acc, p, idx, arr) => {
@@ -458,28 +383,21 @@ export default function OilCheckHistory({ oilCheck }: Props) {
                   }, [])
                   .map((p, idx) =>
                     p === "…" ? (
-                      <span key={`ellipsis-${idx}`} className="w-8 text-center text-white/20 text-xs">…</span>
+                      <span key={`e-${idx}`} className="w-8 text-center text-gray-300 dark:text-white/20 text-xs">…</span>
                     ) : (
-                      <button
-                        key={p}
-                        onClick={() => setPage(p as number)}
-                        className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors
-                          ${page === p
-                            ? "bg-amber-400/15 border border-amber-400/30 text-amber-300"
-                            : "border border-white/8 text-white/35 hover:border-white/20 hover:text-white/55"
-                          }`}
-                      >
+                      <button key={p} onClick={() => setPage(p as number)}
+                        className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
+                          page === p
+                            ? "bg-amber-100 dark:bg-amber-400/15 border border-amber-300 dark:border-amber-400/30 text-amber-700 dark:text-amber-300"
+                            : "border border-gray-200 dark:border-white/[0.08] text-gray-400 dark:text-white/35 hover:border-gray-300 dark:hover:border-white/20 hover:text-gray-600 dark:hover:text-white/55"
+                        }`}>
                         {p}
                       </button>
                     )
                   )
                 }
-
-                <button
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                  className="flex items-center justify-center w-8 h-8 rounded-lg border border-white/10 text-white/40 hover:border-white/20 hover:text-white/60 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
-                >
+                <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+                  className="flex items-center justify-center w-8 h-8 rounded-lg border border-gray-200 dark:border-white/10 text-gray-400 dark:text-white/40 hover:border-gray-300 dark:hover:border-white/20 hover:text-gray-600 dark:hover:text-white/60 disabled:opacity-25 disabled:cursor-not-allowed transition-colors">
                   <IconChevronRight size={14} />
                 </button>
               </div>

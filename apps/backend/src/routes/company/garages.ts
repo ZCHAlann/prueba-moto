@@ -9,21 +9,22 @@ import { requireAdmin } from '../../middlewares/requireAdmin';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { safeString, validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const createGarageSchema = z.object({
-  code: z.string().min(1, 'El código es requerido'),
-  name: z.string().min(1, 'El nombre es requerido'),
-  location: z.string().optional().nullable(),
-  capacity: z.number().int().nonnegative().optional().nullable(),
+  code: z.string().trim().min(1, 'El código es requerido').max(40),
+  name: safeString({ min: 2, max: 120, fieldLabel: 'Nombre', allowEmpty: false }),
+  location: safeString({ max: 250, fieldLabel: 'Ubicación', allowEmpty: true }).nullable().optional(),
+  capacity: z.number().int().min(0).max(10_000).optional().nullable(),
   supervisor: z.string().optional().nullable(),
   status: z.enum(['Activo', 'Inactivo']).default('Activo'),
-  notes: z.string().optional().nullable(),
-  latitude: z.number().optional().nullable(),
-  longitude: z.number().optional().nullable(),
+  notes: validators.longTextOptional,
+  latitude: validators.latitude.optional().nullable(),
+  longitude: validators.longitude.optional().nullable(),
 });
 
 const updateGarageSchema = createGarageSchema.partial();

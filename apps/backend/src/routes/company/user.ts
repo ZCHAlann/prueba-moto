@@ -9,6 +9,7 @@ import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { hashPassword } from '../../services/auth.service';
+import { validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
@@ -28,9 +29,10 @@ const modulePermissionsSchema = z.record(
 ).default({});
 
 const createCompanyUserSchema = z.object({
-  email:             z.string().email('El correo es inválido'),
-  username:          z.string().min(3, 'El usuario debe tener al menos 3 caracteres'),
-  password:          z.string().min(8, 'La contraseña debe tener al menos 8 caracteres'),
+  email:             validators.email,
+  username:          z.string().trim().min(3, 'El usuario debe tener al menos 3 caracteres').max(40)
+                       .regex(/^[a-zA-Z0-9_.-]+$/, 'Solo letras, números, guion, guion bajo y punto'),
+  password:          z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(128),
   role:              z.enum(COMPANY_ROLES),
   status:            z.enum(['active', 'inactive']).default('active'),
   modulePermissions: modulePermissionsSchema,
@@ -39,7 +41,7 @@ const createCompanyUserSchema = z.object({
 
 const updateCompanyUserSchema = createCompanyUserSchema
   .omit({ password: true })
-  .extend({ password: z.string().min(8).optional() })
+  .extend({ password: z.string().min(8).max(128).optional() })
   .partial();
 
 const permissionsSchema = z.object({

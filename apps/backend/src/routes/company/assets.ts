@@ -9,6 +9,7 @@ import { requireAdmin } from '../../middlewares/requireAdmin';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { validators, safeString } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
@@ -18,28 +19,32 @@ const ASSET_TYPES = ['Vehiculo', 'Maquinaria', 'Motor', 'Planta electrica'] as c
 const ASSET_STATUSES = ['Operativo', 'En mantenimiento', 'Fuera de servicio'] as const;
 
 const createAssetSchema = z.object({
-  code: z.string().min(1, 'El código es requerido'),
-  name: z.string().min(1, 'El nombre es requerido'),
+  code: z.string().trim().min(1, 'El código es requerido').max(40),
+  name: safeString({ min: 2, max: 120, fieldLabel: 'Nombre', allowEmpty: false }),
   assetType: z.enum(ASSET_TYPES).optional(),
-  category: z.string().optional(),
+  category: safeString({ max: 80, fieldLabel: 'Categoría', allowEmpty: true }).nullable().optional(),
   status: z.enum(ASSET_STATUSES).default('Operativo'),
-  siteId: z.string().optional().nullable(), // "site-N" | null
+  siteId: z.string().optional().nullable(),
   garageId: z.string().optional().nullable(),
   responsible: z.string().optional(),
-  brand: z.string().optional(),
-  model: z.string().optional(),
-  serial: z.string().optional(),
-  plate: z.string().optional(),
-  year: z.string().optional(),
-  color: z.string().optional(),
+  brand: safeString({ max: 80, fieldLabel: 'Marca', allowEmpty: true }).nullable().optional(),
+  model: safeString({ max: 80, fieldLabel: 'Modelo', allowEmpty: true }).nullable().optional(),
+  serial: safeString({ max: 60, fieldLabel: 'Serie', allowEmpty: true }).nullable().optional(),
+  plate: validators.plateOptional,
+  year: z.union([z.string(), z.number()]).optional().transform((v) => {
+    if (v === undefined || v === null || v === '') return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }),
+  color: safeString({ max: 40, fieldLabel: 'Color', allowEmpty: true }).nullable().optional(),
   maxLoad: z.string().optional(),
-  fuelType: z.string().optional(),
-  oilType: z.string().optional(),
+  fuelType: z.enum(['Diesel', 'Gasolina', 'Electrico', 'Hibrido']).optional().nullable(),
+  oilType: safeString({ max: 60, fieldLabel: 'Aceite', allowEmpty: true }).nullable().optional(),
   oilCapacity: z.string().optional(),
-  location: z.string().optional(),
+  location: safeString({ max: 200, fieldLabel: 'Ubicación', allowEmpty: true }).nullable().optional(),
   availability: z.string().optional(),
-  observations: z.string().optional(),
-  photoUrls: z.array(z.string()).default([]),
+  observations: validators.longTextOptional,
+  photoUrls: z.array(z.string().max(2_000_000)).max(20).default([]),
 });
 
 const updateAssetSchema = createAssetSchema.partial();

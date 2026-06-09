@@ -9,21 +9,70 @@ import { requireSupervisor } from '../../middlewares/requireSupervisor';
 import { NotFoundError, AppError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { safeString, validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
+const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional().nullable();
+
 const createAssignmentSchema = z.object({
-  assetId: z.string().min(1, 'El activo es requerido'),        // "asset-N"
-  driverId: z.string().min(1, 'El conductor es requerido'),    // "driver-N"
-  startDate: z.string().min(1, 'La fecha de inicio es requerida'), // "YYYY-MM-DD"
-  endDate: z.string().optional().nullable(),
-  notes: z.string().optional().nullable(),
-  handoverUrl: z.string().optional().nullable(),
+  assetId: z.string().min(1, 'El activo es requerido'),
+  driverId: z.string().min(1, 'El conductor es requerido'),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)'),
+  endDate: dateString,
+  notes: validators.longTextOptional,
+  handoverUrl: z.string().max(2_000_000).optional().nullable(),
 });
 
 const updateAssignmentSchema = createAssignmentSchema.partial();
+
+const handoverSchema = z.object({
+  // IDs / refs
+  assetId:   z.string().optional().nullable(),
+  driverId:  z.string().optional().nullable(),
+  // Datos del acta
+  actaNumber: safeString({ max: 60, fieldLabel: 'Número de acta', allowEmpty: true }).nullable().optional(),
+  actaDate:   dateString,
+  actaTime:   z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'Hora inválida (HH:MM)').optional().nullable(),
+  actaPlace:  safeString({ max: 200, fieldLabel: 'Lugar', allowEmpty: true }).nullable().optional(),
+  actaArea:   safeString({ max: 200, fieldLabel: 'Área', allowEmpty: true }).nullable().optional(),
+  // Conductor
+  driverName:  validators.nameOptional,
+  driverDni:   validators.digits10Optional,
+  driverPhone: validators.phoneOptional,
+  driverRole:  safeString({ max: 120, fieldLabel: 'Cargo', allowEmpty: true }).nullable().optional(),
+  // Vehículo
+  vehiclePlate:    validators.plateOptional,
+  vehicleBrand:    safeString({ max: 80, fieldLabel: 'Marca', allowEmpty: true }).nullable().optional(),
+  vehicleModel:    safeString({ max: 80, fieldLabel: 'Modelo', allowEmpty: true }).nullable().optional(),
+  vehicleColor:    safeString({ max: 40, fieldLabel: 'Color', allowEmpty: true }).nullable().optional(),
+  vehicleYear:     z.union([z.string(), z.number()]).optional().nullable().transform((v) => {
+    if (v === undefined || v === null || v === '') return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }),
+  vehicleOdometer: z.union([z.string(), z.number()]).optional().nullable().transform((v) => {
+    if (v === undefined || v === null || v === '') return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }),
+  vehicleFuelLevel: z.enum(['1/4', '1/2', '3/4', 'Lleno']).optional().nullable(),
+  vehicleCondition: safeString({ max: 500, fieldLabel: 'Condición', allowEmpty: true }).nullable().optional(),
+  // Novedades y accesorios
+  novedades:     z.record(z.string(), z.unknown()).default({}),
+  novedadesText: validators.longTextOptional,
+  accesorios:    z.record(z.string(), z.unknown()).default({}),
+  accesoriosOtros: safeString({ max: 200, fieldLabel: 'Otros accesorios', allowEmpty: true }).nullable().optional(),
+  // Fotos y firma
+  vehiclePhotoUrls: z.array(z.string().max(2_000_000)).max(20).default([]),
+  signatureUrl:     z.string().max(2_000_000).optional().nullable(),
+  signatureDriverUrl: z.string().max(2_000_000).optional().nullable(),
+  handoverUrl:      z.string().max(2_000_000).optional().nullable(),
+  // Otros
+  observations: validators.longTextOptional,
+});
 
 // ─── GET /company/:id/assignments ─────────────────────────────────────────────
 // Query: ?status=Activa &assetId=asset-1 &driverId=driver-1
@@ -332,26 +381,7 @@ function serializeAssignment(
 
 // ─── PUT /company/:id/assignments/:assignId/handover ──────────────────────────
 
-const handoverSchema = z.object({
-  actaNumber:       z.string().optional().nullable(),
-  actaDate:         z.string().optional().nullable(),
-  actaTime:         z.string().optional().nullable(),
-  actaPlace:        z.string().optional().nullable(),
-  actaArea:         z.string().optional().nullable(),
-  driverDni:        z.string().optional().nullable(),
-  driverPhone:      z.string().optional().nullable(),
-  driverRole:       z.string().optional().nullable(),
-  vehicleOdometer:  z.string().optional().nullable(),
-  vehicleFuelLevel: z.string().optional().nullable(),
-  vehicleCondition: z.string().optional().nullable(),
-  novedades:        z.record(z.unknown()).optional(),
-  accesorios:       z.record(z.unknown()).optional(),
-  novedadesText:    z.string().optional().nullable(),
-  signatureLogUrl:  z.string().optional().nullable(),
-  signatureRespUrl: z.string().optional().nullable(),
-  vehiclePhotoUrls: z.array(z.string()).optional(),
-  handoverUrl:      z.string().optional().nullable(),
-});
+// (handoverSchema declarado arriba con validación estricta)
 
 router.put(
   '/:assignId/handover',

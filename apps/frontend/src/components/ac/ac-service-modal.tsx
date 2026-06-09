@@ -166,18 +166,25 @@ export function AcServiceModal({ unit, onClose, onCreated }: Props) {
               </select>
             </Field>
             <Field label="Costo (USD)">
-              <input type="number" step="0.01" min="0" className={inputCls} value={cost} onChange={(e) => setCost(e.target.value)} placeholder="0.00" />
+              <input type="number" step="0.01" min="0" max="1000000" className={inputCls} value={cost}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  setCost(Number.isFinite(n) ? String(Math.max(0, Math.min(1000000, n))) : "0");
+                }}
+                placeholder="0.00" />
             </Field>
 
             <div className="md:col-span-2">
               <Field label="Hallazgos">
-                <textarea rows={2} className={textareaCls} value={findings} onChange={(e) => setFindings(e.target.value)} placeholder="¿Qué encontraste en la inspección?" />
+                <textarea rows={2} className={textareaCls} value={findings} maxLength={2000}
+                  onChange={(e) => setFindings(e.target.value.slice(0, 2000))} placeholder="¿Qué encontraste en la inspección?" />
               </Field>
             </div>
 
             <div className="md:col-span-2">
               <Field label="Notas">
-                <textarea rows={2} className={textareaCls} value={notes} onChange={(e) => setNotes(e.target.value)} />
+                <textarea rows={2} className={textareaCls} value={notes} maxLength={2000}
+                  onChange={(e) => setNotes(e.target.value.slice(0, 2000))} />
               </Field>
             </div>
 

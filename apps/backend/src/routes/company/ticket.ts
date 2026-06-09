@@ -5,6 +5,7 @@ import { eq, desc, and } from 'drizzle-orm';
 import { authenticate } from '../../middlewares/authenticate';
 import { z } from 'zod';
 import { validate } from '../../lib/validate';
+import { safeString } from '../../lib/validators';
 
 const router = Router();
 router.use(authenticate);
@@ -21,15 +22,17 @@ function ticketNumber() {
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
+const TICKET_CATEGORIES = ['bug', 'consulta', 'facturacion', 'acceso', 'otro'] as const;
+
 const createSchema = z.object({
-  title:       z.string().min(1).max(255),
-  description: z.string().min(1),
+  title:       safeString({ min: 3, max: 255, fieldLabel: 'Título', allowEmpty: false }),
+  description: safeString({ min: 5, max: 5000, fieldLabel: 'Descripción', allowEmpty: false }),
   priority:    z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
-  category:    z.string().optional(),
+  category:    z.enum(TICKET_CATEGORIES).optional().nullable(),
 });
 
 const messageSchema = z.object({
-  body: z.string().min(1),
+  body: safeString({ min: 1, max: 5000, fieldLabel: 'Mensaje', allowEmpty: false }),
 });
 
 // ─── GET /company/tickets ─────────────────────────────────────────────────────

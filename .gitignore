@@ -76,3 +76,11 @@ backups/
 # Test coverage
 coverage/
 .nyc_output/
+
+apps/backend/scripts/seed.ts
+*/seeds.ts
+*/seeds/*.ts
+*/migrations/*.ts
+*/migration/*.ts
+drizzle/*
+*/drizzle/

@@ -7,6 +7,7 @@ import { useSites } from "../../../hooks/useSites";
 import { usePermissions } from "../../../hooks/usePermissions";
 import { ModulePageHeader } from "../../../components/features/modules/ModulePageHeader";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
+import { validationRules, digitsOnlyInputFilter, sanitizeString } from "../../../lib/form-validation";
 import {
   AlertTriangle, Car, ChevronDown, ChevronLeft, ChevronRight,
   Eye, Filter, Loader2, Mail, MapPin, MoreHorizontal, Pencil,
@@ -99,9 +100,48 @@ function createDriverForm(driver?: ApiDriver): DriverFormState {
 
 function validateDriverForm(form: DriverFormState): DriverFormErrors {
   const errors: DriverFormErrors = {};
-  if (!form.code.trim())      errors.code      = "El código es requerido.";
-  if (!form.firstName.trim()) errors.firstName = "El nombre es requerido.";
-  if (!form.lastName.trim())  errors.lastName  = "El apellido es requerido.";
+  // Código
+  if (!form.code.trim()) {
+    errors.code = "El código es requerido.";
+  } else if (form.code.trim().length > 40) {
+    errors.code = "Máximo 40 caracteres.";
+  }
+  // Nombre / apellido — sin números
+  if (!form.firstName.trim()) {
+    errors.firstName = "El nombre es requerido.";
+  } else if (!validationRules.name(form.firstName)) {
+    const v = validationRules.name(form.firstName);
+    errors.firstName = typeof v === 'string' ? v : "Nombre inválido.";
+  } else if (/\d/.test(form.firstName)) {
+    errors.firstName = "El nombre no puede contener números.";
+  }
+  if (!form.lastName.trim()) {
+    errors.lastName = "El apellido es requerido.";
+  } else if (!validationRules.name(form.lastName)) {
+    const v = validationRules.name(form.lastName);
+    errors.lastName = typeof v === 'string' ? v : "Apellido inválido.";
+  } else if (/\d/.test(form.lastName)) {
+    errors.lastName = "El apellido no puede contener números.";
+  }
+  // Email (opcional)
+  if (form.email && form.email.trim()) {
+    const v = validationRules.optionalEmail(form.email);
+    if (v !== true) errors.email = typeof v === 'string' ? v : "Correo inválido.";
+  }
+  // Teléfono — exactamente 10 dígitos si está lleno
+  if (form.phone && form.phone.trim()) {
+    const v = validationRules.optionalPhone(form.phone);
+    if (v !== true) errors.phone = typeof v === 'string' ? v : "Teléfono inválido.";
+  }
+  // Cédula / número de licencia — exactamente 10 dígitos si está lleno
+  if (form.licenseNumber && form.licenseNumber.trim()) {
+    const v = validationRules.optionalDigits10(form.licenseNumber);
+    if (v !== true) errors.licenseNumber = typeof v === 'string' ? v : "Número de licencia inválido.";
+  }
+  // Puntos 0..30
+  if (form.licensePoints < 0 || form.licensePoints > 30) {
+    errors.licensePoints = "Los puntos deben estar entre 0 y 30.";
+  }
   return errors;
 }
 
@@ -331,12 +371,16 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Nombre <span className="text-rose-400">*</span></label>
-              <input className={inputCls} placeholder="Juan" value={form.firstName} onChange={e => set("firstName", e.target.value)} />
+              <input className={inputCls} placeholder="Juan" maxLength={80} value={form.firstName}
+                onKeyDown={e => { if (/\d/.test(e.key)) e.preventDefault(); }}
+                onChange={e => set("firstName", e.target.value)} />
               {errors.firstName && <p className="text-xs text-rose-500">{errors.firstName}</p>}
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Apellido <span className="text-rose-400">*</span></label>
-              <input className={inputCls} placeholder="Pérez" value={form.lastName} onChange={e => set("lastName", e.target.value)} />
+              <input className={inputCls} placeholder="Pérez" maxLength={80} value={form.lastName}
+                onKeyDown={e => { if (/\d/.test(e.key)) e.preventDefault(); }}
+                onChange={e => set("lastName", e.target.value)} />
               {errors.lastName && <p className="text-xs text-rose-500">{errors.lastName}</p>}
             </div>
           </div>
@@ -344,11 +388,16 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Correo</label>
-              <input type="email" className={inputCls} placeholder="correo@empresa.com" value={form.email} onChange={e => set("email", e.target.value)} />
+              <input type="email" className={inputCls} placeholder="correo@empresa.com" maxLength={120} value={form.email}
+                onChange={e => set("email", e.target.value.toLowerCase().trim())} />
+              {errors.email && <p className="text-xs text-rose-500">{errors.email}</p>}
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Teléfono</label>
-              <input className={inputCls} placeholder="0999 000 000" value={form.phone} onChange={e => set("phone", e.target.value)} />
+              <input className={inputCls} placeholder="0990000000" maxLength={10} value={form.phone}
+                onKeyDown={digitsOnlyInputFilter}
+                onChange={e => set("phone", e.target.value.replace(/\D/g, "").slice(0, 10))} />
+              {errors.phone && <p className="text-xs text-rose-500">{errors.phone}</p>}
             </div>
           </div>
 
@@ -368,7 +417,10 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Número de licencia</label>
-                <input className={inputCls} placeholder="0912345678" value={form.licenseNumber} onChange={e => set("licenseNumber", e.target.value)} />
+                <input className={inputCls} placeholder="0912345678" maxLength={10} value={form.licenseNumber}
+                  onKeyDown={digitsOnlyInputFilter}
+                  onChange={e => set("licenseNumber", e.target.value.replace(/\D/g, "").slice(0, 10))} />
+                {errors.licenseNumber && <p className="text-xs text-rose-500">{errors.licenseNumber}</p>}
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Tipo</label>
@@ -402,7 +454,8 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
             <textarea rows={3}
               className="w-full resize-none rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.05] px-3 py-2.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/10 transition"
               placeholder="Observaciones adicionales sobre el conductor."
-              value={form.notes} onChange={e => set("notes", e.target.value)} />
+              maxLength={2000}
+              value={form.notes} onChange={e => set("notes", sanitizeString(e.target.value).slice(0, 2000))} />
           </div>
         </div>
 

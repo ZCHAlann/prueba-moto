@@ -45,10 +45,17 @@ function createEmptyForm(): SiteFormState {
 function validateSite(form: SiteFormState): SiteFormErrors {
   const errors: SiteFormErrors = {};
   if (!form.code.trim())    errors.code    = "El código de sede es obligatorio.";
+  else if (form.code.length > 40) errors.code = "Máximo 40 caracteres.";
   if (!form.name.trim())    errors.name    = "El nombre de la sede es obligatorio.";
+  else if (form.name.length > 120) errors.name = "Máximo 120 caracteres.";
   if (!form.city.trim())    errors.city    = "La ciudad es obligatoria.";
+  else if (form.city.length > 100) errors.city = "Máximo 100 caracteres.";
   if (!form.address.trim()) errors.address = "La dirección es obligatoria.";
-  if (!form.contact.trim()) errors.contact = "El contacto visible es obligatorio.";
+  else if (form.address.length < 5) errors.address = "Mínimo 5 caracteres.";
+  else if (form.address.length > 250) errors.address = "Máximo 250 caracteres.";
+  if (!form.contact.trim()) errors.contact = "El contacto es obligatorio.";
+  else if (!/^\d{10}$/.test(form.contact)) errors.contact = "El contacto debe tener exactamente 10 dígitos.";
+  if (form.notes && form.notes.length > 2000) errors.notes = "Máximo 2000 caracteres.";
   return errors;
 }
 
@@ -336,9 +343,10 @@ function SiteFormModal({
                     <input
                       className={inputCls}
                       placeholder="SEDE-001"
-                      {...field("code")}
+                      maxLength={40}
+                      value={form.code}
                       onChange={(e) =>
-                        setForm((prev) => ({ ...prev, code: e.target.value.toUpperCase() }))
+                        setForm((prev) => ({ ...prev, code: e.target.value.toUpperCase().slice(0, 40) }))
                       }
                     />
                   </FormField>
@@ -354,6 +362,7 @@ function SiteFormModal({
                   <input
                     className={inputCls}
                     placeholder="Nombre de la sede principal"
+                    maxLength={120}
                     {...field("name")}
                   />
                 </FormField>
@@ -362,6 +371,7 @@ function SiteFormModal({
                   <input
                     className={inputCls}
                     placeholder="Ciudad, municipio o zona operativa"
+                    maxLength={100}
                     {...field("city")}
                   />
                 </FormField>
@@ -373,7 +383,7 @@ function SiteFormModal({
                     onChange={(result) =>
                       setForm((prev) => ({
                         ...prev,
-                        address: result.address,
+                        address: String(result.address ?? '').slice(0, 250),
                         latitude: result.latitude || undefined,
                         longitude: result.longitude || undefined,
                       }))
@@ -382,18 +392,22 @@ function SiteFormModal({
                   />
                 </FormField>
 
-                <FormField label="Contacto visible" error={errors.contact}>
+                <FormField label="Contacto (10 dígitos)" error={errors.contact}>
                   <input
                     className={inputCls}
-                    placeholder="Contacto responsable / teléfono"
-                    {...field("contact")}
+                    placeholder="0990000000"
+                    maxLength={10}
+                    value={form.contact}
+                    onKeyDown={(e) => { if (!/[0-9]/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key)) e.preventDefault(); }}
+                    onChange={(e) => setForm((prev) => ({ ...prev, contact: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
                   />
                 </FormField>
 
-                <FormField label="Notas">
+                <FormField label="Notas" error={errors.notes}>
                   <textarea
                     className={`${inputCls} resize-none`}
                     rows={3}
+                    maxLength={2000}
                     placeholder="Cobertura, tipo de operación o consideraciones para esta sede."
                     {...field("notes")}
                   />

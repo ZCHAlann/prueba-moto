@@ -11,54 +11,62 @@ import { requirePermission } from '../../middlewares/requirePermission';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { safeString, validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
+const AC_TYPES = ['Split', 'Cassette', 'Ventana', 'Central', 'Chiller', 'Fan-coil', 'Otro'] as const;
+const AC_STATUSES = ['Operativo', 'En revision', 'Fuera de servicio', 'Pendiente revision'] as const;
+const AC_KINDS = ['Limpieza', 'Recarga', 'Reparacion', 'Inspeccion', 'Preventivo', 'Correctivo'] as const;
+const AC_UNITS = ['kg', 'g', 'lb', 'oz'] as const;
+
+const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional().nullable();
+
 const createAcUnitSchema = z.object({
-  code: z.string().min(1, 'El código es requerido'),
-  name: z.string().min(1, 'El nombre es requerido'),
+  code: z.string().trim().min(1, 'El código es requerido').max(40),
+  name: safeString({ min: 2, max: 120, fieldLabel: 'Nombre', allowEmpty: false }),
   siteId: z.string().optional().nullable(),
-  type: z.string().optional().nullable(),
-  floor: z.string().optional().nullable(),
-  area: z.string().optional().nullable(),
-  serial: z.string().optional().nullable(),
-  brand: z.string().optional().nullable(),
-  model: z.string().optional().nullable(),
-  capacityBtu: z.string().optional().nullable(),
-  voltage: z.string().optional().nullable(),
-  amperage: z.string().optional().nullable(),
-  refrigerantType: z.string().optional().nullable(),
-  installDate: z.string().optional().nullable(),
+  type: z.enum(AC_TYPES).optional().nullable(),
+  floor: safeString({ max: 60, fieldLabel: 'Piso', allowEmpty: true }).nullable().optional(),
+  area: safeString({ max: 60, fieldLabel: 'Área', allowEmpty: true }).nullable().optional(),
+  serial: safeString({ max: 60, fieldLabel: 'Serie', allowEmpty: true }).nullable().optional(),
+  brand: safeString({ min: 1, max: 80, fieldLabel: 'Marca', allowEmpty: false }),
+  model: safeString({ max: 80, fieldLabel: 'Modelo', allowEmpty: true }).nullable().optional(),
+  capacityBtu: z.string().max(20).optional().nullable(),
+  voltage: z.string().max(20).optional().nullable(),
+  amperage: z.string().max(20).optional().nullable(),
+  refrigerantType: z.string().max(40).optional().nullable(),
+  installDate: dateString,
   technician: z.string().optional().nullable(),
-  status: z.string().optional().nullable(),
-  lastService: z.string().optional().nullable(),
-  nextService: z.string().optional().nullable(),
-  photoUrls: z.array(z.string()).default([]),
-  notes: z.string().optional().nullable(),
+  status: z.enum(AC_STATUSES).optional().nullable(),
+  lastService: dateString,
+  nextService: dateString,
+  photoUrls: z.array(z.string().max(2_000_000)).max(20).default([]),
+  notes: validators.longTextOptional,
 });
 
 const updateAcUnitSchema = createAcUnitSchema.partial();
 
 const createServiceSchema = z.object({
-  date: z.string().min(1, 'La fecha es requerida'),
-  kind: z.string().optional().nullable(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)'),
+  kind: z.enum(AC_KINDS).optional().nullable(),
   technician: z.string().optional().nullable(),
-  cost: z.number().nonnegative().optional().nullable(),
-  findings: z.string().optional().nullable(),
-  photoUrls: z.array(z.string()).default([]),
-  notes: z.string().optional().nullable(),
+  cost: z.number().nonnegative().max(1_000_000).optional().nullable(),
+  findings: validators.longTextOptional,
+  photoUrls: z.array(z.string().max(2_000_000)).max(20).default([]),
+  notes: validators.longTextOptional,
 });
 
 const createRefrigerantLogSchema = z.object({
-  date: z.string().min(1, 'La fecha es requerida'),
-  refrigerantType: z.string().optional().nullable(),
-  quantity: z.number().nonnegative().optional().nullable(),
-  unit: z.string().optional().nullable(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)'),
+  refrigerantType: z.string().max(40).optional().nullable(),
+  quantity: z.number().nonnegative().max(10_000).optional().nullable(),
+  unit: z.enum(AC_UNITS).optional().nullable(),
   technician: z.string().optional().nullable(),
-  reason: z.string().optional().nullable(),
-  notes: z.string().optional().nullable(),
+  reason: safeString({ max: 200, fieldLabel: 'Razón', allowEmpty: true }).nullable().optional(),
+  notes: validators.longTextOptional,
 });
 
 // ─── GET /company/:id/ac-units ────────────────────────────────────────────────

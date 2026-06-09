@@ -360,6 +360,11 @@ export function GaragesPage() {
       toast.error("Formulario incompleto", { description: "Código, nombre y ubicación son obligatorios." });
       return;
     }
+    if (form.code.length > 40) { toast.error("Código máximo 40 caracteres."); return; }
+    if (form.name.length > 120) { toast.error("Nombre máximo 120 caracteres."); return; }
+    if (form.location.length > 250) { toast.error("Ubicación máximo 250 caracteres."); return; }
+    if (form.capacity < 0 || form.capacity > 10_000) { toast.error("Capacidad fuera de rango."); return; }
+    if (form.notes.length > 2000) { toast.error("Notas máximo 2000 caracteres."); return; }
     setSaving(true);
     try {
       if (editingId) { await updateGarage(editingId, form); toast.success("Garaje actualizado"); }
@@ -628,8 +633,8 @@ export function GaragesPage() {
               <div className="space-y-4 px-5 py-5 max-h-[70vh] overflow-y-auto">
                 <div className="grid grid-cols-2 gap-4">
                   <Field label="Código">
-                    <input className={inputCls} value={form.code}
-                      onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))}
+                    <input className={inputCls} value={form.code} maxLength={40}
+                      onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase().slice(0, 40) }))}
                       placeholder="GAR-001" />
                   </Field>
                   <Field label="Estado">
@@ -641,15 +646,15 @@ export function GaragesPage() {
                   </Field>
                 </div>
                 <Field label="Nombre del garaje">
-                  <input className={inputCls} value={form.name}
-                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                  <input className={inputCls} value={form.name} maxLength={120}
+                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value.slice(0, 120) }))}
                     placeholder="Base principal de vehículos" />
                 </Field>
                 <Field label="Ubicación">
                   <LocationPickerModal
                     value={form.location}
                     onChange={(result) => setForm((f) => ({
-                      ...f, location: result.address,
+                      ...f, location: String(result.address ?? '').slice(0, 250),
                       latitude: result.latitude || undefined,
                       longitude: result.longitude || undefined,
                     }))}
@@ -657,8 +662,11 @@ export function GaragesPage() {
                   />
                 </Field>
                 <Field label="Capacidad (espacios)">
-                  <input type="number" min="0" step="1" className={inputCls} value={form.capacity}
-                    onChange={(e) => setForm((f) => ({ ...f, capacity: Number(e.target.value || 0) }))} />
+                  <input type="number" min="0" max="10000" step="1" className={inputCls} value={form.capacity}
+                    onChange={(e) => {
+                      const n = Number(e.target.value || 0);
+                      setForm((f) => ({ ...f, capacity: Number.isFinite(n) ? Math.max(0, Math.min(10000, n)) : 0 }));
+                    }} />
                 </Field>
                 <Field label="Supervisor a cargo">
                   <select className={inputCls} value={form.supervisor}
@@ -668,8 +676,8 @@ export function GaragesPage() {
                   </select>
                 </Field>
                 <Field label="Notas">
-                  <textarea rows={3} className={`${inputCls} resize-none`} value={form.notes}
-                    onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                  <textarea rows={3} className={`${inputCls} resize-none`} value={form.notes} maxLength={2000}
+                    onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value.slice(0, 2000) }))}
                     placeholder="Horarios, restricciones, responsable de llaves…" />
                 </Field>
               </div>

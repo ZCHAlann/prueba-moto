@@ -198,10 +198,12 @@ export function AcCreateModal({ onClose }: Props) {
 
           <div className="grid grid-cols-1 gap-4 px-6 py-5 md:grid-cols-2">
             <Field label="Código" required error={errors.code}>
-              <input className={inputCls} value={values.code} onChange={(e) => set("code", e.target.value)} placeholder="AC-001" />
+              <input className={inputCls} value={values.code} maxLength={40}
+                onChange={(e) => set("code", e.target.value.toUpperCase().slice(0, 40))} placeholder="AC-001" />
             </Field>
             <Field label="Nombre" required error={errors.name}>
-              <input className={inputCls} value={values.name} onChange={(e) => set("name", e.target.value)} placeholder="A/C Sala de juntas" />
+              <input className={inputCls} value={values.name} maxLength={120}
+                onChange={(e) => set("name", e.target.value.slice(0, 120))} placeholder="A/C Sala de juntas" />
             </Field>
 
             <Field label="Tipo">
@@ -223,31 +225,28 @@ export function AcCreateModal({ onClose }: Props) {
             </Field>
             <Field label="Piso / Área">
               <div className="grid grid-cols-2 gap-2">
-                <input className={inputCls} value={values.floor} onChange={(e) => set("floor", e.target.value)} placeholder="Piso 2" />
-                <input className={inputCls} value={values.area} onChange={(e) => set("area", e.target.value)} placeholder="Sala" />
+                <input className={inputCls} value={values.floor} maxLength={60}
+                  onChange={(e) => set("floor", e.target.value.slice(0, 60))} placeholder="Piso 2" />
+                <input className={inputCls} value={values.area} maxLength={60}
+                  onChange={(e) => set("area", e.target.value.slice(0, 60))} placeholder="Sala" />
               </div>
             </Field>
 
             <Field label="Marca" required error={errors.brand}>
-              <input className={inputCls} value={values.brand} onChange={(e) => set("brand", e.target.value)} placeholder="LG, Samsung, Daikin..." />
-            </Field>
-            <Field label="Modelo">
-              <input className={inputCls} value={values.model} onChange={(e) => set("model", e.target.value)} />
-            </Field>
-            <Field label="Serie">
-              <input className={inputCls} value={values.serial} onChange={(e) => set("serial", e.target.value)} />
-            </Field>
-            <Field label="Capacidad (BTU)">
-              <input className={inputCls} value={values.capacityBtu} onChange={(e) => set("capacityBtu", e.target.value)} placeholder="12000" />
-            </Field>
-            <Field label="Voltaje">
-              <input className={inputCls} value={values.voltage} onChange={(e) => set("voltage", e.target.value)} placeholder="110V / 220V" />
-            </Field>
-            <Field label="Amperaje">
-              <input className={inputCls} value={values.amperage} onChange={(e) => set("amperage", e.target.value)} />
-            </Field>
-            <Field label="Refrigerante">
-              <input className={inputCls} value={values.refrigerantType} onChange={(e) => set("refrigerantType", e.target.value)} placeholder="R-410A, R-22..." />
+              <input className={inputCls} value={values.brand} maxLength={80}
+                onChange={(e) => set("brand", e.target.value.slice(0, 80))} placeholder="LG, Samsung, Daikin..." />
+              <input className={inputCls} value={values.model} maxLength={80}
+                onChange={(e) => set("model", e.target.value.slice(0, 80))} />
+              <input className={inputCls} value={values.serial} maxLength={60}
+                onChange={(e) => set("serial", e.target.value.slice(0, 60))} />
+              <input className={inputCls} value={values.capacityBtu} maxLength={20}
+                onChange={(e) => set("capacityBtu", e.target.value.slice(0, 20))} placeholder="12000" />
+              <input className={inputCls} value={values.voltage} maxLength={20}
+                onChange={(e) => set("voltage", e.target.value.slice(0, 20))} placeholder="110V / 220V" />
+              <input className={inputCls} value={values.amperage} maxLength={20}
+                onChange={(e) => set("amperage", e.target.value.slice(0, 20))} />
+              <input className={inputCls} value={values.refrigerantType} maxLength={40}
+                onChange={(e) => set("refrigerantType", e.target.value.slice(0, 40))} placeholder="R-410A, R-22..." />
             </Field>
             <Field label="Técnico responsable">
               <select className={selectCls} value={values.technician} onChange={(e) => set("technician", e.target.value)}>
@@ -317,7 +316,8 @@ export function AcCreateModal({ onClose }: Props) {
 
             <div className="md:col-span-2">
               <Field label="Notas">
-                <textarea rows={3} className={textareaCls} value={values.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Observaciones generales..." />
+                <textarea rows={3} className={textareaCls} value={values.notes} maxLength={2000}
+                  onChange={(e) => set("notes", e.target.value.slice(0, 2000))} placeholder="Observaciones generales..." />
               </Field>
             </div>
 

@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { useMaintenances } from "../../hooks/useMaintenances";
 import { useAssets } from "../../hooks/useAssets";
 import { useDrivers } from "../../hooks/useDrivers";
 import { usePermissions } from "../../hooks/usePermissions";
+import { useAuth } from "../../context/AuthContext";
 import { ModulePageHeader } from "../../components/features/modules/ModulePageHeader";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import type { ApiMaintenance, MaintenancePriority, MaintenanceStatus, MaintenanceKind } from "../../hooks/useMaintenances";
@@ -13,6 +14,7 @@ import {
   Calendar, User, Pencil, Trash2, ChevronDown, X, Loader2,
   Car, FileText, Image as ImageIcon, Filter,
   TrendingUp, Zap, Shield, ChevronLeft, ChevronRight,
+  LayoutList, LayoutGrid,
 } from "lucide-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -96,12 +98,13 @@ function KpiRow({ stats }: {
   );
 }
 
-// ─── Detail Modal ─────────────────────────────────────────────────────────────
+// ─── Detail Drawer ────────────────────────────────────────────────────────────
 
-function DetailModal({ item, asset, onClose, onEdit, onDelete, onStatusChange, canEdit, canDelete }: {
+function DetailDrawer({ item, asset, onClose, onEdit, onDelete, onStatusChange, onAddEvidence, canEdit, canDelete }: {
   item: ApiMaintenance; asset: Asset | undefined;
   onClose: () => void; onEdit: () => void; onDelete: () => void;
-  onStatusChange: (s: MaintenanceStatus) => void;
+  onStatusChange: (s: MaintenanceStatus, opts?: { withEvidence?: boolean }) => void;
+  onAddEvidence: () => void;
   canEdit: boolean; canDelete: boolean;
 }) {
   const s = STATUS_CFG[item.status];
@@ -112,9 +115,9 @@ function DetailModal({ item, asset, onClose, onEdit, onDelete, onStatusChange, c
   const hasFooterRight = canEdit; // cambios de estado son una forma de edición
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm"
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="relative w-full max-w-xl overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0d1320]">
+      <div className="relative h-full w-full max-w-xl overflow-hidden border-l border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0d1320] flex flex-col">
         <div className={`h-1 w-full ${s.dot}`} />
 
         <div className="flex items-start justify-between gap-4 px-6 pb-4 pt-5">
@@ -134,7 +137,7 @@ function DetailModal({ item, asset, onClose, onEdit, onDelete, onStatusChange, c
           </button>
         </div>
 
-        <div className="max-h-[60vh] overflow-y-auto px-6 pb-6 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-4">
           {/* Costs */}
           <div className="grid grid-cols-3 gap-2">
             {[
@@ -190,24 +193,37 @@ function DetailModal({ item, asset, onClose, onEdit, onDelete, onStatusChange, c
             </div>
           )}
 
-          {/* Photos */}
+          {/* Evidencias */}
           <div>
-            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1"><ImageIcon size={10} />Evidencias</p>
+            <div className="mb-1.5 flex items-center justify-between">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1"><ImageIcon size={10} />Evidencias</p>
+              {canEdit && (
+                <button onClick={onAddEvidence} className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400">
+                  <Plus size={11} /> Agregar
+                </button>
+              )}
+            </div>
             {item.photoUrls.length === 0
               ? <p className="rounded-xl border border-dashed border-gray-200 px-3 py-2.5 text-xs text-gray-400 dark:border-white/[0.06]">Sin evidencias adjuntas.</p>
-              : <div className="grid grid-cols-3 gap-2">{item.photoUrls.map((url, i) => (
-                  <a key={i} href={url} target="_blank" rel="noreferrer" className="aspect-square overflow-hidden rounded-xl border border-gray-200 dark:border-white/[0.08]">
-                    <img src={url} alt="" className="h-full w-full object-cover transition hover:scale-105" />
-                  </a>
-                ))}</div>
+              : <div className="grid grid-cols-3 gap-2">{item.photoUrls.map((url, i) => {
+                  const isPdf = /\.pdf(\?|$)/i.test(url);
+                  return (
+                    <a key={i} href={url} target="_blank" rel="noreferrer"
+                      className="aspect-square overflow-hidden rounded-xl border border-gray-200 dark:border-white/[0.08] bg-gray-50 dark:bg-white/[0.04] flex items-center justify-center text-xs font-semibold text-gray-500 dark:text-gray-400 hover:ring-2 hover:ring-blue-500/30 transition">
+                      {isPdf
+                        ? <span className="flex flex-col items-center gap-1"><FileText size={20} className="text-rose-500" />PDF</span>
+                        : <img src={url} alt="" className="h-full w-full object-cover transition hover:scale-105" />}
+                    </a>
+                  );
+                })}</div>
             }
           </div>
         </div>
 
         {/* Footer — solo se muestra si el usuario tiene al menos una acción */}
         {(hasFooterLeft || hasFooterRight) && (
-          <div className="flex items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/80 px-6 py-3.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
-            <div className="flex gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/80 px-6 py-3.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
+            <div className="flex flex-wrap gap-2">
               {canDelete && (
                 <button onClick={onDelete} className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-500/20 dark:text-rose-400 dark:hover:bg-rose-500/10">
                   <Trash2 size={12} />Eliminar
@@ -220,13 +236,14 @@ function DetailModal({ item, asset, onClose, onEdit, onDelete, onStatusChange, c
               )}
             </div>
             {canEdit && (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {(["Pendiente", "En proceso", "Completado"] as MaintenanceStatus[]).filter(st => st !== item.status).map(st => {
                   const cfg = STATUS_CFG[st];
+                  const isComplete = st === "Completado";
                   return (
-                    <button key={st} onClick={() => onStatusChange(st)}
+                    <button key={st} onClick={() => onStatusChange(st, { withEvidence: isComplete })}
                       className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition hover:opacity-80 ${cfg.bg} ${cfg.color} ${cfg.border}`}>
-                      {cfg.icon}{cfg.label}
+                      {cfg.icon}{cfg.label}{isComplete ? " (con evidencia)" : ""}
                     </button>
                   );
                 })}
@@ -239,6 +256,254 @@ function DetailModal({ item, asset, onClose, onEdit, onDelete, onStatusChange, c
   );
 }
 
+// ─── Resolve Maintenance Modal (upload evidence + close OT) ──────────────────
+
+function ResolveMaintenanceModal({
+  open, item, companyId, onClose, onResolved,
+}: {
+  open: boolean;
+  item: ApiMaintenance | null;
+  companyId: string;
+  onClose: () => void;
+  onResolved: (updated: ApiMaintenance) => void;
+}) {
+  const [files, setFiles] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<{ url: string; type: string; name: string }[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (open) {
+      setFiles([]);
+      setPreviews([]);
+      setError(null);
+      setUploading(false);
+    }
+  }, [open, item?.id]);
+
+  const addFiles = (incoming: FileList | null) => {
+    if (!incoming) return;
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf'];
+    const next: File[] = [];
+    for (const f of Array.from(incoming)) {
+      if (!allowed.includes(f.type)) {
+        setError(`Tipo no permitido: ${f.name} (${f.type || "desconocido"})`);
+        continue;
+      }
+      if (f.size > 10 * 1024 * 1024) {
+        setError(`Archivo demasiado grande: ${f.name} (máx. 10 MB)`);
+        continue;
+      }
+      next.push(f);
+    }
+    if (next.length === 0) return;
+    setError(null);
+    setFiles((prev) => [...prev, ...next].slice(0, 10));
+    setPreviews((prev) => [
+      ...prev,
+      ...next.map((f) => ({ url: URL.createObjectURL(f), type: f.type, name: f.name })),
+    ]);
+  };
+
+  const removeFile = (idx: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== idx));
+    setPreviews((prev) => {
+      const removed = prev[idx];
+      if (removed) URL.revokeObjectURL(removed.url);
+      return prev.filter((_, i) => i !== idx);
+    });
+  };
+
+  const handleConfirm = async () => {
+    if (!item) return;
+    setUploading(true);
+    setError(null);
+    try {
+      let uploadedUrls: string[] = [];
+      if (files.length > 0) {
+        const fd = new FormData();
+        for (const f of files) fd.append("files", f);
+        const res = await fetch(`/api/upload/maintenance-evidence?companyId=${companyId}`, {
+          method: "POST",
+          body: fd,
+          credentials: "include",
+        });
+        if (!res.ok) throw new Error(`Error subiendo archivos (HTTP ${res.status})`);
+        const json = await res.json();
+        uploadedUrls = (json.urls as Array<{ url: string }>).map((u) => u.url);
+      }
+      const newPhotoUrls = [...(item.photoUrls ?? []), ...uploadedUrls].slice(0, 30);
+      // Marcar como completado
+      const res = await fetch(`/api/company/${companyId}/maintenances/${item.id}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ photoUrls: newPhotoUrls }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      onResolved({ ...item, status: "Completado", photoUrls: newPhotoUrls, completedDate: new Date().toISOString().slice(0, 10) });
+      toast.success("Mantenimiento completado", { description: item.title });
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Error desconocido");
+      toast.error("No se pudo resolver el mantenimiento");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  if (!item) return null;
+
+  return (
+    <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm"
+      onClick={e => { if (e.target === e.currentTarget && !uploading) onClose(); }}>
+      <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0d1320]">
+        <div className="h-1 w-full bg-emerald-500" />
+        <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-100 dark:border-white/[0.06]">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">Resolver mantenimiento</p>
+            <h2 className="mt-0.5 text-base font-bold text-gray-800 dark:text-white">Marcar como completado</h2>
+            <p className="mt-1 text-xs text-gray-400 line-clamp-1">{item.title}</p>
+          </div>
+          <button onClick={onClose} disabled={uploading}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.08] disabled:opacity-40">
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 max-h-[60vh] overflow-y-auto space-y-3">
+          <div>
+            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">Evidencias (opcional)</p>
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); }}
+              onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}
+              className="cursor-pointer rounded-xl border-2 border-dashed border-gray-200 dark:border-white/[0.08] hover:border-orange-400 dark:hover:border-orange-500/50 transition p-4 flex flex-col items-center justify-center gap-1.5 text-center"
+            >
+              <ImageIcon size={20} className="text-gray-300 dark:text-gray-600" />
+              <p className="text-xs text-gray-500 dark:text-gray-400">Arrastra fotos/PDFs o haz clic para seleccionar</p>
+              <p className="text-[10px] text-gray-400">JPG, PNG, WebP, HEIC o PDF · máx 10 MB c/u · 10 archivos</p>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic,application/pdf"
+              multiple
+              className="hidden"
+              onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }}
+            />
+          </div>
+
+          {previews.length > 0 && (
+            <div className="grid grid-cols-3 gap-2">
+              {previews.map((p, i) => (
+                <div key={i} className="relative aspect-square rounded-xl overflow-hidden border border-gray-200 dark:border-white/[0.08] bg-gray-50 dark:bg-white/[0.04] flex items-center justify-center">
+                  {p.type === 'application/pdf' ? (
+                    <div className="flex flex-col items-center text-xs font-semibold text-rose-500">
+                      <FileText size={20} />PDF
+                    </div>
+                  ) : (
+                    <img src={p.url} alt={p.name} className="h-full w-full object-cover" />
+                  )}
+                  <button type="button" onClick={() => removeFile(i)}
+                    className="absolute top-1 right-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-white hover:bg-rose-500 transition">
+                    <X size={10} />
+                  </button>
+                  <p className="absolute bottom-0 inset-x-0 truncate text-[9px] text-white bg-black/60 px-1.5 py-0.5">{p.name}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {error && <p className="text-xs text-rose-500">{error}</p>}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-white/[0.06] dark:bg-white/[0.02]">
+          <button type="button" onClick={onClose} disabled={uploading}
+            className="rounded-lg border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.04] transition disabled:opacity-50">
+            Cancelar
+          </button>
+          <button type="button" onClick={handleConfirm} disabled={uploading}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-4 py-1.5 text-xs font-semibold text-white transition disabled:opacity-60">
+            {uploading && <Loader2 size={12} className="animate-spin" />}
+            {uploading ? "Subiendo y guardando…" : "Marcar como completado"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Kanban Column ───────────────────────────────────────────────────────────
+
+function KanbanView({
+  maintenances, assetMap, onDetail, onResolve, canEdit,
+}: {
+  maintenances: ApiMaintenance[];
+  assetMap: Map<string, Asset>;
+  onDetail: (m: ApiMaintenance) => void;
+  onResolve: (m: ApiMaintenance) => void;
+  canEdit: boolean;
+}) {
+  const COLUMNS: MaintenanceStatus[] = ["Pendiente", "En proceso", "Completado"];
+  const grouped: Record<MaintenanceStatus, ApiMaintenance[]> = {
+    Pendiente:   maintenances.filter(m => m.status === "Pendiente"),
+    "En proceso": maintenances.filter(m => m.status === "En proceso"),
+    Completado:  maintenances.filter(m => m.status === "Completado"),
+  };
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {COLUMNS.map((col) => {
+        const cfg = STATUS_CFG[col];
+        return (
+          <div key={col} className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] flex flex-col min-h-[400px]">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-white/[0.06]">
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex h-2 w-2 rounded-full ${cfg.dot}`} />
+                <h3 className="text-sm font-semibold text-gray-800 dark:text-white">{cfg.label}</h3>
+                <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-white/[0.04] rounded-full px-1.5 py-0.5">{grouped[col].length}</span>
+              </div>
+            </div>
+            <div className="flex-1 p-3 space-y-2 max-h-[600px] overflow-y-auto">
+              {grouped[col].length === 0 ? (
+                <p className="text-center text-xs text-gray-400 py-6">Sin OTs</p>
+              ) : (
+                grouped[col].map((m) => {
+                  const a = assetMap.get(m.assetId);
+                  return (
+                    <div key={m.id} onClick={() => onDetail(m)}
+                      className="cursor-pointer rounded-xl border border-gray-100 dark:border-white/[0.05] bg-gray-50/50 dark:bg-white/[0.03] p-3 hover:border-orange-300 dark:hover:border-orange-500/30 hover:bg-orange-50/40 dark:hover:bg-orange-500/[0.04] transition group">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <p className="text-sm font-semibold text-gray-800 dark:text-white line-clamp-2">{m.title}</p>
+                      </div>
+                      <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-2 line-clamp-1">{a?.plate ?? a?.code ?? "—"} {a?.brand ? `· ${a.brand}` : ""}</p>
+                      <div className="flex items-center justify-between gap-1.5 text-[10px] text-gray-400">
+                        <span className="flex items-center gap-1">
+                          <Calendar size={10} /> {fmtDate(m.dueDate)}
+                        </span>
+                        <span className="rounded-full bg-gray-100 dark:bg-white/[0.04] px-1.5 py-0.5 font-semibold text-gray-600 dark:text-gray-300">{m.priority}</span>
+                      </div>
+                      {canEdit && m.status !== "Completado" && (
+                        <button onClick={(e) => { e.stopPropagation(); onResolve(m); }}
+                          className="mt-2 w-full inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 px-2 py-1.5 text-[11px] font-semibold text-white opacity-0 group-hover:opacity-100 transition-all">
+                          <CheckCircle2 size={11} /> Resolver
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+    
 // ─── Form Modal ───────────────────────────────────────────────────────────────
 
 type FormState = {
@@ -306,7 +571,9 @@ function FormModal({ mode, initial, assets, drivers, driversLoading, onClose, on
             </div>
             <div className="sm:col-span-2">
               <Field label="Título del trabajo" required>
-                <input className={inputCls} value={form.title} onChange={e => set("title", e.target.value)} placeholder="Ej: Cambio de frenos delanteros" />
+                <input className={inputCls} value={form.title} maxLength={200}
+                  onChange={e => set("title", e.target.value.slice(0, 200))}
+                  placeholder="Ej: Cambio de frenos delanteros" />
               </Field>
             </div>
             <Field label="Tipo">
@@ -357,15 +624,26 @@ function FormModal({ mode, initial, assets, drivers, driversLoading, onClose, on
               />
             </Field>
             <Field label="Mano de obra (USD)">
-              <input className={inputCls} type="number" min="0" step="0.01" value={form.laborCost} onChange={e => set("laborCost", e.target.value)} placeholder="0.00" />
+              <input className={inputCls} type="number" min="0" max="1000000" step="0.01" value={form.laborCost}
+                onChange={e => {
+                  const n = Number(e.target.value);
+                  set("laborCost", Number.isFinite(n) ? String(Math.max(0, Math.min(1000000, n))) : "0");
+                }}
+                placeholder="0.00" />
             </Field>
             <Field label="Repuestos (USD)">
-              <input className={inputCls} type="number" min="0" step="0.01" value={form.partsCost} onChange={e => set("partsCost", e.target.value)} placeholder="0.00" />
+              <input className={inputCls} type="number" min="0" max="1000000" step="0.01" value={form.partsCost}
+                onChange={e => {
+                  const n = Number(e.target.value);
+                  set("partsCost", Number.isFinite(n) ? String(Math.max(0, Math.min(1000000, n))) : "0");
+                }}
+                placeholder="0.00" />
             </Field>
             <div className="sm:col-span-2">
               <Field label="Notas">
-                <textarea rows={3} className="w-full resize-none rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.05] px-3 py-2.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/10 transition"
-                  value={form.notes} onChange={e => set("notes", e.target.value)} placeholder="Descripción del trabajo realizado..." />
+                <textarea rows={3} maxLength={2000}
+                  className="w-full resize-none rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.05] px-3 py-2.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/10 transition"
+                  value={form.notes} onChange={e => set("notes", e.target.value.slice(0, 2000))} placeholder="Descripción del trabajo realizado..." />
               </Field>
             </div>
           </div>
@@ -407,9 +685,9 @@ function DeleteConfirm({ title, onConfirm, onCancel }: { title: string; onConfir
 
 // ─── Table row ────────────────────────────────────────────────────────────────
 
-function MaintenanceRow({ item, asset, onDetail, onEdit, onDelete, canEdit, canDelete }: {
+function MaintenanceRow({ item, asset, onDetail, onEdit, onDelete, onResolve, canEdit, canDelete }: {
   item: ApiMaintenance; asset: Asset | undefined;
-  onDetail: () => void; onEdit: () => void; onDelete: () => void;
+  onDetail: () => void; onEdit: () => void; onDelete: () => void; onResolve: () => void;
   canEdit: boolean; canDelete: boolean;
 }) {
   const s = STATUS_CFG[item.status];
@@ -461,6 +739,11 @@ function MaintenanceRow({ item, asset, onDetail, onEdit, onDelete, canEdit, canD
         <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
           {/* "Ver" siempre visible — si llegaron aquí tienen "ver" */}
           <button onClick={onDetail} className="rounded-lg border border-orange-200 px-2 py-1 text-[11px] font-semibold text-orange-600 hover:bg-orange-50 dark:border-orange-500/20 dark:text-orange-400 whitespace-nowrap">Ver</button>
+          {canEdit && item.status !== "Completado" && (
+            <button onClick={onResolve} title="Resolver (con evidencia)" className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-400 whitespace-nowrap">
+              <CheckCircle2 size={11} />Resolver
+            </button>
+          )}
           {canEdit && (
             <button onClick={onEdit} className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.08]"><Pencil size={12} /></button>
           )}
@@ -482,10 +765,12 @@ const EMPTY_FORM: FormState = {
 };
 
 export default function MaintenancePage() {
+  const { session } = useAuth();
   const { maintenances, loading, createMaintenance, updateMaintenance, deleteMaintenance, completeMaintenance } = useMaintenances();
   const { assets, loading: loadingAssets } = useAssets();
   const { drivers, loading: driversLoading } = useDrivers();
   const { can } = usePermissions();
+  const companyId = session?.companyId ?? "";
 
   // ─── Permisos granulares ──────────────────────────────────────────────────
   const canCreate = can("mantenimiento", "ordenes", "crear");
@@ -502,6 +787,8 @@ export default function MaintenancePage() {
   const [detailItem, setDetailItem] = useState<ApiMaintenance | null>(null);
   const [modal, setModal] = useState<{ mode: "create" | "edit"; form: FormState; id?: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ApiMaintenance | null>(null);
+  const [resolveItem, setResolveItem] = useState<ApiMaintenance | null>(null);
+  const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
 
   const filtered = useMemo(() => {
     return maintenances
@@ -568,13 +855,23 @@ export default function MaintenancePage() {
     setModal(null);
   };
 
-  const handleStatusChange = async (item: ApiMaintenance, newStatus: MaintenanceStatus) => {
+  const handleStatusChange = async (item: ApiMaintenance, newStatus: MaintenanceStatus, opts?: { withEvidence?: boolean }) => {
+    if (opts?.withEvidence) {
+      setDetailItem(null);
+      setResolveItem(item);
+      return;
+    }
     try {
       if (newStatus === "Completado") await completeMaintenance(item.id, todayISO());
       else await updateMaintenance(item.id, { status: newStatus });
       toast.success(`Movido a ${newStatus}`);
       setDetailItem(null);
     } catch { toast.error("No se pudo cambiar el estado"); }
+  };
+
+  const handleResolved = (updated: ApiMaintenance) => {
+    setDetailItem(updated);
+    setResolveItem(null);
   };
 
   const handleDelete = async () => {
@@ -615,6 +912,17 @@ export default function MaintenancePage() {
             placeholder="Buscar por vehículo, trabajo o técnico..."
             className="h-9 w-full rounded-xl border border-gray-200 bg-transparent pl-8 pr-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/10 dark:border-white/[0.08] dark:text-white" />
         </div>
+        {/* View-mode toggle */}
+        <div className="flex h-9 items-center gap-0.5 rounded-xl border border-gray-200 dark:border-white/[0.08] p-0.5 shrink-0">
+          <button onClick={() => setViewMode("table")}
+            className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${viewMode === "table" ? "bg-orange-500 text-white" : "text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.04]"}`}>
+            <LayoutList size={12} />Tabla
+          </button>
+          <button onClick={() => setViewMode("kanban")}
+            className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${viewMode === "kanban" ? "bg-orange-500 text-white" : "text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.04]"}`}>
+            <LayoutGrid size={12} />Kanban
+          </button>
+        </div>
         <div className="flex items-center gap-2 shrink-0">
           <Filter size={13} className="text-gray-400" />
           <div className="relative">
@@ -652,6 +960,16 @@ export default function MaintenancePage() {
           <div className="flex items-center justify-center gap-3 py-20 text-gray-400">
             <Loader2 size={18} className="animate-spin" /><span className="text-sm">Cargando...</span>
           </div>
+        ) : viewMode === "kanban" ? (
+          <div className="p-3">
+            <KanbanView
+              maintenances={filtered}
+              assetMap={assetMap}
+              canEdit={canEdit}
+              onDetail={(m) => setDetailItem(m)}
+              onResolve={(m) => setResolveItem(m)}
+            />
+          </div>
         ) : paginated.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-14">
             <Wrench size={20} className="text-gray-300 dark:text-gray-600" />
@@ -674,6 +992,7 @@ export default function MaintenancePage() {
                     onDetail={() => setDetailItem(item)}
                     onEdit={() => { setDetailItem(null); openEdit(item); }}
                     onDelete={() => { setDetailItem(null); setDeleteTarget(item); }}
+                    onResolve={() => { setDetailItem(null); setResolveItem(item); }}
                     canEdit={canEdit}
                     canDelete={canDelete}
                   />
@@ -708,12 +1027,13 @@ export default function MaintenancePage() {
 
       {/* Modals */}
       {detailItem && (
-        <DetailModal
+        <DetailDrawer
           item={detailItem} asset={assetMap.get(detailItem.assetId)}
           onClose={() => setDetailItem(null)}
           onEdit={() => { openEdit(detailItem); setDetailItem(null); }}
           onDelete={() => { setDeleteTarget(detailItem); setDetailItem(null); }}
-          onStatusChange={s => handleStatusChange(detailItem, s)}
+          onStatusChange={(s, opts) => handleStatusChange(detailItem, s, opts)}
+          onAddEvidence={() => { setResolveItem(detailItem); setDetailItem(null); }}
           canEdit={canEdit}
           canDelete={canDelete}
         />
@@ -725,6 +1045,15 @@ export default function MaintenancePage() {
       )}
       {deleteTarget && (
         <DeleteConfirm title={deleteTarget.title} onConfirm={handleDelete} onCancel={() => setDeleteTarget(null)} />
+      )}
+      {resolveItem && (
+        <ResolveMaintenanceModal
+          open={true}
+          item={resolveItem}
+          companyId={String(companyId)}
+          onClose={() => setResolveItem(null)}
+          onResolved={handleResolved}
+        />
       )}
     </div>
   );

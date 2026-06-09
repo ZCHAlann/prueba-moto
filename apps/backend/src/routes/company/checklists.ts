@@ -9,42 +9,44 @@ import { requireAdmin } from '../../middlewares/requireAdmin';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { safeString, validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
 const CHECKLIST_STATUSES = ['Aprobado', 'Observado', 'Pendiente', 'Rechazado'] as const;
+const CHECKLIST_TARGET_KINDS = ['Vehiculo', 'Generador', 'Motor', 'AireAcondicionado', 'Otro'] as const;
 
 // Categorías
 const createCategorySchema = z.object({
-  name: z.string().min(1, 'El nombre es requerido'),
-  description: z.string().optional().nullable(),
-  items: z.array(z.string()).default([]),
+  name: safeString({ min: 2, max: 120, fieldLabel: 'Nombre', allowEmpty: false }),
+  description: safeString({ max: 500, fieldLabel: 'Descripción', allowEmpty: true }).nullable().optional(),
+  items: z.array(safeString({ min: 1, max: 120, fieldLabel: 'Item', allowEmpty: false })).max(100).default([]),
 });
 
 const updateCategorySchema = createCategorySchema.partial();
 
 // Checklists
 const checklistItemSchema = z.object({
-  id: z.string(),
-  label: z.string(),
+  id: z.string().max(60),
+  label: safeString({ max: 200, fieldLabel: 'Item', allowEmpty: false }),
   checked: z.boolean().default(false),
-  observation: z.string().optional().nullable(),
+  observation: validators.longTextOptional,
 });
 
 const createChecklistSchema = z.object({
   categoryId: z.string().optional().nullable(),
   assetId: z.string().optional().nullable(),
   driverId: z.string().optional().nullable(),
-  targetKind: z.string().optional().nullable(),
+  targetKind: z.enum(CHECKLIST_TARGET_KINDS).optional().nullable(),
   targetLabel: z.string().optional().nullable(),
-  date: z.string().min(1, 'La fecha es requerida'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)'),
   status: z.enum(CHECKLIST_STATUSES).default('Pendiente'),
-  summary: z.string().optional().nullable(),
-  findings: z.string().optional().nullable(),
-  items: z.array(checklistItemSchema).default([]),
-  photoUrls: z.array(z.string()).default([]),
+  summary: validators.longTextOptional,
+  findings: validators.longTextOptional,
+  items: z.array(checklistItemSchema).max(200).default([]),
+  photoUrls: z.array(z.string().max(2_000_000)).max(20).default([]),
 });
 
 const updateChecklistSchema = createChecklistSchema.partial();
@@ -76,7 +78,6 @@ router.get('/checklist-categories', requireModule('checklist'), async (req, res,
 router.post(
   '/checklist-categories',
   requireModule('checklist'),
-  requireAdmin,
   validate(createCategorySchema),
   async (req, res, next) => {
     try {

@@ -8,6 +8,7 @@ import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
 import { logAudit } from '../../lib/audit';
 import { toId } from '../../lib/ids';
+import { safeString, validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
@@ -16,16 +17,16 @@ type AlertConfig = { id: string; label: string; description: string; enabled: bo
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 const updateSettingsSchema = z.object({
-  maintenanceLeadTimeDays: z.number().int().min(0).optional(),
+  maintenanceLeadTimeDays: z.number().int().min(0).max(365).optional(),
   checklistRequired:       z.boolean().optional(),
-  fuelCurrency:            z.string().max(10).optional(),
-  alertEmail:              z.string().email().nullable().optional(),
+  fuelCurrency:            z.enum(['USD', 'EUR', 'COP', 'MXN', 'ARS', 'PEN', 'CLP']).optional(),
+  alertEmail:              validators.emailOptional,
   alertConfigs:            z.array(z.object({
-    id:          z.string(),
-    label:       z.string(),
-    description: z.string(),
+    id:          z.string().max(60),
+    label:       safeString({ max: 120, fieldLabel: 'Etiqueta', allowEmpty: false }),
+    description: safeString({ max: 250, fieldLabel: 'Descripción', allowEmpty: true }),
     enabled:     z.boolean(),
-  })).optional(),
+  })).max(50).optional(),
 });
 
 // ─── GET /company/:id/settings ───────────────────────────────────────────────

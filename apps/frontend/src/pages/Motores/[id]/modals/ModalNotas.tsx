@@ -89,7 +89,8 @@ export default function ModalNotas({ open, onClose, assetId, companyId }: Props)
             <div className="flex-1">
               <textarea
                 value={body}
-                onChange={(e) => setBody(e.target.value)}
+                maxLength={2000}
+                onChange={(e) => setBody(e.target.value.slice(0, 2000))}
                 onKeyDown={onKeyDown}
                 placeholder="Escribe una nota sobre este vehículo…"
                 rows={3}

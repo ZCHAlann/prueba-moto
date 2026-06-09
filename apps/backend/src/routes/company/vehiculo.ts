@@ -1,6 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
 import { AppError } from '../../lib/errors';
 import { requireSupervisor } from '../../middlewares/requireSupervisor';
+import { validate } from '../../lib/validate';
+import { safeString, validators } from '../../lib/validators';
 import {
   getVehicleCockpit,
   getVehicleLocation,
@@ -39,6 +42,12 @@ function getCompanyId(req: Request): string {
   return `company-${req.companyId}`;
 }
 
+function toFiniteNumber(v: unknown): number | undefined {
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 // ═══════════════════════════════════════════════
 //  COCKPIT
 // ═══════════════════════════════════════════════
@@ -62,14 +71,13 @@ router.get('/:assetId/location', handle(async (req: Request) => {
 }));
 
 // PATCH /:assetId/status  — cambiar status del activo
-router.patch('/:assetId/status', requireSupervisor, handle(async (req: Request) => {
+const statusSchema = z.object({
+  status: z.enum(['Operativo', 'Fuera de servicio', 'En mantenimiento']),
+});
+router.patch('/:assetId/status', requireSupervisor, validate(statusSchema), handle(async (req: Request) => {
   const assetId   = String(req.params.assetId);
   const companyId = getCompanyId(req);
-  const { status } = req.body ?? {};
-  const allowed = ['Operativo', 'Fuera de servicio', 'En mantenimiento'];
-  if (!allowed.includes(status)) {
-    throw new AppError(400, `status inválido. Permitidos: ${allowed.join(', ')}`);
-  }
+  const { status } = req.body;
   return updateAssetStatus(assetId, companyId, status);
 }));
 
@@ -137,21 +145,20 @@ router.get('/:assetId/routes', handle(async (req: Request) => {
   return listAssetRoutes(assetId, companyId);
 }));
 
-router.post('/:assetId/routes', handle(async (req: Request) => {
+router.post('/:assetId/routes', validate(z.object({
+  date:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)'),
+  origin:      safeString({ max: 200, fieldLabel: 'Origen', allowEmpty: true }).nullable().optional(),
+  destination: safeString({ max: 200, fieldLabel: 'Destino', allowEmpty: true }).nullable().optional(),
+  distanceKm:  z.union([z.string(), z.number()]).optional().nullable().transform(toFiniteNumber),
+  durationMin: z.union([z.string(), z.number()]).optional().nullable().transform(toFiniteNumber),
+  coordinates: z.unknown().optional(),
+  driverId:    z.union([z.string(), z.number()]).optional().nullable().transform(toFiniteNumber),
+  notes:       validators.longTextOptional,
+})), handle(async (req: Request) => {
   const assetId   = String(req.params.assetId);
   const companyId = getCompanyId(req);
-  const b = req.body ?? {};
-  if (!b.date) throw new AppError(400, 'date es requerido');
-  return createAssetRoute(assetId, companyId, {
-    date:        b.date,
-    origin:      b.origin,
-    destination: b.destination,
-    distanceKm:  b.distanceKm  != null ? Number(b.distanceKm)  : undefined,
-    durationMin: b.durationMin != null ? Number(b.durationMin) : undefined,
-    coordinates: b.coordinates,
-    driverId:    b.driverId    != null ? Number(b.driverId)    : undefined,
-    notes:       b.notes,
-  });
+  const b = req.body;
+  return createAssetRoute(assetId, companyId, b);
 }));
 
 // ═══════════════════════════════════════════════
@@ -166,13 +173,13 @@ router.get('/:assetId/notes', handle(async (req: Request) => {
   return listAssetNotes(assetId, companyId, { limit, offset });
 }));
 
-router.post('/:assetId/notes', handle(async (req: Request) => {
+router.post('/:assetId/notes', validate(z.object({
+  body: safeString({ min: 1, max: 2000, fieldLabel: 'Nota', allowEmpty: false }),
+})), handle(async (req: Request) => {
   const assetId   = String(req.params.assetId);
   const companyId = getCompanyId(req);
-  const body      = String(req.body?.body ?? '').trim();
-  if (!body) throw new AppError(400, 'body es requerido');
+  const { body }  = req.body;
 
-  // authorId/name del token (req.user viene del middleware authenticate)
   const user = (req as any).user ?? {};
   return createAssetNote(assetId, companyId, {
     id:   user.id   ?? user.userId ?? null,

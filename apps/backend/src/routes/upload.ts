@@ -143,6 +143,34 @@ router.post('/invoice-files', (req, res, next) => {
   });
 });
 
+// ─── Evidencias de mantenimiento (imágenes + PDF, hasta 10 archivos) ────────
+router.post('/maintenance-evidence', (req, res, next) => {
+  const companyId = req.query.companyId as string | undefined;
+  const folder = companyId ? `maintenance/${companyId}` : 'maintenance';
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf'];
+      if (allowed.includes(file.mimetype)) cb(null, true);
+      else cb(new AppError(400, 'Solo imágenes o PDF.'));
+    },
+  }).array('files', 10);
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    const files = req.files as Express.Multer.File[];
+    if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+    res.json({
+      urls: files.map(f => ({
+        url: `/uploads/${folder}/${f.filename}`,
+        type: f.mimetype,
+        name: f.originalname,
+      })),
+    });
+  });
+});
+
 router.post('/insurance-files', (req, res, next) => {
   const companyId = req.query.companyId as string | undefined;
   const folder = companyId ? `insurance/${companyId}` : 'insurance';

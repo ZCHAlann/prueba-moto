@@ -7,6 +7,7 @@ import * as operationalSchema from '../src/db/schema/operational';
 const {
   platformPlans, companies, platformUsers, companyUsers,
   platformSettings, platformLeads, platformInvoices, platformTickets, platformTicketMessages,
+  platformAuditEntries,
 } = platformSchema;
 
 const {
@@ -16,15 +17,16 @@ const {
   companyInventory, companyGarages, companyAcUnits, companyAcServices,
   companyAcRefrigerantLogs, companyAuditEntries, oilChecks,
   companyOilTypes, companyOilChanges, companyInsurancePolicies,
+  assetNotes, assetRoutes, companyDriverReports,
 } = operationalSchema;
 
 const SALT_ROUNDS = 10;
 const hashPassword = (p: string) => hash(p, SALT_ROUNDS);
 
 async function main() {
-  
-
-  const client = postgres('postgresql://neondb_owner:npg_fQ8wMT7CupPY@ep-calm-darkness-actvd6dg-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require');
+  const client = postgres(
+    'jeje'
+  );
   const db = drizzle(client);
 
   console.log('🌱 Iniciando seed...\n');
@@ -41,6 +43,17 @@ async function main() {
     defaultTrialDays: 14,
     defaultMaxUsers: 10,
     defaultMaxAssets: 50,
+    passwordMinLength: 8,
+    passwordRequireUpper: true,
+    passwordRequireNumber: true,
+    passwordRequireSymbol: false,
+    passwordExpiryDays: 0,
+    sessionExpiryHours: 24,
+    maxLoginAttempts: 5,
+    lockoutMinutes: 30,
+    notifyOnNewCompany: true,
+    notifyOnTrialExpiring: true,
+    notifyOnLoginFailure: false,
   }).onConflictDoNothing();
   console.log('✅ platform_settings');
 
@@ -57,6 +70,7 @@ async function main() {
       maxUsers: 3,
       maxAssets: 10,
       allowedModules: ['activos', 'conductores'],
+      isActive: true,
     },
     {
       id: 'starter',
@@ -67,6 +81,7 @@ async function main() {
       maxUsers: 10,
       maxAssets: 50,
       allowedModules: ['activos', 'conductores', 'mantenimiento', 'combustible', 'alertas'],
+      isActive: true,
     },
     {
       id: 'pro',
@@ -80,6 +95,7 @@ async function main() {
         'activos', 'conductores', 'mantenimiento', 'combustible',
         'alertas', 'checklist', 'inventario', 'garajes', 'ac', 'seguros',
       ],
+      isActive: true,
     },
     {
       id: 'enterprise',
@@ -93,6 +109,7 @@ async function main() {
         'activos', 'conductores', 'mantenimiento', 'combustible',
         'alertas', 'checklist', 'inventario', 'garajes', 'ac', 'seguros', 'auditoria',
       ],
+      isActive: true,
     },
   ]).onConflictDoNothing();
   console.log('✅ platform_plans');
@@ -106,6 +123,7 @@ async function main() {
     passwordHash: await hashPassword('Admin123!'),
     role: 'superadmin',
     status: 'active',
+    failedLoginAttempts: 0,
   }).returning();
   console.log('✅ platform_users (superadmin)');
 
@@ -149,7 +167,7 @@ async function main() {
   // ─────────────────────────────────────────────
   // 6. Usuarios de empresa
   // ─────────────────────────────────────────────
-  const [adminUser] = await db.insert(companyUsers).values([
+  const [adminUser, ownerUser, operadorUser] = await db.insert(companyUsers).values([
     {
       companyId: empresa.id,
       email: 'admin@ecuavial.com',
@@ -158,6 +176,8 @@ async function main() {
       role: 'admin_empresa',
       status: 'active',
       profileData: { firstName: 'Carlos', lastName: 'Mendoza' },
+      modulePermissions: {},
+      failedLoginAttempts: 0,
     },
     {
       companyId: empresa.id,
@@ -167,6 +187,8 @@ async function main() {
       role: 'owner_empresa',
       status: 'active',
       profileData: { firstName: 'Ana', lastName: 'Torres' },
+      modulePermissions: {},
+      failedLoginAttempts: 0,
     },
     {
       companyId: empresa.id,
@@ -176,6 +198,8 @@ async function main() {
       role: 'operador',
       status: 'active',
       profileData: { firstName: 'Pedro', lastName: 'Guzmán' },
+      modulePermissions: {},
+      failedLoginAttempts: 0,
     },
   ]).returning();
   console.log('✅ company_users');
@@ -206,12 +230,42 @@ async function main() {
   console.log('✅ company_sites');
 
   // ─────────────────────────────────────────────
-  // 8. Activos
+  // 8. Garajes (antes de activos por FK garageId)
+  // ─────────────────────────────────────────────
+  const [garGye, garUio] = await db.insert(companyGarages).values([
+    {
+      companyId: empresa.id,
+      code: 'GAR-GYE',
+      name: 'Garaje Central Guayaquil',
+      location: 'Av. Juan Tanca Marengo km 3.5',
+      capacity: 20,
+      supervisor: 'Pedro Guzmán',
+      status: 'Activo',
+      latitude: -2.1894,
+      longitude: -79.8891,
+    },
+    {
+      companyId: empresa.id,
+      code: 'GAR-UIO',
+      name: 'Garaje Quito Norte',
+      location: 'Av. Eloy Alfaro N32-500',
+      capacity: 10,
+      supervisor: 'Jorge Naranjo',
+      status: 'Activo',
+      latitude: -0.1807,
+      longitude: -78.4678,
+    },
+  ]).returning();
+  console.log('✅ company_garages');
+
+  // ─────────────────────────────────────────────
+  // 9. Activos (con campos de telemática y GPS)
   // ─────────────────────────────────────────────
   const [activo1, activo2, activo3, activo4] = await db.insert(companyAssets).values([
     {
       companyId: empresa.id,
       siteId: sedeGye.id,
+      garageId: garGye.id,
       code: 'VH-001',
       name: 'Camión Hino GH 2021',
       assetType: 'Vehiculo',
@@ -229,10 +283,18 @@ async function main() {
       oilCapacity: '11 lts',
       availability: 'Disponible',
       responsible: 'Pedro Guzmán',
+      photoUrls: [],
+      // Telemática
+      engineOn: false,
+      locked: true,
+      lastLat: -2.1500,
+      lastLng: -79.8800,
+      lastGpsAt: new Date('2025-05-30T08:00:00Z'),
     },
     {
       companyId: empresa.id,
       siteId: sedeGye.id,
+      garageId: garGye.id,
       code: 'VH-002',
       name: 'Camioneta Toyota Hilux 2022',
       assetType: 'Vehiculo',
@@ -249,10 +311,18 @@ async function main() {
       oilCapacity: '6 lts',
       availability: 'En ruta',
       responsible: 'Ana Torres',
+      photoUrls: [],
+      // Telemática
+      engineOn: true,
+      locked: false,
+      lastLat: -2.2200,
+      lastLng: -79.9100,
+      lastGpsAt: new Date('2025-05-30T10:30:00Z'),
     },
     {
       companyId: empresa.id,
       siteId: sedeUio.id,
+      garageId: garUio.id,
       code: 'VH-003',
       name: 'Bus Hino RN 2020',
       assetType: 'Vehiculo',
@@ -266,10 +336,18 @@ async function main() {
       color: 'Azul',
       fuelType: 'Diesel',
       availability: 'No disponible',
+      photoUrls: [],
+      // Telemática
+      engineOn: false,
+      locked: true,
+      lastLat: -0.1807,
+      lastLng: -78.4678,
+      lastGpsAt: new Date('2025-05-28T16:00:00Z'),
     },
     {
       companyId: empresa.id,
       siteId: sedeGye.id,
+      garageId: garGye.id,
       code: 'GEN-001',
       name: 'Generador Caterpillar 150kVA',
       assetType: 'Planta electrica',
@@ -282,12 +360,15 @@ async function main() {
       oilType: '15W-40',
       oilCapacity: '14 lts',
       availability: 'Disponible',
+      photoUrls: [],
+      engineOn: false,
+      locked: false,
     },
   ]).returning();
   console.log('✅ company_assets');
 
   // ─────────────────────────────────────────────
-  // 9. Conductores
+  // 10. Conductores
   // ─────────────────────────────────────────────
   const [conductor1, conductor2, conductor3] = await db.insert(companyDrivers).values([
     {
@@ -336,9 +417,9 @@ async function main() {
   console.log('✅ company_drivers');
 
   // ─────────────────────────────────────────────
-  // 10. Asignaciones
+  // 11. Asignaciones (con campos de acta de entrega)
   // ─────────────────────────────────────────────
-  await db.insert(companyAssignments).values([
+  const [asign1] = await db.insert(companyAssignments).values([
     {
       companyId: empresa.id,
       assetId: activo1.id,
@@ -346,6 +427,22 @@ async function main() {
       startDate: '2024-01-15',
       status: 'Activa',
       notes: 'Asignación permanente ruta Guayaquil-Quito',
+      // Acta de entrega
+      actaNumber: 'ACTA-2024-001',
+      actaDate: '2024-01-15',
+      actaTime: '08:00',
+      actaPlace: 'Sede Guayaquil - Oficina de Operaciones',
+      actaArea: 'Logística',
+      driverDni: '1704567890',
+      driverPhone: '+593 98 765 4321',
+      driverRole: 'Conductor de Ruta',
+      vehicleOdometer: '120000',
+      vehicleFuelLevel: '3/4',
+      vehicleCondition: 'Bueno',
+      novedades: { frenos: 'OK', llantas: 'OK', luces: 'OK' },
+      accesorios: { gato: true, llanta_repuesto: true, triangulo: true, extintor: true },
+      novedadesText: 'Vehículo en buen estado general al momento de la entrega.',
+      vehiclePhotoUrls: [],
     },
     {
       companyId: empresa.id,
@@ -353,12 +450,26 @@ async function main() {
       driverId: conductor2.id,
       startDate: '2024-03-01',
       status: 'Activa',
+      actaNumber: 'ACTA-2024-002',
+      actaDate: '2024-03-01',
+      actaTime: '09:00',
+      actaPlace: 'Sede Guayaquil',
+      actaArea: 'Operaciones',
+      driverDni: '0912345678',
+      driverPhone: '+593 97 654 3210',
+      driverRole: 'Conductora Urbana',
+      vehicleOdometer: '75000',
+      vehicleFuelLevel: '1/2',
+      vehicleCondition: 'Muy Bueno',
+      novedades: { frenos: 'OK', llantas: 'OK', luces: 'OK' },
+      accesorios: { gato: true, llanta_repuesto: true, triangulo: true, extintor: true },
+      vehiclePhotoUrls: [],
     },
-  ]);
+  ]).returning();
   console.log('✅ company_assignments');
 
   // ─────────────────────────────────────────────
-  // 11. Mantenimientos
+  // 12. Mantenimientos
   // ─────────────────────────────────────────────
   await db.insert(companyMaintenances).values([
     {
@@ -375,6 +486,7 @@ async function main() {
       laborCost: '60.00',
       partsCost: '120.00',
       notes: 'Se cambió filtro de aceite, aire y combustible.',
+      photoUrls: [],
     },
     {
       companyId: empresa.id,
@@ -389,6 +501,7 @@ async function main() {
       cost: '350.00',
       laborCost: '100.00',
       partsCost: '250.00',
+      photoUrls: [],
     },
     {
       companyId: empresa.id,
@@ -399,12 +512,13 @@ async function main() {
       status: 'Pendiente',
       scheduledDate: '2025-07-01',
       technician: 'Pedro Guzmán',
+      photoUrls: [],
     },
   ]);
   console.log('✅ company_maintenances');
 
   // ─────────────────────────────────────────────
-  // 12. Combustible
+  // 13. Combustible
   // ─────────────────────────────────────────────
   await db.insert(companyFuelEntries).values([
     {
@@ -442,7 +556,7 @@ async function main() {
   console.log('✅ company_fuel_entries');
 
   // ─────────────────────────────────────────────
-  // 13. Alertas
+  // 14. Alertas
   // ─────────────────────────────────────────────
   await db.insert(companyAlerts).values([
     {
@@ -476,7 +590,7 @@ async function main() {
   console.log('✅ company_alerts');
 
   // ─────────────────────────────────────────────
-  // 14. Checklist categorías
+  // 15. Checklist categorías
   // ─────────────────────────────────────────────
   const [catPre, catPost] = await db.insert(companyChecklistCategories).values([
     {
@@ -495,7 +609,7 @@ async function main() {
   console.log('✅ company_checklist_categories');
 
   // ─────────────────────────────────────────────
-  // 15. Checklists
+  // 16. Checklists
   // ─────────────────────────────────────────────
   await db.insert(companyChecklists).values([
     {
@@ -517,12 +631,32 @@ async function main() {
         { name: 'Cinturones', result: 'OK' },
         { name: 'Documentos', result: 'OK' },
       ],
+      photoUrls: [],
+    },
+    {
+      companyId: empresa.id,
+      categoryId: catPost.id,
+      assetId: activo2.id,
+      driverId: conductor2.id,
+      inspectorId: adminUser.id,
+      targetKind: 'Vehiculo',
+      targetLabel: 'Camioneta Toyota Hilux - DEF-5678',
+      date: '2025-05-29',
+      status: 'Completado',
+      summary: 'Sin novedades al retorno',
+      items: [
+        { name: 'Carrocería sin daños', result: 'OK' },
+        { name: 'Nivel de combustible', result: 'Bajo' },
+        { name: 'Limpieza interna', result: 'OK' },
+        { name: 'Reporte de novedades', result: 'Sin novedades' },
+      ],
+      photoUrls: [],
     },
   ]);
   console.log('✅ company_checklists');
 
   // ─────────────────────────────────────────────
-  // 16. Inventario
+  // 17. Inventario
   // ─────────────────────────────────────────────
   await db.insert(companyInventory).values([
     {
@@ -566,42 +700,23 @@ async function main() {
       unit: 'unidad',
       location: 'Bodega B - Zona neumáticos',
     },
+    {
+      companyId: empresa.id,
+      code: 'INV-005',
+      name: 'Filtro de aire Caterpillar C4.4',
+      category: 'Filtros',
+      stock: '4.00',
+      minStock: '2.00',
+      unit: 'unidad',
+      location: 'Bodega A - Estante 3',
+    },
   ]);
   console.log('✅ company_inventory');
 
   // ─────────────────────────────────────────────
-  // 17. Garajes
-  // ─────────────────────────────────────────────
-  await db.insert(companyGarages).values([
-    {
-      companyId: empresa.id,
-      code: 'GAR-GYE',
-      name: 'Garaje Central Guayaquil',
-      location: 'Av. Juan Tanca Marengo km 3.5',
-      capacity: 20,
-      supervisor: 'Pedro Guzmán',
-      status: 'Activo',
-      latitude: -2.1894,
-      longitude: -79.8891,
-    },
-    {
-      companyId: empresa.id,
-      code: 'GAR-UIO',
-      name: 'Garaje Quito Norte',
-      location: 'Av. Eloy Alfaro N32-500',
-      capacity: 10,
-      supervisor: 'Jorge Naranjo',
-      status: 'Activo',
-      latitude: -0.1807,
-      longitude: -78.4678,
-    },
-  ]);
-  console.log('✅ company_garages');
-
-  // ─────────────────────────────────────────────
   // 18. Unidades AC
   // ─────────────────────────────────────────────
-  const [ac1] = await db.insert(companyAcUnits).values([
+  const [ac1, ac2] = await db.insert(companyAcUnits).values([
     {
       companyId: empresa.id,
       siteId: sedeGye.id,
@@ -621,6 +736,7 @@ async function main() {
       status: 'Operativo',
       lastService: '2025-01-15',
       nextService: '2025-07-15',
+      photoUrls: [],
     },
     {
       companyId: empresa.id,
@@ -637,6 +753,7 @@ async function main() {
       status: 'Operativo',
       lastService: '2024-11-20',
       nextService: '2025-05-20',
+      photoUrls: [],
     },
   ]).returning();
   console.log('✅ company_ac_units');
@@ -653,6 +770,17 @@ async function main() {
       technician: 'Servicio Técnico LG',
       cost: '85.00',
       findings: 'Limpieza de filtros y evaporador. Sin novedades.',
+      photoUrls: [],
+    },
+    {
+      companyId: empresa.id,
+      unitId: ac2.id,
+      date: '2024-11-20',
+      kind: 'Mantenimiento preventivo',
+      technician: 'Servicio Técnico Midea',
+      cost: '65.00',
+      findings: 'Limpieza general. Filtros en buen estado.',
+      photoUrls: [],
     },
   ]);
   console.log('✅ company_ac_services');
@@ -726,6 +854,17 @@ async function main() {
       quantity: 2,
       technician: 'Pedro Guzmán',
     },
+    {
+      companyId: empresa.id,
+      assetId: activo4.id,
+      oilTypeId: oilType1.id,
+      date: '2025-03-15',
+      reading: 3200,
+      nextReading: 3700,
+      quantity: 3,
+      technician: 'Pedro Guzmán',
+      notes: 'Cambio preventivo generador',
+    },
   ]);
   console.log('✅ company_oil_changes');
 
@@ -743,6 +882,17 @@ async function main() {
       puedeSalir: true,
       observaciones: 'Aceite oscuro pero dentro del rango operativo.',
       accionRecomendada: 'Programar cambio en el próximo mantenimiento.',
+    },
+    {
+      companyId: empresa.id,
+      assetId: activo2.id,
+      technicianId: operadorUser.id,
+      nivel: 'normal',
+      color: 'claro',
+      confianza: '97%',
+      puedeSalir: true,
+      observaciones: 'Aceite en buen estado, cambio reciente.',
+      accionRecomendada: 'Sin acción requerida.',
     },
   ]);
   console.log('✅ oil_checks');
@@ -795,7 +945,141 @@ async function main() {
   console.log('✅ company_insurance_policies');
 
   // ─────────────────────────────────────────────
-  // 25. Auditoría empresa
+  // 25. Asset Notes (notas del cockpit) — NUEVO
+  // ─────────────────────────────────────────────
+  await db.insert(assetNotes).values([
+    {
+      companyId: empresa.id,
+      assetId: activo1.id,
+      authorId: adminUser.id,
+      authorName: 'Carlos Mendoza',
+      body: 'Revisar el estado del sistema de escape en el próximo ingreso a taller. El conductor reportó ruido inusual en carretera.',
+    },
+    {
+      companyId: empresa.id,
+      assetId: activo1.id,
+      authorId: operadorUser.id,
+      authorName: 'Pedro Guzmán',
+      body: 'Se ajustaron los espejos retrovisores y se verificó el buen funcionamiento del sistema de iluminación trasero.',
+    },
+    {
+      companyId: empresa.id,
+      assetId: activo2.id,
+      authorId: adminUser.id,
+      authorName: 'Carlos Mendoza',
+      body: 'Pendiente renovación de la póliza de seguro antes del 15 de diciembre de 2025.',
+    },
+    {
+      companyId: empresa.id,
+      assetId: activo3.id,
+      authorId: adminUser.id,
+      authorName: 'Carlos Mendoza',
+      body: 'Vehículo en mantenimiento correctivo por falla en sistema de frenos. Estimado de retorno: 26 de mayo de 2025.',
+    },
+  ]);
+  console.log('✅ asset_notes');
+
+  // ─────────────────────────────────────────────
+  // 26. Asset Routes (rutas registradas) — NUEVO
+  // ─────────────────────────────────────────────
+  await db.insert(assetRoutes).values([
+    {
+      companyId: empresa.id,
+      assetId: activo1.id,
+      driverId: conductor1.id,
+      date: '2025-05-28',
+      origin: 'Guayaquil - Sede Principal',
+      destination: 'Quito - Centro de Distribución Norte',
+      distanceKm: 421.5,
+      durationMin: 285,
+      coordinates: [
+        [-2.1500, -79.8800],
+        [-1.8000, -79.5000],
+        [-0.9000, -78.7000],
+        [-0.1807, -78.4678],
+      ],
+      notes: 'Ruta sin novedades. Entrega completada a las 14:30.',
+    },
+    {
+      companyId: empresa.id,
+      assetId: activo2.id,
+      driverId: conductor2.id,
+      date: '2025-05-29',
+      origin: 'Sede Guayaquil',
+      destination: 'Puerto Marítimo Guayaquil',
+      distanceKm: 12.3,
+      durationMin: 35,
+      coordinates: [
+        [-2.1894, -79.8891],
+        [-2.2300, -79.9000],
+        [-2.2761, -79.9000],
+      ],
+      notes: 'Ruta urbana de carga. Sin novedades.',
+    },
+    {
+      companyId: empresa.id,
+      assetId: activo1.id,
+      driverId: conductor1.id,
+      date: '2025-05-30',
+      origin: 'Quito - Centro de Distribución Norte',
+      destination: 'Guayaquil - Sede Principal',
+      distanceKm: 421.5,
+      durationMin: 290,
+      coordinates: [
+        [-0.1807, -78.4678],
+        [-0.9000, -78.7000],
+        [-1.8000, -79.5000],
+        [-2.1500, -79.8800],
+      ],
+      notes: 'Retorno a base. Conductor reportó tráfico en Riobamba (+20 min).',
+    },
+  ]);
+  console.log('✅ asset_routes');
+
+  // ─────────────────────────────────────────────
+  // 27. Driver Reports — NUEVO
+  // ─────────────────────────────────────────────
+  await db.insert(companyDriverReports).values([
+    {
+      companyId: empresa.id,
+      driverId: conductor1.id,
+      driverName: 'Roberto Villacís',
+      fuelLevel: '3/4',
+      oilLevel: 'Normal',
+      vehicleFaults: 'Ruido leve en sistema de escape. Pendiente revisión en taller.',
+      invoices: [
+        { description: 'Peaje Riobamba', amount: 2.50, date: '2025-05-28' },
+        { description: 'Alimentación en ruta', amount: 8.00, date: '2025-05-28' },
+      ],
+      fileUrls: [],
+    },
+    {
+      companyId: empresa.id,
+      driverId: conductor2.id,
+      driverName: 'María Cevallos',
+      fuelLevel: '1/4',
+      oilLevel: 'Normal',
+      vehicleFaults: null,
+      invoices: [
+        { description: 'Parqueadero Puerto', amount: 3.00, date: '2025-05-29' },
+      ],
+      fileUrls: [],
+    },
+    {
+      companyId: empresa.id,
+      driverId: conductor3.id,
+      driverName: 'Jorge Naranjo',
+      fuelLevel: '1/2',
+      oilLevel: 'Bajo',
+      vehicleFaults: 'Nivel de aceite bajo. Se agregó 1 litro preventivamente.',
+      invoices: [],
+      fileUrls: [],
+    },
+  ]);
+  console.log('✅ company_driver_reports');
+
+  // ─────────────────────────────────────────────
+  // 28. Auditoría empresa
   // ─────────────────────────────────────────────
   await db.insert(companyAuditEntries).values([
     {
@@ -810,18 +1094,39 @@ async function main() {
     },
     {
       companyId: empresa.id,
+      entity: 'asset',
+      entityId: String(activo2.id),
+      action: 'create',
+      actorId: adminUser.id,
+      actorName: 'Carlos Mendoza',
+      description: 'Activo VH-002 creado',
+      metadata: { code: 'VH-002' },
+    },
+    {
+      companyId: empresa.id,
       entity: 'driver',
       entityId: String(conductor1.id),
       action: 'create',
       actorId: adminUser.id,
       actorName: 'Carlos Mendoza',
       description: 'Conductor DRV-001 registrado',
+      metadata: { code: 'DRV-001' },
+    },
+    {
+      companyId: empresa.id,
+      entity: 'assignment',
+      entityId: String(asign1.id),
+      action: 'create',
+      actorId: adminUser.id,
+      actorName: 'Carlos Mendoza',
+      description: 'Asignación VH-001 → Roberto Villacís creada',
+      metadata: { actaNumber: 'ACTA-2024-001' },
     },
   ]);
   console.log('✅ company_audit_entries');
 
   // ─────────────────────────────────────────────
-  // 26. Lead demo
+  // 29. Lead demo
   // ─────────────────────────────────────────────
   await db.insert(platformLeads).values([
     {
@@ -837,11 +1142,25 @@ async function main() {
       assignedTo: superAdmin.id,
       estimatedValue: '1200.00',
     },
+    {
+      companyName: 'Constructora Andina Cía. Ltda.',
+      contactName: 'Verónica Salazar',
+      contactEmail: 'vsalazar@constructoraandina.com',
+      contactPhone: '+593 98 111 2233',
+      industry: 'construcción',
+      country: 'Ecuador',
+      city: 'Cuenca',
+      status: 'contactado',
+      source: 'referido',
+      assignedTo: superAdmin.id,
+      estimatedValue: '2500.00',
+      notes: 'Interesada en módulo de maquinaria pesada.',
+    },
   ]);
   console.log('✅ platform_leads');
 
   // ─────────────────────────────────────────────
-  // 27. Factura demo
+  // 30. Facturas demo
   // ─────────────────────────────────────────────
   await db.insert(platformInvoices).values([
     {
@@ -853,17 +1172,42 @@ async function main() {
       amount: '99.00',
       tax: '11.88',
       total: '110.88',
+      issuedAt: '2025-04-01',
+      dueAt: '2025-04-10',
+      paidAt: '2025-04-05',
+    },
+    {
+      companyId: empresa.id,
+      planId: 'pro',
+      invoiceNumber: 'INV-2025-0002',
+      status: 'paid',
+      cycle: 'monthly',
+      amount: '99.00',
+      tax: '11.88',
+      total: '110.88',
       issuedAt: '2025-05-01',
       dueAt: '2025-05-10',
       paidAt: '2025-05-05',
+    },
+    {
+      companyId: empresa.id,
+      planId: 'pro',
+      invoiceNumber: 'INV-2025-0003',
+      status: 'sent',
+      cycle: 'monthly',
+      amount: '99.00',
+      tax: '11.88',
+      total: '110.88',
+      issuedAt: '2025-06-01',
+      dueAt: '2025-06-10',
     },
   ]);
   console.log('✅ platform_invoices');
 
   // ─────────────────────────────────────────────
-  // 28. Ticket soporte
+  // 31. Tickets de soporte
   // ─────────────────────────────────────────────
-  const [ticket1] = await db.insert(platformTickets).values([
+  const [ticket1, ticket2] = await db.insert(platformTickets).values([
     {
       companyId: empresa.id,
       createdBy: adminUser.id,
@@ -874,6 +1218,17 @@ async function main() {
       status: 'in_progress',
       priority: 'high',
       category: 'bug',
+    },
+    {
+      companyId: empresa.id,
+      createdBy: ownerUser.id,
+      assignedTo: superAdmin.id,
+      ticketNumber: 'TKT-2025-0002',
+      title: 'Consulta sobre módulo de telemática GPS',
+      description: '¿El plan Pro incluye actualización de GPS en tiempo real o es un módulo adicional?',
+      status: 'open',
+      priority: 'medium',
+      category: 'consulta',
     },
   ]).returning();
   console.log('✅ platform_tickets');
@@ -893,13 +1248,26 @@ async function main() {
       authorRole: 'platform',
       body: 'Gracias por el detalle. Reproducimos el error. Será resuelto en el próximo deploy (estimado 24-48h).',
     },
+    {
+      ticketId: ticket2.id,
+      authorCompanyUserId: ownerUser.id,
+      authorName: 'Ana Torres',
+      authorRole: 'company',
+      body: 'Necesitamos saber si podemos activar el rastreo GPS sin cambiar de plan.',
+    },
+    {
+      ticketId: ticket2.id,
+      authorPlatformUserId: superAdmin.id,
+      authorName: 'Admin ApliSmart',
+      authorRole: 'platform',
+      body: 'Hola Ana, el módulo GPS en tiempo real está incluido en el plan Pro. Los campos ya están activos en su cuenta. Le envío la guía de activación.',
+    },
   ]);
   console.log('✅ platform_ticket_messages');
 
   // ─────────────────────────────────────────────
-  // 29. Auditoría plataforma
+  // 32. Auditoría plataforma
   // ─────────────────────────────────────────────
-  const { platformAuditEntries } = platformSchema;
   await db.insert(platformAuditEntries).values([
     {
       actorId: superAdmin.id,
@@ -910,15 +1278,40 @@ async function main() {
       description: 'Empresa Transportes Ecuavial S.A. creada',
       metadata: { slug: 'ecuavial', planId: 'pro' },
     },
+    {
+      actorId: superAdmin.id,
+      actorEmail: 'admin@aplismart.io',
+      action: 'plan.assigned',
+      entity: 'company',
+      entityId: String(empresa.id),
+      description: 'Plan Pro asignado a Transportes Ecuavial S.A.',
+      metadata: { planId: 'pro', cycle: 'monthly' },
+    },
   ]);
   console.log('✅ platform_audit_entries');
 
+  // ─────────────────────────────────────────────
+  // Resumen
+  // ─────────────────────────────────────────────
   console.log('\n🎉 Seed completado exitosamente!');
+  console.log('\n📋 Tablas pobladas:');
+  console.log('  Platform:    platform_settings, platform_plans, platform_users');
+  console.log('               platform_leads, platform_invoices, platform_tickets');
+  console.log('               platform_ticket_messages, platform_audit_entries');
+  console.log('  Operational: companies, company_settings, company_sites, company_garages');
+  console.log('               company_assets (con GPS/telemática), company_drivers');
+  console.log('               company_assignments (con acta de entrega), company_maintenances');
+  console.log('               company_fuel_entries, company_alerts');
+  console.log('               company_checklist_categories, company_checklists');
+  console.log('               company_inventory, company_ac_units, company_ac_services');
+  console.log('               company_ac_refrigerant_logs, company_oil_types, company_oil_changes');
+  console.log('               oil_checks, company_insurance_policies, company_audit_entries');
+  console.log('  Nuevas:      asset_notes, asset_routes, company_driver_reports ✨');
   console.log('\n📋 Credenciales de acceso:');
   console.log('  SuperAdmin   → admin@aplismart.io      / Admin123!');
   console.log('  Admin emp.   → admin@ecuavial.com      / Admin123!');
-  console.log('  Supervisor   → supervisor@ecuavial.com / Super123!');
-  console.log('  Técnico      → tecnico@ecuavial.com    / Tecnico123!');
+  console.log('  Owner emp.   → owner@ecuavial.com      / Owner123!');
+  console.log('  Operador     → operador@ecuavial.com   / Operador123!');
 
   await client.end();
 }

@@ -78,9 +78,11 @@ function IconLoader({ className }: { className?: string }) {
 
 function Field({
   label, value, onChange, type = "text", error, disabled, hint,
+  noDigits, digitsOnly, maxLength, toLowerCase,
 }: {
   label: string; value: string; onChange?: (v: string) => void;
   type?: string; error?: string; disabled?: boolean; hint?: string;
+  noDigits?: boolean; digitsOnly?: boolean; maxLength?: number; toLowerCase?: boolean;
 }) {
   const [show, setShow] = useState(false);
   const isPassword = type === "password";
@@ -95,7 +97,17 @@ function Field({
         <input
           type={inputType}
           value={value}
-          onChange={(e) => onChange?.(e.target.value)}
+          maxLength={maxLength ?? undefined}
+          onKeyDown={(e) => {
+            if (noDigits && /\d/.test(e.key)) e.preventDefault();
+            if (digitsOnly && !/[0-9]/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key)) e.preventDefault();
+          }}
+          onChange={(e) => {
+            let v = e.target.value;
+            if (toLowerCase) v = v.toLowerCase();
+            if (maxLength) v = v.slice(0, maxLength);
+            onChange?.(v);
+          }}
           disabled={disabled}
           className={`
             w-full rounded-xl border bg-white dark:bg-white/[0.03] px-4 py-2.5 text-sm
@@ -262,6 +274,17 @@ export function ProfilePage() {
   }, [profile]);
 
   function handleField(key: keyof UpdateProfileInput, value: string) {
+    // Saneado defensivo contra XSS / SQLi en strings largos
+    if (key === "phone") {
+      value = value.replace(/\D/g, "").slice(0, 10);
+    } else if (key === "firstName" || key === "lastName") {
+      value = value.replace(/[^A-Za-zÁÉÍÓÚáéíóúÑñÜü\s'-]/g, "").slice(0, 80);
+    } else if (key === "username") {
+      value = value.toLowerCase().replace(/[^a-z0-9_.-]/g, "").slice(0, 40);
+    } else if (typeof value === "string") {
+      // Eliminar HTML y patrones peligrosos
+      value = value.replace(/[<>]/g, "").slice(0, 200);
+    }
     setForm((f) => ({ ...f, [key]: value }));
   }
 
@@ -482,10 +505,10 @@ export function ProfilePage() {
                     </div>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <Field label="Nombre"   value={form.firstName ?? ""} onChange={(v) => handleField("firstName", v)} />
-                    <Field label="Apellido" value={form.lastName  ?? ""} onChange={(v) => handleField("lastName", v)} />
-                    <Field label="Usuario"  value={form.username  ?? ""} onChange={(v) => handleField("username", v)} hint="Usado para iniciar sesión" />
-                    <Field label="Teléfono" type="tel" value={form.phone ?? ""} onChange={(v) => handleField("phone", v)} />
+                    <Field label="Nombre"   value={form.firstName ?? ""} onChange={(v) => handleField("firstName", v)} noDigits maxLength={80} />
+                    <Field label="Apellido" value={form.lastName  ?? ""} onChange={(v) => handleField("lastName", v)} noDigits maxLength={80} />
+                    <Field label="Usuario"  value={form.username  ?? ""} onChange={(v) => handleField("username", v)} hint="Usado para iniciar sesión" maxLength={40} toLowerCase />
+                    <Field label="Teléfono" type="tel" value={form.phone ?? ""} onChange={(v) => handleField("phone", v)} digitsOnly maxLength={10} />
                     <Field label="Correo electrónico" type="email" value={profile?.email ?? ""} disabled hint="El correo no puede modificarse aquí" />
                   </div>
                 </div>

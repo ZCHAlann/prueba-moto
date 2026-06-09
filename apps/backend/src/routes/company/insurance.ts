@@ -9,6 +9,7 @@ import { requireAdmin } from '../../middlewares/requireAdmin';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
+import { safeString, validators } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
 
@@ -16,14 +17,14 @@ const router = Router({ mergeParams: true });
 
 const createInsuranceSchema = z.object({
   assetId:      z.string().min(1, 'El vehículo es requerido'),
-  insurer:      z.string().min(1, 'La aseguradora es requerida'),
-  policyNumber: z.string().min(1, 'El número de póliza es requerido'),
-  coverage:     z.string().optional().nullable(),
-  startDate:    z.string().min(1, 'La fecha de inicio es requerida'),
-  endDate:      z.string().min(1, 'La fecha de vencimiento es requerida'),
+  insurer:      safeString({ min: 2, max: 120, fieldLabel: 'Aseguradora', allowEmpty: false }),
+  policyNumber: safeString({ min: 3, max: 60, fieldLabel: 'Número de póliza', allowEmpty: false }),
+  coverage:     safeString({ max: 250, fieldLabel: 'Cobertura', allowEmpty: true }).nullable().optional(),
+  startDate:    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)'),
+  endDate:      z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)'),
   status:       z.enum(['Vigente', 'Por vencer', 'Vencido']).default('Vigente'),
-  notes:        z.string().optional().nullable(),
-  fileUrl: z.string().optional().nullable(),
+  notes:        validators.longTextOptional,
+  fileUrl:      z.string().max(2_000_000).optional().nullable(),
 });
 
 const updateInsuranceSchema = createInsuranceSchema.partial();

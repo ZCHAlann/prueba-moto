@@ -41,6 +41,14 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// WebSocket stats (debug) — cuántas conexiones hay, agrupadas por empresa
+app.get('/ws-stats', (_req, res) => {
+  // lazy import para evitar ciclo
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { wsStats } = require('./services/websocket') as typeof import('./services/websocket');
+  res.json(wsStats());
+});
+
 
 // ─── Error handler (siempre al final) ─────────────────────────────────────────
 app.use(errorHandler);

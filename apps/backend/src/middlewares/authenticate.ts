@@ -5,7 +5,14 @@ import { UnauthorizedError } from '../lib/errors';
 export const COOKIE_NAME = "aplismart_token";
 
 export type CrudAction = "create" | "read" | "update" | "delete";
-export type ModulePermissionMap = Record<string, CrudAction[]>;
+/**
+ * Shape real de los permisos por usuario en el JWT:
+ *   { [moduleKey]: { [submoduleKey]: ActionKey[] } }
+ * Coincide con el shape que consume `usePermissions().can()` en el
+ * frontend y con lo que vive en `company_roles.permissions` /
+ * `company_users.module_permissions` (jsonb) en la DB.
+ */
+export type ModulePermissionMap = Record<string, Record<string, string[]>>;
 export type PermissionMap = Record<string, unknown>;
 
 export interface JwtPayload {

@@ -341,14 +341,14 @@ export const companyChecklists = pgTable('company_checklists', {
   assetId: integer('asset_id').references(() => companyAssets.id, { onDelete: 'set null' }),
   driverId: integer('driver_id').references(() => companyDrivers.id, { onDelete: 'set null' }),
   inspectorId: integer('inspector_id').references(() => companyUsers.id, { onDelete: 'set null' }),
-  targetKind: varchar('target_kind', { length: 40 }),
-  targetLabel: varchar('target_label', { length: 160 }),
-  date: date('date').notNull(),
-  status: varchar('status', { length: 40 }).default('Pendiente'),
+  targetKind: varchar('target_kind', { length: 40 }).notNull().default('Vehiculo'),
+  targetLabel: varchar('target_label', { length: 160 }).notNull().default(''),
+  date: date('date').notNull().defaultNow(),
+  status: varchar('status', { length: 40 }).notNull().default('Pendiente'),
   summary: text('summary'),
   findings: text('findings'),
-  items: jsonb('items').default([]),
-  photoUrls: text('photo_urls').array().default([]),
+  items: jsonb('items').notNull().default([]),
+  photoUrls: text('photo_urls').array().notNull().default([]),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
@@ -640,3 +640,4 @@ export const companyDriverReports = pgTable('company_driver_reports', {
   createdAt:     timestamp('created_at').notNull().defaultNow(),
   updatedAt:     timestamp('updated_at').notNull().defaultNow(),
 });
+

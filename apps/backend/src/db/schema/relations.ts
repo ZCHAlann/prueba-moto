@@ -281,3 +281,4 @@ export const assetRoutesRelations = relations(assetRoutes, ({ one }) => ({
   asset:   one(companyAssets,  { fields: [assetRoutes.assetId],   references: [companyAssets.id] }),
   driver:  one(companyDrivers, { fields: [assetRoutes.driverId],  references: [companyDrivers.id] }),
 }));
+

@@ -8,6 +8,13 @@
       "when": 1781032768085,
       "tag": "0000_stiff_jubilee",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781125140253,
+      "tag": "0001_company_roles",
+      "breakpoints": true
     }
   ]
 }

@@ -8,6 +8,7 @@ import { hashPassword, verifyPassword, signToken } from '../services/auth.servic
 import { UnauthorizedError, AppError } from '../lib/errors';
 import { toId } from '../lib/ids';
 import { authenticate, COOKIE_NAME, PermissionMap, ModulePermissionMap } from '../middlewares/authenticate';
+import { getFinalPermissionsForUser } from './company/roles';
 
 const router = Router();
 
@@ -166,9 +167,17 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
       const isAdminRole    = ["owner_empresa", "admin_empresa"].includes(user.role);
       const companyModules = user.company?.enabledModules ?? [];
       const permissions    = {} as PermissionMap;
+      // Owners / admins tienen acceso total (no necesitan lookup).
+      // Para el resto, los permisos del JWT vienen de la tabla
+      // `company_roles` (catálogo por empresa) mergeados con el
+      // override per-user que vive en `company_users.modulePermissions`.
       const modulePermissions: ModulePermissionMap = isAdminRole
         ? {}
-        : (user.modulePermissions as ModulePermissionMap ?? {});
+        : await getFinalPermissionsForUser(
+            Number(user.companyId),
+            user.role,
+            (user.modulePermissions as ModulePermissionMap) ?? {},
+          );
 
       tokenPayload = {
         sub:               toId("company-user", user.id.toString()),
@@ -206,7 +215,7 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
   }
 });
 
-// ─── POST /auth/session ───────────────────────────────────────────────────────
+// ─── POST /auth/session ────────────────────────────────────────────────────────
 // (sin cambios relevantes — este endpoint no se usa para el flujo principal)
 
 router.post('/session', validate(sessionSchema), async (req, res, next) => {
@@ -254,7 +263,11 @@ router.post('/session', validate(sessionSchema), async (req, res, next) => {
       const permissions    = {} as PermissionMap;
       const modulePermissions: ModulePermissionMap = isAdminRole
         ? {}
-        : (user.modulePermissions as ModulePermissionMap ?? {});
+        : await getFinalPermissionsForUser(
+            Number(user.companyId),
+            user.role,
+            (user.modulePermissions as ModulePermissionMap) ?? {},
+          );
 
       const token = await signToken({
         sub:               toId('company-user', user.id.toString()),

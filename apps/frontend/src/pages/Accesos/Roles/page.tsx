@@ -1,21 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, X, Trash2 } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useCompanyRoles, type CompanyRole, type PermissionMap } from "@/hooks/useCompanyRoles";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import {
   MODULE_TREE,
   type ActionKey,
-  type PermissionMap,
 } from "@/lib/module-tree";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Constants ───────────────────────────────────────────────────────────────
 
 const ALL_ACTIONS: ActionKey[] = ["ver", "crear", "editar", "eliminar"];
-const STORAGE_KEY = "aplismart_role_permissions";
-const CUSTOM_ROLES_STORAGE_KEY = "aplismart_custom_roles_v1";
 
 const ACTION_CONFIG: Record<ActionKey, { label: string; color: string; ring: string; dot: string }> = {
   ver:      { label: "Ver",      color: "bg-blue-500/10 text-blue-600 dark:text-blue-400",                 ring: "ring-blue-500/30",    dot: "bg-blue-500"    },
@@ -24,38 +23,14 @@ const ACTION_CONFIG: Record<ActionKey, { label: string; color: string; ring: str
   eliminar: { label: "Eliminar", color: "bg-red-500/10 text-red-600 dark:text-red-400",                    ring: "ring-red-500/30",     dot: "bg-red-500"     },
 };
 
-const COMPANY_ROLES: Array<{
-  key: string;
-  label: string;
-  description: string;
-  activeCls: string;
-  countCls: string;
-}> = [
-  {
-    key: "supervisor",
-    label: "Supervisor",
-    description: "Supervisa operaciones, revisa reportes y gestiona órdenes de trabajo.",
-    activeCls: "bg-violet-600 text-white border-violet-600 shadow-sm",
-    countCls: "bg-white/20 text-white",
-  },
-  {
-    key: "operador",
-    label: "Operador",
-    description: "Ejecuta tareas de mantenimiento, crea checklists y registra novedades.",
-    activeCls: "bg-blue-600 text-white border-blue-600 shadow-sm",
-    countCls: "bg-white/20 text-white",
-  },
-  {
-    key: "conductor",
-    label: "Conductor",
-    description: "Acceso básico a checklist, alertas y geolocalización de unidades.",
-    activeCls: "bg-cyan-600 text-white border-cyan-600 shadow-sm",
-    countCls: "bg-white/20 text-white",
-  },
+const PLATFORM_ROLES = [
+  { key: "owner_empresa", label: "Propietario" },
+  { key: "admin_empresa", label: "Administrador" },
 ];
 
-// Paletas disponibles para roles personalizados
-const CUSTOM_ROLE_PALETTES: Array<{ name: string; activeCls: string; countCls: string }> = [
+// Paletas de los roles custom. Coinciden con los strings que guarda
+// el backend en `company_roles.palette`.
+const PALETTES: Array<{ name: string; activeCls: string; countCls: string }> = [
   { name: "Esmeralda", activeCls: "bg-emerald-600 text-white border-emerald-600 shadow-sm", countCls: "bg-white/20 text-white" },
   { name: "Rosa",      activeCls: "bg-pink-600 text-white border-pink-600 shadow-sm",       countCls: "bg-white/20 text-white" },
   { name: "Púrpura",   activeCls: "bg-purple-600 text-white border-purple-600 shadow-sm",   countCls: "bg-white/20 text-white" },
@@ -63,74 +38,11 @@ const CUSTOM_ROLE_PALETTES: Array<{ name: string; activeCls: string; countCls: s
   { name: "Indigo",    activeCls: "bg-indigo-600 text-white border-indigo-600 shadow-sm",    countCls: "bg-white/20 text-white" },
 ];
 
-type CustomRoleDef = {
-  key: string;
-  label: string;
-  description: string;
-  palette: string; // nombre de la paleta
-};
-
-const PLATFORM_ROLES = [
-  { key: "owner_empresa", label: "Propietario" },
-  { key: "admin_empresa", label: "Administrador" },
-];
-
-// ─── Default permissions ──────────────────────────────────────────────────────
-
-const DEFAULT_PERMISSIONS: Record<string, PermissionMap> = {
-  supervisor: {
-    dashboard:     { dashboard:              ["ver"] },
-    gestion:       { flotas: ["ver"], conductores: ["ver"], sedes: ["ver"], garajes: ["ver"], asignaciones: ["ver"], seguros: ["ver"] },
-    motores:       { lista_motores: ["ver"], mantenimientos_motor: ["ver", "crear"], historial_motor: ["ver"] },
-    mantenimiento: { ordenes: ["ver", "crear", "editar"], inventario: ["ver"], oil: ["ver"] },
-    checklist:     { checklist: ["ver", "crear"] },
-    alertas:       { alertas: ["ver"] },
-    reportes:      { reportes: ["ver"] },
-  },
-  operador: {
-    dashboard:       { dashboard:       ["ver"] },
-    mantenimiento:   { ordenes: ["ver", "crear"], inventario: ["ver"], oil: ["ver"] },
-    checklist:       { checklist:       ["ver", "crear"] },
-    alertas:         { alertas:         ["ver"] },
-    geolocalizacion: { geolocalizacion: ["ver"] },
-  },
-  conductor: {
-    dashboard:       { dashboard:       ["ver"] },
-    checklist:       { checklist:       ["ver", "crear"] },
-    alertas:         { alertas:         ["ver"] },
-    geolocalizacion: { geolocalizacion: ["ver"] },
-  },
-};
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function loadStored(): Record<string, PermissionMap> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, PermissionMap>) : {};
-  } catch { return {}; }
+function paletteCls(name: string) {
+  return PALETTES.find((p) => p.name === name) ?? PALETTES[0];
 }
 
-function saveStored(data: Record<string, PermissionMap>) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch { /* silent */ }
-}
-
-function loadCustomRoles(): CustomRoleDef[] {
-  try {
-    const raw = localStorage.getItem(CUSTOM_ROLES_STORAGE_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr : [];
-  } catch { return []; }
-}
-
-function saveCustomRoles(roles: CustomRoleDef[]) {
-  try { localStorage.setItem(CUSTOM_ROLES_STORAGE_KEY, JSON.stringify(roles)); } catch { /* silent */ }
-}
-
-function getPerms(roleKey: string, stored: Record<string, PermissionMap>): PermissionMap {
-  return stored[roleKey] ?? DEFAULT_PERMISSIONS[roleKey] ?? {};
-}
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function countPerms(p: PermissionMap): number {
   return Object.values(p).reduce(
@@ -148,18 +60,10 @@ function slugify(text: string): string {
     .slice(0, 40);
 }
 
-// ─── Toggle Switch ────────────────────────────────────────────────────────────
+// ─── Toggle Switch ───────────────────────────────────────────────────────────
 
-function Toggle({
-  checked,
-  onChange,
-  action,
-  readonly,
-}: {
-  checked: boolean;
-  onChange: () => void;
-  action: ActionKey;
-  readonly: boolean;
+function Toggle({ checked, onChange, action, readonly }: {
+  checked: boolean; onChange: () => void; action: ActionKey; readonly: boolean;
 }) {
   const cfg = ACTION_CONFIG[action];
   return (
@@ -187,104 +91,72 @@ function Toggle({
   );
 }
 
-// ─── Module icons ─────────────────────────────────────────────────────────────
+// ─── Module icons ────────────────────────────────────────────────────────────
 
 const MODULE_ICONS: Record<string, React.ReactNode> = {
-  dashboard: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
-      <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
-    </svg>
-  ),
-  gestion: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
-    </svg>
-  ),
-  motores: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="3"/>
-      <path d="M12 2v3m0 14v3M4.22 4.22l2.12 2.12m11.32 11.32 2.12 2.12M2 12h3m14 0h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/>
-    </svg>
-  ),
-  mantenimiento: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
-    </svg>
-  ),
-  checklist: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
-    </svg>
-  ),
-  alertas: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>
-    </svg>
-  ),
-  reportes: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-      <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
-    </svg>
-  ),
-  geolocalizacion: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/>
-    </svg>
-  ),
+  dashboard: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>),
+  gestion: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>),
+  motores: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M4.22 4.22l2.12 2.12m11.32 11.32 2.12 2.12M2 12h3m14 0h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>),
+  mantenimiento: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>),
+  checklist: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>),
+  alertas: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>),
+  reportes: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>),
+  geolocalizacion: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>),
 };
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Main Page ───────────────────────────────────────────────────────────────
 
 export function RolesPage() {
   const { can } = usePermissions();
-
-  // Esta página es de accesos — solo quien puede editar accesos puede modificar plantillas
   const canManage = can("accesos", "accesos", "editar");
 
-  const [stored, setStored]             = useState<Record<string, PermissionMap>>({});
-  const [customRoles, setCustomRoles]   = useState<CustomRoleDef[]>([]);
-  const [selectedRole, setSelectedRole] = useState<string>(COMPANY_ROLES[0].key);
-  const [permissions, setPermissions]   = useState<PermissionMap>({});
-  const [dirty, setDirty]               = useState(false);
-  const [saving, setSaving]             = useState(false);
-  const [showNewRoleModal, setShowNewRoleModal] = useState(false);
+  const { roles, loading, createRole, updateRole, deleteRole } = useCompanyRoles();
 
+  // ── Limpieza de localStorage viejo (migración suave one-shot) ─────────────
   useEffect(() => {
-    const data = loadStored();
-    const customs = loadCustomRoles();
-    setStored(data);
-    setCustomRoles(customs);
-    setPermissions(getPerms(COMPANY_ROLES[0].key, data));
-    setDirty(false);
+    try {
+      localStorage.removeItem("aplismart_role_permissions");
+      localStorage.removeItem("aplismart_custom_roles_v1");
+    } catch { /* silent */ }
   }, []);
 
-  // Lista unificada de roles (default + custom)
-  const allCompanyRoles = [
-    ...COMPANY_ROLES,
-    ...customRoles.map((cr) => {
-      const palette = CUSTOM_ROLE_PALETTES.find((p) => p.name === cr.palette) ?? CUSTOM_ROLE_PALETTES[0];
-      return {
-        key: cr.key,
-        label: cr.label,
-        description: cr.description,
-        activeCls: palette.activeCls,
-        countCls: palette.countCls,
-        isCustom: true,
-      };
-    }),
-  ];
+  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+  const [draft, setDraft]             = useState<PermissionMap>({});
+  const [dirty, setDirty]             = useState(false);
+  const [saving, setSaving]           = useState(false);
+  const [showNewRoleModal, setShowNewRoleModal] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<CompanyRole | null>(null);
 
-  const handleSelectRole = (roleKey: string) => {
-    setSelectedRole(roleKey);
-    setPermissions(getPerms(roleKey, stored));
+  // Cuando llegan los roles, seleccionamos el primero por defecto
+  useEffect(() => {
+    if (roles.length === 0) {
+      setSelectedRoleId(null);
+      return;
+    }
+    if (!selectedRoleId || !roles.find((r) => r.id === selectedRoleId)) {
+      const first = roles[0];
+      setSelectedRoleId(first.id);
+      setDraft(first.permissions ?? {});
+      setDirty(false);
+    }
+  }, [roles, selectedRoleId]);
+
+  const selectedRole = useMemo<CompanyRole | null>(
+    () => roles.find((r) => r.id === selectedRoleId) ?? null,
+    [roles, selectedRoleId],
+  );
+
+  const handleSelectRole = (id: string) => {
+    const r = roles.find((x) => x.id === id);
+    if (!r) return;
+    setSelectedRoleId(id);
+    setDraft(r.permissions ?? {});
     setDirty(false);
   };
 
   const handleToggleAction = (mod: string, sub: string, action: ActionKey) => {
     if (!canManage) return;
-    setPermissions((prev) => {
+    setDraft((prev) => {
       const current: ActionKey[] = prev[mod]?.[sub] ?? [];
       let next: ActionKey[];
       if (action === "ver") {
@@ -303,7 +175,7 @@ export function RolesPage() {
 
   const handleSetAll = (mod: string, sub: string | null, all: boolean) => {
     if (!canManage) return;
-    setPermissions((prev) => {
+    setDraft((prev) => {
       const modDef = MODULE_TREE[mod as keyof typeof MODULE_TREE];
       if (!modDef) return prev;
       if (sub === null) {
@@ -317,85 +189,83 @@ export function RolesPage() {
   };
 
   const handleSave = async () => {
-    if (!canManage) return;
+    if (!canManage || !selectedRole) return;
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 280));
-    const next = { ...stored, [selectedRole]: permissions };
-    setStored(next);
-    saveStored(next);
-    setDirty(false);
-    setSaving(false);
-    const roleLabel = allCompanyRoles.find((r) => r.key === selectedRole)?.label ?? selectedRole;
-    toast.success("Plantilla guardada", {
-      description: `Permisos de "${roleLabel}" actualizados.`,
-    });
+    try {
+      await updateRole(selectedRole.id, { permissions: draft });
+      setDirty(false);
+      toast.success("Plantilla guardada", {
+        description: `Permisos de "${selectedRole.label}" actualizados.`,
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al guardar");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleReset = () => {
-    if (!canManage) return;
-    setPermissions(DEFAULT_PERMISSIONS[selectedRole] ?? {});
+    if (!canManage || !selectedRole) return;
+    setDraft(selectedRole.permissions ?? {});
     setDirty(true);
   };
 
-  const handleCreateRole = (def: { label: string; description: string; sourceKey: string; palette: string }) => {
+  const handleCreateRole = async (def: { label: string; description: string; sourceKey: string; palette: string }) => {
     if (!canManage) return;
-    // Generar key única
-    let key = slugify(def.label) || `rol_${Date.now()}`;
-    const existingKeys = new Set([
-      ...COMPANY_ROLES.map((r) => r.key),
-      ...customRoles.map((r) => r.key),
-    ]);
+    // Generar key única (basada en label, sin colisionar con la lista actual)
+    const existingKeys = new Set(roles.map((r) => r.key));
+    let baseKey = slugify(def.label) || `rol_${Date.now()}`;
+    let key = baseKey;
     let suffix = 1;
     while (existingKeys.has(key)) {
-      key = `${slugify(def.label) || "rol"}_${suffix++}`;
+      key = `${baseKey}_${suffix++}`;
     }
-    const newRole: CustomRoleDef = {
-      key,
-      label: def.label.trim(),
-      description: def.description.trim(),
-      palette: def.palette,
-    };
-    const next = [...customRoles, newRole];
-    setCustomRoles(next);
-    saveCustomRoles(next);
-    // Sembrar permisos desde la fuente
-    const seed = getPerms(def.sourceKey, stored);
-    const newStored = { ...stored, [key]: seed };
-    setStored(newStored);
-    saveStored(newStored);
-    setSelectedRole(key);
-    setPermissions(seed);
-    setDirty(false);
-    setShowNewRoleModal(false);
-    toast.success("Rol creado", {
-      description: `"${newRole.label}" se agregó a las plantillas.`,
-    });
+    // Sembrar permisos copiando del rol fuente
+    const sourceRole = roles.find((r) => r.key === def.sourceKey);
+    const seed = sourceRole?.permissions ?? {};
+    try {
+      await createRole({
+        key,
+        label: def.label.trim(),
+        description: def.description.trim(),
+        palette: def.palette,
+        permissions: seed,
+      });
+      setShowNewRoleModal(false);
+      toast.success("Rol creado", {
+        description: `"${def.label.trim()}" se agregó a las plantillas.`,
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al crear el rol");
+    }
   };
 
-  const handleDeleteRole = (roleKey: string) => {
+  const handleDeleteRole = (id: string) => {
     if (!canManage) return;
-    const role = customRoles.find((r) => r.key === roleKey);
+    const role = roles.find((r) => r.id === id);
     if (!role) return;
-    if (!confirm(`¿Eliminar la plantilla "${role.label}"? Los permisos asignados a usuarios con este rol no se verán afectados.`)) return;
-    const next = customRoles.filter((r) => r.key !== roleKey);
-    setCustomRoles(next);
-    saveCustomRoles(next);
-    // Limpiar permisos del rol eliminado
-    const { [roleKey]: _, ...rest } = stored;
-    setStored(rest);
-    saveStored(rest);
-    if (selectedRole === roleKey) {
-      setSelectedRole(COMPANY_ROLES[0].key);
-      setPermissions(getPerms(COMPANY_ROLES[0].key, rest));
-      setDirty(false);
+    if (role.isSystem) {
+      toast.error("Los roles del sistema no se pueden eliminar.");
+      return;
     }
-    toast.success("Plantilla eliminada", {
-      description: `"${role.label}" se quitó de la lista.`,
-    });
+    setPendingDelete(role);
   };
 
-  const activeRole = allCompanyRoles.find((r) => r.key === selectedRole);
-  const totalPerms = countPerms(permissions);
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    const role = pendingDelete;
+    setPendingDelete(null);
+    try {
+      await deleteRole(role.id);
+      toast.success("Plantilla eliminada", {
+        description: `"${role.label}" se quitó de la lista.`,
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al eliminar");
+    }
+  };
+
+  const totalPerms = countPerms(draft);
 
   return (
     <div className="flex flex-col gap-5 h-full">
@@ -419,51 +289,56 @@ export function RolesPage() {
             Rol
           </span>
 
-          {/* Editable role chips (default + custom) */}
           <div className="flex gap-2 flex-wrap">
-            {allCompanyRoles.map((role) => {
-              const isActive = selectedRole === role.key;
-              const count    = countPerms(getPerms(role.key, stored));
-              return (
-                <div key={role.key} className="relative group">
-                  <motion.button
-                    type="button"
-                    onClick={() => handleSelectRole(role.key)}
-                    whileTap={{ scale: 0.94 }}
-                    className={[
-                      "inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-all duration-200",
-                      isActive
-                        ? role.activeCls
-                        : "border-gray-200 dark:border-white/[0.08] text-gray-600 dark:text-gray-400 bg-transparent hover:bg-gray-50 dark:hover:bg-white/[0.04]",
-                    ].join(" ")}
-                  >
-                    {role.label}
-                    {count > 0 && (
-                      <span className={[
-                        "text-[10px] font-bold tabular-nums rounded-full px-1.5 py-0.5 leading-none",
-                        isActive ? role.countCls : "bg-gray-100 dark:bg-white/[0.08] text-gray-500 dark:text-gray-400",
-                      ].join(" ")}>
-                        {count}
-                      </span>
-                    )}
-                    {(role as any).isCustom && canManage && (
-                      <span
-                        role="button"
-                        tabIndex={-1}
-                        onClick={(e) => { e.stopPropagation(); handleDeleteRole(role.key); }}
-                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleDeleteRole(role.key); }}}
-                        className="ml-0.5 -mr-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-black/15 hover:bg-red-500 hover:text-white cursor-pointer transition-colors"
-                        title="Eliminar plantilla"
-                      >
-                        <X size={9} strokeWidth={3} />
-                      </span>
-                    )}
-                  </motion.button>
-                </div>
-              );
-            })}
+            {loading ? (
+              <span className="text-xs text-gray-400 dark:text-gray-500">Cargando…</span>
+            ) : roles.length === 0 ? (
+              <span className="text-xs text-gray-400 dark:text-gray-500">Aún no hay roles. Crea el primero.</span>
+            ) : (
+              roles.map((role) => {
+                const isActive = selectedRoleId === role.id;
+                const palette = paletteCls(role.palette);
+                const count = countPerms(role.permissions ?? {});
+                return (
+                  <div key={role.id} className="relative group">
+                    <motion.button
+                      type="button"
+                      onClick={() => handleSelectRole(role.id)}
+                      whileTap={{ scale: 0.94 }}
+                      className={[
+                        "inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-all duration-200",
+                        isActive
+                          ? palette.activeCls
+                          : "border-gray-200 dark:border-white/[0.08] text-gray-600 dark:text-gray-400 bg-transparent hover:bg-gray-50 dark:hover:bg-white/[0.04]",
+                      ].join(" ")}
+                    >
+                      {role.label}
+                      {count > 0 && (
+                        <span className={[
+                          "text-[10px] font-bold tabular-nums rounded-full px-1.5 py-0.5 leading-none",
+                          isActive ? palette.countCls : "bg-gray-100 dark:bg-white/[0.08] text-gray-500 dark:text-gray-400",
+                        ].join(" ")}>
+                          {count}
+                        </span>
+                      )}
+                      {!role.isSystem && canManage && (
+                        <span
+                          role="button"
+                          tabIndex={-1}
+                          onClick={(e) => { e.stopPropagation(); void handleDeleteRole(role.id); }}
+                          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void handleDeleteRole(role.id); }}}
+                          className="ml-0.5 -mr-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-black/15 hover:bg-red-500 hover:text-white cursor-pointer transition-colors"
+                          title="Eliminar plantilla"
+                        >
+                          <X size={9} strokeWidth={3} />
+                        </span>
+                      )}
+                    </motion.button>
+                  </div>
+                );
+              })
+            )}
 
-            {/* Botón "+ Nuevo rol" */}
             {canManage && (
               <button
                 type="button"
@@ -478,7 +353,6 @@ export function RolesPage() {
 
           <div className="h-5 w-px bg-gray-200 dark:bg-white/[0.08] shrink-0" />
 
-          {/* Platform read-only pills */}
           <div className="flex gap-2 flex-wrap">
             {PLATFORM_ROLES.map((role) => (
               <span
@@ -491,14 +365,11 @@ export function RolesPage() {
             ))}
           </div>
 
-          {/* Spacer + save actions */}
           <div className="ml-auto flex items-center gap-2 shrink-0">
             <AnimatePresence>
               {dirty && (
                 <motion.span
-                  initial={{ opacity: 0, x: 8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 8 }}
+                  initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 8 }}
                   className="text-xs rounded-full border px-2.5 py-1 font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20"
                 >
                   Sin guardar
@@ -507,19 +378,12 @@ export function RolesPage() {
             </AnimatePresence>
             {canManage && (
               <>
-                <button
-                  type="button"
-                  onClick={handleReset}
-                  className="rounded-lg border border-gray-200 dark:border-white/[0.06] px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition"
-                >
+                <button type="button" onClick={handleReset}
+                  className="rounded-lg border border-gray-200 dark:border-white/[0.06] px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition">
                   Restaurar
                 </button>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={!dirty || saving}
-                  className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-1.5 text-xs font-medium text-white transition"
-                >
+                <button type="button" onClick={handleSave} disabled={!dirty || saving}
+                  className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-1.5 text-xs font-medium text-white transition">
                   {saving ? "Guardando…" : "Guardar plantilla"}
                 </button>
               </>
@@ -527,29 +391,32 @@ export function RolesPage() {
           </div>
         </div>
 
-        {/* Active role description */}
         <AnimatePresence mode="wait">
-          <motion.div
-            key={selectedRole}
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 4 }}
-            transition={{ duration: 0.14 }}
-            className="mt-2.5 flex items-center gap-2 flex-wrap"
-          >
-            <span className="text-xs text-gray-400 dark:text-gray-500">{activeRole?.description}</span>
-            <span className="text-gray-300 dark:text-white/20 text-xs">·</span>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
-              {totalPerms} permiso{totalPerms !== 1 ? "s" : ""} activo{totalPerms !== 1 ? "s" : ""}
-            </span>
-          </motion.div>
+          {selectedRole && (
+            <motion.div
+              key={selectedRole.id}
+              initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}
+              transition={{ duration: 0.14 }}
+              className="mt-2.5 flex items-center gap-2 flex-wrap"
+            >
+              <span className="text-xs text-gray-400 dark:text-gray-500">{selectedRole.description}</span>
+              <span className="text-gray-300 dark:text-white/20 text-xs">·</span>
+              <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                {totalPerms} permiso{totalPerms !== 1 ? "s" : ""} activo{totalPerms !== 1 ? "s" : ""}
+              </span>
+              {selectedRole.isSystem && (
+                <span className="text-[10px] font-semibold rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 px-2 py-0.5">
+                  Sistema
+                </span>
+              )}
+            </motion.div>
+          )}
         </AnimatePresence>
       </div>
 
-      {/* ── Permissions table with internal scroll ── */}
+      {/* ── Permissions table ── */}
       <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] flex flex-col min-h-0 flex-1">
 
-        {/* Sticky thead wrapper */}
         <div className="shrink-0 border-b border-gray-100 dark:border-white/[0.06]">
           <table className="w-full table-fixed">
             <colgroup>
@@ -565,10 +432,7 @@ export function RolesPage() {
                   Módulo / Submódulo
                 </th>
                 {ALL_ACTIONS.map((action) => (
-                  <th
-                    key={action}
-                    className="px-2 py-3 text-center text-[11px] font-semibold uppercase tracking-wider"
-                  >
+                  <th key={action} className="px-2 py-3 text-center text-[11px] font-semibold uppercase tracking-wider">
                     <span className={[
                       "inline-flex items-center gap-1 rounded-full px-2 py-0.5",
                       ACTION_CONFIG[action].color,
@@ -583,14 +447,11 @@ export function RolesPage() {
           </table>
         </div>
 
-        {/* Scrollable tbody */}
         <div className="overflow-y-auto flex-1" style={{ scrollbarWidth: "thin" }}>
           <AnimatePresence mode="wait">
             <motion.table
-              key={selectedRole}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
+              key={selectedRoleId ?? "none"}
+              initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.16 }}
               className="w-full table-fixed"
             >
@@ -605,17 +466,14 @@ export function RolesPage() {
                 {Object.entries(MODULE_TREE).map(([modKey, modDef]) => {
                   const subs = Object.entries(modDef.submodules);
                   const activeSubCount = subs.filter(
-                    ([s]) => (permissions[modKey]?.[s]?.length ?? 0) > 0
+                    ([s]) => (draft[modKey]?.[s]?.length ?? 0) > 0
                   ).length;
 
                   return (
-                    <>
+                    <tbody key={`mod-${modKey}`}>
                       {/* Module header row */}
-                      <tr key={`mod-${modKey}`} className="border-t border-gray-100 dark:border-white/[0.04]">
-                        <td
-                          colSpan={5}
-                          className="px-4 py-2 bg-gray-50/60 dark:bg-white/[0.02]"
-                        >
+                      <tr className="border-t border-gray-100 dark:border-white/[0.04]">
+                        <td colSpan={5} className="px-4 py-2 bg-gray-50/60 dark:bg-white/[0.02]">
                           <div className="flex items-center gap-2">
                             <span className="text-gray-400 dark:text-gray-500 shrink-0">
                               {MODULE_ICONS[modKey] ?? (
@@ -624,27 +482,19 @@ export function RolesPage() {
                                 </svg>
                               )}
                             </span>
-                            <span className="text-xs font-bold text-gray-600 dark:text-gray-300">
-                              {modDef.label}
-                            </span>
+                            <span className="text-xs font-bold text-gray-600 dark:text-gray-300">{modDef.label}</span>
                             <span className="text-[10px] text-gray-400 dark:text-gray-600 tabular-nums">
                               {activeSubCount}/{subs.length}
                             </span>
                             {canManage && (
                               <div className="flex gap-1 ml-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleSetAll(modKey, null, true)}
-                                  className="text-[10px] text-blue-500 dark:text-blue-400 hover:underline leading-none"
-                                >
+                                <button type="button" onClick={() => handleSetAll(modKey, null, true)}
+                                  className="text-[10px] text-blue-500 dark:text-blue-400 hover:underline leading-none">
                                   Todo
                                 </button>
                                 <span className="text-gray-300 dark:text-white/20 text-[10px]">·</span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleSetAll(modKey, null, false)}
-                                  className="text-[10px] text-gray-400 dark:text-gray-500 hover:underline leading-none"
-                                >
+                                <button type="button" onClick={() => handleSetAll(modKey, null, false)}
+                                  className="text-[10px] text-gray-400 dark:text-gray-500 hover:underline leading-none">
                                   Nada
                                 </button>
                               </div>
@@ -655,7 +505,7 @@ export function RolesPage() {
 
                       {/* Submodule rows */}
                       {subs.map(([subKey, subLabel]) => {
-                        const activeActions: ActionKey[] = permissions[modKey]?.[subKey] ?? [];
+                        const activeActions: ActionKey[] = draft[modKey]?.[subKey] ?? [];
                         const hasAny = activeActions.length > 0;
 
                         return (
@@ -691,7 +541,7 @@ export function RolesPage() {
                           </tr>
                         );
                       })}
-                    </>
+                    </tbody>
                   );
                 })}
               </tbody>
@@ -700,51 +550,61 @@ export function RolesPage() {
         </div>
       </div>
 
-      {/* ── Read-only notice ── */}
       {!canManage && (
         <div className="rounded-xl border border-yellow-200 dark:border-yellow-500/20 bg-yellow-50 dark:bg-yellow-500/10 px-4 py-3 text-sm text-yellow-800 dark:text-yellow-400 shrink-0">
           Solo administradores pueden modificar las plantillas de permisos.
         </div>
       )}
 
-      {/* ── New role modal ── */}
       <NewRoleModal
         open={showNewRoleModal}
         onClose={() => setShowNewRoleModal(false)}
-        existingCount={allCompanyRoles.length}
-        defaultSourceKey={COMPANY_ROLES[0].key}
+        existingRoles={roles}
         onCreate={handleCreateRole}
+      />
+
+      <ConfirmModal
+        open={!!pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={confirmDelete}
+        title="Eliminar plantilla"
+        tone="danger"
+        confirmLabel="Eliminar"
+        description={
+          pendingDelete
+            ? <>¿Eliminar la plantilla <strong className="text-gray-800 dark:text-white">{pendingDelete.label}</strong>? Los usuarios con este rol quedarán sin asignar.</>
+            : null
+        }
       />
     </div>
   );
 }
 
-// ─── New Role Modal ─────────────────────────────────────────────────────────
+// ─── New Role Modal ──────────────────────────────────────────────────────────
 
 function NewRoleModal({
-  open, onClose, existingCount, defaultSourceKey, onCreate,
+  open, onClose, existingRoles, onCreate,
 }: {
   open: boolean;
   onClose: () => void;
-  existingCount: number;
-  defaultSourceKey: string;
+  existingRoles: CompanyRole[];
   onCreate: (def: { label: string; description: string; sourceKey: string; palette: string }) => void;
 }) {
-  const [label, setLabel]         = useState("");
+  const [label, setLabel]             = useState("");
   const [description, setDescription] = useState("");
-  const [sourceKey, setSourceKey] = useState(defaultSourceKey);
-  const [palette, setPalette]     = useState(CUSTOM_ROLE_PALETTES[0].name);
-  const [touched, setTouched]     = useState(false);
+  const [sourceKey, setSourceKey]     = useState(existingRoles[0]?.key ?? "supervisor");
+  const [palette, setPalette]         = useState(PALETTES[0].name);
+  const [touched, setTouched]         = useState(false);
 
   useEffect(() => {
     if (open) {
       setLabel("");
       setDescription("");
-      setSourceKey(defaultSourceKey);
-      setPalette(CUSTOM_ROLE_PALETTES[0].name);
+      setSourceKey(existingRoles[0]?.key ?? "supervisor");
+      setPalette(PALETTES[0].name);
       setTouched(false);
     }
-  }, [open, defaultSourceKey]);
+  }, [open, existingRoles]);
 
   const trimmed = label.trim();
   const isValid = trimmed.length >= 2 && trimmed.length <= 60;
@@ -761,9 +621,7 @@ function NewRoleModal({
       {open && (
         <>
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
             className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
             onClick={onClose}
@@ -781,11 +639,8 @@ function NewRoleModal({
                   <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500">Nueva plantilla</p>
                   <h2 className="mt-0.5 text-base font-semibold text-gray-800 dark:text-white">Crear rol personalizado</h2>
                 </div>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition"
-                >
+                <button type="button" onClick={onClose}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition">
                   <X size={14} />
                 </button>
               </div>
@@ -796,12 +651,9 @@ function NewRoleModal({
                     Nombre del rol *
                   </label>
                   <input
-                    type="text"
-                    value={label}
-                    maxLength={60}
+                    type="text" value={label} maxLength={60}
                     onChange={(e) => setLabel(e.target.value.slice(0, 60))}
-                    placeholder="Ej. Mecánico líder"
-                    autoFocus
+                    placeholder="Ej. Mecánico líder" autoFocus
                     onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
                     className="w-full h-10 px-3 rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition"
                   />
@@ -815,11 +667,9 @@ function NewRoleModal({
                     Descripción
                   </label>
                   <textarea
-                    value={description}
-                    maxLength={250}
+                    value={description} maxLength={250}
                     onChange={(e) => setDescription(e.target.value.slice(0, 250))}
-                    placeholder="Responsabilidades o alcance del rol (opcional)"
-                    rows={2}
+                    placeholder="Responsabilidades o alcance del rol (opcional)" rows={2}
                     className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition resize-none"
                   />
                 </div>
@@ -831,12 +681,11 @@ function NewRoleModal({
                     </label>
                     <div className="relative">
                       <select
-                        value={sourceKey}
-                        onChange={(e) => setSourceKey(e.target.value)}
+                        value={sourceKey} onChange={(e) => setSourceKey(e.target.value)}
                         className="w-full h-10 px-3 pr-8 rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] text-sm text-gray-800 dark:text-white focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 appearance-none transition"
                       >
-                        {COMPANY_ROLES.map((r) => (
-                          <option key={r.key} value={r.key}>{r.label}</option>
+                        {existingRoles.map((r) => (
+                          <option key={r.id} value={r.key}>{r.label}</option>
                         ))}
                       </select>
                     </div>
@@ -846,14 +695,10 @@ function NewRoleModal({
                       Color
                     </label>
                     <div className="flex gap-1.5">
-                      {CUSTOM_ROLE_PALETTES.map((p) => (
-                        <button
-                          key={p.name}
-                          type="button"
-                          onClick={() => setPalette(p.name)}
+                      {PALETTES.map((p) => (
+                        <button key={p.name} type="button" onClick={() => setPalette(p.name)}
                           className={`h-10 flex-1 rounded-lg ${p.activeCls} text-[10px] font-semibold uppercase tracking-wider ring-2 ${palette === p.name ? "ring-blue-500" : "ring-transparent hover:ring-gray-300 dark:hover:ring-white/20"} transition`}
-                          title={p.name}
-                        >
+                          title={p.name}>
                           {p.name.slice(0, 1)}
                         </button>
                       ))}
@@ -862,24 +707,17 @@ function NewRoleModal({
                 </div>
 
                 <p className="text-[11px] text-gray-400 dark:text-gray-500">
-                  Se creará la plantilla <code className="px-1 py-0.5 rounded bg-gray-100 dark:bg-white/[0.06]">{slugify(label) || "rol"}</code> con {existingCount + 1}º orden en la lista.
+                  Se creará la plantilla <code className="px-1 py-0.5 rounded bg-gray-100 dark:bg-white/[0.06]">{slugify(label) || "rol"}</code> con {existingRoles.length + 1}° orden en la lista.
                 </p>
               </div>
 
               <div className="flex items-center justify-end gap-2 px-5 py-3.5 border-t border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02]">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="rounded-lg border border-gray-200 dark:border-white/[0.08] px-3.5 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.04] transition"
-                >
+                <button type="button" onClick={onClose}
+                  className="rounded-lg border border-gray-200 dark:border-white/[0.08] px-3.5 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.04] transition">
                   Cancelar
                 </button>
-                <button
-                  type="button"
-                  onClick={handleSubmit}
-                  disabled={!isValid}
-                  className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-1.5 text-sm font-medium text-white transition"
-                >
+                <button type="button" onClick={handleSubmit} disabled={!isValid}
+                  className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-1.5 text-sm font-medium text-white transition">
                   Crear plantilla
                 </button>
               </div>

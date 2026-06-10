@@ -139,6 +139,43 @@ export const companyUsers = pgTable(
   ]
 );
 
+// ─── Roles por empresa (catálogo persistente) ────────────────────────────────
+//
+// `company_users.role` sigue siendo un varchar con el `key` del rol.
+// Esta tabla es la FUENTE de verdad de los permisos por defecto
+// para cada `key` dentro de una empresa. Se siembra al crear la
+// empresa con los 3 default (supervisor, operador, conductor) y
+// los admins pueden crear / editar / borrar roles adicionales.
+//
+// `isSystem = true` marca los roles default. No se pueden borrar
+// ni renombrar (sí se les puede ajustar permisos).
+export const companyRoles = pgTable(
+  'company_roles',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+    /** Identificador estable referenciado por `company_users.role`. Único por empresa. */
+    key: varchar('key', { length: 60 }).notNull(),
+    /** Etiqueta visible en UI. */
+    label: varchar('label', { length: 80 }).notNull(),
+    description: text('description').notNull().default(''),
+    /** Color de la paleta (esmeralda, rosa, púrpura, naranja, indigo). Default: esmeralda. */
+    palette: varchar('palette', { length: 40 }).notNull().default('Esmeralda'),
+    /**
+     * Permissions map: { [moduleKey]: { [submoduleKey]: ActionKey[] } }
+     * Mismo shape que `usePermissions().can()` espera en el frontend.
+     */
+    permissions: jsonb('permissions').notNull().default({}),
+    /** true para los 3 default. No se pueden borrar. */
+    isSystem: boolean('is_system').notNull().default(false),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => [
+    unique('company_roles_company_id_key').on(table.companyId, table.key),
+  ]
+);
+
 // ─────────────────────────────────────────────
 // Leads (CRM comercial)
 // ─────────────────────────────────────────────

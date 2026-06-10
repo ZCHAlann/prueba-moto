@@ -1,0 +1,288 @@
+// routes/company/roles.ts
+// CRUD del catálogo de roles por empresa.
+//
+// GET    /api/company/:id/roles        → lista todos los roles de la empresa
+// POST   /api/company/:id/roles        → crea un rol custom
+// PATCH  /api/company/:id/roles/:roleId → actualiza (label, description, palette, permissions)
+// DELETE /api/company/:id/roles/:roleId → elimina (no se pueden borrar is_system)
+// POST   /api/company/:id/roles/seed   → fuerza el seed de los 3 default (idempotente)
+//
+// Permisos:
+//  - GET:    cualquier usuario autenticado de la empresa
+//  - resto:  admin/owner_empresa (requireAdmin)
+//
+// `company_users.role` sigue siendo string (key). Esta tabla es la
+// fuente de verdad de los permisos por defecto por key.
+
+import { Router } from "express";
+import { z } from "zod";
+import { eq, and, asc, sql } from "drizzle-orm";
+import { db } from "../../db/client";
+import { companyRoles, companyUsers } from "../../db/schema/platform";
+import { validate } from "../../lib/validate";
+import { requireAdmin } from "../../middlewares/requireAdmin";
+import { NotFoundError, AppError, ConflictError } from "../../lib/errors";
+import { toId, parseId } from "../../lib/ids";
+import { logAudit } from "../../lib/audit";
+import {
+  ensureDefaultRolesForCompany,
+  getPermissionsForRole,
+  mergePermissions,
+  type ModulePermissionMap,
+} from "../../services/role-catalog.service";
+
+const router = Router({ mergeParams: true });
+
+// ── Schemas ──────────────────────────────────────────────────────────────────
+
+const permissionsSchema = z.record(
+  z.string(),
+  z.record(z.string(), z.array(z.enum(["ver", "crear", "editar", "eliminar"]))),
+);
+
+const paletteSchema = z.enum(["Esmeralda", "Rosa", "Púrpura", "Naranja", "Indigo"]);
+
+const createRoleSchema = z.object({
+  key:         z
+    .string()
+    .trim()
+    .min(2, "Mín. 2 caracteres")
+    .max(60, "Máx. 60 caracteres")
+    .regex(/^[a-z0-9_]+$/i, "Solo letras, números y guion bajo"),
+  label:       z.string().trim().min(2, "Mín. 2 caracteres").max(80),
+  description: z.string().trim().max(500).optional().default(""),
+  palette:     paletteSchema.optional().default("Esmeralda"),
+  permissions: permissionsSchema.default({}),
+});
+
+const updateRoleSchema = z.object({
+  label:       z.string().trim().min(2).max(80).optional(),
+  description: z.string().trim().max(500).optional(),
+  palette:     paletteSchema.optional(),
+  permissions: permissionsSchema.optional(),
+});
+
+// isSystem/label/key NO se pueden cambiar para is_system. Para roles
+// custom, sí se puede renombrar pero el `key` no (es FK conceptual).
+
+// ── Serializer ───────────────────────────────────────────────────────────────
+
+function serializeRole(r: typeof companyRoles.$inferSelect) {
+  return {
+    id:          toId("company-role", r.id),
+    companyId:   toId("company", r.companyId),
+    key:         r.key,
+    label:       r.label,
+    description: r.description,
+    palette:     r.palette,
+    permissions: (r.permissions as ModulePermissionMap) ?? {},
+    isSystem:    r.isSystem,
+    createdAt:   r.createdAt,
+    updatedAt:   r.updatedAt,
+  };
+}
+
+// ── GET / (todos los roles de la empresa) ────────────────────────────────────
+// Cualquier usuario autenticado puede ver la lista (la necesita para
+// poblar el select de "Rol" en el módulo de usuarios).
+
+router.get("/", async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    // Idempotente: si la empresa no tiene los default, los sembramos.
+    await ensureDefaultRolesForCompany(companyId);
+
+    const rows = await db
+      .select()
+      .from(companyRoles)
+      .where(eq(companyRoles.companyId, companyId))
+      .orderBy(asc(companyRoles.isSystem), asc(companyRoles.label));
+
+    res.json({ data: rows.map(serializeRole), total: rows.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST / (crear rol custom) ────────────────────────────────────────────────
+
+router.post("/", requireAdmin, validate(createRoleSchema), async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const body = req.body as z.infer<typeof createRoleSchema>;
+
+    // Validar que el key no colisione con uno existente
+    const existing = await db
+      .select({ id: companyRoles.id })
+      .from(companyRoles)
+      .where(and(eq(companyRoles.companyId, companyId), eq(companyRoles.key, body.key)))
+      .limit(1);
+
+    if (existing.length > 0) {
+      throw new ConflictError(`Ya existe un rol con la clave "${body.key}".`);
+    }
+
+    // Tampoco chocar con platform roles
+    const RESERVED_KEYS = ["owner_empresa", "admin_empresa", "superadmin"];
+    if (RESERVED_KEYS.includes(body.key)) {
+      throw new AppError(400, `"${body.key}" es una clave reservada del sistema.`);
+    }
+
+    const [created] = await db
+      .insert(companyRoles)
+      .values({
+        companyId,
+        key:         body.key,
+        label:       body.label,
+        description: body.description ?? "",
+        palette:     body.palette,
+        permissions: body.permissions as unknown as Record<string, unknown>,
+        isSystem:    false,
+      })
+      .returning();
+
+    if (!created) throw new AppError(500, "No se pudo crear el rol.");
+
+    await logAudit(db, companyId, {
+      entity: "company_roles",
+      entityId: toId("company-role", created.id),
+      action: "create",
+      actorId: req.user!.sub,
+      actorName: req.user!.name,
+      description: `Creó el rol personalizado "${created.label}" (key=${created.key}).`,
+    });
+
+    res.status(201).json(serializeRole(created));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── PATCH /:roleId ───────────────────────────────────────────────────────────
+
+router.patch("/:roleId", requireAdmin, validate(updateRoleSchema), async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const roleId = parseId("company-role", req.params.roleId);
+    const body = req.body as z.infer<typeof updateRoleSchema>;
+
+    const [existing] = await db
+      .select()
+      .from(companyRoles)
+      .where(and(eq(companyRoles.companyId, companyId), eq(companyRoles.id, roleId)))
+      .limit(1);
+
+    if (!existing) throw new NotFoundError("Rol", req.params.roleId);
+
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (body.label !== undefined)       patch.label       = body.label;
+    if (body.description !== undefined) patch.description = body.description;
+    if (body.palette !== undefined)     patch.palette     = body.palette;
+    if (body.permissions !== undefined) patch.permissions = body.permissions as unknown as Record<string, unknown>;
+
+    const [updated] = await db
+      .update(companyRoles)
+      .set(patch)
+      .where(eq(companyRoles.id, roleId))
+      .returning();
+
+    if (!updated) throw new AppError(500, "No se pudo actualizar el rol.");
+
+    await logAudit(db, companyId, {
+      entity: "company_roles",
+      entityId: toId("company-role", updated.id),
+      action: "update",
+      actorId: req.user!.sub,
+      actorName: req.user!.name,
+      description: `Actualizó el rol "${updated.label}".`,
+    });
+
+    res.json(serializeRole(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── DELETE /:roleId ──────────────────────────────────────────────────────────
+
+router.delete("/:roleId", requireAdmin, async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const roleId = parseId("company-role", req.params.roleId);
+
+    const [existing] = await db
+      .select()
+      .from(companyRoles)
+      .where(and(eq(companyRoles.companyId, companyId), eq(companyRoles.id, roleId)))
+      .limit(1);
+
+    if (!existing) throw new NotFoundError("Rol", req.params.roleId);
+
+    if (existing.isSystem) {
+      throw new AppError(400, "Los roles del sistema (supervisor/operador/conductor) no se pueden eliminar.");
+    }
+
+    // Si hay usuarios usando este rol, no lo dejamos borrar (mejor renombrar
+    // o reasignar). Devolvemos 409 con la cantidad para que la UI muestre
+    // un mensaje útil.
+    const [countRow] = await db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(companyUsers)
+      .where(and(eq(companyUsers.companyId, companyId), eq(companyUsers.role, existing.key)));
+
+    if ((countRow?.count ?? 0) > 0) {
+      throw new ConflictError(
+        `No se puede eliminar: ${countRow!.count} usuario${countRow!.count !== 1 ? "s" : ""} tiene${countRow!.count !== 1 ? "n" : ""} este rol. Reasígnalos primero.`,
+      );
+    }
+
+    await db.delete(companyRoles).where(eq(companyRoles.id, roleId));
+
+    await logAudit(db, companyId, {
+      entity: "company_roles",
+      entityId: req.params.roleId,
+      action: "delete",
+      actorId: req.user!.sub,
+      actorName: req.user!.name,
+      description: `Eliminó el rol personalizado "${existing.label}" (key=${existing.key}).`,
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /seed (forzar seed de default) ──────────────────────────────────────
+// Útil cuando se crea la empresa vía API en tests/CLI, o como recovery.
+
+router.post("/seed", requireAdmin, async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    await ensureDefaultRolesForCompany(companyId);
+
+    const rows = await db
+      .select()
+      .from(companyRoles)
+      .where(eq(companyRoles.companyId, companyId))
+      .orderBy(asc(companyRoles.isSystem), asc(companyRoles.label));
+
+    res.json({ data: rows.map(serializeRole), total: rows.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Export ───────────────────────────────────────────────────────────────────
+// Helper público: dado un companyId y un roleKey, devuelve el set
+// final de permisos (rol base + override per-user). Lo usa signToken.
+export async function getFinalPermissionsForUser(
+  companyId: number,
+  roleKey: string,
+  perUserOverride: ModulePermissionMap,
+): Promise<ModulePermissionMap> {
+  const base = await getPermissionsForRole(companyId, roleKey);
+  return mergePermissions(base, perUserOverride);
+}
+
+export default router;

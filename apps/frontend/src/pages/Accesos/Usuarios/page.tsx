@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { useSites } from "@/hooks/useSites";
 import { useCompanyUsers, type CompanyUser, type CreateCompanyUserInput, type UpdateCompanyUserInput } from "@/hooks/useCompanyUsers";
+import { useCompanyRoles } from "@/hooks/useCompanyRoles";
 import type { PlatformRole } from "@/types/platform";
 import { MODULE_TREE, type ActionKey, type PermissionMap } from "@/lib/module-tree";
 import { PermissionEditor } from "@/components/users/PermissionEditor";
@@ -19,6 +20,9 @@ const ROLE_LABELS: Record<string, string> = {
   operador:       "Operador",
   conductor:      "Conductor",
 };
+
+// Platform roles: tienen acceso total sin chequear el catálogo.
+const PLATFORM_ROLES: PlatformRole[] = ["owner_empresa", "admin_empresa"];
 
 // ─── Permisos por defecto por rol ─────────────────────────────────────────────
 
@@ -68,6 +72,11 @@ const COMPANY_ROLES: PlatformRole[] = [
   "operador",
   "conductor",
 ];
+
+// Keys de los roles de empresa (los 3 default). Se filtran contra el
+// catálogo real que viene del backend — si por algún motivo no están
+// aún, igual los mostramos para no romper el select.
+const DEFAULT_COMPANY_ROLE_KEYS = new Set(["supervisor", "operador", "conductor"]);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -702,8 +711,8 @@ function UserFormModal({
                           value={form.role}
                           onChange={(e) => set("role", e.target.value)}
                         >
-                          {COMPANY_ROLES.map((r) => (
-                            <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                          {roleOptions.map((o) => (
+                            <option key={o.key} value={o.key}>{o.label}</option>
                           ))}
                         </select>
                       </FormField>
@@ -828,8 +837,42 @@ export function UsersPage() {
   const { session } = useAuth();
   const { sites } = useSites();
   const { users, loading, createUser, updateUser, deleteUser } = useCompanyUsers();
+  const { roles: companyRoles } = useCompanyRoles();
 
   const canManage = ["owner_empresa", "admin_empresa"].includes(session?.role ?? "");
+
+  /**
+   * Options del select "Rol". Construimos a partir de:
+   *  - los 2 platform roles (owner_empresa, admin_empresa)
+   *  - los roles del catálogo persistente de la empresa
+   * Si el catálogo aún no llegó (loading), caemos al set hardcoded
+   * de 3 default para no romper el form.
+   */
+  const roleOptions = useMemo(() => {
+    const opts: { key: string; label: string }[] = PLATFORM_ROLES.map((r) => ({
+      key: r, label: ROLE_LABELS[r] ?? r,
+    }));
+    const seen = new Set(opts.map((o) => o.key));
+    if (companyRoles.length > 0) {
+      for (const r of companyRoles) {
+        if (seen.has(r.key)) continue;
+        seen.add(r.key);
+        opts.push({ key: r.key, label: r.label });
+      }
+    } else {
+      // fallback mientras carga
+      for (const key of ["supervisor", "operador", "conductor"] as const) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+        opts.push({ key, label: ROLE_LABELS[key] ?? key });
+      }
+    }
+    return opts;
+  }, [companyRoles]);
+
+  // Reusable en cualquier parte donde se necesite la lista de keys válidas
+  // (validación, defaults, etc).
+  const allRoleKeys = useMemo(() => new Set(roleOptions.map((o) => o.key)), [roleOptions]);
 
   const [query, setQuery]               = useState("");
   const [modalOpen, setModalOpen]       = useState(false);

@@ -2,10 +2,10 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../../db/client';
-import { companyUsers } from '../../db/schema/platform';
+import { companyUsers, companyRoles } from '../../db/schema/platform';
 import { validate } from '../../lib/validate';
 import { requireAdmin } from '../../middlewares/requireAdmin';
-import { NotFoundError } from '../../lib/errors';
+import { NotFoundError, AppError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { hashPassword } from '../../services/auth.service';
@@ -15,13 +15,18 @@ const router = Router({ mergeParams: true });
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
-const COMPANY_ROLES = [
+/**
+ * Roles "de plataforma" — tienen acceso total sin necesidad de estar
+ * en la tabla `company_roles`. Los admins de empresa eligen desde el
+ * catálogo persistente (default + custom). Validamos que el `role`
+ * enviado en create/update exista en el catálogo de la empresa, o sea
+ * uno de los platform roles.
+ */
+const PLATFORM_ROLES = new Set([
   'owner_empresa',
   'admin_empresa',
-  'supervisor',
-  'operador',
-  'conductor',
-] as const;
+  'superadmin',
+]);
 
 const modulePermissionsSchema = z.record(
   z.string(),
@@ -33,7 +38,7 @@ const createCompanyUserSchema = z.object({
   username:          z.string().trim().min(3, 'El usuario debe tener al menos 3 caracteres').max(40)
                        .regex(/^[a-zA-Z0-9_.-]+$/, 'Solo letras, números, guion, guion bajo y punto'),
   password:          z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(128),
-  role:              z.enum(COMPANY_ROLES),
+  role:              z.string().trim().min(1).max(60),
   status:            z.enum(['active', 'inactive']).default('active'),
   modulePermissions: modulePermissionsSchema,
   profileData:       z.record(z.string(), z.unknown()).default({}),
@@ -43,6 +48,19 @@ const updateCompanyUserSchema = createCompanyUserSchema
   .omit({ password: true })
   .extend({ password: z.string().min(8).max(128).optional() })
   .partial();
+
+/** Verifica que un `role` sea válido para la empresa: platform role o key en el catálogo. */
+async function assertRoleValid(companyId: number, roleKey: string): Promise<void> {
+  if (PLATFORM_ROLES.has(roleKey)) return;
+  const [row] = await db
+    .select({ id: companyRoles.id })
+    .from(companyRoles)
+    .where(and(eq(companyRoles.companyId, companyId), eq(companyRoles.key, roleKey)))
+    .limit(1);
+  if (!row) {
+    throw new AppError(400, `El rol "${roleKey}" no existe en el catálogo de la empresa.`);
+  }
+}
 
 const permissionsSchema = z.object({
   modulePermissions: modulePermissionsSchema,
@@ -122,6 +140,8 @@ router.post(
       const companyId = req.companyId!;
       const body      = req.body as z.infer<typeof createCompanyUserSchema>;
 
+      await assertRoleValid(companyId, body.role);
+
       const passwordHash = await hashPassword(body.password);
 
       const { modulePermissions, profileData, ...rest } = body;
@@ -179,9 +199,13 @@ router.put(
         )
         .limit(1);
 
-      if (!existing.length) throw new NotFoundError('Usuario', req.params.userId as string);
+    if (!existing.length) throw new NotFoundError('Usuario', req.params.userId as string);
 
-      const { password, modulePermissions, profileData, ...rest } = body;
+    if (body.role !== undefined) {
+      await assertRoleValid(companyId, body.role);
+    }
+
+    const { password, modulePermissions, profileData, ...rest } = body;
 
       const updateData: Partial<typeof companyUsers.$inferInsert> & Record<string, unknown> = {
         ...rest,

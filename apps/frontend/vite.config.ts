@@ -25,10 +25,17 @@ export default defineConfig({
         secure: false,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
-      "/uploads": { 
+      "/uploads": {
         target:'http://localhost:5000/uploads',
         rewrite: (path) => path.replace(/^\/uploads/, ""),
-      }
+      },
+      "/ws": {
+        target: "http://localhost:5000",
+        ws: true,
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path, // ← añade esto, fuerza que Vite procese el path
+      },
     },
   },
 });

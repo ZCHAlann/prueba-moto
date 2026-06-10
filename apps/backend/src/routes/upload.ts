@@ -19,6 +19,7 @@ const ALLOWED_CATEGORIES = [
   'assets',
   'general',
   'handover-pdfs',
+  'checklists',
 ] as const;
 
 type UploadCategory = (typeof ALLOWED_CATEGORIES)[number];
@@ -98,6 +99,34 @@ router.post('/driver-photos', uploadHandler('drivers'));
 router.post('/assignment-photos', uploadHandler('assignments'));
 router.post('/ac-photos', uploadHandler('ac'));
 router.post('/user-photos', uploadHandler('users'));
+
+// ─── Evidencias de checklist (un archivo por item, usado al marcar "Incorrecto") ──
+router.post('/checklist-photos', (req: Request, res: Response, next: NextFunction) => {
+  const companyId = req.query.companyId as string | undefined;
+  const folder = companyId ? `checklists/${companyId}` : 'checklists';
+
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
+      if (allowed.includes(file.mimetype)) cb(null, true);
+      else cb(new AppError(400, 'Solo imágenes (JPG/PNG/WebP/HEIC).'));
+    },
+  }).single('photo');
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    const file = req.file as Express.Multer.File | undefined;
+    if (!file) return next(new AppError(400, 'No se recibió la foto.'));
+    res.json({
+      url:  `/uploads/${folder}/${file.filename}`,
+      type: file.mimetype,
+      name: file.originalname,
+      size: file.size,
+    });
+  });
+});
 
 // PDF actas de entrega
 router.post('/handover-pdf', (req: Request, res: Response, next: NextFunction) => {

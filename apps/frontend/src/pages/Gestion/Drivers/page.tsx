@@ -63,6 +63,7 @@ type DriverFormState = {
   licensePoints: number;
   status: "Activo" | "Inactivo";
   notes: string;
+  photoUrl: string | null;
 };
 
 type DriverFormErrors = Partial<Record<keyof DriverFormState, string>>;
@@ -95,6 +96,7 @@ function createDriverForm(driver?: ApiDriver): DriverFormState {
     licensePoints: driver?.licensePoints ?? 0,
     status:        driver?.status        ?? "Activo",
     notes:         driver?.notes         ?? "",
+    photoUrl:      driver?.photoUrl      ?? null,
   };
 }
 
@@ -286,6 +288,8 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
   onUpdate: (id: string, form: DriverFormState) => Promise<void>;
 }) {
   const { sites } = useSites();
+  const { session } = useAuth();
+  const sessionCompanyId = session?.companyId ?? 0;
   const [form, setForm] = useState<DriverFormState>(() => createDriverForm(driver ?? undefined));
   const [errors, setErrors] = useState<DriverFormErrors>({});
   const [saving, setSaving] = useState(false);
@@ -350,6 +354,53 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
         </div>
 
         <div className="max-h-[65vh] overflow-y-auto px-6 py-5 space-y-4">
+          {/* Foto del conductor */}
+          <div className="flex items-center gap-4">
+            <div className="h-20 w-20 overflow-hidden rounded-2xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.05]">
+              {form.photoUrl ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={form.photoUrl} alt="Foto" className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-[10px] text-gray-400">Sin foto</div>
+              )}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3.5 py-2 text-sm font-semibold text-gray-600 transition hover:border-brand-400 hover:text-brand-600 dark:border-white/[0.12] dark:bg-white/[0.04] dark:text-gray-300">
+                Subir foto
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setSaving(true);
+                    try {
+                      const { uploadDriverPhoto } = await import("../../../hooks/useDrivers");
+                      const url = await uploadDriverPhoto(file, sessionCompanyId);
+                      set("photoUrl", url);
+                      toast.success("Foto subida");
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Error al subir");
+                    } finally {
+                      setSaving(false);
+                      e.target.value = "";
+                    }
+                  }}
+                />
+              </label>
+              {form.photoUrl && (
+                <button
+                  type="button"
+                  onClick={() => set("photoUrl", null)}
+                  className="self-start text-xs font-semibold text-gray-500 hover:text-rose-500"
+                >
+                  Quitar foto
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Código <span className="text-rose-400">*</span></label>

@@ -23,6 +23,7 @@ import usersRouter from './user';
 import ticketsRouter from './ticket';
 import insurancesRouter from './insurance';
 import rolesRouter from './roles';
+import exitAuthRouter from './exit-authorizations';
 
 const router = Router({ mergeParams: true });
 
@@ -51,6 +52,7 @@ router.use('/users', usersRouter);
 router.use('/tickets', ticketsRouter);
 router.use('/insurance', insurancesRouter);
 router.use('/roles', rolesRouter);
+router.use('/exit-authorizations', exitAuthRouter);
 
 
 export default router;

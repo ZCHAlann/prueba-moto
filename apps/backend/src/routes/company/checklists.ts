@@ -468,8 +468,12 @@ router.get('/checklists/:checkId', requireModule('checklist'), async (req, res, 
       assetName = a?.name ?? null;
     }
     if (c.driverId) {
-      const [d] = await db.select({ name: companyDrivers.name }).from(companyDrivers).where(and(eq(companyDrivers.id, c.driverId), eq(companyDrivers.companyId, companyId))).limit(1);
-      driverName = d?.name ?? null;
+      const [d] = await db
+        .select({ firstName: companyDrivers.firstName, lastName: companyDrivers.lastName })
+        .from(companyDrivers)
+        .where(and(eq(companyDrivers.id, c.driverId), eq(companyDrivers.companyId, companyId)))
+        .limit(1);
+      driverName = d ? `${d.firstName} ${d.lastName}`.trim() : null;
     }
     if (c.categoryId) {
       const [cat] = await db.select({ name: companyChecklistCategories.name }).from(companyChecklistCategories).where(and(eq(companyChecklistCategories.id, c.categoryId), eq(companyChecklistCategories.companyId, companyId))).limit(1);
@@ -532,7 +536,7 @@ router.post(
       let driverName: string | null = null;
       let categoryName: string | null = null;
       if (c.assetId) { const [a] = await db.select({ name: companyAssets.name }).from(companyAssets).where(and(eq(companyAssets.id, c.assetId), eq(companyAssets.companyId, companyId))).limit(1); assetName = a?.name ?? null; }
-      if (c.driverId) { const [d] = await db.select({ name: companyDrivers.name }).from(companyDrivers).where(and(eq(companyDrivers.id, c.driverId), eq(companyDrivers.companyId, companyId))).limit(1); driverName = d?.name ?? null; }
+      if (c.driverId) { const [d] = await db.select({ firstName: companyDrivers.firstName, lastName: companyDrivers.lastName }).from(companyDrivers).where(and(eq(companyDrivers.id, c.driverId), eq(companyDrivers.companyId, companyId))).limit(1); driverName = d ? `${d.firstName} ${d.lastName}`.trim() : null; }
       if (c.categoryId) { const [cat] = await db.select({ name: companyChecklistCategories.name }).from(companyChecklistCategories).where(and(eq(companyChecklistCategories.id, c.categoryId), eq(companyChecklistCategories.companyId, companyId))).limit(1); categoryName = cat?.name ?? null; }
 
       res.status(201).json(serializeChecklist(c, { assetName, driverName, categoryName }));
@@ -613,7 +617,7 @@ router.put(
       let driverName: string | null = null;
       let categoryName: string | null = null;
       if (c.assetId) { const [a] = await db.select({ name: companyAssets.name }).from(companyAssets).where(and(eq(companyAssets.id, c.assetId), eq(companyAssets.companyId, companyId))).limit(1); assetName = a?.name ?? null; }
-      if (c.driverId) { const [d] = await db.select({ name: companyDrivers.name }).from(companyDrivers).where(and(eq(companyDrivers.id, c.driverId), eq(companyDrivers.companyId, companyId))).limit(1); driverName = d?.name ?? null; }
+      if (c.driverId) { const [d] = await db.select({ firstName: companyDrivers.firstName, lastName: companyDrivers.lastName }).from(companyDrivers).where(and(eq(companyDrivers.id, c.driverId), eq(companyDrivers.companyId, companyId))).limit(1); driverName = d ? `${d.firstName} ${d.lastName}`.trim() : null; }
       if (c.categoryId) { const [cat] = await db.select({ name: companyChecklistCategories.name }).from(companyChecklistCategories).where(and(eq(companyChecklistCategories.id, c.categoryId), eq(companyChecklistCategories.companyId, companyId))).limit(1); categoryName = cat?.name ?? null; }
 
       res.json(serializeChecklist(c, { assetName, driverName, categoryName }));

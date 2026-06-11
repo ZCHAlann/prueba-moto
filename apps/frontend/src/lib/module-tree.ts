@@ -81,6 +81,12 @@ export const MODULE_TREE = {
       accesos: "Usuarios y roles",
     },
   },
+  autorizaciones: {
+    label: "Autorizaciones",
+    submodules: {
+      autorizaciones: "Autorizaciones de salida",
+    },
+  },
 } as const;
 
 export type ModuleKey    = keyof typeof MODULE_TREE;

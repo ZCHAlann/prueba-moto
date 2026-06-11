@@ -3,10 +3,11 @@ import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyDrivers, companySites } from '../../db/schema/operational';
+import { companyUsers } from '../../db/schema/platform';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
-import { NotFoundError } from '../../lib/errors';
+import { NotFoundError, AppError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { companyDriverReports } from '../../db/schema/operational';
@@ -129,6 +130,29 @@ router.post(
 
       const siteId = body.siteId ? parseId('site', body.siteId) : null;
       const userId = body.userId ? parseId('company-user', body.userId) : null;
+
+      // Validar que el companyUser (si se pasa) exista en la misma empresa.
+      if (userId) {
+        const [u] = await db
+          .select({ id: companyUsers.id, role: companyUsers.role })
+          .from(companyUsers)
+          .where(and(eq(companyUsers.id, userId), eq(companyUsers.companyId, companyId)))
+          .limit(1);
+        if (!u) {
+          throw new NotFoundError('Usuario', body.userId!);
+        }
+        // Si el user es conductor, no debe existir OTRO driver con ese userId.
+        if (u.role === "conductor") {
+          const dup = await db
+            .select({ id: companyDrivers.id })
+            .from(companyDrivers)
+            .where(and(eq(companyDrivers.userId, userId), eq(companyDrivers.companyId, companyId)))
+            .limit(1);
+          if (dup.length) {
+            throw new AppError(`El usuario ya tiene un conductor asociado (driver=${dup[0]!.id}).`, 409);
+          }
+        }
+      }
 
       const [created] = await db
         .insert(companyDrivers)

@@ -10,7 +10,7 @@ import type { NavigationSection } from "../lib/navigation";
 import {
   LayoutGrid, User, List, Table2, MapPin, PieChart,
   FileText, Box, Plug, Calendar, Bell, BookOpen,
-  ClipboardList, Folder, Package, Zap, Users, Wind,
+  ClipboardList, Folder, Package, Zap, Users, Wind, Truck,
 } from "lucide-react";
 
 const ICON_MAP: Record<string, React.ElementType> = {
@@ -26,7 +26,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
   CC: List,       PF: User,    CF: Plug,      RG: PieChart,
   GR: BookOpen,   RI: Table2,
   // Platform icons
-  EM: Users,      MD: Box,      PL: FileText, AU: List,
+  EM: Users,      MD: Box,      PL: FileText, AU: Truck,
   CRM: Users,     LD: FileText, CL: Users,    FC: FileText,
   UG: Users,
   default: FileText,

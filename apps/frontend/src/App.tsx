@@ -37,6 +37,7 @@ import { SitesManagementPage } from "./pages/Gestion/Sedes/page";
 import { InsuranceManagementPage } from "./pages/Gestion/Seguros/page";
 import { UsersPage } from "./pages/Accesos/Usuarios/page";
 import { RolesPage } from "./pages/Accesos/Roles/page";
+import { AutorizacionesPage } from "./pages/Autorizaciones/page";
 import SoportePage from "@/pages/Soporte/page";
 
 // Platform pages
@@ -170,6 +171,7 @@ export default function App() {
           <Route path="/gestion/seguros" element={<InsuranceManagementPage />} />
           <Route path="/accesos/usuarios" element={<UsersPage />} />
           <Route path="/accesos/roles" element={<RolesPage />} />
+          <Route path="/autorizaciones" element={<AutorizacionesPage />} />
           <Route path="/soporte" element={<SoportePage />} />
           <Route path="/geolocalizacion" element={<GeolocationPage />} />
           <Route path="/aires-acondicionados" element={<AcPage />} />

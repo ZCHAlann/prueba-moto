@@ -17,6 +17,7 @@ export type CompanyUser = {
   modulePermissions: PermissionMap;
   permissions: Record<string, unknown>;  // deprecado, siempre {}
   profileData: Record<string, unknown>;
+  photoUrl: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -29,6 +30,7 @@ export type CreateCompanyUserInput = {
   status?: CompanyUserStatus;
   modulePermissions?: PermissionMap;
   profileData?: Record<string, unknown>;
+  photoUrl?: string | null;
 };
 
 export type UpdateCompanyUserInput = Omit<CreateCompanyUserInput, "password"> & {
@@ -59,9 +61,26 @@ function mapApiToUser(data: Record<string, unknown>): CompanyUser {
     modulePermissions: (data.modulePermissions as PermissionMap) ?? {},
     permissions:       {},  // deprecado
     profileData:       (data.profileData as Record<string, unknown>) ?? {},
+    photoUrl:          (data.photoUrl as string | null) ?? (data.photo_url as string | null) ?? null,
     createdAt:         String(data.createdAt ?? data.created_at ?? ""),
     updatedAt:         String(data.updatedAt ?? data.updated_at ?? ""),
   };
+}
+
+/** Sube 1 foto al endpoint de usuarios y devuelve la URL pública. */
+export async function uploadUserPhoto(file: File, companyId: number): Promise<string> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`/api/upload/users?companyId=${companyId}`, {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`Upload user: HTTP ${res.status}`);
+  const json = await res.json();
+  const url = Array.isArray(json.urls) ? json.urls[0] : json.url;
+  if (!url) throw new Error("Upload user: respuesta sin URL");
+  return url;
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
@@ -118,6 +137,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
             status:            input.status ?? "active",
             modulePermissions: input.modulePermissions ?? {},
             profileData:       input.profileData ?? {},
+            photoUrl:          input.photoUrl ?? null,
           }),
         });
 
@@ -151,6 +171,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
           status:            input.status ?? "active",
           modulePermissions: input.modulePermissions ?? {},
           profileData:       input.profileData ?? {},
+          photoUrl:          input.photoUrl ?? null,
         };
 
         if (input.password) {

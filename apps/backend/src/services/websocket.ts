@@ -44,6 +44,9 @@ export function attachWebSocket(server: HttpServer) {
   wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req: IncomingMessage, socket, head) => {
+    //console.log('WS UPGRADE');
+    //console.log(req.headers.cookie);
+    //console.log(req.url);
     if (!req.url || !req.url.startsWith('/ws')) {
       socket.destroy();
       return;

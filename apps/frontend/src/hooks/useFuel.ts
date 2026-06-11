@@ -15,6 +15,7 @@ export type ApiFuelEntry = {
   station: string;
   fuelType: string;
   notes: string;
+  photoUrl: string | null;
   createdAt: string;
   updatedAt: string;
   // ── Backend enrichment (display-only) ──────────────────────────────────────
@@ -32,6 +33,7 @@ export type CreateFuelPayload = {
   odometer: number;
   station: string;
   notes?: string;
+  photoUrl?: string | null;
 };
 
 function mapApi(raw: Record<string, unknown>): ApiFuelEntry {
@@ -47,6 +49,7 @@ function mapApi(raw: Record<string, unknown>): ApiFuelEntry {
     station: (raw.station as string) ?? "",
     fuelType: (raw.fuelType as string) ?? "",
     notes: (raw.notes as string) ?? "",
+    photoUrl: (raw.photoUrl as string | null) ?? null,
     createdAt: (raw.createdAt as string) ?? "",
     updatedAt: (raw.updatedAt as string) ?? "",
     // ── Backend enrichment ──────────────────────────────────────────────────────
@@ -54,6 +57,22 @@ function mapApi(raw: Record<string, unknown>): ApiFuelEntry {
     assetBrand: (raw.assetBrand as string | null) ?? null,
     assetModel: (raw.assetModel as string | null) ?? null,
   };
+}
+
+/** Sube 1 foto al endpoint de combustible y devuelve la URL pública. */
+export async function uploadFuelPhoto(file: File, companyId: number): Promise<string> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`/api/upload/fuel-photos?companyId=${companyId}`, {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`Upload fuel: HTTP ${res.status}`);
+  const json = await res.json();
+  const url = Array.isArray(json.urls) ? json.urls[0] : json.url;
+  if (!url) throw new Error("Upload fuel: respuesta sin URL");
+  return url;
 }
 
 export function useFuel() {
@@ -94,6 +113,7 @@ export function useFuel() {
         odometer: payload.odometer,
         station: payload.station,
         notes: payload.notes ?? "",
+        photoUrl: payload.photoUrl ?? null,
       }),
     });
     if (!res.ok) throw new Error(`Error ${res.status}`);

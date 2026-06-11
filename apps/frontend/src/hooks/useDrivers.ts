@@ -42,6 +42,7 @@ type CreateDriverPayload = {
   site: string;
   status: "Activo" | "Inactivo";
   notes: string;
+  photoUrl: string | null;
 };
 
 type UpdateDriverPayload = Partial<CreateDriverPayload>;
@@ -117,6 +118,7 @@ export function useDrivers() {
         phone: payload.phone || null,
         status: payload.status,
         notes: payload.notes || null,
+        photoUrl: payload.photoUrl ?? null,
       }),
     });
     if (!res.ok) throw new Error(`Error ${res.status}`);
@@ -139,6 +141,7 @@ export function useDrivers() {
     if (payload.phone         !== undefined) body.phone         = payload.phone || null;
     if (payload.status        !== undefined) body.status        = payload.status;
     if (payload.notes         !== undefined) body.notes         = payload.notes || null;
+    if (payload.photoUrl      !== undefined) body.photoUrl      = payload.photoUrl;
 
     const res = await fetch(`/api/company/${companyId}/drivers/${id}`, {
       method: "PUT",
@@ -158,4 +161,20 @@ export function useDrivers() {
   }, [companyId]);
 
   return { drivers, loading, error, refresh, createDriver, updateDriver, deleteDriver };
+}
+
+/** Sube 1 foto al endpoint de conductores y devuelve la URL pública. */
+export async function uploadDriverPhoto(file: File, companyId: number): Promise<string> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`/api/upload/drivers?companyId=${companyId}`, {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`Upload driver: HTTP ${res.status}`);
+  const json = await res.json();
+  const url = Array.isArray(json.urls) ? json.urls[0] : json.url;
+  if (!url) throw new Error("Upload driver: respuesta sin URL");
+  return url;
 }

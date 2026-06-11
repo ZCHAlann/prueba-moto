@@ -6,12 +6,15 @@ import {
   Fuel, Plus, X, Droplets, DollarSign, Gauge,
   MapPin, TrendingUp, TrendingDown, ChevronRight,
   Flame, BarChart3, Table2, LineChart, ChevronLeft,
+  Camera,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useAssets } from "../../hooks/useAssets";
-import { useFuel, type CreateFuelPayload } from "../../hooks/useFuel";
+import { useFuel, type CreateFuelPayload, uploadFuelPhoto } from "../../hooks/useFuel";
 import { usePermissions } from "../../hooks/usePermissions";
 import { ExportToolbar, type ExportColumn, type ExportRow } from "../../components/ui/export-toolbar/ExportToolbar";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
+import { useAuth } from "../../context/AuthContext";
 import { LineChartExp } from "../../components/ui/charts/LineChart";
 import { RadarChart } from "../../components/ui/charts/RadarChart";
 import { BarChartExp } from "../../components/ui/charts/BarChart";
@@ -241,14 +244,16 @@ export function FuelPage() {
   const { assets, loading: assetsLoading } = useAssets();
   const { fuelEntries, loading: fuelLoading, createFuelEntry } = useFuel();
   const { can } = usePermissions();
+  const { session } = useAuth();
 
   const canCreate = can("combustible", "combustible", "crear");
 
   const loading = assetsLoading || fuelLoading;
 
-  const [search,     setSearch]     = useState("");
-  const [modalOpen,  setModalOpen]  = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [search,         setSearch]         = useState("");
+  const [modalOpen,      setModalOpen]      = useState(false);
+  const [submitting,     setSubmitting]     = useState(false);
+  const [photoUploading, setPhotoUploading] = useState(false);
   const [viewTab,    setViewTab]    = useState<ViewTab>("graficas");
   const [page,       setPage]       = useState(1);
 
@@ -260,6 +265,7 @@ export function FuelPage() {
     odometer: 0,
     station:  "",
     notes:    "",
+    photoUrl: null,
   });
 
   function openModal() {
@@ -273,7 +279,7 @@ export function FuelPage() {
     try {
       await createFuelEntry(form);
       setModalOpen(false);
-      setForm((f) => ({ ...f, liters: 0, cost: 0, odometer: 0, station: "", notes: "" }));
+      setForm((f) => ({ ...f, liters: 0, cost: 0, odometer: 0, station: "", notes: "", photoUrl: null }));
     } finally {
       setSubmitting(false);
     }
@@ -647,6 +653,43 @@ export function FuelPage() {
                         onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value.slice(0, 2000) }))}
                         placeholder="Observaciones adicionales…"
                         className="w-full resize-none rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-700 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200 dark:placeholder:text-gray-500" />
+                    </div>
+
+                    {/* Foto evidencia (surtidor / factura) */}
+                    <div>
+                      <label className={labelCls}>Foto evidencia (opcional)</label>
+                      <div className="flex items-start gap-3">
+                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3.5 py-2.5 text-sm font-semibold text-gray-600 transition hover:border-brand-400 hover:text-brand-600 dark:border-white/[0.12] dark:bg-white/[0.04] dark:text-gray-300">
+                          <Camera size={14} />
+                          {photoUploading ? "Subiendo…" : form.photoUrl ? "Reemplazar foto" : "Subir foto"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setPhotoUploading(true);
+                              try {
+                                const url = await uploadFuelPhoto(file, session?.companyId ?? 0);
+                                setForm((f) => ({ ...f, photoUrl: url }));
+                                toast.success("Foto subida");
+                              } catch (err) {
+                                toast.error(err instanceof Error ? err.message : "Error al subir");
+                              } finally {
+                                setPhotoUploading(false);
+                                e.target.value = "";
+                              }
+                            }}
+                          />
+                        </label>
+                        {form.photoUrl && (
+                          <a href={form.photoUrl} target="_blank" rel="noreferrer" className="relative h-20 w-28 overflow-hidden rounded-xl border border-gray-200 dark:border-white/[0.08]">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={form.photoUrl} alt="Foto combustible" className="h-full w-full object-cover" />
+                          </a>
+                        )}
+                      </div>
                     </div>
                   </div>
 

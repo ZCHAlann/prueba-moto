@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { useSites } from "@/hooks/useSites";
-import { useCompanyUsers, type CompanyUser, type CreateCompanyUserInput, type UpdateCompanyUserInput } from "@/hooks/useCompanyUsers";
+import { useCompanyUsers, uploadUserPhoto, type CompanyUser, type CreateCompanyUserInput, type UpdateCompanyUserInput } from "@/hooks/useCompanyUsers";
 import { useCompanyRoles } from "@/hooks/useCompanyRoles";
 import type { PlatformRole } from "@/types/platform";
 import { MODULE_TREE, type ActionKey, type PermissionMap } from "@/lib/module-tree";
@@ -86,7 +86,7 @@ type UserFormState = {
   password: string;
   role: PlatformRole;
   status: "active" | "inactive";
-  permissions: PermissionMap;  
+  permissions: PermissionMap;
   // profileData fields
   fullName: string;
   lastName: string;
@@ -95,6 +95,8 @@ type UserFormState = {
   area: string;
   documentNumber: string;
   notes: string;
+  /** URL pública de la foto subida al backend. */
+  photoUrl: string | null;
 };
 
 type UserFormErrors = Partial<Record<keyof UserFormState, string>>;
@@ -116,6 +118,7 @@ function createEmptyForm(defaultSite: string): UserFormState {
     area: "",
     documentNumber: "",
     notes: "",
+    photoUrl: null,
   };
 }
 
@@ -195,6 +198,7 @@ function formToCreateInput(form: UserFormState): CreateCompanyUserInput {
       documentNumber: form.documentNumber.trim(),
       notes:          form.notes.trim(),
     },
+    photoUrl: form.photoUrl ?? null,
   };
 }
 
@@ -214,6 +218,7 @@ function formToUpdateInput(form: UserFormState): UpdateCompanyUserInput {
       documentNumber: form.documentNumber.trim(),
       notes:          form.notes.trim(),
     },
+    photoUrl: form.photoUrl ?? null,
   };
   if (form.password.trim()) input.password = form.password;
   return input;
@@ -242,6 +247,7 @@ function userToForm(user: CompanyUser): UserFormState {
     area:           String(p.area ?? ""),
     documentNumber: String(p.documentNumber ?? ""),
     notes:          String(p.notes ?? ""),
+    photoUrl:       user.photoUrl ?? null,
   };
 }
 
@@ -502,6 +508,7 @@ function UserFormModal({
   open,
   user,
   siteOptions,
+  roleOptions,
   onClose,
   onCreate,
   onUpdate,
@@ -509,6 +516,7 @@ function UserFormModal({
   open: boolean;
   user: CompanyUser | null;
   siteOptions: string[];
+  roleOptions: { key: string; label: string }[];
   onClose: () => void;
   onCreate: (input: CreateCompanyUserInput) => Promise<void>;
   onUpdate: (id: string, input: UpdateCompanyUserInput) => Promise<void>;
@@ -630,6 +638,55 @@ function UserFormModal({
               <form onSubmit={handleSubmit} className="flex flex-col overflow-hidden">
                 <div className="overflow-y-auto px-6 py-5 space-y-5">
 
+                  {/* ── Foto del usuario ── */}
+                  <div>
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
+                      Foto
+                    </p>
+                    <div className="flex items-center gap-4">
+                      <div className="h-20 w-20 overflow-hidden rounded-2xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.05]">
+                        {form.photoUrl ? (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img src={form.photoUrl} alt="Foto" className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">Sin foto</div>
+                        )}
+                      </div>
+                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3.5 py-2.5 text-sm font-semibold text-gray-600 transition hover:border-brand-400 hover:text-brand-600 dark:border-white/[0.12] dark:bg-white/[0.04] dark:text-gray-300">
+                        Subir foto
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            setSaving(true);
+                            try {
+                              const url = await uploadUserPhoto(file, session?.companyId ?? 0);
+                              setForm((prev) => ({ ...prev, photoUrl: url }));
+                              toast.success("Foto subida");
+                            } catch (err) {
+                              toast.error(err instanceof Error ? err.message : "Error al subir");
+                            } finally {
+                              setSaving(false);
+                              e.target.value = "";
+                            }
+                          }}
+                        />
+                      </label>
+                      {form.photoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setForm((prev) => ({ ...prev, photoUrl: null }))}
+                          className="text-xs font-semibold text-gray-500 hover:text-rose-500"
+                        >
+                          Quitar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
                   {/* ── Datos personales ── */}
                   <div>
                     <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
@@ -705,7 +762,7 @@ function UserFormModal({
                           onChange={(e) => set("area", e.target.value)}
                         />
                       </FormField>
-                      <FormField label="Rol *" error={errors.role}>
+                          <FormField label="Rol *" error={errors.role}>
                         <select
                           className={inputCls}
                           value={form.role}
@@ -1167,6 +1224,7 @@ export function UsersPage() {
         open={modalOpen}
         user={editingUser}
         siteOptions={activeSites}
+        roleOptions={roleOptions}
         onClose={() => setModalOpen(false)}
         onCreate={async (input) => { await createUser(input); }}
         onUpdate={async (id, input) => { await updateUser(id, input); }}

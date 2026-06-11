@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, ChevronLeft, ChevronRight, Check, AlertTriangle, Car, User, Wrench, ArrowRight, ClipboardCheck } from "lucide-react";
 import { toast } from "sonner";
 import { useAssets, type Asset } from "../../../../hooks/useAssets";
-import { useDrivers, type ApiDriver } from "../../../../hooks/useDrivers";
 import { useChecklistCategories, type ChecklistCategory } from "../../../../hooks/useChecklistCategories";
 import { useChecklists, type ChecklistInspectionItem, type ChecklistStatus } from "../../../../hooks/useChecklists";
 import IncorrectoModal from "./IncorrectoModal";
@@ -19,6 +18,13 @@ type Props = {
   /** Si se pasa, el wizard arranca con esta plantilla ya seleccionada
    *  y se salta el step de elegir categoría. */
   initialCategory?: ChecklistCategory | null;
+  /**
+   * Si el usuario es Conductor, viene del /conductor-context y se usa
+   * para auto-seleccionar su vehículo y driver. Si es null/undefined,
+   * el wizard muestra el selector de vehículo normal.
+   */
+  presetAssetId?: string | number | null;
+  presetDriverId?: number | null;
 };
 
 type Step = "vehicle" | "category" | "items" | "review";
@@ -31,9 +37,8 @@ type Step = "vehicle" | "category" | "items" | "review";
  *     drawer modal para observación + foto cuando es Incorrecto
  *  4) Confirmar y guardar
  */
-export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage = 7, initialCategory = null }: Props) {
+export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage = 7, initialCategory = null, presetAssetId = null, presetDriverId = null }: Props) {
   const { assets } = useAssets();
-  const { drivers } = useDrivers();
   const { categories } = useChecklistCategories();
   const { createChecklist } = useChecklists();
 
@@ -49,13 +54,18 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
   // ── Cuando se abre el wizard, sembrar el estado ─────────────────────────
   useEffect(() => {
     if (!open) return;
-    setStep(initialCategory ? "vehicle" : "vehicle");
-    setSelectedAsset(null);
+    if (presetAssetId) {
+      const found = assets.find((a) => String(a.id) === String(presetAssetId));
+      if (found) setSelectedAsset(found);
+    } else {
+      setSelectedAsset(null);
+    }
+    setStep("category");
     setSelectedCategory(initialCategory ?? null);
     setResponses({});
     setPage(1);
     setPendingIncorrectItem(null);
-  }, [open, initialCategory]);
+  }, [open, initialCategory, presetAssetId, assets]);
 
   // ── Si el usuario eligió una plantilla por el path de "Iniciar inspección"
   //    desde una card, salteamos el step de categoría y vamos directo a
@@ -76,13 +86,18 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
     setResponses({});
   }, [selectedCategory?.id, selectedAsset?.id]);
 
-  // ── Driver inferido de la asignación activa del vehículo ──────────────────
-  const inferredDriver: ApiDriver | null = useMemo(() => {
+  // ── Driver inferido: si el padre pasó presetDriverId (caso Conductor),
+  //    ese es. Si no, leemos el `currentDriver` que el backend ya enriquece
+  //    en el GET /assets (no requiere hook cruzado).
+  const inferredDriver: { id: number; name: string; code?: string | null; phone?: string | null; photoUrl?: string | null } | null = useMemo(() => {
+    if (presetDriverId) {
+      return { id: presetDriverId, name: "—" };
+    }
     if (!selectedAsset) return null;
-    const cd = (selectedAsset as Asset & { currentDriver?: { name?: string; code?: string; phone?: string; photoUrl?: string | null } | null }).currentDriver;
-    if (!cd?.name) return null;
-    return drivers.find((d) => `${d.firstName} ${d.lastName}`.trim() === cd.name) ?? null;
-  }, [selectedAsset, drivers]);
+    const cd = (selectedAsset as Asset & { currentDriver?: { id?: number; name?: string; code?: string; phone?: string; photoUrl?: string | null } | null }).currentDriver;
+    if (!cd?.id) return null;
+    return { id: cd.id, name: cd.name ?? "—", code: cd.code ?? null, phone: cd.phone ?? null, photoUrl: cd.photoUrl ?? null };
+  }, [selectedAsset, presetDriverId]);
 
   const items = selectedCategory?.items ?? [];
   const totalPages = Math.max(1, Math.ceil(items.length / itemsPerPage));
@@ -519,7 +534,7 @@ function StepItems({ category, pageItems, responses, page, totalPages, answeredC
 }
 
 function StepReview({ asset, driver, category, responses }: {
-  asset: Asset | null; driver: ApiDriver | null; category: ChecklistCategory | null;
+  asset: Asset | null; driver: { id: number; name: string; code?: string | null; phone?: string | null; photoUrl?: string | null } | null; category: ChecklistCategory | null;
   responses: Record<string, ChecklistInspectionItem>;
 }) {
   const items = category?.items ?? [];

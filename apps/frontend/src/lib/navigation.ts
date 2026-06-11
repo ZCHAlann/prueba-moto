@@ -217,6 +217,21 @@ export const navigationSections: NavigationSection[] = [
     ],
   },
   {
+    label: "Autorizaciones",
+    icon: "AU",
+    description: "Salida de vehiculos",
+    accent: "emerald",
+    items: [
+      {
+        label: "Autorizaciones",
+        href: "/autorizaciones",
+        icon: "AU",
+        description: "Solicitudes de salida de vehiculos",
+        accent: "emerald",
+      }
+    ],
+  },
+  {
     label: "Alertas",
     icon: "AL",
     description: "Seguimiento y severidad",

@@ -39,6 +39,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<DefaultRoleKey, ModulePermissionMa
     checklist:       { checklist:       ["ver", "crear"] },
     alertas:         { alertas:         ["ver"] },
     geolocalizacion: { geolocalizacion: ["ver"] },
+    autorizaciones:  { autorizaciones:  ["ver", "crear"] },
   },
 };
 

@@ -370,6 +370,7 @@ const SECTION_MODULE_MAP: Record<string, string[]> = {
   "combustible":      ["combustible"],
   "geolocalizacion":  ["geolocalizacion"],
   "soporte":          ["soporte"],
+  "autorizaciones":   ["autorizaciones"],
   "cuenta":           [],
 };
 

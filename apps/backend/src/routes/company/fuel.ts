@@ -26,6 +26,7 @@ const createFuelSchema = z.object({
   station: safeString({ max: 120, fieldLabel: 'Estación', allowEmpty: true }).nullable().optional(),
   fuelType: z.enum(['Diesel', 'Gasolina', 'Electrico', 'Hibrido']).optional().nullable(),
   notes: validators.longTextOptional,
+  photoUrl: z.string().min(1).max(2_000_000).nullable().optional(),
 });
 
 const updateFuelSchema = createFuelSchema.partial();
@@ -283,6 +284,7 @@ function serializeFuel(
     station: f.station,
     fuelType: f.fuelType,
     notes: f.notes,
+    photoUrl: f.photoUrl,
     // ── Enrichment: datos del activo para display sin hooks externos ─────────
     assetPlate: assetInfo?.plate ?? null,
     assetBrand: assetInfo?.brand ?? null,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAssets } from "../../hooks/useAssets";
 import { useDrivers } from "../../hooks/useDrivers";
 import { useAssignments } from "../../hooks/useAssignments";
@@ -9,6 +9,7 @@ import { useChecklists } from "../../hooks/useChecklists";
 import { useAlerts } from "../../hooks/useAlerts";
 import { useFuel } from "../../hooks/useFuel";
 import { useInventory } from "../../hooks/useInventory";
+import { useExitAuthorizations } from "../../hooks/useExitAuthorizations";
 import {
   FileBarChart2,
   CalendarRange,
@@ -69,6 +70,7 @@ const REPORT_CATALOG: ReportDef[] = [
   { id: "rep-005", label: "Combustible" },
   { id: "rep-006", label: "Alertas" },
   { id: "rep-007", label: "Inventario" },
+  { id: "rep-008", label: "Autorizaciones" },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -155,11 +157,17 @@ export function ReportsPage() {
   const { alerts,       loading: loadingAlerts }       = useAlerts();
   const { fuelEntries,  loading: loadingFuel }         = useFuel();
   const { inventory,    loading: loadingInventory }    = useInventory();
+  const { items: exitAuths, loading: loadingExitAuths, fetchList: fetchExitAuths } = useExitAuthorizations();
+
+  // Las autorizaciones requieren una llamada explícita (no se cargan en mount).
+  useEffect(() => {
+    void fetchExitAuths();
+  }, [fetchExitAuths]);
 
   const loading =
     loadingAssets || loadingDrivers || loadingAssignments ||
     loadingMaintenances || loadingChecklists || loadingAlerts ||
-    loadingFuel || loadingInventory;
+    loadingFuel || loadingInventory || loadingExitAuths;
 
   const [activeId, setActiveId] = useState("rep-001");
   const [search, setSearch] = useState("");
@@ -430,7 +438,48 @@ export function ReportsPage() {
         { label: "Stock total", value: inventory.reduce((t, i) => t + i.stock, 0).toString(),                     detail: "Unidades acumuladas",    tone: "success" },
       ],
     };
-  }, [activeId, assets, drivers, assignments, maintenances, checklists, alerts, fuelEntries, inventory]);
+
+    // ── rep-008 Autorizaciones ──────────────────────────────────────────────────
+    if (activeId === "rep-008") {
+      const columns: ReportColumn[] = [
+        { key: "assetPlate",    label: "Vehículo"        },
+        { key: "driverName",    label: "Conductor"       },
+        { key: "status",        label: "Estado"          },
+        { key: "requestedAt",   label: "Solicitada"      },
+        { key: "decidedAt",     label: "Decidida"        },
+        { key: "decidedBy",     label: "Aprobada por"    },
+        { key: "decisionNotes", label: "Nota de decisión"},
+      ];
+      const rows: ReportRow[] = exitAuths.map((a) => {
+        const driver   = drivers.find((d) => d.id === a.driverId);
+        const driverNm = a.driverName ?? (driver ? `${driver.firstName} ${driver.lastName}`.trim() : "—");
+        const plate    = a.assetPlate ?? assets.find((x) => x.id === a.assetId)?.plate ?? "—";
+        const decider  = drivers.find((d) => d.id === a.decisionByUserId);
+        return {
+          assetPlate:    plate,
+          driverName:    driverNm,
+          status:        a.status,
+          requestedAt:   a.requestedAt ? a.requestedAt.slice(0, 16).replace("T", " ") : "—",
+          decidedAt:     a.decidedAt   ? a.decidedAt.slice(0, 16).replace("T", " ")   : "—",
+          decidedBy:     a.decidedByName ?? (decider ? `${decider.firstName} ${decider.lastName}`.trim() : "—"),
+          decisionNotes: a.decisionNotes ?? "—",
+          __date:        a.requestedAt,
+        };
+      });
+      return {
+        title: "Reporte de autorizaciones de salida",
+        description: "Solicitudes de salida de vehiculos, su estado y quien las decidio.",
+        columns,
+        rows,
+        summary: [
+          { label: "Total",       value: exitAuths.length.toString(),                                                                                          detail: "Solicitudes registradas", tone: "info"    },
+          { label: "Autorizadas", value: exitAuths.filter((a) => a.status === "Autorizada").length.toString(),                                                detail: "Aprobadas",                 tone: "success" },
+          { label: "Rechazadas",  value: exitAuths.filter((a) => a.status === "Rechazada").length.toString(),                                                 detail: "Denegadas",                 tone: "danger"  },
+          { label: "Pendientes",  value: exitAuths.filter((a) => a.status === "Pendiente").length.toString(),                                                 detail: "En espera",                 tone: "warning" },
+        ],
+      };
+    }
+  }, [activeId, assets, drivers, assignments, maintenances, checklists, alerts, fuelEntries, inventory, exitAuths]);
 
   // ─── Filtered rows ─────────────────────────────────────────────────────────
 

@@ -10,6 +10,7 @@ import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { hashPassword } from '../../services/auth.service';
 import { validators } from '../../lib/validators';
+import { syncDriverWithUser, onUserDelete } from '../../services/driver-sync.service';
 
 const router = Router({ mergeParams: true });
 
@@ -42,6 +43,7 @@ const createCompanyUserSchema = z.object({
   status:            z.enum(['active', 'inactive']).default('active'),
   modulePermissions: modulePermissionsSchema,
   profileData:       z.record(z.string(), z.unknown()).default({}),
+  photoUrl:          z.string().min(1).max(2_000_000).nullable().optional(),
 });
 
 const updateCompanyUserSchema = createCompanyUserSchema
@@ -144,7 +146,7 @@ router.post(
 
       const passwordHash = await hashPassword(body.password);
 
-      const { modulePermissions, profileData, ...rest } = body;
+      const { modulePermissions, profileData, photoUrl, ...rest } = body;
 
       const [created] = await db
         .insert(companyUsers)
@@ -157,8 +159,16 @@ router.post(
           status:            rest.status,
           modulePermissions: modulePermissions ?? {},
           profileData:       profileData ?? {},
+          photoUrl:          photoUrl ?? null,
         })
         .returning();
+
+      // 1-a-1: si el rol es conductor, crear/asegurar su fila en drivers.
+      await syncDriverWithUser({
+        companyId,
+        userId:  created.id,
+        role:    created.role,
+      });
 
       await logAudit(db, companyId, {
         entity:      'company_users',
@@ -235,6 +245,15 @@ router.put(
           )
         )
         .returning();
+
+      // 1-a-1: si cambió el rol, mover la fila de drivers según corresponda.
+      if (body.role !== undefined || body.username !== undefined) {
+        await syncDriverWithUser({
+          companyId,
+          userId:  updated.id,
+          role:    updated.role,
+        });
+      }
 
       await logAudit(db, companyId, {
         entity:      'company_users',
@@ -335,6 +354,10 @@ router.delete(
             eq(companyUsers.companyId, companyId),
           )
         );
+
+      // FK CASCADE borra la fila de drivers automáticamente; onUserDelete
+      // es no-op pero se llama por simetría.
+      await onUserDelete({ companyId, userId });
 
       await logAudit(db, companyId, {
         entity:      'company_users',

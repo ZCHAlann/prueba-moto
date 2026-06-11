@@ -157,7 +157,7 @@ export const companyDrivers = pgTable(
       .notNull()
       .references(() => companies.id, { onDelete: 'cascade' }),
     siteId: integer('site_id').references(() => companySites.id, { onDelete: 'set null' }),
-    userId: integer('user_id').references(() => companyUsers.id, { onDelete: 'set null' }),
+    userId: integer('user_id').references(() => companyUsers.id, { onDelete: 'cascade' }),
     code: varchar('code', { length: 40 }).notNull(),
     firstName: varchar('first_name', { length: 80 }).notNull(),
     lastName: varchar('last_name', { length: 80 }).notNull(),
@@ -173,7 +173,13 @@ export const companyDrivers = pgTable(
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
-  (table) => [unique('company_drivers_company_id_code').on(table.companyId, table.code)]
+  (table) => [
+    unique('company_drivers_company_id_code').on(table.companyId, table.code),
+    // 1-a-1: un companyUser (rol=conductor) ↔ un driver row.
+    // Cubre el caso conductor-accede-al-sistema. Conductores legacy
+    // quedan con userId NULL y se mantienen por el driverId del FK.
+    unique('company_drivers_company_id_user_id').on(table.companyId, table.userId),
+  ]
 );
 
 // ─────────────────────────────────────────────
@@ -285,6 +291,7 @@ export const companyFuelEntries = pgTable('company_fuel_entries', {
   station: varchar('station', { length: 160 }),
   fuelType: varchar('fuel_type', { length: 40 }),
   notes: text('notes'),
+  photoUrl: text('photo_url'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
@@ -352,6 +359,69 @@ export const companyChecklists = pgTable('company_checklists', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
+
+// ─────────────────────────────────────────────
+// Autorizaciones de salida de vehículos
+// ─────────────────────────────────────────────
+//
+// Una "autorización" es la solicitud que hace un conductor para sacar un
+// vehículo del garaje. El conductor registra un video midiendo la bayoneta
+// del aceite + 7 fotos (refrigerante, líquido de frenos, las 4 llantas,
+// agua del limpia parabrisas, luces, batería, gato hidráulico).
+// Un supervisor/operador/admin/owner autoriza o rechaza.
+//
+// Estado:
+//  - Pendiente : esperando decisión
+//  - Autorizada : aprobada por un aprobador
+//  - Rechazada  : rechazada con nota
+//
+// `tire_photos_url` es text[] porque son 4 fotos de las 4 llantas.
+// El resto de las evidencias son URLs simples (image o video) excepto el
+// video de la bayoneta que también es una URL simple.
+export const exitAuthorizationStatusEnum = pgEnum('exit_authorization_status_enum', [
+  'Pendiente',
+  'Autorizada',
+  'Rechazada',
+]);
+
+export const companyExitAuthorizations = pgTable(
+  'company_exit_authorizations',
+  {
+    id: serial('id').primaryKey(),
+    companyId: integer('company_id').notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    assetId: integer('asset_id').notNull()
+      .references(() => companyAssets.id, { onDelete: 'restrict' }),
+    driverId: integer('driver_id').notNull()
+      .references(() => companyDrivers.id, { onDelete: 'restrict' }),
+
+    status: exitAuthorizationStatusEnum('status').notNull().default('Pendiente'),
+
+    // Evidencias (URLs en /uploads/...).
+    // El video de la bayoneta se guarda junto con un thumbnail generado client-side.
+    oilBayonetaVideoUrl:       text('oil_bayoneta_video_url'),
+    oilBayonetaVideoThumbUrl: text('oil_bayoneta_video_thumb_url'),
+    coolantPhotoUrl:          text('coolant_photo_url'),
+    brakeFluidPhotoUrl:       text('brake_fluid_photo_url'),
+    tirePhotosUrl:            text('tire_photos_url').array().notNull().default([]),
+    windshieldWasherPhotoUrl: text('windshield_washer_photo_url'),
+    lightsPhotoUrl:           text('lights_photo_url'),
+    batteryPhotoUrl:          text('battery_photo_url'),
+    jackPhotoUrl:             text('jack_photo_url'),
+
+    notes: text('notes'),
+
+    // Decisión.
+    decisionNotes:    text('decision_notes'),
+    decisionByUserId: integer('decision_by_user_id')
+      .references(() => companyUsers.id, { onDelete: 'set null' }),
+    decidedAt:        timestamp('decided_at'),
+
+    requestedAt: timestamp('requested_at').notNull().defaultNow(),
+    createdAt:   timestamp('created_at').notNull().defaultNow(),
+    updatedAt:   timestamp('updated_at').notNull().defaultNow(),
+  },
+);
 
 // ─────────────────────────────────────────────
 // Inventario

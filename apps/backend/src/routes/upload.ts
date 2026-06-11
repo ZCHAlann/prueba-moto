@@ -8,7 +8,9 @@ const router = Router();
 
 const UPLOAD_BASE = process.env.UPLOAD_DIR ?? join(process.cwd(), '..', '..', 'uploads');
 const MAX_FILE_SIZE = 8 * 1024 * 1024; // 8 MB
+const MAX_VIDEO_SIZE = 25 * 1024 * 1024; // 25 MB (cliente ya comprimió)
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
+const ALLOWED_VIDEO_MIME = ['video/mp4', 'video/webm', 'video/quicktime'];
 
 const ALLOWED_CATEGORIES = [
   'maintenance',
@@ -20,6 +22,9 @@ const ALLOWED_CATEGORIES = [
   'general',
   'handover-pdfs',
   'checklists',
+  'exit-auth',
+  'exit-auth-video',
+  'fuel',
 ] as const;
 
 type UploadCategory = (typeof ALLOWED_CATEGORIES)[number];
@@ -57,12 +62,32 @@ function imageFilter(
   }
 }
 
+function videoFilter(
+  _req: Request,
+  file: Express.Multer.File,
+  cb: multer.FileFilterCallback,
+) {
+  if (ALLOWED_VIDEO_MIME.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new AppError(400, `Tipo de video no permitido: ${file.mimetype}`));
+  }
+}
+
 function buildUpload(category: UploadCategory) {
   return multer({
     storage: buildStorage(category),
     limits: { fileSize: MAX_FILE_SIZE },
     fileFilter: imageFilter,
   }).array('photos', 10);
+}
+
+function buildVideoUpload(category: UploadCategory) {
+  return multer({
+    storage: buildStorage(category),
+    limits: { fileSize: MAX_VIDEO_SIZE },
+    fileFilter: videoFilter,
+  }).single('video');
 }
 
 function resolveUrls(
@@ -89,6 +114,25 @@ function uploadHandler(category: UploadCategory) {
   };
 }
 
+function videoUploadHandler(category: UploadCategory) {
+  const upload = buildVideoUpload(category);
+  return (req: Request, res: Response, next: NextFunction) => {
+    upload(req, res, (err) => {
+      if (err) return next(err);
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file) return next(new AppError(400, 'No se recibió el video.'));
+      const companyId = req.query.companyId as string | undefined;
+      const folder = companyId ? `${category}/${companyId}` : category;
+      res.json({
+        url:  `/uploads/${folder}/${file.filename}`,
+        type: file.mimetype,
+        name: file.originalname,
+        size: file.size,
+      });
+    });
+  };
+}
+
 
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -99,6 +143,54 @@ router.post('/driver-photos', uploadHandler('drivers'));
 router.post('/assignment-photos', uploadHandler('assignments'));
 router.post('/ac-photos', uploadHandler('ac'));
 router.post('/user-photos', uploadHandler('users'));
+
+// ─── Evidencias de autorización de salida (fotos + video) ──────────────────
+// El cliente ya comprime las imágenes a ~JPEG quality 0.8 y el video a 720p
+// antes de subirlos. Aquí sólo guardamos y devolvemos las URLs públicas.
+router.post('/exit-auth-photos', (req: Request, res: Response, next: NextFunction) => {
+  const companyId = req.query.companyId as string | undefined;
+  const folder = companyId ? `exit-auth/${companyId}` : 'exit-auth';
+
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: MAX_FILE_SIZE },
+    fileFilter: imageFilter,
+  }).array('photos', 10);
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    const files = req.files as Express.Multer.File[];
+    if (!files || files.length === 0)
+      return next(new AppError(400, 'No se recibieron archivos.'));
+    res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
+  });
+});
+
+router.post('/exit-auth-video', (req: Request, res: Response, next: NextFunction) => {
+  const companyId = req.query.companyId as string | undefined;
+  const folder = companyId ? `exit-auth-video/${companyId}` : 'exit-auth-video';
+
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: MAX_VIDEO_SIZE },
+    fileFilter: videoFilter,
+  }).single('video');
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    const file = req.file as Express.Multer.File | undefined;
+    if (!file) return next(new AppError(400, 'No se recibió el video.'));
+    res.json({
+      url:  `/uploads/${folder}/${file.filename}`,
+      type: file.mimetype,
+      name: file.originalname,
+      size: file.size,
+    });
+  });
+});
+
+// ─── Evidencias de carga de combustible (foto del surtidor / factura) ──────────
+router.post('/fuel-photos', uploadHandler('fuel'));
 
 // ─── Evidencias de checklist (un archivo por item, usado al marcar "Incorrecto") ──
 router.post('/checklist-photos', (req: Request, res: Response, next: NextFunction) => {

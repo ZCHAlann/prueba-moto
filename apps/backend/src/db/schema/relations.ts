@@ -165,8 +165,8 @@ export const companyAssetsRelations = relations(companyAssets, ({ one, many }) =
 // ── Company Drivers ──
 export const companyDriversRelations = relations(companyDrivers, ({ one, many }) => ({
   company:     one(companies, { fields: [companyDrivers.companyId], references: [companies.id] }),
+  user:        one(companyUsers, { fields: [companyDrivers.userId], references: [companyUsers.id] }), // ← NUEVO
   assignments: many(companyAssignments),
-  // NUEVO:
   routes:      many(assetRoutes),
 }));
 
@@ -267,6 +267,7 @@ export const companyAuditEntriesRelations = relations(companyAuditEntries, ({ on
 export const companyUsersRelations = relations(companyUsers, ({ one, many }) => ({
   company: one(companies, { fields: [companyUsers.companyId], references: [companies.id] }),
   notes:   many(assetNotes),
+  driver:  one(companyDrivers, { fields: [companyUsers.id], references: [companyDrivers.userId] }), // ← NUEVO
 }));
 
 

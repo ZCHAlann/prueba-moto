@@ -43,6 +43,9 @@ export function ChecklistHistorial({ onOpenDetail, pageSize = 7 }: Props) {
   const [page, setPage] = useState(1);
   const [exportingId, setExportingId] = useState<string | null>(null);
 
+  useEffect(() => {
+    console.log("[historial] checklists:", checklists.map(c => ({ id: c.id, status: c.status, items: c.items.length })));
+  }, [checklists]);
   // Live updates via WebSocket
   const { status: wsStatus } = useChecklistWebSocket((evt) => {
     // Cuando llega cualquier evento del namespace, refetch

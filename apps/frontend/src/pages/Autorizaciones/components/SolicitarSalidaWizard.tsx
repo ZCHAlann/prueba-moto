@@ -11,7 +11,7 @@
 //    5. Llanta delantera derecha       — obligatorio
 //    6. Llanta trasera izquierda       — obligatorio
 //    7. Llanta trasera derecha         — obligatorio
-//    8. Agua del limpia parabrisas     — obligatorio
+//    8. Agua del limpia parabrisas     — obligatorioo
 //    9. Luces                          — obligatorio
 //   10. Batería                         — obligatorio
 //   11. Gato hidráulico                 — obligatorio
@@ -31,7 +31,7 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "../../../context/AuthContext";
 import { useExitAuthorizations } from "../../../hooks/useExitAuthorizations";
-import { compressImage, compressVideo, generateVideoThumbnail } from "../../../lib/mediaCompress";
+import { compressImage, generateVideoThumbnail } from "../../../lib/mediaCompress";
 import type { ExitAuthorization } from "../../../hooks/useExitAuthorizations";
 
 type AssetLite = { id: string; plate: string; brand: string; model: string };
@@ -166,13 +166,12 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
     if (!companyId) return;
     setUploading(true);
     try {
-      // Compresión local primero
       let toUpload = captured;
+      // Solo comprimir imágenes — video lo comprime el servidor
       if (captured.type.startsWith("image/")) {
         toUpload = await compressImage(captured);
-      } else if (captured.type.startsWith("video/")) {
-        toUpload = await compressVideo(captured);
       }
+
       const form = new FormData();
       form.append(step.type === "video" ? "video" : "photos", toUpload);
       const endpoint =
@@ -186,12 +185,11 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
       if (!uploadedUrl) throw new Error("No se obtuvo la URL");
 
       if (step.id === "oil_bayoneta_video") {
-        // Genera thumb client-side a partir del original
         const thumb = await generateVideoThumbnail(captured).catch(() => null);
         setUrls((prev) => ({
           ...prev,
           oil_bayoneta_video: uploadedUrl,
-          oil_bayoneta_video_thumb: thumb ?? prev.oil_bayoneta_video_thumb,
+          oil_bayoneta_video_thumb: null,
         }));
       } else if (step.id.startsWith("tire_")) {
         setUrls((prev) => ({
@@ -201,7 +199,7 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
       } else {
         setUrls((prev) => ({ ...prev, [step.id]: uploadedUrl }));
       }
-      toast.success("Subido y comprimido");
+      toast.success("Subido correctamente");
     } catch (err) {
       console.error(err);
       toast.error("No se pudo subir el archivo");

@@ -1,24 +1,10 @@
 "use client";
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  AutorizacionesPage
-// ─────────────────────────────────────────────────────────────────────────────
-//  Vista principal del módulo "Autorizaciones".
-//
-//  Roles:
-//   - conductor         → dashboard de SU vehículo + botón "Solicitar…"
-//   - supervisor/operador/admin/owner → 3 sub-tabs:
-//       1. Dashboard    → stats globales + barras por vehículo
-//       2. Entrantes    → tabla en vivo (WS) de Pendientes, click abre
-//                          el drawer con el video + todas las fotos y
-//                          permite aprobar/rechazar.
-//       3. Historial    → Autorizadas / Rechazadas (filtros libres).
-
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Plus, LayoutDashboard, Inbox, History, Loader2, AlertTriangle,
-  Check, Search, Calendar, Truck, X,
+  Plus, Inbox, History, Loader2, AlertTriangle,
+  Check, Search, Calendar, Truck,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useExitAuthorizations, type ConductorContext, type ExitAuthorization, type ExitAuthStatus } from "../../hooks/useExitAuthorizations";
@@ -26,8 +12,7 @@ import { SolicitarSalidaWizard } from "./components/SolicitarSalidaWizard";
 import { ExitAuthDetailDrawer } from "./components/ExitAuthDetailDrawer";
 import { DatePicker } from "@/components/ui/date-picker/DatePicker";
 
-
-type SubTab = "dashboard" | "entrantes" | "historial";
+type SubTab = "entrantes" | "historial";
 type HistorialFilter = "Autorizadas" | "Rechazadas";
 
 function fmtDate(iso: string | null | undefined): string {
@@ -56,33 +41,68 @@ export function AutorizacionesPage() {
   const isConductor = role === "conductor";
   const canDecide = ["supervisor", "admin_empresa", "owner_empresa"].includes(role);
 
-  const { items, loading, fetchList, fetchConductorContext, decide, remove, wsChangeCount } = useExitAuthorizations();
+  const { items, loading, fetchList, fetchConductorContext, decide, remove, wsChangeCount, wsDecidedCount  } = useExitAuthorizations();
 
-  useEffect(() => {
-    console.log("[session companyId]", session?.companyId);
-    console.log("[items]", items.length, items.map(i => i.status));
-  }, [session?.companyId, items]);
-
-  // ── Carga inicial según rol.
-  //    Conductor: pide /conductor-context (driverId + asset) y también
-  //    /exit-authorizations (el backend ya filtra por su driverId).
-  //    Demás:      fetchList() con el filtrado de supervisor.
   const [conductorCtx, setConductorCtx] = useState<ConductorContext | null>(null);
+
+  // ── Set de IDs ya vistos — para no mostrar popup de decisiones antiguas
+  const [shownIds, setShownIds] = useState<Set<string>>(new Set());
+  const initialLoadDone = useRef(false);
+
+  // ── Carga inicial
   useEffect(() => {
     if (isConductor) {
-      void fetchConductorContext().then(setConductorCtx);
-      void fetchList(); // ← el backend filtra por su driverId
+      void fetchConductorContext().then((ctx) => {
+        if (!ctx) return;
+        setConductorCtx(ctx);
+
+        // resto de los logs de debug del popup, igual que antes
+        console.log("[popup] ctx.authorizations:", ctx.authorizations.map(a => ({ id: a.id, status: a.status })));
+        console.log("[popup] shownIds:", [...shownIds]);
+
+        const decided = ctx.authorizations.find(
+          (a) => a.status !== "Pendiente" && !shownIds.has(a.id)
+        );
+        console.log("[popup] decided:", decided);
+        console.log("[popup] driverId match:", ctx.driverId, decided?.driverId, String(ctx.driverId) === String(decided?.driverId));
+      });
+      void fetchList();
     } else {
       void fetchList();
     }
   }, [isConductor, fetchConductorContext, fetchList]);
 
-  // Refetch del contexto del conductor cuando llegan eventos WS que ya
-  // afectaron sus items.
+  // ── Cuando llega un evento WS nuevo → refetch y evaluar popup
+  const prevWsCount = useRef(0);
   useEffect(() => {
     if (!isConductor) return;
-    void fetchConductorContext().then(setConductorCtx);
-  }, [isConductor, wsChangeCount, fetchConductorContext]);
+    if (wsChangeCount === 0) return;
+    if (wsChangeCount === prevWsCount.current) return;
+    prevWsCount.current = wsChangeCount;
+
+    console.log("[popup] wsChangeCount cambió a", wsChangeCount);
+
+    void fetchConductorContext().then((ctx) => {
+      console.log("[popup] ctx.authorizations:", ctx?.authorizations.map(a => ({ id: a.id, status: a.status })));
+      console.log("[popup] shownIds:", [...shownIds]);
+      if (!ctx) return;
+      setConductorCtx(ctx);
+
+      // Buscar la primera autorización decidida que el conductor no haya visto
+      const decided = ctx.authorizations.find(
+        (a) => a.status !== "Pendiente" && !shownIds.has(a.id)
+      );
+      if (!decided) return;
+      const decidedDriverNum = String(decided.driverId).replace(/^driver-/, "");
+      if (String(ctx.driverId) !== decidedDriverNum) return;
+
+      setShownIds((prev) => new Set([...prev, decided.id]));
+      setPendingDecisionPopup({
+        status: decided.status as "Autorizada" | "Rechazada",
+        auth: decided,
+      });
+    });
+  }, [isConductor, wsDecidedCount, fetchConductorContext, shownIds]);
 
   // ── Estado UI
   const [subTab, setSubTab] = useState<SubTab>("entrantes");
@@ -93,36 +113,8 @@ export function AutorizacionesPage() {
     status: "Autorizada" | "Rechazada";
     auth: ExitAuthorization;
   } | null>(null);
-  const [lastSeenId, setLastSeenId] = useState<string | null>(null);
-
 
   const effectiveItems = isConductor ? (conductorCtx?.authorizations ?? []) : items;
-
-  // Cuando llega una decisión y la solicitud nos pertenece, mostramos popUp custom
-  useEffect(() => {
-    if (isConductor) return;
-    // Para supervisor/operador no hace falta el popup.
-  }, [isConductor, items]);
-
-  // Hook para conductor: abrir el popUp cuando llega una decisión sobre una de sus solicitudes
-  const miConductorId = useMemo(() => {
-    if (!isConductor) return null;
-    const sessAny = session as unknown as { companyUserId?: number; id?: string };
-    const cuid = sessAny.companyUserId ?? (sessAny.id ? Number(String(sessAny.id).replace(/\D/g, "")) : null);
-    return cuid;
-  }, [isConductor, session]);
-
-  useEffect(() => {
-    if (!isConductor || !miConductorId) return;
-    const candidate = effectiveItems.find((a) => a.id !== lastSeenId);
-    if (!candidate || candidate.status === "Pendiente") return;
-    const isMine = conductorCtx
-      ? String(conductorCtx.driverId) === String(candidate.driverId)
-      : false;
-    if (!isMine) return;
-    setPendingDecisionPopup({ status: candidate.status as "Autorizada" | "Rechazada", auth: candidate });
-    setLastSeenId(candidate.id);
-  }, [effectiveItems, isConductor, miConductorId, conductorCtx, lastSeenId]);
 
   function openDetail(a: ExitAuthorization, mode: "viewer" | "operator") {
     setDetail(a);
@@ -155,28 +147,7 @@ export function AutorizacionesPage() {
     return list;
   }, [items, historialFilter, q, dateFrom, dateTo]);
 
-  const stats = useMemo(() => {
-    const total   = items.length;
-    const pend    = items.filter((a) => a.status === "Pendiente").length;
-    const apro    = items.filter((a) => a.status === "Autorizada").length;
-    const rech    = items.filter((a) => a.status === "Rechazada").length;
-    return { total, pend, apro, rech };
-  }, [items]);
-
-  const byVehicle = useMemo(() => {
-    const map = new Map<string, { plate: string; name: string | null; pendientes: number; aprobadas: number; rechazadas: number; }>();
-    for (const a of items) {
-      const key = a.assetPlate ?? a.assetLabel ?? a.assetId;
-      const cur = map.get(key) ?? { plate: key, name: a.assetName, pendientes: 0, aprobadas: 0, rechazadas: 0 };
-      if (a.status === "Pendiente") cur.pendientes++;
-      if (a.status === "Autorizada") cur.aprobadas++;
-      if (a.status === "Rechazada") cur.rechazadas++;
-      map.set(key, cur);
-    }
-    return Array.from(map.values()).sort((a, b) => (b.pendientes + b.rechazadas) - (a.pendientes + a.rechazadas));
-  }, [items]);
-
-  // ── Render
+  // ── Render conductor
   if (isConductor) {
     const myAsset = conductorCtx?.asset
       ? { id: conductorCtx.asset.id, plate: conductorCtx.asset.plate, brand: conductorCtx.asset.brand, model: conductorCtx.asset.model }
@@ -190,7 +161,6 @@ export function AutorizacionesPage() {
         onSolicitar={() => setWizardOpen(true)}
         onOpenDetail={(a) => openDetail(a, "viewer")}
       >
-        {/* wizard + popUp decision */}
         {wizardOpen && (
           <SolicitarSalidaWizard
             open={wizardOpen}
@@ -212,6 +182,7 @@ export function AutorizacionesPage() {
     );
   }
 
+  // ── Render supervisor/admin
   return (
     <div className="space-y-5">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -225,8 +196,7 @@ export function AutorizacionesPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => void fetchList()}
-            disabled={loading}
+          <button type="button" onClick={() => void fetchList()} disabled={loading}
             className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] px-3.5 py-2 text-sm font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.05] disabled:opacity-50 transition">
             {loading ? <Loader2 size={13} className="animate-spin" /> : null} Refrescar
           </button>
@@ -270,11 +240,10 @@ export function AutorizacionesPage() {
           onClose={() => setDetail(null)}
           onDecide={detailMode === "operator" && isPending(detail) ? async (id, action, notes) => {
             const updated = await decide(id, action, notes);
-            // Cierre inmediato del modal + popup Swift para quien autoriza
             setDetail(null);
             setPendingDecisionPopup({
               status: updated.status as "Autorizada" | "Rechazada",
-              auth:   updated,
+              auth: updated,
             });
           } : undefined}
           onDelete={detailMode === "operator" && !isPending(detail) ? (id) => remove(id) : undefined}
@@ -296,16 +265,16 @@ function isPending(a: ExitAuthorization): boolean {
   return a.status === "Pendiente";
 }
 
-// ─── SubTabs ─────────────────────────────────────────────────────────────────
+// ─── SubTabs ──────────────────────────────────────────────────────────────────
 
 function SubTabs({ value, onChange }: { value: SubTab; onChange: (v: SubTab) => void }) {
-  const items: { key: SubTab; label: string; icon: React.ReactNode }[] = [
-    { key: "entrantes",  label: "Solicitudes pendientes",  icon: <Inbox size={12} /> },
-    { key: "historial",  label: "Historial",  icon: <History size={12} /> },
+  const tabs: { key: SubTab; label: string; icon: React.ReactNode }[] = [
+    { key: "entrantes", label: "Solicitudes pendientes", icon: <Inbox size={12} /> },
+    { key: "historial", label: "Historial",              icon: <History size={12} /> },
   ];
   return (
     <div className="flex items-center gap-1">
-      {items.map((it) => {
+      {tabs.map((it) => {
         const active = value === it.key;
         return (
           <button key={it.key} type="button" onClick={() => onChange(it.key)}
@@ -322,36 +291,15 @@ function SubTabs({ value, onChange }: { value: SubTab; onChange: (v: SubTab) => 
   );
 }
 
-
-
-function StatCard({ label, value, tone }: { label: string; value: number; tone: "neutral" | "amber" | "emerald" | "rose" }) {
-  const colorMap = {
-    neutral: "text-gray-700 dark:text-gray-200",
-    amber:   "text-amber-600 dark:text-amber-400",
-    emerald: "text-emerald-600 dark:text-emerald-400",
-    rose:    "text-rose-600 dark:text-rose-400",
-  } as const;
-  return (
-    <div className="rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] p-4">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">{label}</p>
-      <p className={`mt-1 text-3xl font-black tabular-nums ${colorMap[tone]}`}>{value}</p>
-    </div>
-  );
-}
-
-// ─── Entrantes tab ──────────────────────────────────────────────────────────
+// ─── Entrantes tab ────────────────────────────────────────────────────────────
 
 function EntrantesTab({ items, loading, onOpen }: {
   items: ExitAuthorization[];
   loading: boolean;
   onOpen: (a: ExitAuthorization) => void;
 }) {
-  if (loading && items.length === 0) {
-    return <CenteredLoader label="Buscando solicitudes entrantes…" />;
-  }
-  if (items.length === 0) {
-    return <EmptyState icon={<Inbox size={18} />} title="Sin solicitudes entrantes" subtitle="Las nuevas solicitudes se mostrarán aquí en tiempo real." />;
-  }
+  if (loading && items.length === 0) return <CenteredLoader label="Buscando solicitudes entrantes…" />;
+  if (items.length === 0) return <EmptyState icon={<Inbox size={18} />} title="Sin solicitudes entrantes" subtitle="Las nuevas solicitudes se mostrarán aquí en tiempo real." />;
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03]">
       <table className="w-full text-sm">
@@ -378,7 +326,7 @@ function EntrantesTab({ items, loading, onOpen }: {
   );
 }
 
-// ─── Historial tab ──────────────────────────────────────────────────────────
+// ─── Historial tab ────────────────────────────────────────────────────────────
 
 function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, dateTo, onChangeDateFrom, onChangeDateTo, onOpen }: {
   items: ExitAuthorization[];
@@ -419,7 +367,6 @@ function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, d
           <DatePicker value={dateTo} onChange={onChangeDateTo} placeholder="Fecha hasta" />
         </div>
       </div>
-
       {items.length === 0 ? (
         <EmptyState icon={<History size={18} />} title="Sin resultados" subtitle="Ajustá los filtros o esperá nuevas solicitudes." />
       ) : (
@@ -451,7 +398,7 @@ function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, d
   );
 }
 
-// ─── Empty state & loader ────────────────────────────────────────────────────
+// ─── Empty / Loader ───────────────────────────────────────────────────────────
 
 function EmptyState({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
   return (
@@ -462,6 +409,7 @@ function EmptyState({ icon, title, subtitle }: { icon: React.ReactNode; title: s
     </div>
   );
 }
+
 function CenteredLoader({ label }: { label: string }) {
   return (
     <div className="rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] py-16 text-center text-sm text-gray-500 dark:text-gray-400">
@@ -470,11 +418,9 @@ function CenteredLoader({ label }: { label: string }) {
   );
 }
 
-// ─── Conductor view ──────────────────────────────────────────────────────────
+// ─── Conductor view ───────────────────────────────────────────────────────────
 
-function ConductorView({
-  loading, myAsset, driverId, items, onSolicitar, onOpenDetail, children,
-}: {
+function ConductorView({ loading, myAsset, driverId, items, onSolicitar, onOpenDetail, children }: {
   loading: boolean;
   myAsset: { id: string; plate: string; brand: string; model: string } | null;
   driverId: number | null;
@@ -488,7 +434,6 @@ function ConductorView({
   const ultima = items[0];
   return (
     <div className="space-y-5">
-      {/* Hero card: vehículo asignado */}
       <div className="rounded-2xl border border-emerald-200/60 dark:border-emerald-500/20 bg-gradient-to-br from-emerald-50/40 to-white dark:from-emerald-500/[0.04] dark:to-gray-900 p-6">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div className="min-w-0">
@@ -496,7 +441,7 @@ function ConductorView({
               <Truck size={10} /> Vehículo asignado
             </span>
             <h2 className="mt-2 text-2xl font-bold text-gray-900 dark:text-white tracking-tight">
-              {myAsset?.plate ?? myAsset?.code ?? myAsset?.name ?? "Sin vehículo asignado"}
+              {myAsset?.plate ?? "Sin vehículo asignado"}
             </h2>
             <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
               {[myAsset?.brand, myAsset?.model].filter(Boolean).join(" ") || "—"}
@@ -514,15 +459,13 @@ function ConductorView({
         </div>
       </div>
 
-      {/* KPIs del vehículo */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <MiniStat label="Solicitudes totales" value={items.length} />
-        <MiniStat label="Pendientes"         value={pendientes.length} tone="amber" />
+        <MiniStat label="Pendientes"          value={pendientes.length} tone="amber" />
         <MiniStat label="Autorizadas"         value={items.filter((a) => a.status === "Autorizada").length} tone="emerald" />
         <MiniStat label="Rechazadas"          value={items.filter((a) => a.status === "Rechazada").length} tone="rose" />
       </div>
 
-      {/* Última solicitud */}
       {loading ? <CenteredLoader label="Cargando solicitudes…" />
         : ultima ? (
           <div className="rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] p-5">
@@ -550,12 +493,7 @@ function ConductorView({
 }
 
 function MiniStat({ label, value, tone = "neutral" }: { label: string; value: number; tone?: "neutral" | "amber" | "emerald" | "rose" }) {
-  const c = {
-    neutral: "text-gray-700 dark:text-gray-200",
-    amber:   "text-amber-600 dark:text-amber-400",
-    emerald: "text-emerald-600 dark:text-emerald-400",
-    rose:    "text-rose-600 dark:text-rose-400",
-  }[tone];
+  const c = { neutral: "text-gray-700 dark:text-gray-200", amber: "text-amber-600 dark:text-amber-400", emerald: "text-emerald-600 dark:text-emerald-400", rose: "text-rose-600 dark:text-rose-400" }[tone];
   return (
     <div className="rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] p-4">
       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">{label}</p>
@@ -564,7 +502,7 @@ function MiniStat({ label, value, tone = "neutral" }: { label: string; value: nu
   );
 }
 
-// ─── Decision popup (estilo "swift", sin sonner) ──────────────────────────
+// ─── Decision popup ───────────────────────────────────────────────────────────
 
 function DecisionPopup({ status, auth, onClose }: {
   status: "Autorizada" | "Rechazada";
@@ -587,10 +525,10 @@ function DecisionPopup({ status, auth, onClose }: {
           onClick={(e) => e.stopPropagation()}
           className="w-full max-w-md overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 shadow-2xl">
           <div className="px-6 pt-6 pb-4 text-center">
-            <div className={`mx-auto inline-flex h-14 w-14 items-center justify-center rounded-full ${
-              isAprob ? "bg-emerald-100 dark:bg-emerald-500/20" : "bg-rose-100 dark:bg-rose-500/20"
-            }`}>
-              {isAprob ? <Check size={26} className="text-emerald-600 dark:text-emerald-400" /> : <AlertTriangle size={26} className="text-rose-600 dark:text-rose-400" />}
+            <div className={`mx-auto inline-flex h-14 w-14 items-center justify-center rounded-full ${isAprob ? "bg-emerald-100 dark:bg-emerald-500/20" : "bg-rose-100 dark:bg-rose-500/20"}`}>
+              {isAprob
+                ? <Check size={26} className="text-emerald-600 dark:text-emerald-400" />
+                : <AlertTriangle size={26} className="text-rose-600 dark:text-rose-400" />}
             </div>
             <h2 className="mt-3 text-lg font-semibold text-gray-900 dark:text-white tracking-tight">
               {isAprob ? "¡Salida aprobada!" : "Salida rechazada"}
@@ -599,9 +537,7 @@ function DecisionPopup({ status, auth, onClose }: {
               {auth.assetPlate ?? auth.assetLabel ?? "Tu vehículo"} · {fmtDate(auth.decidedAt ?? auth.requestedAt)}
             </p>
             {auth.decisionNotes && (
-              <div className={`mt-4 rounded-xl border px-3 py-2 text-left text-sm ${
-                isAprob ? "border-emerald-200 bg-emerald-50 dark:border-emerald-500/20 dark:bg-emerald-500/10" : "border-rose-200 bg-rose-50 dark:border-rose-500/20 dark:bg-rose-500/10"
-              }`}>
+              <div className={`mt-4 rounded-xl border px-3 py-2 text-left text-sm ${isAprob ? "border-emerald-200 bg-emerald-50 dark:border-emerald-500/20 dark:bg-emerald-500/10" : "border-rose-200 bg-rose-50 dark:border-rose-500/20 dark:bg-rose-500/10"}`}>
                 <p className="text-[10px] font-bold uppercase tracking-wider opacity-70 mb-1">Motivo</p>
                 <p className="text-gray-800 dark:text-gray-200">{auth.decisionNotes}</p>
               </div>
@@ -613,9 +549,7 @@ function DecisionPopup({ status, auth, onClose }: {
               Cerrar
             </button>
             <button type="button" onClick={onClose}
-              className={`flex-1 rounded-lg py-2 text-sm font-semibold text-white transition ${
-                isAprob ? "bg-emerald-500 hover:bg-emerald-600" : "bg-rose-500 hover:bg-rose-600"
-              }`}>
+              className={`flex-1 rounded-lg py-2 text-sm font-semibold text-white transition ${isAprob ? "bg-emerald-500 hover:bg-emerald-600" : "bg-rose-500 hover:bg-rose-600"}`}>
               Entendido
             </button>
           </div>

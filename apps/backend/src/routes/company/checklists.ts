@@ -7,7 +7,7 @@ import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
 import { NotFoundError } from '../../lib/errors';
-import { toId, parseId } from '../../lib/ids';
+import { toId, parseId, parseIdFlexible } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
 import { wsBroadcast } from '../../services/websocket';
@@ -497,9 +497,9 @@ router.post(
       const companyId = req.companyId!;
       const body = req.body as z.infer<typeof createChecklistSchema>;
 
-      const categoryId = body.categoryId ? parseId('checklist-category', body.categoryId) : null;
-      const assetId    = body.assetId    ? parseId('asset', body.assetId)              : null;
-      const driverId   = body.driverId   ? parseId('driver', body.driverId)            : null;
+      const categoryId = body.categoryId ? parseIdFlexible('checklist-category', body.categoryId) : null;
+      const assetId    = body.assetId    ? parseIdFlexible('asset',               body.assetId)    : null;
+      const driverId   = body.driverId   ? parseIdFlexible('driver',              body.driverId)   : null;
       const inspectorId = Number(req.user!.sub.replace(/\D/g, '')) || null;
 
       const [created] = await db

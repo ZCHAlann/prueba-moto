@@ -120,6 +120,7 @@ export function useExitAuthorizations() {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const [wsChangeCount, setWsChangeCount] = useState(0);
+  const [wsDecidedCount, setWsDecidedCount] = useState(0);
 
   // Suscripción WS — se conecta cuando hay session
   useExitAuthorizationsSocket(companyIdStr, {
@@ -129,10 +130,12 @@ export function useExitAuthorizations() {
       setWsChangeCount((n) => n + 1);
     },
     onDecided: (a) => {
+      const mapped = mapRow(a as unknown as Record<string, unknown>);
       setItems((prev) =>
-        prev.map((x) => (x.id === a.id ? { ...x, status: a.status as ExitAuthStatus } : x))
+        prev.map((x) => (x.id === mapped.id ? { ...x, ...mapped } : x))
       );
-      setWsChangeCount((n) => n + 1); // ← esto triggerea el refetch del conductor
+      setWsChangeCount((n) => n + 1);
+      setWsDecidedCount((n) => n + 1);
     },
     onDeleted: ({ id }) => {
       setItems((prev) => prev.filter((x) => x.id !== id));
@@ -255,5 +258,5 @@ export function useExitAuthorizations() {
     [companyIdStr],
   );
 
-  return { items, loading, error, fetchList, fetchConductorContext, create, decide, remove, refetch: () => fetchList(), wsChangeCount };
+  return { items, loading, error, fetchList, fetchConductorContext, create, decide, remove, refetch: () => fetchList(), wsChangeCount, wsDecidedCount };
 }

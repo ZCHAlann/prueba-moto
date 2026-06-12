@@ -166,8 +166,8 @@ export function useDrivers() {
 /** Sube 1 foto al endpoint de conductores y devuelve la URL pública. */
 export async function uploadDriverPhoto(file: File, companyId: number): Promise<string> {
   const fd = new FormData();
-  fd.append("file", file);
-  const res = await fetch(`/api/upload/drivers?companyId=${companyId}`, {
+  fd.append("photos", file); 
+  const res = await fetch(`/api/upload/driver-photos?companyId=${companyId}`, {  
     method: "POST",
     body: fd,
     credentials: "include",

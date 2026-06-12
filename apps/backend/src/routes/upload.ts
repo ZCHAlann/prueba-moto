@@ -3,6 +3,8 @@ import multer from 'multer';
 import { existsSync, mkdirSync, unlinkSync } from 'fs';
 import { extname, join } from 'path';
 import { AppError } from '../lib/errors';
+import ffmpeg from 'fluent-ffmpeg';
+import { promises as fs } from 'fs';
 
 const router = Router();
 
@@ -139,10 +141,44 @@ function videoUploadHandler(category: UploadCategory) {
 
 router.post('/asset-photos', uploadHandler('assets'));
 router.post('/maintenance-photos', uploadHandler('maintenance'));
-router.post('/driver-photos', uploadHandler('drivers'));
 router.post('/assignment-photos', uploadHandler('assignments'));
 router.post('/ac-photos', uploadHandler('ac'));
-router.post('/user-photos', uploadHandler('users'));
+
+router.post('/driver-photos', (req: Request, res: Response, next: NextFunction) => {
+  const companyId = req.query.companyId as string | undefined;
+  const folder = companyId ? `drivers/${companyId}` : 'drivers';
+
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: MAX_FILE_SIZE },
+    fileFilter: imageFilter,
+  }).array('photos', 10);
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    const files = req.files as Express.Multer.File[];
+    if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+    res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
+  });
+});
+
+router.post('/user-photos', (req: Request, res: Response, next: NextFunction) => {
+  const companyId = req.query.companyId as string | undefined;
+  const folder = companyId ? `users/${companyId}` : 'users';
+
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: MAX_FILE_SIZE },
+    fileFilter: imageFilter,
+  }).array('photos', 10);
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    const files = req.files as Express.Multer.File[];
+    if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+    res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
+  });
+});
 
 // ─── Evidencias de autorización de salida (fotos + video) ──────────────────
 // El cliente ya comprime las imágenes a ~JPEG quality 0.8 y el video a 720p
@@ -171,26 +207,88 @@ router.post('/exit-auth-video', (req: Request, res: Response, next: NextFunction
   const folder = companyId ? `exit-auth-video/${companyId}` : 'exit-auth-video';
 
   const upload = multer({
-    storage: buildStorage(folder),
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => {
+        const dir = join(UPLOAD_BASE, folder);
+        ensureDir(dir);
+        cb(null, dir);
+      },
+      filename: (_req, file, cb) => {
+        const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        cb(null, `tmp_${unique}${extname(file.originalname).toLowerCase() || '.mp4'}`);
+      },
+    }),
     limits: { fileSize: MAX_VIDEO_SIZE },
     fileFilter: videoFilter,
   }).single('video');
 
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
     const file = req.file as Express.Multer.File | undefined;
     if (!file) return next(new AppError(400, 'No se recibió el video.'));
-    res.json({
-      url:  `/uploads/${folder}/${file.filename}`,
-      type: file.mimetype,
-      name: file.originalname,
-      size: file.size,
-    });
+
+    const inputPath  = file.path;
+    const outputName = file.filename.replace('tmp_', '') .replace(/\.[^.]+$/, '.mp4');
+    const outputPath = join(UPLOAD_BASE, folder, outputName);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(inputPath)
+          .outputOptions([
+            '-vcodec libx264',
+            '-crf 28',          // calidad: 18=alta, 28=media, 35=baja — sube este para más compresión
+            '-preset ultrafast', // ultrafast = más rápido, menos compresión; slow = más compresión
+            '-vf scale=720:-2',  // 720p, mantiene aspect ratio
+            '-movflags +faststart',
+            '-an',               // sin audio (bayoneta no necesita audio)
+          ])
+          .output(outputPath)
+          .on('end', () => resolve())
+          .on('error', (e) => reject(e))
+          .run();
+      });
+
+      // Eliminar el archivo temporal
+      await fs.unlink(inputPath).catch(() => {});
+
+      res.json({
+        url:  `/uploads/${folder}/${outputName}`,
+        type: 'video/mp4',
+        name: outputName,
+        size: (await fs.stat(outputPath)).size,
+      });
+    } catch (ffmpegErr) {
+      // Si ffmpeg falla, devolver el original sin comprimir
+      console.error('[upload] ffmpeg error, serving original:', ffmpegErr);
+      await fs.rename(inputPath, outputPath.replace('.mp4', extname(file.originalname))).catch(() => {});
+      res.json({
+        url:  `/uploads/${folder}/${file.filename.replace('tmp_', '')}`,
+        type: file.mimetype,
+        name: file.originalname,
+        size: file.size,
+      });
+    }
   });
 });
 
 // ─── Evidencias de carga de combustible (foto del surtidor / factura) ──────────
-router.post('/fuel-photos', uploadHandler('fuel'));
+router.post('/fuel-photos', (req: Request, res: Response, next: NextFunction) => {
+  const companyId = req.query.companyId as string | undefined;
+  const folder = companyId ? `fuel/${companyId}` : 'fuel';
+
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: MAX_FILE_SIZE },
+    fileFilter: imageFilter,
+  }).array('photos', 10);  
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    const files = req.files as Express.Multer.File[];
+    if (!files?.length) return next(new AppError(400, 'No se recibió el archivo.'));
+    res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
+  });
+});
 
 // ─── Evidencias de checklist (un archivo por item, usado al marcar "Incorrecto") ──
 router.post('/checklist-photos', (req: Request, res: Response, next: NextFunction) => {

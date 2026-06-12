@@ -521,6 +521,7 @@ function UserFormModal({
   onCreate: (input: CreateCompanyUserInput) => Promise<void>;
   onUpdate: (id: string, input: UpdateCompanyUserInput) => Promise<void>;
 }) {
+  const { session } = useAuth(); 
   const [form, setForm]         = useState<UserFormState>(() => createEmptyForm(siteOptions[0] ?? ""));
   const [errors, setErrors]     = useState<UserFormErrors>({});
   const [saving, setSaving]     = useState(false);

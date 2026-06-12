@@ -9,7 +9,7 @@
 //  conductor, decisor, fechas y notas.
 
 import { pdf, Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
-import type { ExitAuthorization } from "../../../../hooks/useExitAuthorizations";
+import type { ExitAuthorization } from "../../../hooks/useExitAuthorizations";
 
 const s = StyleSheet.create({
   page: {

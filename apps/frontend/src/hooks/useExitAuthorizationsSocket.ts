@@ -76,7 +76,7 @@ export function useExitAuthorizationsSocket(
       };
 
       ws.onerror = (e) => {
-        console.log("[WS] Error");
+        console.log("[WS] Error", e);
       };
 
       ws.onclose = (e) => {

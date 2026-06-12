@@ -54,17 +54,24 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
   // ── Cuando se abre el wizard, sembrar el estado ─────────────────────────
   useEffect(() => {
     if (!open) return;
-    if (presetAssetId) {
-      const found = assets.find((a) => String(a.id) === String(presetAssetId));
-      if (found) setSelectedAsset(found);
-    } else {
-      setSelectedAsset(null);
-    }
-    setStep("category");
-    setSelectedCategory(initialCategory ?? null);
+
+    // Reset siempre
     setResponses({});
     setPage(1);
     setPendingIncorrectItem(null);
+
+    if (presetAssetId) {
+      // Conductor: asset ya conocido, ir directo a category o items
+      const found = assets.find((a) => String(a.id) === String(presetAssetId));
+      if (found) setSelectedAsset(found);
+      setSelectedCategory(initialCategory ?? null);
+      setStep(initialCategory ? "items" : "category");
+    } else {
+      // Flujo normal: siempre empezar en vehicle
+      setSelectedAsset(null);
+      setSelectedCategory(initialCategory ?? null);
+      setStep("vehicle");
+    }
   }, [open, initialCategory, presetAssetId, assets]);
 
   // ── Si el usuario eligió una plantilla por el path de "Iniciar inspección"
@@ -151,13 +158,21 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
     if (!selectedAsset || !selectedCategory) return;
     setSubmitting(true);
     try {
-      const itemsArr = items.map((it) => responses[it]).filter(Boolean) as ChecklistInspectionItem[];
-      const observed = itemsArr.some((i) => i.hasItem === "NO" || (i.condition && i.condition !== "Bueno"));
+      const itemsArr = selectedCategory.items
+        .map((it) => responses[it])
+        .filter((r): r is ChecklistInspectionItem => !!r);
+
+      console.log("[checklist] itemsArr a enviar:", itemsArr); // debug temporal
+
+      const observed = itemsArr.some((i) => i.hasItem === "NO");
       const status: ChecklistStatus = observed ? "Observado" : "Aprobado";
-      const findings = itemsArr.map((i) => {
-        if (i.hasItem === "NO") return `${i.itemName}: NO / ${i.condition ?? "Malo"}${i.comment ? ` / ${i.comment}` : ""}`;
-        return `${i.itemName}: SI / ${i.condition ?? "Bueno"}`;
-      }).join(" | ");
+      const findings = itemsArr
+        .map((i) =>
+          i.hasItem === "NO"
+            ? `${i.itemName}: NO / ${i.condition ?? "Malo"}${i.comment ? ` / ${i.comment}` : ""}`
+            : `${i.itemName}: SI / ${i.condition ?? "Bueno"}`
+        )
+        .join(" | ");
 
       await createChecklist({
         targetKind: "Vehiculo",
@@ -172,11 +187,12 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
         items: itemsArr,
         photoUrls: [],
       });
+
       toast.success("Checklist registrado", { description: `Estado: ${status}` });
       onSaved();
       onClose();
     } catch (err) {
-      console.error(err);
+      console.error("[checklist] error al guardar:", err);
       toast.error(err instanceof Error ? err.message : "No se pudo registrar el checklist");
     } finally {
       setSubmitting(false);

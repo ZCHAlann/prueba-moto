@@ -116,9 +116,13 @@ export function ChecklistAnomalias({ onOpenChecklist, pageSize = 7 }: Props) {
   const { anomalies, loading: loadingAnom, fetchAnomalies } = useChecklistAnomalies();
   const { session } = useAuth();
 
-  const [mode, setMode] = useState<Mode>("day");
+  const [mode, setMode] = useState<Mode>("range");
   const [day, setDay] = useState<string>(todayISO());
-  const [from, setFrom] = useState<string>(todayISO());
+  const [from, setFrom] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
   const [to, setTo] = useState<string>(todayISO());
   const [page, setPage] = useState(1);
 

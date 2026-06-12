@@ -62,7 +62,7 @@ function mapApi(raw: Record<string, unknown>): ApiFuelEntry {
 /** Sube 1 foto al endpoint de combustible y devuelve la URL pública. */
 export async function uploadFuelPhoto(file: File, companyId: number): Promise<string> {
   const fd = new FormData();
-  fd.append("file", file);
+  fd.append("photos", file);
   const res = await fetch(`/api/upload/fuel-photos?companyId=${companyId}`, {
     method: "POST",
     body: fd,
@@ -105,8 +105,9 @@ export function useFuel() {
     const res = await fetch(`/api/company/${companyId}/fuel`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",   // ← también faltaba esto
       body: JSON.stringify({
-        asset_id: payload.assetId,
+        assetId: payload.assetId,   // ← camelCase
         date: payload.date,
         liters: payload.liters,
         cost: payload.cost,

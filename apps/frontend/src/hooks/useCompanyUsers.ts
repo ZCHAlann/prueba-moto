@@ -70,8 +70,8 @@ function mapApiToUser(data: Record<string, unknown>): CompanyUser {
 /** Sube 1 foto al endpoint de usuarios y devuelve la URL pública. */
 export async function uploadUserPhoto(file: File, companyId: number): Promise<string> {
   const fd = new FormData();
-  fd.append("file", file);
-  const res = await fetch(`/api/upload/users?companyId=${companyId}`, {
+  fd.append("photos", file); 
+  const res = await fetch(`/api/upload/user-photos?companyId=${companyId}`, { 
     method: "POST",
     body: fd,
     credentials: "include",

@@ -2,7 +2,7 @@ import {
   createContext, useCallback, useContext,
   useEffect, useMemo, useState, type ReactNode,
 } from "react";
-import { canAccessPath, getDefaultRouteForRole } from "../lib/access-control";
+import { canAccessPath, getDefaultRouteForRole, getDefaultRouteForSession } from "../lib/access-control";
 import type { PlatformModuleKey, PlatformRole } from "../types/platform";
 import type { PermissionMap } from "../lib/module-tree";
 
@@ -103,8 +103,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const data = await res.json();
-      setSession(buildSession(data));
-      return { ok: true, redirectTo: getDefaultRouteForRole(data.role) };
+      const built = buildSession(data);
+      setSession(built);
+      return {
+        ok: true,
+        redirectTo: getDefaultRouteForSession({
+          role: built.role,
+          modulePermissions: built.modulePermissions,
+          companyModules: built.companyModules,
+        }),
+      };
     } catch {
       return { ok: false, title: "Error de conexión", description: "No se pudo conectar con el servidor." };
     }
@@ -150,7 +158,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const getHomePath = useCallback(
-    () => session ? getDefaultRouteForRole(session.role) : "/signin",
+    () => session
+      ? getDefaultRouteForSession({
+          role: session.role,
+          modulePermissions: session.modulePermissions,
+          companyModules: session.companyModules,
+        })
+      : "/signin",
     [session]
   );
 

@@ -70,7 +70,7 @@ type DriverFormErrors = Partial<Record<keyof DriverFormState, string>>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 7;
 const REPORT_KEY = "aplismart-driver-reports-v1";
 
 function fmtDate(d: string) {
@@ -401,7 +401,7 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Código <span className="text-rose-400">*</span></label>
               <input className={inputCls} placeholder="COND-001" value={form.code} onChange={e => set("code", e.target.value.toUpperCase())} />
@@ -419,7 +419,7 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Nombre <span className="text-rose-400">*</span></label>
               <input className={inputCls} placeholder="Juan" maxLength={80} value={form.firstName}
@@ -436,7 +436,7 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Correo</label>
               <input type="email" className={inputCls} placeholder="correo@empresa.com" maxLength={120} value={form.email}
@@ -465,7 +465,7 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
 
           <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 dark:border-white/[0.05] dark:bg-white/[0.03] space-y-3">
             <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Información de licencia</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Número de licencia</label>
                 <input className={inputCls} placeholder="0912345678" maxLength={10} value={form.licenseNumber}
@@ -484,7 +484,7 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
                 </div>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Fecha de vencimiento</label>
                 <DatePicker
@@ -614,7 +614,7 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
 
           <section>
             <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">Licencia</p>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 dark:border-white/[0.05] dark:bg-white/[0.03]">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Tipo</p>
                 <p className="mt-1 text-sm font-black text-gray-800 dark:text-white">{driver.licenseType || "—"}</p>
@@ -839,7 +839,7 @@ function ReportModal({ driver, onClose }: { driver: ApiDriver; onClose: () => vo
         </div>
 
         <div className="max-h-[65vh] overflow-y-auto px-6 py-5 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {[{ label: "Combustible", icon: <Fuel size={10} />, value: fuelLevel, set: setFuelLevel }, { label: "Aceite", icon: <Droplets size={10} />, value: oilLevel, set: setOilLevel }].map(({ label, icon, value, set: setter }) => (
               <div key={label} className="rounded-xl border border-gray-100 bg-gray-50 p-3 dark:border-white/[0.05] dark:bg-white/[0.03]">
                 <p className="mb-2 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">{icon}{label}</p>
@@ -1282,10 +1282,10 @@ export default function DriversPage() {
       <KpiRow drivers={drivers} />
 
       {/* ─── Tabs ─────────────────────────────────────────────── */}
-      <div className="flex gap-1 rounded-xl border border-gray-200 bg-gray-100/60 p-1 dark:border-white/[0.06] dark:bg-white/[0.03] w-fit">
+      <div className="flex w-full gap-1 rounded-xl border border-gray-200 bg-gray-100/60 p-1 dark:border-white/[0.06] dark:bg-white/[0.03] md:w-fit">
         {(["conductores", "reportes"] as const).map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
-            className={`rounded-lg px-5 py-1.5 text-sm font-semibold capitalize transition ${
+            className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-semibold capitalize transition md:flex-none md:px-5 ${
               activeTab === tab
                 ? "bg-white text-gray-800 shadow-sm dark:bg-white/[0.08] dark:text-white"
                 : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"

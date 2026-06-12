@@ -284,7 +284,7 @@ export function RolesPage() {
 
       {/* ── Role selector bar ── */}
       <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] px-4 py-3 shrink-0">
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-3 md:flex-wrap">
           <span className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide shrink-0">
             Rol
           </span>
@@ -351,7 +351,7 @@ export function RolesPage() {
             )}
           </div>
 
-          <div className="h-5 w-px bg-gray-200 dark:bg-white/[0.08] shrink-0" />
+          <div className="hidden h-5 w-px bg-gray-200 dark:bg-white/[0.08] shrink-0 md:block" />
 
           <div className="flex gap-2 flex-wrap">
             {PLATFORM_ROLES.map((role) => (
@@ -365,7 +365,7 @@ export function RolesPage() {
             ))}
           </div>
 
-          <div className="ml-auto flex items-center gap-2 shrink-0">
+          <div className="md:ml-auto flex flex-wrap items-center gap-2 shrink-0">
             <AnimatePresence>
               {dirty && (
                 <motion.span
@@ -415,10 +415,10 @@ export function RolesPage() {
       </div>
 
       {/* ── Permissions table ── */}
-      <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] flex flex-col min-h-0 flex-1">
+      <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] flex flex-col min-h-0 flex-1 overflow-hidden">
 
-        <div className="shrink-0 border-b border-gray-100 dark:border-white/[0.06]">
-          <table className="w-full table-fixed">
+        <div className="shrink-0 border-b border-gray-100 dark:border-white/[0.06] overflow-x-auto" style={{ scrollbarWidth: "thin" }}>
+          <table className="w-full table-fixed min-w-[560px]">
             <colgroup>
               <col className="w-[44%]" />
               <col className="w-[14%]" />
@@ -447,13 +447,13 @@ export function RolesPage() {
           </table>
         </div>
 
-        <div className="overflow-y-auto flex-1" style={{ scrollbarWidth: "thin" }}>
+        <div className="overflow-y-auto overflow-x-auto flex-1" style={{ scrollbarWidth: "thin" }}>
           <AnimatePresence mode="wait">
             <motion.table
               key={selectedRoleId ?? "none"}
               initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.16 }}
-              className="w-full table-fixed"
+              className="w-full table-fixed min-w-[560px]"
             >
               <colgroup>
                 <col className="w-[44%]" />
@@ -674,7 +674,7 @@ function NewRoleModal({
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label className="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
                       Copiar permisos de

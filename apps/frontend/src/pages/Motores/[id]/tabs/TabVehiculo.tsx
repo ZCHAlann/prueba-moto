@@ -193,12 +193,7 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
 
       {/* ── TOP ROW: Photo (left) + Details panel (right) ─────────────────── */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 380px',
-        gap: 14,
-        alignItems: 'stretch',
-      }}>
+      <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[1fr_380px] md:gap-3.5" style={{ alignItems: 'stretch' }}>
 
         {/* ── LEFT: Vehicle photo ──────────────────────────────────────────── */}
         <div style={{
@@ -480,11 +475,7 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
       </div>
 
       {/* ── BOTTOM ROW: 3 Cards ───────────────────────────────────────────── */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: 14,
-      }}>
+      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
         <CardLocation
           assetId={a.id}
           companyId={companyId}

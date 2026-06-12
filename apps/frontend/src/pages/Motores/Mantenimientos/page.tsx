@@ -684,7 +684,7 @@ function MaintenanceModal({
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0f1623]">
-        <div className="flex items-center justify-between border-b border-gray-100 px-6 pb-4 pt-5 dark:border-white/[0.06]">
+        <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 pb-4 pt-5 sm:px-6 dark:border-white/[0.06]">
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-orange-500">
               {mode === "create" ? "Nuevo mantenimiento" : "Editar mantenimiento"}
@@ -701,7 +701,7 @@ function MaintenanceModal({
         </div>
         <div className="h-0.5 w-full bg-orange-500" />
 
-        <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
+        <div className="max-h-[60vh] overflow-y-auto px-4 py-5 sm:px-6">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
               <Field label="Motor" required>
@@ -795,14 +795,14 @@ function MaintenanceModal({
           </div>
         </div>
 
-        <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50 px-6 py-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
+        <div className="flex flex-col-reverse gap-2 border-t border-gray-100 bg-gray-50 px-4 py-4 sm:flex-row sm:justify-end sm:px-6 dark:border-white/[0.06] dark:bg-white/[0.02]">
           <button type="button" onClick={onClose}
             className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 transition hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/10"
           >
             Cancelar
           </button>
           <button type="button" onClick={handleSubmit} disabled={saving || !isValid}
-            className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-5 py-2 text-sm font-semibold text-white shadow-sm shadow-orange-500/20 transition hover:bg-orange-600 active:scale-95 disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-5 py-2 text-sm font-semibold text-white shadow-sm shadow-orange-500/20 transition hover:bg-orange-600 active:scale-95 disabled:opacity-50"
           >
             {saving && <Loader2 size={14} className="animate-spin" />}
             {saving ? "Guardando..." : mode === "create" ? "Crear mantenimiento" : "Guardar cambios"}
@@ -824,7 +824,7 @@ function DeleteConfirm({ title, onConfirm, onCancel }: {
       onClick={e => { if (e.target === e.currentTarget) onCancel(); }}
     >
       <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0f1623]">
-        <div className="px-6 pb-4 pt-5">
+        <div className="px-4 pb-4 pt-5 sm:px-6">
           <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 dark:bg-rose-500/10">
             <AlertTriangle size={18} className="text-rose-500" />
           </div>
@@ -835,7 +835,7 @@ function DeleteConfirm({ title, onConfirm, onCancel }: {
             Esta acción no se puede deshacer.
           </p>
         </div>
-        <div className="flex items-center gap-3 border-t border-gray-100 bg-gray-50 px-6 py-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
+        <div className="flex flex-col-reverse items-stretch gap-2 border-t border-gray-100 bg-gray-50 px-4 py-4 sm:flex-row sm:items-center sm:px-6 dark:border-white/[0.06] dark:bg-white/[0.02]">
           <button type="button" onClick={onCancel}
             className="flex-1 rounded-xl border border-gray-200 py-2 text-sm font-semibold text-gray-600 transition hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/10"
           >
@@ -1057,7 +1057,7 @@ export default function MotorMaintenancesRoute() {
       />
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-4 md:gap-5 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:gap-5 sm:grid-cols-3 md:grid-cols-4">
         <StatCard label="Total"      value={stats.total}      tone="neutral" />
         <StatCard label="Emergentes" value={stats.emergentes} tone="danger"  />
         <StatCard label="En proceso" value={stats.enProceso}  tone="info"    />

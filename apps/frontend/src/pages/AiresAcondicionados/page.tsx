@@ -236,7 +236,7 @@ export default function AcPage() {
       />
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-4 md:gap-5 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:gap-5 sm:grid-cols-3 md:grid-cols-4">
         <StatCard label="Total"             value={units.length.toString()}                                            detail="Unidades registradas"        tone="info"    />
         <StatCard label="Operativos"        value={units.filter((u) => u.status === "Operativo").length.toString()}        detail="En funcionamiento"          tone="success" />
         <StatCard label="En revisión"       value={units.filter((u) => u.status === "En revision").length.toString()}      detail="Pendientes de inspección"   tone="warning" />

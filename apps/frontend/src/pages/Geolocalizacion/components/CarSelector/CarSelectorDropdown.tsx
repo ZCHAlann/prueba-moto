@@ -51,7 +51,7 @@ export const CarSelectorDropdown = ({ onSelect }: Props) => {
   }, [cars, filter, search]);
 
   return (
-    <div className="absolute left-0 top-full z-50 mt-2 w-[24rem] overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200 dark:bg-[#0d1320] dark:ring-white/[0.08]">
+    <div className="absolute left-0 top-full z-50 mt-2 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200 dark:bg-[#0d1320] dark:ring-white/[0.08]">
       {/* Header */}
       <div className="border-b border-slate-100 p-4 dark:border-white/[0.06]">
         <div className="mb-3 flex items-center justify-between">

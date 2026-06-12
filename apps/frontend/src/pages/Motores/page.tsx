@@ -319,7 +319,7 @@ export function MotorsPage() {
       />
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-4 md:gap-5 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:gap-5 sm:grid-cols-3 md:grid-cols-4">
         <StatCard label="Total"             value={motors.length.toString()}                                                detail="Base técnica registrada" tone="info"    />
         <StatCard label="Operativos"        value={motors.filter((m) => m.status === "Operativo").length.toString()}        detail="Listos para uso"         tone="success" />
         <StatCard label="Mantenimiento"     value={motors.filter((m) => m.status === "En mantenimiento").length.toString()} detail="Intervenidos por taller" tone="warning" />

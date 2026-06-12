@@ -110,7 +110,7 @@ export default function ModalSeguros({ open, onClose, insurance, assetId, compan
           <Field label="Cobertura">
             <input value={form.coverage} onChange={(e) => setForm({ ...form, coverage: e.target.value })} style={input} />
           </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Inicio">
               <DatePicker
                 value={form.startDate}

@@ -283,7 +283,7 @@ export function ConvertModal({ open, deal, onClose, onConvert }: ConvertModalPro
                     animate={{ opacity: 1, scale: 1   }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.3 }}
-                    className="flex flex-col items-center justify-center gap-4 py-16 px-6"
+                    className="flex flex-col items-center justify-center gap-4 py-16 px-4 sm:px-6"
                   >
                     <motion.div
                       initial={{ scale: 0 }}
@@ -316,7 +316,7 @@ export function ConvertModal({ open, deal, onClose, onConvert }: ConvertModalPro
                   <motion.div key="form" exit={{ opacity: 0 }}>
 
                     {/* Header */}
-                    <div className="relative overflow-hidden border-b border-white/[0.06] px-6 py-5">
+                    <div className="relative overflow-hidden border-b border-white/[0.06] px-4 py-5 sm:px-6">
                       {/* Glow de fondo */}
                       <div className="absolute -top-6 -right-6 h-24 w-24 rounded-full
                         bg-emerald-500/10 blur-2xl pointer-events-none" />
@@ -373,7 +373,7 @@ export function ConvertModal({ open, deal, onClose, onConvert }: ConvertModalPro
                     </div>
 
                     {/* Body */}
-                    <div className="space-y-5 px-6 py-5 max-h-[52vh] overflow-y-auto custom-scrollbar">
+                    <div className="space-y-5 px-4 py-5 sm:px-6 max-h-[52vh] overflow-y-auto custom-scrollbar">
 
                       {/* Nombre + slug */}
                       <div className="grid gap-4 sm:grid-cols-2">
@@ -459,8 +459,8 @@ export function ConvertModal({ open, deal, onClose, onConvert }: ConvertModalPro
                     </div>
 
                     {/* Footer */}
-                    <div className="flex items-center justify-between
-                      border-t border-white/[0.06] px-6 py-4">
+                    <div className="flex flex-col-reverse items-stretch gap-2
+                      border-t border-white/[0.06] px-4 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-6">
                       <button type="button" onClick={onClose}
                         className="text-sm font-semibold text-gray-600
                           hover:text-gray-300 transition px-1">

@@ -91,9 +91,9 @@ function RequirePlatform() {
 
 /** Si ya tienes sesión de operacion, salta el login */
 function GuestOperacion({ children }: { children: React.ReactNode }) {
-  const { ready, session } = useAuth();
+  const { ready, session, getHomePath } = useAuth();
   if (!ready) return null;
-  if (session?.scope === "operacion") return <Navigate to="/dashboard" replace />;
+  if (session?.scope === "operacion") return <Navigate to={getHomePath()} replace />;
   return <>{children}</>;
 }
 
@@ -111,9 +111,9 @@ function GuestPlatform({ children }: { children: React.ReactNode }) {
  * dejamos pasar (puede querer ver el sitio publico igual).
  */
 function GuestLanding({ children }: { children: React.ReactNode }) {
-  const { ready, session } = useAuth();
+  const { ready, session, getHomePath } = useAuth();
   if (!ready) return null;
-  if (session?.scope === "operacion") return <Navigate to="/dashboard" replace />;
+  if (session?.scope === "operacion") return <Navigate to={getHomePath()} replace />;
   return <>{children}</>;
 }
 

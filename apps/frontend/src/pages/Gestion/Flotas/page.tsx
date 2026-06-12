@@ -31,7 +31,7 @@ function fmtDate(d: string) {
   return new Date(d).toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 7;
 
 // ─── Status config ────────────────────────────────────────────────────────────
 
@@ -203,7 +203,7 @@ function CreateMaintenanceModal({ vehicle, onClose, onCreated }: {
             <input className={darkInputCls} placeholder="Ej. Cambio de filtros y aceite" value={form.title}
               onChange={(e) => set("title", e.target.value)} />
           </DarkField>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <DarkField label="Tipo" required>
               <DarkSelect options={kindOptions} value={form.kind} onChange={(v) => set("kind", v as MaintenanceKind)} />
             </DarkField>
@@ -214,7 +214,7 @@ function CreateMaintenanceModal({ vehicle, onClose, onCreated }: {
           <DarkField label="Estado">
             <DarkSelect options={statusOptions} value={form.status} onChange={(v) => set("status", v as MaintenanceStatus)} />
           </DarkField>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <DarkField label="Fecha programada" required>
               <DatePicker
                 value={form.scheduledDate}
@@ -233,7 +233,7 @@ function CreateMaintenanceModal({ vehicle, onClose, onCreated }: {
           <DarkField label="Técnico responsable">
             <DarkSelect options={techOptions} value={form.technician} onChange={(v) => set("technician", v)} placeholder="Seleccionar técnico..." />
           </DarkField>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <DarkField label="Costo mano de obra">
               <input className={darkInputCls} type="number" placeholder="0.00" value={form.laborCost ?? ""}
                 onChange={(e) => set("laborCost", e.target.value ? Number(e.target.value) : null)} />
@@ -303,7 +303,7 @@ function VehicleFormFields({ form, set, inputCls, selectCls, labelCls, spanCls }
       {/* Identificación */}
       <section>
         <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-gray-400">Identificación</p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className={labelCls}>
             <span className={spanCls}>Placa *</span>
             <input className={inputCls} placeholder="Ej. ABC-1234" maxLength={8} value={form.plate}
@@ -325,7 +325,7 @@ function VehicleFormFields({ form, set, inputCls, selectCls, labelCls, spanCls }
       {/* Datos técnicos */}
       <section>
         <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-gray-400">Datos técnicos</p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className={labelCls}>
             <span className={spanCls}>Marca</span>
             <input className={inputCls} placeholder="Toyota" value={form.brand}
@@ -367,7 +367,7 @@ function VehicleFormFields({ form, set, inputCls, selectCls, labelCls, spanCls }
       {/* Combustible y aceite */}
       <section>
         <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-gray-400">Combustible y aceite</p>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
           <label className={labelCls}>
             <span className={spanCls}>Combustible</span>
             <select className={selectCls} value={form.fuelType}
@@ -393,7 +393,7 @@ function VehicleFormFields({ form, set, inputCls, selectCls, labelCls, spanCls }
       {/* Operación */}
       <section>
         <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-gray-400">Operación</p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className={labelCls}>
             <span className={spanCls}>Garaje</span>
             <select className={selectCls} value={form.garageId ?? ""}

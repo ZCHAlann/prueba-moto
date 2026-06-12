@@ -29,7 +29,7 @@ function fmtUSD(n: number | null) {
   return `$${n.toFixed(2)}`;
 }
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 7;
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -137,9 +137,9 @@ function DetailDrawer({ item, asset, onClose, onEdit, onDelete, onStatusChange, 
           </button>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-6 sm:px-6 space-y-4">
           {/* Costs */}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {[
               { label: "Mano de obra", value: fmtUSD(item.laborCost), accent: "border-l-2 border-l-blue-400" },
               { label: "Repuestos",    value: fmtUSD(item.partsCost), accent: "border-l-2 border-l-violet-400" },
@@ -153,7 +153,7 @@ function DetailDrawer({ item, asset, onClose, onEdit, onDelete, onStatusChange, 
           </div>
 
           {/* Vehicle + Dates */}
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 dark:border-white/[0.05] dark:bg-white/[0.03]">
               <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1"><Car size={10} />Vehículo</p>
               {asset ? (
@@ -205,7 +205,7 @@ function DetailDrawer({ item, asset, onClose, onEdit, onDelete, onStatusChange, 
             </div>
             {item.photoUrls.length === 0
               ? <p className="rounded-xl border border-dashed border-gray-200 px-3 py-2.5 text-xs text-gray-400 dark:border-white/[0.06]">Sin evidencias adjuntas.</p>
-              : <div className="grid grid-cols-3 gap-2">{item.photoUrls.map((url, i) => {
+              : <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{item.photoUrls.map((url, i) => {
                   const isPdf = /\.pdf(\?|$)/i.test(url);
                   return (
                     <a key={i} href={url} target="_blank" rel="noreferrer"
@@ -222,7 +222,7 @@ function DetailDrawer({ item, asset, onClose, onEdit, onDelete, onStatusChange, 
 
         {/* Footer — solo se muestra si el usuario tiene al menos una acción */}
         {(hasFooterLeft || hasFooterRight) && (
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/80 px-6 py-3.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/80 px-4 py-3.5 sm:px-6 dark:border-white/[0.06] dark:bg-white/[0.02]">
             <div className="flex flex-wrap gap-2">
               {canDelete && (
                 <button onClick={onDelete} className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-500/20 dark:text-rose-400 dark:hover:bg-rose-500/10">
@@ -397,7 +397,7 @@ function ResolveMaintenanceModal({
           </div>
 
           {previews.length > 0 && (
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {previews.map((p, i) => (
                 <div key={i} className="relative aspect-square rounded-xl overflow-hidden border border-gray-200 dark:border-white/[0.08] bg-gray-50 dark:bg-white/[0.04] flex items-center justify-center">
                   {p.type === 'application/pdf' ? (
@@ -556,7 +556,7 @@ function FormModal({ mode, initial, assets, drivers, driversLoading, onClose, on
           <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-xl text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10"><X size={15} /></button>
         </div>
 
-        <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
+        <div className="max-h-[60vh] overflow-y-auto px-4 py-5 sm:px-6">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
               <Field label="Vehículo / Activo" required>
@@ -649,7 +649,7 @@ function FormModal({ mode, initial, assets, drivers, driversLoading, onClose, on
           </div>
         </div>
 
-        <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50 px-6 py-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
+        <div className="flex flex-col-reverse gap-2 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 border-t border-gray-100 bg-gray-50 dark:border-white/[0.06] dark:bg-white/[0.02]">
           <button onClick={onClose} className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/10">Cancelar</button>
           <button onClick={handleSubmit} disabled={saving || !isValid}
             className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-5 py-2 text-sm font-semibold text-white shadow-sm shadow-orange-500/20 hover:bg-orange-600 active:scale-95 disabled:opacity-50">
@@ -674,7 +674,7 @@ function DeleteConfirm({ title, onConfirm, onCancel }: { title: string; onConfir
           <h3 className="text-base font-bold text-gray-800 dark:text-white">Eliminar OT</h3>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">¿Seguro que deseas eliminar <span className="font-semibold text-gray-700 dark:text-gray-200">{title}</span>? Esta acción no se puede deshacer.</p>
         </div>
-        <div className="flex gap-3 border-t border-gray-100 bg-gray-50 px-6 py-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
+        <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:px-6 border-t border-gray-100 bg-gray-50 dark:border-white/[0.06] dark:bg-white/[0.02]">
           <button onClick={onCancel} className="flex-1 rounded-xl border border-gray-200 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300">Cancelar</button>
           <button onClick={onConfirm} className="flex-1 rounded-xl bg-rose-500 py-2 text-sm font-semibold text-white hover:bg-rose-600 active:scale-95">Eliminar</button>
         </div>

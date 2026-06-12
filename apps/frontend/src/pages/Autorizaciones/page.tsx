@@ -298,30 +298,41 @@ function EntrantesTab({ items, loading, onOpen }: {
   loading: boolean;
   onOpen: (a: ExitAuthorization) => void;
 }) {
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 7;
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const paged = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // Reset página si cambian los items
+  useEffect(() => { setPage(1); }, [items.length]);
+
   if (loading && items.length === 0) return <CenteredLoader label="Buscando solicitudes entrantes…" />;
   if (items.length === 0) return <EmptyState icon={<Inbox size={18} />} title="Sin solicitudes entrantes" subtitle="Las nuevas solicitudes se mostrarán aquí en tiempo real." />;
   return (
-    <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03]">
-      <table className="w-full text-sm">
-        <thead className="border-b border-gray-100 dark:border-white/[0.06]">
-          <tr>
-            {["Hora", "Vehículo", "Conductor", "Estado", ""].map((h) => (
-              <th key={h} className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-          {items.map((a) => (
-            <tr key={a.id} className="group cursor-pointer hover:bg-gray-50/60 dark:hover:bg-white/[0.02] transition" onClick={() => onOpen(a)}>
-              <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300 whitespace-nowrap">{fmtDate(a.requestedAt)}</td>
-              <td className="px-5 py-3.5 font-semibold text-gray-800 dark:text-gray-200">{a.assetPlate ?? a.assetLabel ?? "—"}</td>
-              <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300">{a.driverName ?? "—"}</td>
-              <td className="px-5 py-3.5"><StatusPill status={a.status} /></td>
-              <td className="px-5 py-3.5 text-right text-xs text-emerald-600 dark:text-emerald-400 font-semibold opacity-0 group-hover:opacity-100 transition">Revisar →</td>
+    <div className="space-y-3">
+      <div className="overflow-x-auto rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03]">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead className="border-b border-gray-100 dark:border-white/[0.06]">
+            <tr>
+              {["Hora", "Vehículo", "Conductor", "Estado", ""].map((h) => (
+                <th key={h} className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{h}</th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
+            {paged.map((a) => (
+              <tr key={a.id} className="group cursor-pointer hover:bg-gray-50/60 dark:hover:bg-white/[0.02] transition" onClick={() => onOpen(a)}>
+                <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300 whitespace-nowrap">{fmtDate(a.requestedAt)}</td>
+                <td className="px-5 py-3.5 font-semibold text-gray-800 dark:text-gray-200">{a.assetPlate ?? a.assetLabel ?? "—"}</td>
+                <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300">{a.driverName ?? "—"}</td>
+                <td className="px-5 py-3.5"><StatusPill status={a.status} /></td>
+                <td className="px-5 py-3.5 text-right text-xs text-emerald-600 dark:text-emerald-400 font-semibold opacity-0 group-hover:opacity-100 transition">Revisar →</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Paginator page={page} totalPages={totalPages} total={items.length} onChange={setPage} />
     </div>
   );
 }
@@ -340,10 +351,18 @@ function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, d
   onChangeDateTo: (s: string) => void;
   onOpen: (a: ExitAuthorization) => void;
 }) {
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 7;
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const paged = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // Reset a página 1 cuando cambian filtros o items
+  useEffect(() => { setPage(1); }, [items.length, filter, q, dateFrom, dateTo]);
+
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] p-3">
-        <div className="inline-flex rounded-xl border border-gray-200 dark:border-white/[0.08] p-0.5 text-xs font-semibold">
+      <div className="flex flex-col gap-3 rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] p-3 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="inline-flex shrink-0 rounded-xl border border-gray-200 dark:border-white/[0.08] p-0.5 text-xs font-semibold">
           {(["Autorizadas", "Rechazadas"] as HistorialFilter[]).map((f) => {
             const active = filter === f;
             return (
@@ -354,46 +373,105 @@ function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, d
             );
           })}
         </div>
-        <div className="relative flex-1 min-w-[200px]">
+        <div className="relative min-w-0 flex-1">
           <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input value={q} onChange={(e) => onChangeQ(e.target.value)} type="text"
             placeholder="Filtrar por placa, conductor, quien aprobó, nota…"
             className="w-full h-9 pl-8 pr-3 text-sm rounded-xl border border-gray-200 dark:border-white/[0.08] bg-transparent outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10" />
         </div>
-        <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
           <Calendar size={11} /> Desde
           <DatePicker value={dateFrom} onChange={onChangeDateFrom} placeholder="Fecha desde" />
           <span>→</span>
           <DatePicker value={dateTo} onChange={onChangeDateTo} placeholder="Fecha hasta" />
         </div>
       </div>
+
       {items.length === 0 ? (
         <EmptyState icon={<History size={18} />} title="Sin resultados" subtitle="Ajustá los filtros o esperá nuevas solicitudes." />
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03]">
-          <table className="w-full text-sm">
-            <thead className="border-b border-gray-100 dark:border-white/[0.06]">
-              <tr>
-                {["Decidida", "Vehículo", "Conductor", "Aprobador", "Estado", ""].map((h) => (
-                  <th key={h} className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-              {items.map((a) => (
-                <tr key={a.id} className="group cursor-pointer hover:bg-gray-50/60 dark:hover:bg-white/[0.02] transition" onClick={() => onOpen(a)}>
-                  <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300 whitespace-nowrap">{fmtDate(a.decidedAt ?? a.requestedAt)}</td>
-                  <td className="px-5 py-3.5 font-semibold text-gray-800 dark:text-gray-200">{a.assetPlate ?? a.assetLabel ?? "—"}</td>
-                  <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300">{a.driverName ?? "—"}</td>
-                  <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300">{a.decidedByName ?? "—"}</td>
-                  <td className="px-5 py-3.5"><StatusPill status={a.status} /></td>
-                  <td className="px-5 py-3.5 text-right text-xs text-emerald-600 dark:text-emerald-400 font-semibold opacity-0 group-hover:opacity-100 transition">Ver →</td>
+        <>
+          <div className="overflow-x-auto rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03]">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead className="border-b border-gray-100 dark:border-white/[0.06]">
+                <tr>
+                  {["Decidida", "Vehículo", "Conductor", "Aprobador", "Estado", ""].map((h) => (
+                    <th key={h} className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
+                {paged.map((a) => (
+                  <tr key={a.id} className="group cursor-pointer hover:bg-gray-50/60 dark:hover:bg-white/[0.02] transition" onClick={() => onOpen(a)}>
+                    <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300 whitespace-nowrap">{fmtDate(a.decidedAt ?? a.requestedAt)}</td>
+                    <td className="px-5 py-3.5 font-semibold text-gray-800 dark:text-gray-200">{a.assetPlate ?? a.assetLabel ?? "—"}</td>
+                    <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300">{a.driverName ?? "—"}</td>
+                    <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300">{a.decidedByName ?? "—"}</td>
+                    <td className="px-5 py-3.5"><StatusPill status={a.status} /></td>
+                    <td className="px-5 py-3.5 text-right text-xs text-emerald-600 dark:text-emerald-400 font-semibold opacity-0 group-hover:opacity-100 transition">Ver →</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Paginator page={page} totalPages={totalPages} total={items.length} onChange={setPage} />
+        </>
       )}
+    </div>
+  );
+}
+
+// ─── Paginator ────────────────────────────────────────────────────────────────
+
+function Paginator({ page, totalPages, total, onChange }: {
+  page: number;
+  totalPages: number;
+  total: number;
+  onChange: (p: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+
+  // Generar páginas visibles — siempre muestra máximo 5 botones
+  const pages: (number | "...")[] = [];
+  if (totalPages <= 5) {
+    for (let i = 1; i <= totalPages; i++) pages.push(i);
+  } else {
+    pages.push(1);
+    if (page > 3) pages.push("...");
+    for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
+    if (page < totalPages - 2) pages.push("...");
+    pages.push(totalPages);
+  }
+
+  return (
+    <div className="flex items-center justify-between px-1">
+      <p className="text-xs text-gray-500 dark:text-gray-400">
+        {total} resultado{total !== 1 ? "s" : ""} · página {page} de {totalPages}
+      </p>
+      <div className="flex items-center gap-1">
+        <button type="button" onClick={() => onChange(page - 1)} disabled={page === 1}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-white/[0.08] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition text-xs">
+          ‹
+        </button>
+        {pages.map((p, i) =>
+          p === "..." ? (
+            <span key={`ellipsis-${i}`} className="px-1 text-xs text-gray-400">…</span>
+          ) : (
+            <button key={p} type="button" onClick={() => onChange(p as number)}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg text-xs font-semibold transition ${
+                page === p
+                  ? "bg-emerald-500 text-white border border-emerald-500"
+                  : "border border-gray-200 dark:border-white/[0.08] text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04]"
+              }`}>
+              {p}
+            </button>
+          )
+        )}
+        <button type="button" onClick={() => onChange(page + 1)} disabled={page === totalPages}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-white/[0.08] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition text-xs">
+          ›
+        </button>
+      </div>
     </div>
   );
 }
@@ -453,7 +531,7 @@ function ConductorView({ loading, myAsset, driverId, items, onSolicitar, onOpenD
             )}
           </div>
           <button type="button" onClick={onSolicitar}
-            className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/30 transition active:scale-95">
+            className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/30 transition active:scale-95 sm:w-auto">
             <Plus size={14} /> Solicitar autorización de salida
           </button>
         </div>

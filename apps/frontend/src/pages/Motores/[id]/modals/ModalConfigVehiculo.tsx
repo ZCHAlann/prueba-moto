@@ -155,7 +155,7 @@ const Field = ({ label, muted, children }: { label: string; muted: string; child
 );
 
 const Grid = ({ children }: { children: ReactNode }) => (
-  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
+  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" style={{ marginBottom: '14px' }}>
     {children}
   </div>
 );

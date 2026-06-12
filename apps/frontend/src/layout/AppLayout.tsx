@@ -10,7 +10,7 @@ import AppSidebar from "./AppSidebar";
 
 const LayoutContent: React.FC = () => {
   const { isExpanded, isHovered, isMobileOpen } = useSidebar();
-  const { ready, session } = useAuth();
+  const { ready, session, getHomePath } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -22,7 +22,7 @@ const LayoutContent: React.FC = () => {
   }, [ready, session, navigate]);
 
   // 2) Si hay sesión pero el role + permisos granulares NO permiten
-  //    la ruta actual → redirigir al dashboard (sin history)
+  //    la ruta actual → redirigir al primer módulo permitido (sin history).
   useEffect(() => {
     if (!ready || !session) return;
     const role = session.role;
@@ -31,9 +31,9 @@ const LayoutContent: React.FC = () => {
       Record<string, string[]>
     >;
     if (!canAccessHref(role, location.pathname, perms)) {
-      navigate("/dashboard", { replace: true });
+      navigate(getHomePath(), { replace: true });
     }
-  }, [ready, session, location.pathname, navigate]);
+  }, [ready, session, location.pathname, navigate, getHomePath]);
 
   // Mientras carga la sesión no renderizamos nada
   if (!ready) return null;
@@ -65,7 +65,7 @@ const LayoutContent: React.FC = () => {
         } ${isMobileOpen ? "ml-0" : ""}`}
       >
         <AppHeader />
-        <div className="pt-24 p-4 mx-auto max-w-(--breakpoint-2xl) md:p-6">
+        <div className="pt-20 p-3 mx-auto max-w-(--breakpoint-2xl) sm:pt-24 sm:p-4 md:p-6">
           <Outlet />
         </div>
       </div>

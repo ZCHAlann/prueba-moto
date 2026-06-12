@@ -295,7 +295,7 @@ export function SettingsPage() {
           <Skeleton className="w-56 h-8" />
           <Skeleton className="w-80 h-4" />
         </div>
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
           {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-24" />)}
         </div>
         <div className="grid gap-6 xl:grid-cols-2">
@@ -339,7 +339,7 @@ export function SettingsPage() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, delay: 0.05 }}
-        className="grid gap-3 md:grid-cols-4"
+        className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4"
       >
         <KpiCard label="Empresa activa" value={companyCode}                                           detail={companyName}                              tone="brand"   />
         <KpiCard label="Sedes"          value={String(sites.length)}                                  detail="Catálogo de sedes"                        tone="success" />
@@ -405,7 +405,7 @@ export function SettingsPage() {
         >
           <div className="space-y-3">
             {/* Stats grid */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {[
                 { label: "Sedes",       value: sites.length,   href: "/gestion/sedes" },
                 { label: "Activos",     value: assets.length,  href: "/flotas" },

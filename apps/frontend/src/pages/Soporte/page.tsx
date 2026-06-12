@@ -157,7 +157,7 @@ function KpiStrip({ tickets }: { tickets: CompanyTicket[] }) {
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
       {items.map((item, i) => (
         <motion.div
           key={item.label}
@@ -208,7 +208,7 @@ function NewTicketModal({ onClose, onCreate }: NewTicketModalProps) {
         className="w-full max-w-lg overflow-hidden rounded-3xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-[#0d1320] shadow-2xl"
       >
         <div className="h-1 w-full bg-[#465fff]" />
-        <div className="flex items-center justify-between border-b border-gray-100 dark:border-white/[0.06] px-6 pb-4 pt-5">
+        <div className="flex items-center justify-between gap-3 border-b border-gray-100 dark:border-white/[0.06] px-4 pb-4 pt-5 sm:px-6">
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-[#465fff]">Soporte</p>
             <h2 className="mt-0.5 text-base font-bold text-gray-800 dark:text-white">Nuevo ticket</h2>
@@ -218,7 +218,7 @@ function NewTicketModal({ onClose, onCreate }: NewTicketModalProps) {
           </button>
         </div>
 
-        <div className="px-6 py-5 space-y-4">
+        <div className="px-4 py-5 sm:px-6 space-y-4">
           <div>
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-gray-400">Título <span className="text-red-400">*</span></label>
             <input className={inputCls} value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="Describe el problema brevemente" />
@@ -227,7 +227,7 @@ function NewTicketModal({ onClose, onCreate }: NewTicketModalProps) {
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-gray-400">Descripción <span className="text-red-400">*</span></label>
             <textarea rows={4} className={`${inputCls} resize-none`} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Explica el problema con el mayor detalle posible" />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-gray-400">Prioridad</label>
               <div className="relative">
@@ -248,7 +248,7 @@ function NewTicketModal({ onClose, onCreate }: NewTicketModalProps) {
           {error && <p className="text-xs text-red-500 dark:text-red-400">{error}</p>}
         </div>
 
-        <div className="flex items-center justify-between border-t border-gray-100 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] px-6 py-4">
+        <div className="flex flex-col-reverse items-stretch gap-2 border-t border-gray-100 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <button onClick={onClose} className="rounded-xl border border-gray-200 dark:border-white/[0.08] px-4 py-2 text-sm font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10 transition-colors">Cancelar</button>
           <button onClick={handleSubmit} disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-[#465fff] px-5 py-2 text-sm font-semibold text-white hover:bg-[#3451d1] disabled:opacity-50 transition-colors active:scale-95">
             {saving ? (
@@ -500,12 +500,12 @@ export default function SoportePage() {
   const closeDrawer = () => { setDrawerTicket(null); setDrawerMessages([]); };
 
   return (
-    <div className="space-y-5 p-6 min-h-screen">
+    <div className="space-y-5 px-4 py-5 sm:px-6 min-h-screen">
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex items-start justify-between"
+        className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
       >
         <div>
           <p className="text-xs font-bold uppercase tracking-widest text-[#465fff] mb-1">Plataforma</p>
@@ -551,7 +551,8 @@ export default function SoportePage() {
         ) : tickets.length === 0 ? (
           <EmptyState onNew={() => setShowNewModal(true)} />
         ) : (
-          <table className="w-full">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px]">
             <thead>
               <tr className="border-b border-gray-100 dark:border-white/[0.06]">
                 {["Nº", "Título", "Estado", "Prioridad", "Asignado", "Creado", ""].map((h, i) => (
@@ -565,6 +566,7 @@ export default function SoportePage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </motion.div>
 

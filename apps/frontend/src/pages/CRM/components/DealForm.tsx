@@ -56,7 +56,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function StepIndicator({ current }: { current: number }) {
   return (
-    <div className="flex items-start gap-0 px-6 pt-6 pb-2">
+    <div className="flex items-start gap-0 px-4 pt-6 pb-2 sm:px-6">
       {STEPS.map((step, idx) => {
         const done   = current > step.id;
         const active = current === step.id;
@@ -358,7 +358,7 @@ export function DealForm({
               border border-white/[0.08] bg-gray-900 shadow-2xl">
 
               {/* Header */}
-              <div className="flex items-start justify-between border-b border-white/[0.06] px-6 py-5">
+              <div className="flex items-start justify-between gap-3 border-b border-white/[0.06] px-4 py-5 sm:px-6">
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-xl
                     bg-brand-500/[0.12] border border-brand-500/20">
@@ -390,7 +390,7 @@ export function DealForm({
               {!isEdit && <StepIndicator current={step} />}
 
               {/* Body */}
-              <div className="px-6 py-5 max-h-[60vh] overflow-y-auto custom-scrollbar">
+              <div className="px-4 py-5 sm:px-6 max-h-[60vh] overflow-y-auto custom-scrollbar">
                 {isEdit ? (
                   <div className="space-y-6">
                     <Step1 form={form} set={set} />
@@ -415,7 +415,7 @@ export function DealForm({
               </div>
 
               {/* Footer */}
-              <div className="flex items-center justify-between border-t border-white/[0.06] px-6 py-4">
+              <div className="flex flex-col-reverse items-stretch gap-3 border-t border-white/[0.06] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
 
                 {/* Left — back / cancel + dots */}
                 <div className="flex items-center gap-3">

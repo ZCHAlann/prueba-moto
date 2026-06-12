@@ -120,7 +120,7 @@ function ServiceDetailModal({
         className="w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0f1623]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4 dark:border-white/[0.06]">
+        <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-4 sm:px-6 dark:border-white/[0.06]">
           <div>
             <h3 className="text-base font-bold text-gray-800 dark:text-white">
               {service.kind ?? "Mantenimiento"}
@@ -138,7 +138,7 @@ function ServiceDetailModal({
           </button>
         </div>
 
-        <div className="space-y-4 px-6 py-5">
+        <div className="space-y-4 px-4 py-5 sm:px-6">
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="flex items-center gap-2 rounded-lg bg-gray-50 p-2.5 dark:bg-white/[0.03]">
               <Calendar size={14} className="text-cyan-500" />
@@ -320,7 +320,7 @@ export default function AcMaintenancesPage() {
       />
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-4 md:gap-5 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:gap-5 sm:grid-cols-3 md:grid-cols-4">
         <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-white/[0.06] dark:bg-white/[0.03]">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Total servicios</p>
           <h4 className="mt-2 text-3xl font-bold text-gray-800 dark:text-white">{services.length}</h4>

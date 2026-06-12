@@ -103,7 +103,7 @@ export function ChecklistDetailDrawer({ checklist, onClose, focusOnAnomalies = f
             className="fixed right-0 top-0 z-50 flex h-full w-full max-w-xl flex-col bg-white dark:bg-gray-900 shadow-2xl border-l border-gray-200 dark:border-white/[0.08]"
           >
             {/* ── Header ─────────────────────────────────────────────────────── */}
-            <header className="px-7 py-5 border-b border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 shrink-0">
+            <header className="px-4 py-5 sm:px-7 border-b border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 shrink-0">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-1.5">
@@ -134,7 +134,7 @@ export function ChecklistDetailDrawer({ checklist, onClose, focusOnAnomalies = f
             {/* ── Body scrollable ────────────────────────────────────────────── */}
             <div className="flex-1 overflow-y-auto bg-gray-50/40 dark:bg-gray-950/20">
               {/* Summary card */}
-              <div className="px-7 py-5">
+              <div className="px-4 py-5 sm:px-7">
                 <SummaryCard
                   correct={correct.length}
                   incorrect={incorrect.length}
@@ -145,7 +145,7 @@ export function ChecklistDetailDrawer({ checklist, onClose, focusOnAnomalies = f
               </div>
 
               {/* Meta */}
-              <div className="px-7 pb-5">
+              <div className="px-4 pb-5 sm:px-7">
                 <MetaBlock
                   compact={showOnlyAnomalies}
                   checklist={checklist}
@@ -154,7 +154,7 @@ export function ChecklistDetailDrawer({ checklist, onClose, focusOnAnomalies = f
 
               {/* Findings (full view) */}
               {!showOnlyAnomalies && checklist.findings && (
-                <div className="px-7 pb-5">
+                <div className="px-4 pb-5 sm:px-7">
                   <SectionTitle icon={<MessageSquareWarning size={12} />}>
                     Resumen del inspector
                   </SectionTitle>
@@ -182,7 +182,7 @@ export function ChecklistDetailDrawer({ checklist, onClose, focusOnAnomalies = f
               )}
 
               {/* Items */}
-              <div className="px-7 pb-6">
+              <div className="px-4 pb-6 sm:px-7">
                 <SectionTitle
                   icon={showOnlyAnomalies ? <AlertTriangle size={12} /> : <CircleDot size={12} />}
                   accent={showOnlyAnomalies ? "rose" : "neutral"}
@@ -211,26 +211,28 @@ export function ChecklistDetailDrawer({ checklist, onClose, focusOnAnomalies = f
             </div>
 
             {/* ── Footer ─────────────────────────────────────────────────────── */}
-            <footer className="px-5 py-3.5 border-t border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={exporting}
-                className="flex-1 rounded-lg border border-gray-200 dark:border-white/[0.08] py-2.5 text-sm font-medium text-gray-600 dark:text-gray-300 transition hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-50"
-              >
-                Cerrar
-              </button>
-              <button
-                type="button"
-                onClick={handleDownload}
-                disabled={exporting}
-                className="flex-[1.4] inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 dark:text-gray-900 disabled:opacity-50 py-2.5 text-sm font-semibold text-white transition"
-              >
-                {exporting
-                  ? <span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                  : <Download size={14} />}
-                {exporting ? "Generando…" : "Descargar PDF"}
-              </button>
+            <footer className="border-t border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 shrink-0">
+              <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-2 sm:px-5 sm:py-3.5">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={exporting}
+                  className="flex-1 rounded-lg border border-gray-200 dark:border-white/[0.08] py-2.5 text-sm font-medium text-gray-600 dark:text-gray-300 transition hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-50"
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  disabled={exporting}
+                  className="flex-[1.4] inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 dark:text-gray-900 disabled:opacity-50 py-2.5 text-sm font-semibold text-white transition"
+                >
+                  {exporting
+                    ? <span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    : <Download size={14} />}
+                  {exporting ? "Generando…" : "Descargar PDF"}
+                </button>
+              </div>
             </footer>
           </motion.aside>
         </>

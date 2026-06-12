@@ -608,7 +608,7 @@ function UserFormModal({
             <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-gray-900 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
 
               {/* ── Header ── */}
-              <div className="flex items-center justify-between px-6 py-5 border-b border-gray-200 dark:border-white/[0.06] shrink-0">
+              <div className="flex items-center justify-between px-4 py-5 sm:px-6 border-b border-gray-200 dark:border-white/[0.06] shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-500 dark:text-blue-400">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -637,7 +637,7 @@ function UserFormModal({
 
               {/* ── Body ── */}
               <form onSubmit={handleSubmit} className="flex flex-col overflow-hidden">
-                <div className="overflow-y-auto px-6 py-5 space-y-5">
+                <div className="overflow-y-auto px-4 py-5 sm:px-6 space-y-5">
 
                   {/* ── Foto del usuario ── */}
                   <div>
@@ -693,7 +693,7 @@ function UserFormModal({
                     <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
                       Datos personales
                     </p>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <FormField label="Nombre completo *" error={errors.fullName}>
                         <input
                           className={inputCls}
@@ -742,7 +742,7 @@ function UserFormModal({
                     <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
                       Datos laborales
                     </p>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <FormField label="Sede" error={errors.site}>
                         <select
                           className={inputCls}
@@ -792,7 +792,7 @@ function UserFormModal({
                     <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
                       Credenciales de acceso
                     </p>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <FormField label="Correo electrónico *" error={errors.email}>
                         <input
                           type="email"
@@ -864,7 +864,7 @@ function UserFormModal({
                 </div>
 
                 {/* ── Footer ── */}
-                <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-200 dark:border-white/[0.06] shrink-0">
+                <div className="flex flex-col-reverse gap-2 px-4 py-4 sm:flex-row sm:justify-end sm:px-6 border-t border-gray-200 dark:border-white/[0.06] shrink-0">
                   <button
                     type="button"
                     onClick={onClose}
@@ -986,7 +986,7 @@ export function UsersPage() {
     return (
       <div className="space-y-5 p-6">
         <div className="h-8 w-48 rounded-lg bg-gray-200 dark:bg-white/[0.06] animate-pulse" />
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-24 rounded-xl bg-gray-200 dark:bg-white/[0.06] animate-pulse" />
           ))}

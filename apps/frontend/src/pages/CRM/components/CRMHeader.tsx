@@ -134,7 +134,7 @@ export function CRMHeader({ stats, loading, onRefetch }: CRMHeaderProps) {
         </div>
 
         {/* Right side — metrics + refresh */}
-        <div className="flex items-center gap-5">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-5">
 
           {stats && (
             <>

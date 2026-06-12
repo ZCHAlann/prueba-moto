@@ -119,6 +119,40 @@ function serializeAuthorization(
   };
 }
 
+/** Helper: resuelve assetPlate, assetName, assetLabel y driverName en una sola query. */
+async function fetchEnrichInfo(assetId: number, driverId: number, companyId: number): Promise<{
+  assetLabel: string | null;
+  assetName:  string | null;
+  assetPlate: string | null;
+  driverName: string | null;
+}> {
+  const [row] = await db.execute<{
+    asset_name:  string | null;
+    asset_plate: string | null;
+    asset_label: string | null;
+    driver_name: string | null;
+  }>(sql`
+    SELECT
+      ast.name  AS asset_name,
+      ast.plate AS asset_plate,
+      ast.code  AS asset_label,
+      TRIM(COALESCE(d.first_name,'') || ' ' || COALESCE(d.last_name,'')) AS driver_name
+    FROM company_assets ast
+    LEFT JOIN company_drivers d
+      ON d.id = ${driverId}
+     AND d.company_id = ${companyId}
+    WHERE ast.id = ${assetId}
+      AND ast.company_id = ${companyId}
+    LIMIT 1
+  `);
+  return {
+    assetLabel: row?.asset_label ?? null,
+    assetName:  row?.asset_name  ?? null,
+    assetPlate: row?.asset_plate ?? null,
+    driverName: row?.driver_name ?? null,
+  };
+}
+
 /** Determina si un user puede ver/editar/eliminar una autorización. */
 function canDecide(role: string): boolean {
   return ['supervisor', 'admin_empresa', 'owner_empresa'].includes(role);
@@ -127,19 +161,7 @@ function canDelete(role: string): boolean {
   return ['supervisor', 'admin_empresa', 'owner_empresa'].includes(role);
 }
 
-// ─── GET /company/:id/exit-authorizations ──────────────────────────────────
-//
-// Conductor: solo ve las suyas.
-// Resto:     ve todas (con filtros por query).
-
 // ─── GET /company/:id/exit-authorizations/conductor-context ─────────────────
-//
-// Endpoint agregado para la vista del conductor: devuelve en UNA sola
-// respuesta todo lo que la página necesita (sin requerir permisos de
-// `flotas` / `conductores` / `asignaciones`, y sin cruzar hooks en el
-// cliente). La info se calcula con SQL crudo directo.
-//
-// Devuelve: { driverId, asset: { id, plate, brand, model }, authorizations: [...] }
 
 router.get('/conductor-context', requireModule('autorizaciones'), async (req, res, next) => {
   try {
@@ -154,10 +176,6 @@ router.get('/conductor-context', requireModule('autorizaciones'), async (req, re
       throw new ForbiddenError('Sesión sin company-user id.');
     }
 
-    // 1) Driver row de este user.
-    //    Garantizado por driver-sync: si role=conductor, su fila en
-    //    company_drivers existe. El fallback "no driver" se mantiene
-    //    como defensa por si la DB no se migró correctamente.
     const [driverRow] = await db
       .select({ id: companyDrivers.id })
       .from(companyDrivers)
@@ -167,10 +185,6 @@ router.get('/conductor-context', requireModule('autorizaciones'), async (req, re
       return res.json({ driverId: null, asset: null, authorizations: [] });
     }
 
-    // 2) Asignación activa del conductor + asset en UNA query.
-    //    Si no tiene asignación activa, devolvemos null y dejamos que el
-    //    frontend muestre "no tenés un vehículo asignado" en lugar de
-    //    mostrar un vehículo cualquiera.
     const today = new Date().toISOString().slice(0, 10);
     const [ctxRow] = await db.execute<{
       asset_id: number | null;
@@ -199,7 +213,6 @@ router.get('/conductor-context', requireModule('autorizaciones'), async (req, re
       ? { id: String(ctxRow.asset_id), plate: ctxRow.plate ?? '', brand: ctxRow.brand ?? '', model: ctxRow.model ?? '' }
       : null;
 
-    // 3) Solicitudes de salida del conductor
     const auths = await db
       .select()
       .from(companyExitAuthorizations)
@@ -225,7 +238,7 @@ router.get('/conductor-context', requireModule('autorizaciones'), async (req, re
   }
 });
 
-
+// ─── GET /company/:id/exit-authorizations ──────────────────────────────────
 
 router.get('/', requireModule('autorizaciones'), async (req, res, next) => {
   try {
@@ -239,12 +252,9 @@ router.get('/', requireModule('autorizaciones'), async (req, res, next) => {
     }
     const { status, driverId, assetId, decidedBy, date, from, to } = parsed.data;
 
-    // Filtro extra: si es conductor, sólo ve las suyas. driverId del query
-    // es ignorado si no coincide con el del token.
     let effectiveDriverId: number | undefined = driverId;
     if (role === 'conductor') {
       if (!userId) throw new ForbiddenError('Sesión sin company-user id.');
-      // Buscar el driver asociado a este company_user
       const [driverRow] = await db
         .select({ id: companyDrivers.id })
         .from(companyDrivers)
@@ -361,7 +371,6 @@ router.get('/:authId', requireModule('autorizaciones'), async (req, res, next) =
     const row = rows[0];
     if (!row) throw new NotFoundError('Autorización', req.params.authId);
 
-    // Conductor solo ve las suyas.
     if (role === 'conductor') {
       if (!userId || row.driver_user_id !== userId) {
         throw new ForbiddenError('No tenés permiso para ver esta autorización.');
@@ -381,7 +390,6 @@ router.get('/:authId', requireModule('autorizaciones'), async (req, res, next) =
 });
 
 // ─── POST /company/:id/exit-authorizations ────────────────────────────────
-// Conductor crea su propia solicitud.
 
 router.post('/', requireModule('autorizaciones'), validate(createAuthorizationSchema), async (req, res, next) => {
   try {
@@ -390,7 +398,6 @@ router.post('/', requireModule('autorizaciones'), validate(createAuthorizationSc
     const userId = Number(String(req.user!.sub).replace(/\D/g, '')) || null;
     const body = req.body as z.infer<typeof createAuthorizationSchema>;
 
-    // Conductor solo crea para su propio driver. Buscar su driver row.
     let driverId = body.driverId;
     if (role === 'conductor') {
       if (!userId) throw new ForbiddenError('Sesión sin company-user id.');
@@ -406,7 +413,6 @@ router.post('/', requireModule('autorizaciones'), validate(createAuthorizationSc
       driverId = driverRow.id;
     }
 
-    // Sanity: el activo y el driver deben pertenecer a la empresa
     const [assetOk] = await db
       .select({ id: companyAssets.id })
       .from(companyAssets)
@@ -441,6 +447,9 @@ router.post('/', requireModule('autorizaciones'), validate(createAuthorizationSc
       })
       .returning();
 
+    // ── Enriquecer con datos relacionales para WS y response ─────────────
+    const enrichInfo = await fetchEnrichInfo(body.assetId, driverId, companyId);
+
     await logAudit(db, companyId, {
       entity:   'exit_authorizations',
       entityId: toId('exit-auth', created.id),
@@ -450,19 +459,12 @@ router.post('/', requireModule('autorizaciones'), validate(createAuthorizationSc
       description: `Autorización creada para vehículo ${body.assetId} por conductor ${driverId}.`,
     });
 
-    // WS broadcast: las pantallas de supervisor/operador/admin se enteran.
     wsBroadcast(companyId, {
       type: 'exit-authorization:created',
-      data: serializeAuthorization(created, {
-        assetLabel: null, assetName: null, assetPlate: null,
-        driverName: null, decidedByName: null,
-      }),
+      data: serializeAuthorization(created, { ...enrichInfo, decidedByName: null }),
     });
 
-    res.status(201).json(serializeAuthorization(created, {
-      assetLabel: null, assetName: null, assetPlate: null,
-      driverName: null, decidedByName: null,
-    }));
+    res.status(201).json(serializeAuthorization(created, { ...enrichInfo, decidedByName: null }));
   } catch (err) {
     next(err);
   }
@@ -501,6 +503,9 @@ router.post('/:authId/approve', requireModule('autorizaciones'), async (req, res
       .where(eq(companyExitAuthorizations.id, authId))
       .returning();
 
+    // ── Enriquecer con datos relacionales para WS y response ─────────────
+    const enrichInfo = await fetchEnrichInfo(existing.assetId, existing.driverId, companyId);
+
     await logAudit(db, companyId, {
       entity:   'exit_authorizations',
       entityId: toId('exit-auth', updated.id),
@@ -512,13 +517,10 @@ router.post('/:authId/approve', requireModule('autorizaciones'), async (req, res
 
     wsBroadcast(companyId, {
       type: 'exit-authorization:decided',
-      data: { id: toId('exit-auth', updated.id), status: updated.status, decidedBy: req.user!.sub },
+      data: serializeAuthorization(updated, { ...enrichInfo, decidedByName: req.user!.name }),
     });
 
-    res.json(serializeAuthorization(updated, {
-      assetLabel: null, assetName: null, assetPlate: null,
-      driverName: null, decidedByName: req.user!.name,
-    }));
+    res.json(serializeAuthorization(updated, { ...enrichInfo, decidedByName: req.user!.name }));
   } catch (err) {
     next(err);
   }
@@ -559,6 +561,9 @@ router.post('/:authId/reject', requireModule('autorizaciones'), validate(decisio
       .where(eq(companyExitAuthorizations.id, authId))
       .returning();
 
+    // ── Enriquecer con datos relacionales para WS y response ─────────────
+    const enrichInfo = await fetchEnrichInfo(existing.assetId, existing.driverId, companyId);
+
     await logAudit(db, companyId, {
       entity:   'exit_authorizations',
       entityId: toId('exit-auth', updated.id),
@@ -570,20 +575,16 @@ router.post('/:authId/reject', requireModule('autorizaciones'), validate(decisio
 
     wsBroadcast(companyId, {
       type: 'exit-authorization:decided',
-      data: { id: toId('exit-auth', updated.id), status: updated.status, decidedBy: req.user!.sub },
+      data: serializeAuthorization(updated, { ...enrichInfo, decidedByName: req.user!.name }),
     });
 
-    res.json(serializeAuthorization(updated, {
-      assetLabel: null, assetName: null, assetPlate: null,
-      driverName: null, decidedByName: req.user!.name,
-    }));
+    res.json(serializeAuthorization(updated, { ...enrichInfo, decidedByName: req.user!.name }));
   } catch (err) {
     next(err);
   }
 });
 
 // ─── DELETE /company/:id/exit-authorizations/:authId ──────────────────────
-// Solo supervisor/admin/owner. Solo sobre Autorizadas/Rechazadas (no Pendientes).
 
 router.delete('/:authId', requireModule('autorizaciones'), async (req, res, next) => {
   try {

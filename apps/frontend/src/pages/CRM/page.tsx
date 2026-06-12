@@ -51,7 +51,7 @@ function DeleteConfirm({
           border border-white/[0.08] bg-gray-900 shadow-2xl">
 
           {/* Header */}
-          <div className="border-b border-white/[0.06] px-6 py-5">
+          <div className="border-b border-white/[0.06] px-4 py-5 sm:px-6">
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl
                 bg-rose-500/[0.12] border border-rose-500/20">
@@ -67,7 +67,7 @@ function DeleteConfirm({
           </div>
 
           {/* Body */}
-          <div className="px-6 py-5">
+          <div className="px-4 py-5 sm:px-6">
             <div className="rounded-xl border border-rose-500/20 bg-rose-500/[0.07] px-4 py-3">
               <p className="text-sm text-rose-300 leading-relaxed">
                 Esta acción eliminará el deal permanentemente. No se puede deshacer.
@@ -76,7 +76,7 @@ function DeleteConfirm({
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between border-t border-white/[0.06] px-6 py-4">
+          <div className="flex flex-col-reverse items-stretch gap-2 border-t border-white/[0.06] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <button type="button" onClick={onCancel}
               className="text-sm font-semibold text-gray-600
                 hover:text-gray-300 transition px-1">

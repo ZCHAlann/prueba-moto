@@ -111,7 +111,7 @@ export const BottomSheet = () => {
               </div>
 
               {/* Body: layout horizontal | controles | contenido (scrollable) */}
-              <div className="grid max-h-[260px] grid-cols-[180px_1fr] divide-x divide-slate-100 overflow-hidden dark:divide-white/[0.06]">
+              <div className="grid max-h-[260px] grid-cols-1 divide-x divide-slate-100 overflow-hidden sm:grid-cols-[180px_1fr] dark:divide-white/[0.06]">
                 {/* Izquierda: controles (stacked vertical) */}
                 <div className="overflow-y-auto bg-slate-50/50 p-3 dark:bg-white/[0.02]">
                   <CarControls />

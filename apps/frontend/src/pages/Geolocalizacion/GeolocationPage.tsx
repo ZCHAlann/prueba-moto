@@ -20,7 +20,7 @@ export const GeolocationPage = () => {
   return (
     <div className="space-y-4">
       {/* ── Header ──────────────────────────────────────── */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-gray-500">
             <Navigation2 className="h-3.5 w-3.5" />

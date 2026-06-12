@@ -119,7 +119,7 @@ export function ExitAuthDetailDrawer({ authorization, role, onClose, onDecide, o
             className="fixed right-0 top-0 z-50 flex h-full w-full max-w-2xl flex-col bg-white dark:bg-gray-900 shadow-2xl border-l border-gray-200 dark:border-white/[0.08]">
 
             {/* HEADER */}
-            <header className="px-7 py-5 border-b border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 shrink-0">
+            <header className="px-4 py-5 sm:px-7 border-b border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 shrink-0">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-1.5">
@@ -145,7 +145,7 @@ export function ExitAuthDetailDrawer({ authorization, role, onClose, onDecide, o
             {/* BODY */}
             <div className="flex-1 overflow-y-auto bg-gray-50/40 dark:bg-gray-950/20">
               {/* Meta */}
-              <div className="px-7 py-5">
+              <div className="px-4 py-5 sm:px-7">
                 <div className="rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.02] divide-y divide-gray-100 dark:divide-white/[0.06]">
                   <MetaRow icon={<Car size={12} />}      label="Placa"     value={a.assetPlate ?? a.assetLabel ?? "—"} />
                   <MetaRow icon={<User size={12} />}     label="Conductor" value={a.driverName ?? "—"} />
@@ -156,7 +156,7 @@ export function ExitAuthDetailDrawer({ authorization, role, onClose, onDecide, o
               </div>
 
               {/* Evidencias */}
-              <div className="px-7 pb-5 space-y-4">
+              <div className="px-4 pb-5 sm:px-7 space-y-4">
                 <SectionTitle icon={<Camera size={12} />}>Evidencias</SectionTitle>
 
                 {/* Video de la bayoneta */}
@@ -199,52 +199,54 @@ export function ExitAuthDetailDrawer({ authorization, role, onClose, onDecide, o
             </div>
 
             {/* FOOTER */}
-            <footer className="px-5 py-3.5 border-t border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 flex items-center gap-2 shrink-0">
-              {canDelete ? (
-                <button type="button" onClick={handleDelete} disabled={!!busy}
-                  className="rounded-lg border border-rose-200 dark:border-rose-500/30 px-3 py-2 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 disabled:opacity-40 transition">
-                  Eliminar
-                </button>
-              ) : null}
-
-              {rejectNotes.length > 0 && canDecide ? (
-                <button type="button" onClick={() => setRejectNotes("")}
-                  className="text-xs text-gray-500 dark:text-gray-400 underline">
-                  Limpiar nota de rechazo
-                </button>
-              ) : null}
-
-              <div className="flex-1" />
-
-              {canDecide ? (
-                <textarea
-                  placeholder="Nota de rechazo (opcional)…"
-                  value={rejectNotes}
-                  onChange={(e) => setRejectNotes(e.target.value)}
-                  rows={1}
-                  className="flex-1 max-w-xs px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-500/10 resize-none" />
-              ) : null}
-
-              {canDecide ? (
-                <>
-                  <button type="button" onClick={handleReject} disabled={!!busy}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-500/10 px-3.5 py-2 text-xs font-semibold text-rose-700 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-500/15 disabled:opacity-40 transition">
-                    {busy === "reject" && <Loader2 size={12} className="animate-spin" />}
-                    Rechazar
+            <footer className="border-t border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 shrink-0">
+              <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-2 sm:px-5 sm:py-3.5">
+                {canDelete ? (
+                  <button type="button" onClick={handleDelete} disabled={!!busy}
+                    className="rounded-lg border border-rose-200 dark:border-rose-500/30 px-3 py-2 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 disabled:opacity-40 transition">
+                    Eliminar
                   </button>
-                  <button type="button" onClick={handleApprove} disabled={!!busy}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 text-xs font-semibold text-white transition">
-                    {busy === "approve" && <Loader2 size={12} className="animate-spin" />}
-                    Aprobar salida
+                ) : null}
+
+                {rejectNotes.length > 0 && canDecide ? (
+                  <button type="button" onClick={() => setRejectNotes("")}
+                    className="self-start text-xs text-gray-500 dark:text-gray-400 underline sm:self-auto">
+                    Limpiar nota de rechazo
                   </button>
-                </>
-              ) : (
-                <button type="button" onClick={downloadPdf} disabled={exporting}
-                  className="inline-flex items-center gap-2 rounded-lg bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 dark:text-gray-900 disabled:opacity-50 px-4 py-2 text-xs font-semibold text-white transition">
-                  {exporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-                  {exporting ? "Generando…" : "Descargar PDF"}
-                </button>
-              )}
+                ) : null}
+
+                <div className="hidden flex-1 sm:block" />
+
+                {canDecide ? (
+                  <textarea
+                    placeholder="Nota de rechazo (opcional)…"
+                    value={rejectNotes}
+                    onChange={(e) => setRejectNotes(e.target.value)}
+                    rows={1}
+                    className="w-full px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-500/10 resize-none sm:flex-1 sm:max-w-xs" />
+                ) : null}
+
+                {canDecide ? (
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={handleReject} disabled={!!busy}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-500/10 px-3.5 py-2 text-xs font-semibold text-rose-700 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-500/15 disabled:opacity-40 transition sm:flex-none">
+                      {busy === "reject" && <Loader2 size={12} className="animate-spin" />}
+                      Rechazar
+                    </button>
+                    <button type="button" onClick={handleApprove} disabled={!!busy}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 text-xs font-semibold text-white transition sm:flex-none">
+                      {busy === "approve" && <Loader2 size={12} className="animate-spin" />}
+                      Aprobar salida
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={downloadPdf} disabled={exporting}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 dark:text-gray-900 disabled:opacity-50 px-4 py-2 text-xs font-semibold text-white transition sm:w-auto">
+                    {exporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                    {exporting ? "Generando…" : "Descargar PDF"}
+                  </button>
+                )}
+              </div>
             </footer>
           </motion.aside>
         </>

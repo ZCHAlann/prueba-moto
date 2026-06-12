@@ -305,6 +305,84 @@ export function getDefaultRouteForRole(role: PlatformRole) {
   return defaultHomes[role];
 }
 
+/**
+ * Devuelve la ruta a la que el usuario debe ir al iniciar sesión, elegida
+ * por orden de prioridad según sus permisos reales:
+ *
+ *   1. Lista de prioridad del rol (los conductores priorizan "autorizaciones",
+ *      los demás priorizan "dashboard").
+ *   2. Si ninguno de los prioritarios está permitido, el primer módulo
+ *      al que el usuario tenga acceso, en el orden del MODULE_TREE.
+ *   3. Si no tiene permiso a nada, devuelve "/signin" (forzará re-login).
+ *
+ * @param session  sesión actual con `role`, `modulePermissions` y
+ *                 `companyModules` (no se usa `companyAdminRole` corto-circuito
+ *                 porque aquí queremos evaluar permisos reales granulares).
+ */
+export function getDefaultRouteForSession(session: {
+  role: PlatformRole;
+  modulePermissions: Record<string, Record<string, string[]>>;
+  companyModules: string[];
+} | null): string {
+  if (!session) return "/signin";
+
+  // Si la sesión es de un admin/owner de empresa, saltamos a dashboard
+  // (siempre tienen acceso total).
+  if (isCompanyAdminRole(session.role)) {
+    return "/dashboard";
+  }
+
+  // 1) Prioridades por rol
+  const rolePriority: Record<string, string[]> = {
+    conductor:  ["/autorizaciones", "/dashboard", "/perfil"],
+    supervisor: ["/dashboard", "/autorizaciones", "/perfil"],
+    operador:   ["/dashboard", "/perfil"],
+  };
+  const priority = rolePriority[session.role];
+  if (priority) {
+    for (const href of priority) {
+      if (canAccessHref(session.role, href, session.modulePermissions)) {
+        return href;
+      }
+    }
+  }
+
+  // 2) Fallback: recorrer el MODULE_TREE en orden y devolver el primer
+  //    href permitido.
+  const fallbackOrder = [
+    "/dashboard",
+    "/autorizaciones",
+    "/flotas",
+    "/operaciones/conductores",
+    "/operaciones/asignaciones",
+    "/gestion/sedes",
+    "/gestion/garajes",
+    "/gestion/seguros",
+    "/motores",
+    "/generadores",
+    "/aires-acondicionados",
+    "/mantenimiento",
+    "/mantenimiento/inventario",
+    "/mantenimiento/verificacion-aceite",
+    "/checklist",
+    "/alertas",
+    "/reportes",
+    "/combustible",
+    "/geolocalizacion",
+    "/accesos/usuarios",
+    "/accesos/roles",
+    "/perfil",
+  ];
+  for (const href of fallbackOrder) {
+    if (canAccessHref(session.role, href, session.modulePermissions)) {
+      return href;
+    }
+  }
+
+  // 3) Sin permisos a nada
+  return "/signin";
+}
+
 export function canAccessPath(role: PlatformRole, pathname: string) {
   if (isPublicPath(pathname)) {
     return true;
@@ -408,9 +486,15 @@ export function filterOperationalNavigation(
         return { ...section, items: filteredItems };
       }
 
-      // Secciones siempre visibles para su rol
-      const alwaysVisible = isAdmin ? ALWAYS_VISIBLE_ADMIN : ALWAYS_VISIBLE;
-      if (alwaysVisible.includes(sectionKey)) {
+      // ── "dashboard" sólo es alwaysVisible si el usuario tiene
+      //    dashboard.dashboard:ver. Si no, se filtra como cualquier
+      //    otra sección y desaparece de la sidebar.
+      const hasDashboardPerm = (modulePermissions?.dashboard?.dashboard ?? []).includes("ver");
+      const effectiveAlwaysVisible = isAdmin
+        ? ALWAYS_VISIBLE_ADMIN
+        : (hasDashboardPerm ? ALWAYS_VISIBLE : ALWAYS_VISIBLE.filter((k) => k !== "dashboard"));
+
+      if (effectiveAlwaysVisible.includes(sectionKey)) {
         return { ...section, items: filteredItems };
       }
 

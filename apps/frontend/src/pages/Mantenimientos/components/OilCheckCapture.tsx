@@ -7,7 +7,7 @@ import { sanitizeString } from "../../../lib/form-validation";
 type Step = "vehicle" | "photo" | "analyzing" | "result";
 type Vehicle = { id: string; plate: string; model: string };
 
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 7;
 
 const TIPS = [
   { icon: <IconClock />,  text: "Motor apagado al menos 5 min" },

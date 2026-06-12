@@ -630,8 +630,8 @@ export function GaragesPage() {
                 </button>
               </div>
 
-              <div className="space-y-4 px-5 py-5 max-h-[70vh] overflow-y-auto">
-                <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-4 px-4 py-5 sm:px-5 max-h-[70vh] overflow-y-auto">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <Field label="Código">
                     <input className={inputCls} value={form.code} maxLength={40}
                       onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase().slice(0, 40) }))}

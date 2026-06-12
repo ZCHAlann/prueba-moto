@@ -317,7 +317,7 @@ export function AssignmentsPage() {
     return (
       <div className="space-y-4">
         <div className="h-16 animate-pulse rounded-2xl bg-gray-100 dark:bg-white/[0.04]" />
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-24 animate-pulse rounded-2xl bg-gray-100 dark:bg-white/[0.04]" />
           ))}

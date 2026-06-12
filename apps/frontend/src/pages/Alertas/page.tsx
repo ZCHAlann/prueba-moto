@@ -292,7 +292,7 @@ function CreateDrawer({
             className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-white/[0.06] shadow-2xl"
           >
             {/* header */}
-            <div className="flex items-center justify-between border-b border-gray-100 dark:border-white/[0.06] px-6 py-5">
+            <div className="flex items-center justify-between gap-3 border-b border-gray-100 dark:border-white/[0.06] px-4 py-5 sm:px-6">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">Nueva alerta</p>
                 <h2 className="mt-1 text-base font-semibold text-gray-800 dark:text-white">Crear alerta operativa</h2>
@@ -309,7 +309,7 @@ function CreateDrawer({
             </div>
 
             {/* body */}
-            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+            <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 space-y-4">
               <div>
                 <FieldLabel>Título</FieldLabel>
                 <input
@@ -339,7 +339,7 @@ function CreateDrawer({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <FieldLabel>Tipo</FieldLabel>
                   <div className="relative">
@@ -394,7 +394,7 @@ function CreateDrawer({
             </div>
 
             {/* footer */}
-            <div className="border-t border-gray-100 dark:border-white/[0.06] px-6 py-4 flex gap-3">
+            <div className="border-t border-gray-100 dark:border-white/[0.06] px-4 py-4 sm:px-6 flex flex-col-reverse gap-2 sm:flex-row sm:gap-3">
               <button
                 type="button"
                 onClick={onClose}

@@ -9,12 +9,12 @@ export default function TabEstadisticas({ assetId, companyId }: Props) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Row 1: 2 charts iguales */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2" style={{ gap: 16 }}>
         <ChartFuelConsumption assetId={assetId} companyId={companyId} />
         <ChartMaintenances    assetId={assetId} companyId={companyId} />
       </div>
       {/* Row 2: 2 charts iguales */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2" style={{ gap: 16 }}>
         <ChartOdometer assetId={assetId} companyId={companyId} />
         <ChartCosts    assetId={assetId} companyId={companyId} />
       </div>

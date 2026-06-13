@@ -58,7 +58,7 @@ const handoverSchema = z.object({
     const n = Number(v);
     return Number.isFinite(n) ? n : undefined;
   }),
-  vehicleFuelLevel: z.enum(['1/4', '1/2', '3/4', 'Lleno']).optional().nullable(),
+  vehicleFuelLevel: z.string().max(40).optional().nullable(),
   vehicleCondition: safeString({ max: 500, fieldLabel: 'Condición', allowEmpty: true }).nullable().optional(),
   // Novedades y accesorios
   novedades:     z.record(z.string(), z.unknown()).default({}),

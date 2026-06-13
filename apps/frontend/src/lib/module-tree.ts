@@ -14,6 +14,8 @@ export const MODULE_TREE = {
       garajes:      "Garajes",
       asignaciones: "Asignar vehículo",
       seguros:      "Seguros vehiculares",
+      talleres:     "Talleres",
+      proveedores:  "Proveedores",
     },
   },
   motores: {
@@ -40,15 +42,22 @@ export const MODULE_TREE = {
   mantenimiento: {
     label: "Mantenimiento",
     submodules: {
-      ordenes:    "Órdenes de mantenimiento",
-      inventario: "Inventario",
-      oil:        "Aceites",
+      agenda:       "Agendar",
+      execution:    "Preventivo y correctivo",
+      records:      "Histórico de mantenimientos",
     },
   },
   checklist: {
     label: "Checklist",
     submodules: {
+      // Gestión de plantillas (crear/editar/eliminar categorías).
       checklist: "Checklist",
+      // Ejecución de inspecciones (ver/realizar — los usuarios que ejecutan, no los que gestionan).
+      inspecciones: "Inspecciones",
+      // Historial: ver inspecciones pasadas (anomalías, todos los checklists).
+      // Es un permiso separado para que un usuario que ejecuta no vea por defecto
+      // el historial de toda la empresa.
+      historial: "Historial",
     },
   },
   alertas: {

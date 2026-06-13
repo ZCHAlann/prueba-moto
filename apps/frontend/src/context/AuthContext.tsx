@@ -42,6 +42,13 @@ type AuthContextValue = {
   ready: boolean;
   session: AuthSession | null;
   isAuthenticated: boolean;
+  /**
+   * ID numérico de la empresa actual como string (formato esperado por los
+   * endpoints `/api/company/:companyId/...`). Viene de `session.companyId`.
+   * `null` cuando no hay sesión o el usuario no pertenece a una empresa
+   * (ej. superadmin sin empresa asignada).
+   */
+  companyId: string | null;
   login: (input: LoginInput) => Promise<LoginResult>;
   loginPlatform: (input: LoginInput) => Promise<LoginResult>;
   logout: () => void;
@@ -172,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ready,
     session,
     isAuthenticated: Boolean(session),
+    companyId: session?.companyId ?? null,
     login,
     loginPlatform,
     logout,

@@ -31,8 +31,12 @@ export function usePermissions() {
 
     const perms = session.modulePermissions as unknown as PermissionMap;
     const modulePerm = perms[module] ?? {};
+    // Mostrar el módulo si el usuario tiene AL MENOS una acción (de cualquier
+    // tipo) en AL MENOS un submódulo. Así un Conductor con permiso
+    // "checklist.inspecciones.crear" ve el módulo "checklist" sin necesidad
+    // de tener explícitamente "checklist.checklist.ver" o similar.
     return Object.values(modulePerm).some((actions) =>
-      Array.isArray(actions) && actions.includes("ver")
+      Array.isArray(actions) && actions.length > 0
     );
   }
 

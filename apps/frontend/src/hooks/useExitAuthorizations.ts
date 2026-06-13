@@ -12,8 +12,16 @@
 //
 //  Para el conductor, el filtro `driverId` se aplica en el backend
 //  (sólo ve las suyas). Para el resto, ve todas las de la empresa.
+//
+//  Comportamiento en vivo:
+//    • Cuando llega un `created`/`decided`/`deleted` por WS actualizamos el
+//      estado local de forma optimista (UX instantánea).
+//    • A continuación disparamos un `fetchList` silencioso (sin spinner) para
+//      reconciliar cualquier campo calculado en backend (p. ej. joins) y
+//      evitar filas "fantasma" si el evento WS llegó con datos incompletos.
+// ─────────────────────────────────────────────────────────────────────────────
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useExitAuthorizationsSocket } from "./useExitAuthorizationsSocket";
 
@@ -122,30 +130,14 @@ export function useExitAuthorizations() {
   const [wsChangeCount, setWsChangeCount] = useState(0);
   const [wsDecidedCount, setWsDecidedCount] = useState(0);
 
-  // Suscripción WS — se conecta cuando hay session
-  useExitAuthorizationsSocket(companyIdStr, {
-    onCreated: (a) => {
-      const mapped = mapRow(a as unknown as Record<string, unknown>);
-      setItems((prev) => [mapped, ...prev.filter((x) => x.id !== mapped.id)]);
-      setWsChangeCount((n) => n + 1);
-    },
-    onDecided: (a) => {
-      const mapped = mapRow(a as unknown as Record<string, unknown>);
-      setItems((prev) =>
-        prev.map((x) => (x.id === mapped.id ? { ...x, ...mapped } : x))
-      );
-      setWsChangeCount((n) => n + 1);
-      setWsDecidedCount((n) => n + 1);
-    },
-    onDeleted: ({ id }) => {
-      setItems((prev) => prev.filter((x) => x.id !== id));
-      setWsChangeCount((n) => n + 1);
-    },
-  });
+  // ── fetchList ref-estable para que el `useEffect` del WS no la liste
+  //    como dependencia (lo recrearía en cada cambio de estado).
+  const fetchListRef = useRef<(params?: ListExitAuthorizationsParams) => Promise<void>>(
+    async () => {},
+  );
 
   const fetchList = useCallback(
     async (params: ListExitAuthorizationsParams = {}) => {
-      console.log("[fetchList] companyIdStr:", companyIdStr);
       if (!companyIdStr) return;
       setLoading(true);
       setError(null);
@@ -175,6 +167,74 @@ export function useExitAuthorizations() {
     },
     [companyIdStr],
   );
+
+  // Variante silenciosa — no toca el spinner. La usamos para reconciliar
+  // estado en respuesta a eventos WebSocket sin parpadear la UI.
+  const fetchListSilent = useCallback(
+    async (params: ListExitAuthorizationsParams = {}) => {
+      if (!companyIdStr) return;
+      try {
+        const qs = new URLSearchParams();
+        if (params.status)    qs.set("status",    params.status);
+        if (params.driverId)  qs.set("driverId",  String(params.driverId));
+        if (params.assetId)   qs.set("assetId",   String(params.assetId));
+        if (params.decidedBy) qs.set("decidedBy", String(params.decidedBy));
+        if (params.date)      qs.set("date",      params.date);
+        if (params.from)      qs.set("from",      params.from);
+        if (params.to)        qs.set("to",        params.to);
+        const res = await fetch(`/api/company/${companyIdStr}/exit-authorizations?${qs.toString()}`, {
+          credentials: "include",
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        const arr: ExitAuthorization[] = (Array.isArray(json) ? json : (json.data ?? [])).map(
+          (raw: Record<string, unknown>) => mapRow(raw),
+        );
+        setItems(arr);
+      } catch {
+        // Silencioso: en WS no queremos propagar errores de reconciliación.
+      }
+    },
+    [companyIdStr],
+  );
+
+  // Mantener la ref siempre apuntando a la última versión.
+  fetchListRef.current = fetchListSilent;
+
+  // ── Suscripción WS ────────────────────────────────────────────────────────
+  //  Importante: este useEffect SOLO depende de (session, companyIdStr) para
+  //  evitar reconexiones por re-render. La lógica de "refetch silencioso
+  //  cuando llega un evento" se hace aquí mismo.
+  useExitAuthorizationsSocket(companyIdStr, {
+    onCreated: (a) => {
+      const mapped = mapRow(a as unknown as Record<string, unknown>);
+      setItems((prev) => {
+        // Si ya existe (por nuestra propia creación optimista), reemplazamos.
+        if (prev.some((x) => x.id === mapped.id)) {
+          return prev.map((x) => (x.id === mapped.id ? mapped : x));
+        }
+        return [mapped, ...prev];
+      });
+      setWsChangeCount((n) => n + 1);
+      // Reconciliación silenciosa: si el evento WS vino con datos incompletos
+      // (p. ej. sin driverName), el GET devuelve la fila completa.
+      void fetchListRef.current().catch(() => {});
+    },
+    onDecided: (a) => {
+      const mapped = mapRow(a as unknown as Record<string, unknown>);
+      setItems((prev) =>
+        prev.map((x) => (x.id === mapped.id ? { ...x, ...mapped } : x))
+      );
+      setWsChangeCount((n) => n + 1);
+      setWsDecidedCount((n) => n + 1);
+      void fetchListRef.current().catch(() => {});
+    },
+    onDeleted: ({ id }) => {
+      setItems((prev) => prev.filter((x) => x.id !== id));
+      setWsChangeCount((n) => n + 1);
+      void fetchListRef.current().catch(() => {});
+    },
+  });
 
   const fetchConductorContext = useCallback(async (): Promise<ConductorContext | null> => {
     if (!companyIdStr) return null;
@@ -208,7 +268,12 @@ export function useExitAuthorizations() {
         throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
       }
       const created = mapRow(await res.json());
-      setItems((prev) => [created, ...prev.filter((x) => x.id !== created.id)]);
+      setItems((prev) => {
+        if (prev.some((x) => x.id === created.id)) {
+          return prev.map((x) => (x.id === created.id ? created : x));
+        }
+        return [created, ...prev];
+      });
       return created;
     },
     [companyIdStr],
@@ -217,7 +282,6 @@ export function useExitAuthorizations() {
   const decide = useCallback(
     async (id: string, action: "approve" | "reject", notes?: string) => {
       if (!companyIdStr) throw new Error("companyId requerido");
-      // ← mandá id completo, el backend hace parseId
       const res = await fetch(
         `/api/company/${companyIdStr}/exit-authorizations/${id}/${action}`,
         {
@@ -241,7 +305,6 @@ export function useExitAuthorizations() {
   const remove = useCallback(
     async (id: string) => {
       if (!companyIdStr) throw new Error("companyId requerido");
-      // ← igual acá
       const res = await fetch(
         `/api/company/${companyIdStr}/exit-authorizations/${id}`,
         {
@@ -258,5 +321,10 @@ export function useExitAuthorizations() {
     [companyIdStr],
   );
 
-  return { items, loading, error, fetchList, fetchConductorContext, create, decide, remove, refetch: () => fetchList(), wsChangeCount, wsDecidedCount };
+  return {
+    items, loading, error,
+    fetchList, fetchListSilent, fetchConductorContext, create, decide, remove,
+    refetch: () => fetchList(),
+    wsChangeCount, wsDecidedCount,
+  };
 }

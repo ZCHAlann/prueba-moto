@@ -24,6 +24,11 @@ import ticketsRouter from './ticket';
 import insurancesRouter from './insurance';
 import rolesRouter from './roles';
 import exitAuthRouter from './exit-authorizations';
+import workshopsRouter from './workshops';
+import suppliersRouter from './suppliers';
+import odometerRouter from './odometer';
+import notificationsRouter from './notifications';
+import reportsRouter from './reports';
 
 const router = Router({ mergeParams: true });
 
@@ -53,6 +58,11 @@ router.use('/tickets', ticketsRouter);
 router.use('/insurance', insurancesRouter);
 router.use('/roles', rolesRouter);
 router.use('/exit-authorizations', exitAuthRouter);
+router.use('/workshops', workshopsRouter);
+router.use('/suppliers', suppliersRouter);
+router.use('/odometer', odometerRouter);
+router.use('/notifications', notificationsRouter);
+router.use('/reports', reportsRouter);
 
 
 export default router;

@@ -12,9 +12,7 @@ import {
   Step6Photos,
 } from "./wizard-steps/Steps";
 import type { ApiAssignment, HandoverPayload } from "../../../../hooks/useAssignments";
-import type { ExistingHandoverData } from "../../../../hooks/useHandoverWizard";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
+import type { ExistingHandoverData, WizardData } from "../../../../hooks/useHandoverWizard";
 
 type Props = {
   open: boolean;
@@ -37,13 +35,11 @@ type Props = {
   onComplete: (assignment: ApiAssignment) => void;
   createAssignment: (payload: { assetId: string; driverId: string; startDate: string }) => Promise<ApiAssignment>;
   updateHandover: (id: string, payload: HandoverPayload) => Promise<ApiAssignment>;
-  // ── Edit mode ──────────────────────────────────────────────────────────────
-  editMode?: boolean;               // true = editar acta existente
-  existingAssignmentId?: string;    // id de la asignación a editar
-  existingData?: ExistingHandoverData | null; // datos actuales del acta
+  editMode?: boolean;
+  existingAssignmentId?: string;
+  existingData?: ExistingHandoverData | null;
 };
 
-// En edit mode saltamos el Step 0 (confirmación), arrancamos en Step 1
 const STEPS = [
   "Confirmación",
   "Datos del acta",
@@ -58,9 +54,59 @@ const STEPS = [
 ];
 
 const FIRST_STEP_CREATE = 0;
-const FIRST_STEP_EDIT   = 1;  // saltamos confirmación en edit mode
+const FIRST_STEP_EDIT   = 1;
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Patrones de validación (espejo del backend) ──────────────────────────────
+
+const DIGITS_10    = /^\d{10}$/;
+const PLATE_PATTERN = /^[A-Z]{3}-?\d{3,4}$/;
+const NAME_PATTERN  = /^[A-Za-zÁÉÍÓÚáéíóúÑñÜü\s'-]+$/;
+const TIME_PATTERN  = /^\d{2}:\d{2}(:\d{2})?$/;
+const DATE_PATTERN  = /^\d{4}-\d{2}-\d{2}$/;
+
+// ─── Validación por step ──────────────────────────────────────────────────────
+// Cada función devuelve el primer error encontrado o null si todo está bien.
+
+function validateStep1(data: WizardData): string | null {
+  if (!data.actaDate || !DATE_PATTERN.test(data.actaDate))
+    return "La fecha del acta es requerida (YYYY-MM-DD).";
+  if (data.actaTime && !TIME_PATTERN.test(data.actaTime))
+    return "La hora tiene formato inválido (HH:MM).";
+  return null;
+}
+
+function validateStep2(data: WizardData): string | null {
+  if (data.driverName && !NAME_PATTERN.test(data.driverName))
+    return "El nombre del conductor no puede contener números ni caracteres especiales.";
+  if (data.driverDni && !DIGITS_10.test(data.driverDni))
+    return "La cédula debe tener exactamente 10 dígitos numéricos.";
+  if (data.driverPhone && !DIGITS_10.test(data.driverPhone))
+    return "El teléfono debe tener exactamente 10 dígitos numéricos.";
+  return null;
+}
+
+function validateStep3(data: WizardData): string | null {
+  if (data.vehiclePlate && !PLATE_PATTERN.test(data.vehiclePlate.toUpperCase()))
+    return "Formato de placa inválido. Debe ser como ABC-1234 o ABC1234.";
+  if (data.vehicleYear) {
+    const y = Number(data.vehicleYear);
+    if (!Number.isFinite(y) || y < 1900 || y > new Date().getFullYear() + 1)
+      return `El año del vehículo debe estar entre 1900 y ${new Date().getFullYear() + 1}.`;
+  }
+  if (data.vehicleOdometer) {
+    const km = Number(data.vehicleOdometer);
+    if (!Number.isFinite(km) || km < 0)
+      return "El odómetro debe ser un número positivo.";
+  }
+  return null;
+}
+
+// Validación global antes del PUT (todos los steps juntos)
+function validateAll(data: WizardData): string | null {
+  return validateStep1(data) ?? validateStep2(data) ?? validateStep3(data);
+}
+
+// ─── Componente ───────────────────────────────────────────────────────────────
 
 export function HandoverWizard({
   open,
@@ -80,11 +126,11 @@ export function HandoverWizard({
 
   const firstStep = editMode ? FIRST_STEP_EDIT : FIRST_STEP_CREATE;
 
-  const [step, setStep]                     = useState(firstStep);
-  const [saving, setSaving]                 = useState(false);
-  const [pdfBlob, setPdfBlob]               = useState<Blob | null>(null);
-  const [pdfPreviewUrl, setPdfPreviewUrl]   = useState<string | null>(null);
-  const [done, setDone]                     = useState(false);
+  const [step, setStep]                       = useState(firstStep);
+  const [saving, setSaving]                   = useState(false);
+  const [pdfBlob, setPdfBlob]                 = useState<Blob | null>(null);
+  const [pdfPreviewUrl, setPdfPreviewUrl]     = useState<string | null>(null);
+  const [done, setDone]                       = useState(false);
   const [finalAssignment, setFinalAssignment] = useState<ApiAssignment | null>(null);
 
   const {
@@ -92,7 +138,6 @@ export function HandoverWizard({
     uploadPhotos, uploadSignature, uploadPdf, reset,
   } = useHandoverWizard(driver, asset, assignmentCount, existingData);
 
-  // Re-init on open
   useEffect(() => {
     if (open) {
       reset(existingData);
@@ -106,10 +151,26 @@ export function HandoverWizard({
 
   if (!open) return null;
 
-  // ── Navigation ──────────────────────────────────────────────────────────────
+  // ── Validación por step al avanzar ─────────────────────────────────────────
+  function getStepError(): string | null {
+    switch (step) {
+      case 1: return validateStep1(data);
+      case 2: return validateStep2(data);
+      case 3: return validateStep3(data);
+      default: return null;
+    }
+  }
 
   async function next() {
     setError(null);
+
+    // Validar el step actual antes de avanzar
+    const stepError = getStepError();
+    if (stepError) {
+      setError(stepError);
+      return;
+    }
+
     try {
       if (step === 6 && data.vehiclePhotos.length > 0 && !data.vehiclePhotoUrls.length) {
         await uploadPhotos();
@@ -134,50 +195,58 @@ export function HandoverWizard({
 
   function prev() {
     setError(null);
-    // En edit mode no permitir retroceder más allá del Step 1
     setStep((s) => Math.max(s - 1, firstStep));
   }
 
-  // ── Final save ──────────────────────────────────────────────────────────────
-
   async function confirm() {
     if (!pdfBlob) return;
+
+    // ── Validación global antes del PUT ───────────────────────────────────
+    const validationError = validateAll(data);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
     setSaving(true);
     setError(null);
-    try {
-      let assignmentId: string;
 
+    let assignmentId: string | null = null;
+
+    try {
       if (editMode && existingAssignmentId) {
-        // Edit mode: la asignación ya existe, no crear otra
         assignmentId = existingAssignmentId;
       } else {
-        // Create mode: crear asignación primero
         const today = new Date().toISOString().split("T")[0];
         const assignment = await createAssignment({ assetId, driverId, startDate: today });
         assignmentId = assignment.id;
       }
 
-      // Subir PDF (siempre, genera uno nuevo aunque sea edición)
       const pdfUrl = await uploadPdf(pdfBlob);
 
-      // Guardar / actualizar datos del acta
+      // Limpiar campos vacíos que podrían fallar validaciones estrictas del backend.
+      // Los validators del backend aceptan "" → null gracias a .or(z.literal('').transform(() => null))
+      // pero nos aseguramos de mandar null explícito en vez de "" para campos opcionales.
+      const clean = (v: string | null | undefined) =>
+        v === "" || v === undefined ? null : v;
+
       const updated = await updateHandover(assignmentId, {
-        actaNumber:       data.actaNumber,
-        actaDate:         data.actaDate,
-        actaTime:         data.actaTime,
-        actaPlace:        data.actaPlace,
-        actaArea:         data.actaArea,
-        driverDni:        data.driverDni,
-        driverPhone:      data.driverPhone,
-        driverRole:       data.driverRole,
-        vehicleOdometer:  data.vehicleOdometer,
-        vehicleFuelLevel: data.vehicleFuelLevel,
-        vehicleCondition: data.vehicleCondition,
+        actaNumber:       clean(data.actaNumber),
+        actaDate:         clean(data.actaDate),
+        actaTime:         clean(data.actaTime),
+        actaPlace:        clean(data.actaPlace),
+        actaArea:         clean(data.actaArea),
+        driverDni:        clean(data.driverDni),
+        driverPhone:      clean(data.driverPhone),
+        driverRole:       clean(data.driverRole),
+        vehicleOdometer:  clean(data.vehicleOdometer),
+        vehicleFuelLevel: clean(data.vehicleFuelLevel),
+        vehicleCondition: clean(data.vehicleCondition),
         novedades:        data.novedades as Record<string, unknown>,
         accesorios:       data.accesorios as Record<string, unknown>,
-        novedadesText:    data.novedadesText,
-        signatureLogUrl:  data.signatureLogUrl,
-        signatureRespUrl: data.signatureRespUrl,
+        novedadesText:    clean(data.novedadesText),
+        signatureLogUrl:  clean(data.signatureLogUrl),
+        signatureRespUrl: clean(data.signatureRespUrl),
         vehiclePhotoUrls: data.vehiclePhotoUrls,
         handoverUrl:      pdfUrl,
       });
@@ -185,7 +254,14 @@ export function HandoverWizard({
       setFinalAssignment(updated);
       setDone(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error al guardar");
+      // Si la asignación ya se creó pero falló el handover, marcamos done igual
+      // para no dejar al usuario en un estado inconsistente.
+      if (assignmentId) {
+        setDone(true);
+        setFinalAssignment({ id: assignmentId } as ApiAssignment);
+      } else {
+        setError(e instanceof Error ? e.message : "Error al guardar");
+      }
     } finally {
       setSaving(false);
     }
@@ -198,8 +274,6 @@ export function HandoverWizard({
     a.download = `${data.actaNumber}.pdf`;
     a.click();
   }
-
-  // ── Step content ────────────────────────────────────────────────────────────
 
   function renderStep() {
     if (done && finalAssignment) {
@@ -243,7 +317,6 @@ export function HandoverWizard({
       case 4: return <Step4Novedades data={data} onChange={setField} />;
       case 5: return <Step5Accesorios data={data} onChange={setField} />;
       case 6: return <Step6Photos data={data} onChange={setField} />;
-
       case 7:
         return (
           <div className="flex flex-col gap-3">
@@ -256,7 +329,6 @@ export function HandoverWizard({
             />
           </div>
         );
-
       case 8:
         return (
           <div className="flex flex-col gap-3">
@@ -269,7 +341,6 @@ export function HandoverWizard({
             />
           </div>
         );
-
       case 9:
         return (
           <div className="flex flex-col gap-4">
@@ -290,7 +361,6 @@ export function HandoverWizard({
             )}
           </div>
         );
-
       default: return null;
     }
   }
@@ -298,9 +368,7 @@ export function HandoverWizard({
   const isLast    = step === STEPS.length - 1;
   const isBusy    = uploading || saving;
   const canFinish = isLast && pdfPreviewUrl && !done;
-
-  // Título del step actual
-  const stepTitle = done ? (editMode ? "¡Listo!" : "¡Listo!") : STEPS[step];
+  const stepTitle = done ? "¡Listo!" : STEPS[step];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -335,12 +403,9 @@ export function HandoverWizard({
               </svg>
             </button>
           </div>
-
-          {/* Barra de progreso */}
           {!done && (
             <div className="flex gap-1">
               {STEPS.map((_, i) => {
-                // En edit mode, los steps anteriores al firstStep se muestran como completados
                 const isComplete = i < firstStep || i <= step;
                 const isSkipped  = editMode && i < firstStep;
                 return (
@@ -363,7 +428,11 @@ export function HandoverWizard({
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {error && (
-            <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
+            <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm flex items-start gap-2">
+              <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
               {error}
             </div>
           )}
@@ -386,11 +455,9 @@ export function HandoverWizard({
               </svg>
               Atrás
             </button>
-
             <span className="text-xs text-gray-400">
               {step + 1} / {STEPS.length}
             </span>
-
             {canFinish ? (
               <button
                 type="button"

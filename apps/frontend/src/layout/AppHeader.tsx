@@ -5,11 +5,16 @@ import { useSidebar } from "../context/SidebarContext";
 import { ThemeToggleButton } from "../components/common/ThemeToggleButton";
 import NotificationDropdown from "../components/header/NotificationDropdown";
 import UserDropdown from "../components/header/UserDropdown";
+import { NotificationsBell } from "../components/features/notifications/NotificationsBell";
+import { useAuth } from "../context/AuthContext";
 
 const AppHeader: React.FC = () => {
   const [isApplicationMenuOpen, setApplicationMenuOpen] = useState(false);
 
   const { isMobileOpen, toggleSidebar, toggleMobileSidebar } = useSidebar();
+  const { session } = useAuth();
+  const isAdmin = !!session && ['superadmin', 'owner_empresa', 'admin_empresa'].includes(session.role);
+  const companyIdNum = session?.companyId ? Number(session.companyId) : null;
 
   const handleToggle = () => {
     if (window.innerWidth >= 1024) {
@@ -162,6 +167,7 @@ const AppHeader: React.FC = () => {
             {/* <!-- Dark Mode Toggler --> */}
             <NotificationDropdown />
             {/* <!-- Notification Menu Area --> */}
+            {companyIdNum && <NotificationsBell companyId={companyIdNum} isAdmin={isAdmin} />}
           </div>
           {/* <!-- User Area --> */}
           <UserDropdown />

@@ -1,10 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+
+export type CadenceKind = "none" | "weekly" | "days";
+export type ScopeKind = "pick" | "site_assets" | "asset_type";
+
 export type ChecklistCategory = {
   id: string;
   name: string;
   description: string;
   items: string[];
+  // Asignación
+  targetRoles: string[];
+  targetUserIds: string[];
+  // Periodicidad
+  cadenceKind: CadenceKind;
+  cadenceDays: number | null;
+  windowDays: number;
+  // Alcance
+  scopeKind: ScopeKind;
+  scopeAssetType: string | null;
+  scopeSiteId: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -13,6 +28,14 @@ type CreateChecklistCategoryInput = {
   name: string;
   description: string;
   items: string[];
+  targetRoles?: string[];
+  targetUserIds?: string[];
+  cadenceKind?: CadenceKind;
+  cadenceDays?: number | null;
+  windowDays?: number;
+  scopeKind?: ScopeKind;
+  scopeAssetType?: string | null;
+  scopeSiteId?: number | null;
 };
 
 export function useChecklistCategories() {
@@ -38,6 +61,14 @@ export function useChecklistCategories() {
           name: String(c.name),
           description: String(c.description ?? ""),
           items: Array.isArray(c.items) ? (c.items as string[]) : [],
+          targetRoles: Array.isArray(c.target_roles) ? (c.target_roles as string[]) : [],
+          targetUserIds: Array.isArray(c.target_user_ids) ? (c.target_user_ids as string[]) : [],
+          cadenceKind: (String(c.cadence_kind ?? "none") as CadenceKind),
+          cadenceDays: c.cadence_days == null ? null : Number(c.cadence_days),
+          windowDays: Number(c.window_days ?? 7),
+          scopeKind: (String(c.scope_kind ?? "pick") as ScopeKind),
+          scopeAssetType: c.scope_asset_type == null ? null : String(c.scope_asset_type),
+          scopeSiteId: c.scope_site_id == null ? null : Number(c.scope_site_id),
           createdAt: String(c.created_at ?? "").slice(0, 16).replace("T", " "),
           updatedAt: String(c.updated_at ?? "").slice(0, 16).replace("T", " "),
         }))

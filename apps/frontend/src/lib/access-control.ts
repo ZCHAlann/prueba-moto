@@ -24,10 +24,12 @@ const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub
   { test: (h) => h.startsWith("/gestion/sedes"),                                                          mod: "gestion",       sub: "sedes" },
   { test: (h) => h.startsWith("/gestion/garajes"),                                                        mod: "gestion",       sub: "garajes" },
   { test: (h) => h.startsWith("/gestion/seguros"),                                                        mod: "gestion",       sub: "seguros" },
+  { test: (h) => h.startsWith("/gestion/talleres"),                                                       mod: "gestion",       sub: "talleres" },
+  { test: (h) => h.startsWith("/gestion/proveedores"),                                                    mod: "gestion",       sub: "proveedores" },
   { test: (h) => h === "/motores" || h.startsWith("/motores"),                                            mod: "motores",       sub: "lista_motores" },
   { test: (h) => h === "/generadores" || h.startsWith("/generadores"),                                    mod: "generadores",   sub: "generadores" },
   { test: (h) => h === "/aires-acondicionados" || h.startsWith("/aires-acondicionados"),                  mod: "ac",            sub: "lista_ac" },
-  { test: (h) => h === "/mantenimiento" || h.startsWith("/mantenimiento"),                                 mod: "mantenimiento", sub: "ordenes" },
+  { test: (h) => h === "/mantenimiento" || h.startsWith("/mantenimiento"),                                 mod: "mantenimiento", sub: "agenda" },
   { test: (h) => h === "/checklist" || h.startsWith("/checklist"),                                        mod: "checklist",     sub: "checklist" },
   { test: (h) => h === "/alertas" || h.startsWith("/alertas"),                                             mod: "alertas",       sub: "alertas" },
   { test: (h) => h === "/reportes" || h.startsWith("/reportes"),                                          mod: "reportes",      sub: "reportes" },
@@ -233,6 +235,12 @@ const rules: RouteRule[] = [
   },
   {
     test: (pathname) =>
+      pathname.startsWith("/gestion/talleres") ||
+      pathname.startsWith("/gestion/proveedores"),
+    roles: [...companyAdminRoles, "supervisor", "operador"],
+  },
+  {
+    test: (pathname) =>
       pathname.startsWith("/gestion/seguros") ||
       pathname.startsWith("/gestion/tipos-aceite") ||
       pathname.startsWith("/gestion/garajes"),
@@ -336,7 +344,7 @@ export function getDefaultRouteForSession(session: {
   const rolePriority: Record<string, string[]> = {
     conductor:  ["/autorizaciones", "/dashboard", "/perfil"],
     supervisor: ["/dashboard", "/autorizaciones", "/perfil"],
-    operador:   ["/dashboard", "/perfil"],
+    operador:   ["/dashboard", "/autorizaciones", "/perfil"],
   };
   const priority = rolePriority[session.role];
   if (priority) {

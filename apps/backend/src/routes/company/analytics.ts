@@ -3,7 +3,7 @@ import { eq, desc } from 'drizzle-orm';
 import { db } from '../../db/client';
 import {
   companyAssets,
-  companyMaintenances,
+  companyMaintenanceRecords,
   companyFuelEntries,
   companyAlerts,
   companyDrivers,
@@ -60,7 +60,7 @@ router.get('/dashboard', requireModule('dashboard'), async (req, res, next) => {
       auditRows,
     ] = await Promise.all([
       db.select().from(companyAssets).where(eq(companyAssets.companyId, companyId)),
-      db.select().from(companyMaintenances).where(eq(companyMaintenances.companyId, companyId)),
+      db.select().from(companyMaintenanceRecords).where(eq(companyMaintenanceRecords.companyId, companyId)),
       db.select().from(companyFuelEntries).where(eq(companyFuelEntries.companyId, companyId)),
       db.select().from(companyAlerts).where(eq(companyAlerts.companyId, companyId)),
       db.select().from(companyDrivers).where(eq(companyDrivers.companyId, companyId)),
@@ -107,18 +107,18 @@ router.get('/dashboard', requireModule('dashboard'), async (req, res, next) => {
     /* Mantenimientos por mes (count) */
     const maintByMonth: Record<string, number> = {};
     for (const m of maintenancesRows) {
-      const key = toYearMonth(m.scheduledDate ?? m.createdAt);
+      const key = toYearMonth(m.scheduledFor ?? m.createdAt);
       if (!key) continue;
       maintByMonth[key] = (maintByMonth[key] ?? 0) + 1;
     }
 
     const maintenancesByMonth = {
       categories: months.map(monthLabel),
-      count:      months.map(m => maintByMonth[m] ?? 0),
+      count: months.map(m => maintByMonth[m] ?? 0),
       cost: months.map(m => {
         const total = maintenancesRows
-          .filter(r => toYearMonth(r.scheduledDate ?? r.createdAt) === m && r.cost !== null)
-          .reduce((acc, r) => acc + Number(r.cost), 0);
+          .filter(r => toYearMonth(r.scheduledFor ?? r.createdAt) === m)
+          .reduce((acc, r) => acc + Number(r.totalCost ?? 0), 0);
         return Math.round(total * 100) / 100;
       }),
     };
@@ -186,9 +186,10 @@ router.get('/dashboard', requireModule('dashboard'), async (req, res, next) => {
     /* Mantenimientos por tipo */
     const byKindMap: Record<string, number> = {};
     for (const m of maintenancesRows) {
-      const k = m.kind ?? 'Sin tipo';
+      const k = m.category ?? 'Sin tipo';
       byKindMap[k] = (byKindMap[k] ?? 0) + 1;
     }
+
     const maintenancesByKind = Object.entries(byKindMap)
       .map(([name, value]) => ({ name, value }));
 
@@ -282,8 +283,8 @@ router.get('/maintenance', requireModule('mantenimiento'), async (req, res, next
 
     const rows = await db
       .select()
-      .from(companyMaintenances)
-      .where(eq(companyMaintenances.companyId, companyId));
+      .from(companyMaintenanceRecords)
+      .where(eq(companyMaintenanceRecords.companyId, companyId));
 
     const byKind: Record<string, number> = {};
     const byStatus: Record<string, number> = {};
@@ -291,22 +292,22 @@ router.get('/maintenance', requireModule('mantenimiento'), async (req, res, next
     const costByMonth: Record<string, number> = {};
 
     for (const m of rows) {
-      const kind = m.kind ?? 'Sin tipo';
+      const kind = m.category ?? 'Sin tipo';
       const status = m.status ?? 'Sin estado';
-      const priority = m.priority ?? 'Normal';
+      const type = m.type ?? 'Programado';
       byKind[kind] = (byKind[kind] ?? 0) + 1;
       byStatus[status] = (byStatus[status] ?? 0) + 1;
-      byPriority[priority] = (byPriority[priority] ?? 0) + 1;
+      byPriority[type] = (byPriority[type] ?? 0) + 1;
 
-      if (m.cost && m.completedDate) {
-        const month = m.completedDate.slice(0, 7); // "YYYY-MM"
-        costByMonth[month] = (costByMonth[month] ?? 0) + Number(m.cost);
-      }
+      if (m.totalCost && m.completedAt) {
+      const month = toYearMonth(m.completedAt);  // Date → "YYYY-MM"
+      if (month) costByMonth[month] = (costByMonth[month] ?? 0) + Number(m.totalCost);
+    }
     }
 
     const totalCost = rows
-      .filter((m) => m.cost !== null)
-      .reduce((acc, m) => acc + Number(m.cost), 0);
+      .filter((m) => m.totalCost !== null)
+      .reduce((acc, m) => acc + Number(m.totalCost), 0);
 
     res.json({
       total: rows.length,

@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ChevronLeft, ChevronRight, Check, AlertTriangle, Car, User, Wrench, ArrowRight, ClipboardCheck } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Check, AlertTriangle, Car, User, Wrench, ArrowRight, ClipboardCheck, Lock } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "../../../../context/AuthContext";
 import { useAssets, type Asset } from "../../../../hooks/useAssets";
 import { useChecklistCategories, type ChecklistCategory } from "../../../../hooks/useChecklistCategories";
 import { useChecklists, type ChecklistInspectionItem, type ChecklistStatus } from "../../../../hooks/useChecklists";
@@ -41,6 +42,14 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
   const { assets } = useAssets();
   const { categories } = useChecklistCategories();
   const { createChecklist } = useChecklists();
+  const { session } = useAuth();
+  const userRole = session?.role ?? "";
+  // El conductor solo puede inspeccionar el vehículo de su asignación activa.
+  // Esto se enforcea server-side; acá filtramos la UI para que no pueda elegir otro.
+  const isConductor = userRole === "conductor";
+  // Si es conductor, su `presetAssetId` es obligatorio. Si no viene, el padre
+  // ya bloqueó la apertura; igual defendemos acá.
+  const restrictedAssetId = isConductor ? presetAssetId : null;
 
   const [step, setStep] = useState<Step>("vehicle");
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
@@ -61,7 +70,7 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
     setPendingIncorrectItem(null);
 
     if (presetAssetId) {
-      // Conductor: asset ya conocido, ir directo a category o items
+      // Conductor (o caller que ya conoce el asset): sembrar y saltar "vehicle".
       const found = assets.find((a) => String(a.id) === String(presetAssetId));
       if (found) setSelectedAsset(found);
       setSelectedCategory(initialCategory ?? null);
@@ -273,6 +282,7 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
                   assets={assets}
                   selected={selectedAsset}
                   onSelect={(a) => { setSelectedAsset(a); }}
+                  restrictToAssetId={restrictedAssetId}
                 />
               </motion.div>
             )}
@@ -370,7 +380,16 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
 
 // ─── Sub-pasos ──────────────────────────────────────────────────────────────
 
-function StepVehicle({ assets, selected, onSelect }: { assets: Asset[]; selected: Asset | null; onSelect: (a: Asset) => void }) {
+function StepVehicle({ assets, selected, onSelect, restrictToAssetId }: {
+  assets: Asset[]; selected: Asset | null; onSelect: (a: Asset) => void;
+  /** Si está definido, solo este assetId es seleccionable. La UI muestra el resto
+   *  deshabilitado y con candado. Se usa cuando el usuario es Conductor. */
+  restrictToAssetId?: string | number | null;
+}) {
+  const restricted = restrictToAssetId != null && restrictToAssetId !== "";
+  const filteredAssets = restricted
+    ? assets.filter((a) => String(a.id) === String(restrictToAssetId))
+    : assets;
   return (
     <div>
       <h3 className="text-sm font-bold text-gray-800 dark:text-white mb-1">¿A qué vehículo se le hará el checklist?</h3>
@@ -378,13 +397,17 @@ function StepVehicle({ assets, selected, onSelect }: { assets: Asset[]; selected
         El conductor se completará automáticamente desde la asignación activa. Si el vehículo no tiene asignación, se dejará en blanco.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[420px] overflow-y-auto pr-1">
-        {assets.length === 0 ? (
+        {filteredAssets.length === 0 ? (
           <div className="col-span-2 flex flex-col items-center justify-center py-10 text-center">
             <Car size={20} className="text-gray-300 dark:text-gray-600 mb-2" />
-            <p className="text-sm text-gray-500">No hay vehículos registrados.</p>
+            <p className="text-sm text-gray-500">
+              {restricted
+                ? "No tienes un vehículo con asignación activa. Pide a un supervisor que te asigne uno."
+                : "No hay vehículos registrados."}
+            </p>
           </div>
         ) : (
-          assets.map((a) => {
+          filteredAssets.map((a) => {
             const isSelected = selected?.id === a.id;
             return (
               <button key={a.id} type="button" onClick={() => onSelect(a)}
@@ -407,6 +430,13 @@ function StepVehicle({ assets, selected, onSelect }: { assets: Asset[]; selected
               </button>
             );
           })
+        )}
+        {/* Si está restringido y hay otros assets, los listamos deshabilitados para
+            que el usuario entienda que existen pero no puede elegirlos. */}
+        {restricted && assets.length > filteredAssets.length && (
+          <div className="col-span-2 mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+            Los demás vehículos de la empresa están ocultos porque solo puedes inspeccionar el tuyo.
+          </div>
         )}
       </div>
     </div>

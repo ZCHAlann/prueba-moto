@@ -103,6 +103,20 @@ export const navigationSections: NavigationSection[] = [
         icon: "SG",
         description: "Polizas, vencimientos y seguimiento",
         accent: "sky",
+      },
+      {
+        label: "Talleres",
+        href: "/gestion/talleres",
+        icon: "TL",
+        description: "Talleres donde se realizan los mantenimientos",
+        accent: "sky",
+      },
+      {
+        label: "Proveedores",
+        href: "/gestion/proveedores",
+        icon: "PV",
+        description: "Proveedores de repuestos e insumos",
+        accent: "sky",
       }
     ],
   },
@@ -182,14 +196,7 @@ export const navigationSections: NavigationSection[] = [
         label: "Preventivo y correctivo",
         href: "/mantenimiento",
         icon: "PC",
-        description: "OT, fechas y responsables",
-        accent: "amber",
-      },
-      {
-        label: "Inventario",
-        href: "/mantenimiento/inventario",
-        icon: "IV",
-        description: "Control de repuestos y stock minimo",
+        description: "Agendar y dar seguimiento a mantenimientos",
         accent: "amber",
       },
       {

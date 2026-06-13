@@ -1,34 +1,65 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, gte, lte, sql, desc } from 'drizzle-orm';
+import { eq, and, gte, lte, sql, desc, inArray } from 'drizzle-orm';
 import { db } from '../../db/client';
-import { companyChecklists, companyChecklistCategories, companyAssets, companyDrivers } from '../../db/schema/operational';
+import { companyChecklists, companyChecklistCategories, companyAssets, companyDrivers, companyAssignments, companySites } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
-import { requireAdmin } from '../../middlewares/requireAdmin';
-import { NotFoundError } from '../../lib/errors';
+import { requirePermission } from '../../middlewares/requirePermission';
+import { NotFoundError, ForbiddenError, AppError, ValidationError } from '../../lib/errors';
 import { toId, parseId, parseIdFlexible } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
 import { wsBroadcast } from '../../services/websocket';
+import { currentCycle, isWithinWindow, isCycleClosed, previousCycle, type CadenceKind, type ScopeKind } from '../../lib/periodicity';
 
 const router = Router({ mergeParams: true });
 
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
-const CHECKLIST_STATUSES = ['Aprobado', 'Observado', 'Pendiente', 'Rechazado'] as const;
-const CHECKLIST_TARGET_KINDS = ['Vehiculo', 'Generador', 'Motor', 'AireAcondicionado', 'Otro'] as const;
+const CHECKLIST_STATUSES = ['Aprobado', 'Observado', 'Pendiente', 'Rechazado', 'Vencido'] as const;
+const CHECKLIST_TARGET_KINDS = ['Vehiculo', 'Generador', 'AireAcondicionado', 'Otro'] as const;
 const CHECKLIST_HAS_ITEM = ['SI', 'NO'] as const;
 const CHECKLIST_CONDITION = ['Bueno', 'Regular', 'Malo'] as const;
 
+const CADENCE_KINDS = ['none', 'weekly', 'days'] as const;
+const SCOPE_KINDS = ['pick', 'site_assets', 'asset_type'] as const;
+
 // Categorías
-const createCategorySchema = z.object({
+//
+// Zod v4 NO permite `.partial()` sobre schemas con `.superRefine()`, así que
+// definimos la "shape" base sin refinements cross-field. El `create` agrega el
+// refinement al final; el `update` aplica `.partial()` y luego corre la misma
+// validación cross-field manualmente.
+const categoryShape = {
   name: safeString({ min: 2, max: 120, fieldLabel: 'Nombre', allowEmpty: false }),
   description: safeString({ max: 500, fieldLabel: 'Descripción', allowEmpty: true }).nullable().optional(),
   items: z.array(safeString({ min: 1, max: 120, fieldLabel: 'Item', allowEmpty: false })).max(100).default([]),
+  // Asignación opcional
+  targetRoles: z.array(safeString({ min: 1, max: 40, fieldLabel: 'Rol', allowEmpty: false })).max(20).default([]),
+  targetUserIds: z.array(safeString({ min: 1, max: 40, fieldLabel: 'UserId', allowEmpty: false })).max(500).default([]),
+  // Periodicidad
+  cadenceKind: z.enum(CADENCE_KINDS).default('none'),
+  cadenceDays: z.number().int().min(1).max(365).nullable().optional(),
+  windowDays: z.number().int().min(1).max(60).default(7),
+  // Alcance
+  scopeKind: z.enum(SCOPE_KINDS).default('pick'),
+  scopeAssetType: z.enum(CHECKLIST_TARGET_KINDS).nullable().optional(),
+  scopeSiteId: z.number().int().positive().nullable().optional(),
+} as const;
+
+const createCategorySchema = z.object(categoryShape).superRefine((data, ctx) => {
+  if (data.cadenceKind === 'days' && data.cadenceDays == null) {
+    ctx.addIssue({ code: 'custom', path: ['cadenceDays'], message: 'cadenceDays es obligatorio si cadenceKind="days"' });
+  }
+  if (data.scopeKind === 'asset_type' && !data.scopeAssetType) {
+    ctx.addIssue({ code: 'custom', path: ['scopeAssetType'], message: 'scopeAssetType es obligatorio si scopeKind="asset_type"' });
+  }
 });
 
-const updateCategorySchema = createCategorySchema.partial();
+// Para update: object parcial + validamos la combinación (kind/days, kind/type)
+// manualmente, fuera del schema, para evitar el crash de Zod v4 con refinements.
+const updateCategorySchema = z.object(categoryShape).partial();
 
 // Checklists — forma de cada item inspeccionado
 const checklistItemSchema = z.object({
@@ -60,10 +91,14 @@ const updateChecklistSchema = createChecklistSchema.partial();
 // ══════════════════════════════════════════════════════════════════════════════
 
 // ─── GET /company/:id/checklist-categories ────────────────────────────────────
+// Visibilidad: admin/owner ven TODAS las categorías de la empresa.
+// El resto ve solo las que no tienen asignación (todos) o donde aparece
+// su rol o su userId en la unión OR.
 
 router.get('/checklist-categories', requireModule('checklist'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
+    const user = req.user!;
 
     const rows = await db
       .select()
@@ -71,7 +106,8 @@ router.get('/checklist-categories', requireModule('checklist'), async (req, res,
       .where(eq(companyChecklistCategories.companyId, companyId))
       .orderBy(companyChecklistCategories.name);
 
-    res.json({ data: rows.map(serializeCategory), total: rows.length });
+    const filtered = filterCategoriesForUser(rows, user.role, user.sub);
+    res.json({ data: filtered.map(serializeCategory), total: filtered.length });
   } catch (err) {
     next(err);
   }
@@ -82,15 +118,33 @@ router.get('/checklist-categories', requireModule('checklist'), async (req, res,
 router.post(
   '/checklist-categories',
   requireModule('checklist'),
+  requirePermission('checklist', 'checklist', 'crear'),
   validate(createCategorySchema),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
       const body = req.body as z.infer<typeof createCategorySchema>;
 
+      const values = {
+        companyId,
+        name: body.name,
+        description: body.description ?? null,
+        items: body.items ?? [],
+        targetRoles: body.targetRoles ?? [],
+        targetUserIds: body.targetUserIds ?? [],
+        cadenceKind: body.cadenceKind ?? 'none',
+        cadenceDays: body.cadenceKind === 'days' ? body.cadenceDays ?? null : null,
+        windowDays: body.windowDays ?? 7,
+        scopeKind: body.scopeKind ?? 'pick',
+        scopeAssetType: body.scopeKind === 'asset_type' ? body.scopeAssetType ?? null : null,
+        scopeSiteId: body.scopeKind === 'site_assets' || body.scopeKind === 'asset_type'
+          ? body.scopeSiteId ?? null
+          : null,
+      };
+
       const [created] = await db
         .insert(companyChecklistCategories)
-        .values({ ...body, companyId })
+        .values(values)
         .returning();
 
       await logAudit(db, companyId, {
@@ -114,7 +168,7 @@ router.post(
 router.put(
   '/checklist-categories/:catId',
   requireModule('checklist'),
-  requireAdmin,
+  requirePermission('checklist', 'checklist', 'editar'),
   validate(updateCategorySchema),
   async (req, res, next) => {
     try {
@@ -135,9 +189,45 @@ router.put(
 
       if (!existing.length) throw new NotFoundError('Categoría', req.params.catId);
 
+      // ── Validación cross-field: combina lo que viene en el body con lo que
+      //    ya está en BD para validar la combinación final. Zod v4 no permite
+      //    .partial() con refinements, así que lo hacemos a mano. ──
+      const effCadenceKind   = body.cadenceKind    ?? existing[0].cadenceKind;
+      const effScopeKind     = body.scopeKind      ?? existing[0].scopeKind;
+      const effCadenceDays   = body.cadenceDays    ?? existing[0].cadenceDays;
+      const effScopeAsset    = body.scopeAssetType ?? existing[0].scopeAssetType;
+      const issues: Record<string, string[]> = {};
+      if (effCadenceKind === 'days' && effCadenceDays == null) {
+        (issues.cadenceDays ??= []).push('cadenceDays es obligatorio si cadenceKind="days"');
+      }
+      if (effScopeKind === 'asset_type' && !effScopeAsset) {
+        (issues.scopeAssetType ??= []).push('scopeAssetType es obligatorio si scopeKind="asset_type"');
+      }
+      if (Object.keys(issues).length) throw new ValidationError(issues);
+
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (body.name           !== undefined) updateData.name           = body.name;
+      if (body.description    !== undefined) updateData.description    = body.description;
+      if (body.items          !== undefined) updateData.items          = body.items;
+      if (body.targetRoles    !== undefined) updateData.targetRoles    = body.targetRoles;
+      if (body.targetUserIds  !== undefined) updateData.targetUserIds  = body.targetUserIds;
+      if (body.cadenceKind    !== undefined) {
+        updateData.cadenceKind = body.cadenceKind;
+        if (body.cadenceKind !== 'days') updateData.cadenceDays = null;
+      }
+      if (body.cadenceDays    !== undefined) updateData.cadenceDays    = body.cadenceDays;
+      if (body.windowDays     !== undefined) updateData.windowDays     = body.windowDays;
+      if (body.scopeKind      !== undefined) {
+        updateData.scopeKind = body.scopeKind;
+        if (body.scopeKind !== 'asset_type') updateData.scopeAssetType = null;
+        if (body.scopeKind === 'pick') updateData.scopeSiteId = null;
+      }
+      if (body.scopeAssetType !== undefined) updateData.scopeAssetType = body.scopeAssetType;
+      if (body.scopeSiteId    !== undefined) updateData.scopeSiteId    = body.scopeSiteId;
+
       const [updated] = await db
         .update(companyChecklistCategories)
-        .set({ ...body, updatedAt: new Date() })
+        .set(updateData)
         .where(
           and(
             eq(companyChecklistCategories.id, catId),
@@ -167,7 +257,7 @@ router.put(
 router.delete(
   '/checklist-categories/:catId',
   requireModule('checklist'),
-  requireAdmin,
+  requirePermission('checklist', 'checklist', 'eliminar'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -220,7 +310,7 @@ router.delete(
 // El problema: `const rows` no se puede reasignar con los filtros de status/assetId/etc.
 // La solución: usar `let rows` y SQL crudo puro, sin el whereParts muerto.
 
-router.get('/', requireModule('checklist'), async (req, res, next) => {
+router.get('/', requireModule('checklist'), requirePermission('checklist', 'historial', 'ver'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const { status, assetId, driverId, categoryId, date, from, to } = req.query;
@@ -320,7 +410,7 @@ router.get('/', requireModule('checklist'), async (req, res, next) => {
   }
 });
 
-router.get('/anomalies', requireModule('checklist'), async (req, res, next) => {
+router.get('/anomalies', requireModule('checklist'), requirePermission('checklist', 'historial', 'ver'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const dateParam  = typeof req.query.date === 'string' ? req.query.date : null;
@@ -419,7 +509,7 @@ router.get('/anomalies', requireModule('checklist'), async (req, res, next) => {
 // (Express 4 no soporta regex inline en paths; validamos el formato dentro
 // del handler con un guard sobre el parámetro.)
 
-router.get('/checklists/:checkId', requireModule('checklist'), async (req, res, next) => {
+router.get('/checklists/:checkId', requireModule('checklist'), requirePermission('checklist', 'historial', 'ver'), async (req, res, next) => {
   // Guard: si el path-segment no es un id numérico, no matcheamos — dejamos
   // que la siguiente ruta (`/checklists/anomalies`) lo capture. Express 4 no
   // soporta regex inline en paths, así que hacemos el match manualmente.
@@ -480,7 +570,9 @@ router.get('/checklists/:checkId', requireModule('checklist'), async (req, res, 
       categoryName = cat?.name ?? null;
     }
 
-    res.json(serializeChecklist(c, { assetName, driverName, categoryName }));
+    // eslint-disable-next-line no-console
+    console.log('[pendientes] result', { role: user.role, count: result.length, items: result.map((r) => ({ cat: r.categoryName, scope: r.scopeKind, pendingCount: r.pendingItems.length })) });
+    res.json({ data: result, total: result.length });
   } catch (err) {
     next(err);
   }
@@ -491,6 +583,7 @@ router.get('/checklists/:checkId', requireModule('checklist'), async (req, res, 
 router.post(
   '/',
   requireModule('checklist'),
+  requirePermission('checklist', 'inspecciones', 'crear'),
   validate(createChecklistSchema),
   async (req, res, next) => {
     try {
@@ -501,6 +594,58 @@ router.post(
       const assetId    = body.assetId    ? parseIdFlexible('asset',               body.assetId)    : null;
       const driverId   = body.driverId   ? parseIdFlexible('driver',              body.driverId)   : null;
       const inspectorId = Number(req.user!.sub.replace(/\D/g, '')) || null;
+
+      // ── Regla: un Conductor solo puede inspeccionar el vehículo de su asignación
+      //           activa. Si manda otro assetId, 403.
+      if (req.user!.role === 'conductor' && assetId) {
+        const userIdNum = Number(req.user!.sub.replace(/\D/g, '')) || null;
+        if (!userIdNum) {
+          throw new ForbiddenError('No se pudo identificar al usuario para validar la asignación.');
+        }
+        // Resolver driverId del usuario.
+        const [driverRow] = await db
+          .select({ id: companyDrivers.id })
+          .from(companyDrivers)
+          .where(and(eq(companyDrivers.userId, userIdNum), eq(companyDrivers.companyId, companyId)))
+          .limit(1);
+        if (!driverRow) {
+          throw new ForbiddenError('Tu usuario no está registrado como conductor. Pide a un supervisor que te dé de alta.');
+        }
+        // Buscar asignación activa.
+        const [activeAssign] = await db
+          .select({ id: companyAssignments.id, assetId: companyAssignments.assetId })
+          .from(companyAssignments)
+          .where(and(
+            eq(companyAssignments.companyId, companyId),
+            eq(companyAssignments.driverId, driverRow.id),
+            eq(companyAssignments.status, 'Activa'),
+          ))
+          .limit(1);
+        if (!activeAssign) {
+          throw new ForbiddenError('No tienes una asignación activa. Pide a un supervisor que te asigne un vehículo.');
+        }
+        if (activeAssign.assetId !== assetId) {
+          throw new ForbiddenError('Solo puedes inspeccionar el vehículo de tu asignación activa.');
+        }
+      }
+
+      // ── Regla: si la categoría tiene periodicidad y el ciclo actual ya cerró
+      //           su ventana, no se puede crear el checklist (está vencido). ──
+      if (categoryId) {
+        const [cat] = await db
+          .select()
+          .from(companyChecklistCategories)
+          .where(and(eq(companyChecklistCategories.id, categoryId), eq(companyChecklistCategories.companyId, companyId)))
+          .limit(1);
+        if (cat) {
+          const closed = isCycleClosed(
+            { cadenceKind: cat.cadenceKind as CadenceKind, cadenceDays: cat.cadenceDays, windowDays: cat.windowDays, createdAt: cat.createdAt },
+          );
+          if (closed) {
+            throw new AppError(410, 'El ciclo de esta plantilla ya cerró su ventana. El pendiente pasó al historial como vencido.');
+          }
+        }
+      }
 
       const [created] = await db
         .insert(companyChecklists)
@@ -557,12 +702,18 @@ router.post(
 router.put(
   '/checklists/:checkId',
   requireModule('checklist'),
+  requirePermission('checklist', 'inspecciones', 'editar'),
   validate(updateChecklistSchema),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
       const checkId = parseId('checklist', req.params.checkId);
       const body = req.body as z.infer<typeof updateChecklistSchema>;
+
+      // ── Regla: supervisor NO puede editar checklists ya hechos. ──
+      if (req.user!.role === 'supervisor') {
+        throw new ForbiddenError('El supervisor no puede editar checklists ya hechos. Solo admin/owner pueden.');
+      }
 
       const existing = await db
         .select({
@@ -638,7 +789,7 @@ router.put(
 router.delete(
   '/checklists/:checkId',
   requireModule('checklist'),
-  requireAdmin,
+  requirePermission('checklist', 'inspecciones', 'eliminar'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -687,6 +838,412 @@ router.delete(
 
 
 
+// ══════════════════════════════════════════════════════════════════════════════
+// VISIBILIDAD + PENDIENTES + VENCIDOS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Roles que ven TODO sin filtro (no se les aplica targetRoles/targetUserIds).
+const ADMIN_ROLES = new Set(['owner_empresa', 'admin_empresa', 'superadmin']);
+
+/** Filtra categorías por visibilidad del usuario. */
+function filterCategoriesForUser<
+  T extends {
+    targetRoles: string[] | null;
+    targetUserIds: string[] | null;
+  }
+>(rows: T[], userRole: string, userSub: string): T[] {
+  if (ADMIN_ROLES.has(userRole)) return rows;
+  return rows.filter((c) => {
+    const roles = c.targetRoles ?? [];
+    const users = c.targetUserIds ?? [];
+    // Si no hay asignación, es pública para todos los de la empresa.
+    if (roles.length === 0 && users.length === 0) return true;
+    return roles.includes(userRole) || users.includes(userSub);
+  });
+}
+
+/**
+ * Devuelve los assets aplicables a la categoría según su scopeKind.
+ * - 'pick'         -> [] (el usuario elige, no pre-derivamos)
+ * - 'site_assets'  -> todos los Vehiculo de la sede del usuario
+ * - 'asset_type'   -> todos los del tipo (filtrado por sede si scopeSiteId)
+ */
+async function deriveAssetsForCategory(
+  companyId: number,
+  cat: typeof companyChecklistCategories.$inferSelect,
+  userSiteId: number | null,
+): Promise<Array<{ id: number; name: string; plate: string | null; siteId: number | null }>> {
+  if (cat.scopeKind === 'pick') return [];
+
+  if (cat.scopeKind === 'site_assets') {
+    const siteId = cat.scopeSiteId ?? userSiteId;
+    if (!siteId) {
+      // Sin sede ni en el usuario ni en la categoría: fallback a todos los
+      // vehículos de la empresa (no falla).
+      return db
+        .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate, siteId: companyAssets.siteId })
+        .from(companyAssets)
+        .where(and(eq(companyAssets.companyId, companyId), eq(companyAssets.assetType, 'Vehiculo')))
+        .orderBy(companyAssets.name);
+    }
+    return db
+      .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate, siteId: companyAssets.siteId })
+      .from(companyAssets)
+      .where(and(eq(companyAssets.companyId, companyId), eq(companyAssets.siteId, siteId), eq(companyAssets.assetType, 'Vehiculo')))
+      .orderBy(companyAssets.name);
+  }
+
+  // 'asset_type'
+  // El schema de assets tiene assetType: 'Vehiculo' | 'Motor' | 'Maquinaria' | 'Planta electrica'.
+  // El scope de la plantilla usa CHECKLIST_TARGET_KINDS. Mapeamos a los valores válidos.
+  // (Nota: 'Motor' fue removido del enum público en 2026-06 porque se duplicaba con 'Vehiculo'.)
+  const ASSET_TYPE_MAP: Record<string, 'Vehiculo' | 'Maquinaria' | 'Planta electrica'> = {
+    Vehiculo: 'Vehiculo',
+    Generador: 'Planta electrica',
+    AireAcondicionado: 'Maquinaria',
+    Otro: 'Maquinaria',
+  };
+  const rawType = cat.scopeAssetType ?? 'Vehiculo';
+  const assetType = ASSET_TYPE_MAP[rawType] ?? 'Vehiculo';
+  const conds = [eq(companyAssets.companyId, companyId), eq(companyAssets.assetType, assetType)];
+  if (cat.scopeSiteId) conds.push(eq(companyAssets.siteId, cat.scopeSiteId));
+  return db
+    .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate, siteId: companyAssets.siteId })
+    .from(companyAssets)
+    .where(and(...conds))
+    .orderBy(companyAssets.name);
+}
+
+/** Busca la sede del usuario. companyUsers aún no tiene siteId en el schema,
+ *  así que por ahora devolvemos null y el caller hace fallback. */
+async function getUserSiteId(_companyId: number, _userSub: string): Promise<number | null> {
+  return null;
+}
+
+// ─── GET /company/:id/checklists/pendientes ────────────────────────────────────
+// Devuelve para el usuario autenticado, los checklists que aún debe hacer
+// en el ciclo actual de cada categoría a la que tiene acceso.
+//
+// Respuesta: { data: [{ categoryId, categoryName, scopeKind, scopeLabel,
+//                       cycleStart, cycleEnd, windowEnd, isOverdue,
+//                       pendingItems: [{ assetId, assetLabel, assetPlate, siteId }] }] }
+
+router.get('/pendientes', requireModule('checklist'), requirePermission('checklist', 'inspecciones', 'ver'), async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const user = req.user!;
+    const userSiteId = await getUserSiteId(companyId, user.sub);
+
+    // ── Si el usuario es Conductor, resolver su driverId + assetId de asignación
+    //    activa UNA sola vez. Luego filtramos `assets` por ese asset en cada
+    //    categoría, de modo que el chofer solo vea su propio vehículo.
+    let conductorAssetId: number | null = null;
+    if (user.role === 'conductor') {
+      const userIdNum = Number(user.sub.replace(/\D/g, '')) || null;
+      if (userIdNum) {
+        const [driverRow] = await db
+          .select({ id: companyDrivers.id })
+          .from(companyDrivers)
+          .where(and(eq(companyDrivers.userId, userIdNum), eq(companyDrivers.companyId, companyId)))
+          .limit(1);
+        if (driverRow) {
+          const [activeAssign] = await db
+            .select({ assetId: companyAssignments.assetId })
+            .from(companyAssignments)
+            .where(and(
+              eq(companyAssignments.companyId, companyId),
+              eq(companyAssignments.driverId, driverRow.id),
+              eq(companyAssignments.status, 'Activa'),
+            ))
+            .limit(1);
+          conductorAssetId = activeAssign?.assetId ?? null;
+        }
+      }
+    }
+
+    const allCats = await db
+      .select()
+      .from(companyChecklistCategories)
+      .where(eq(companyChecklistCategories.companyId, companyId))
+      .orderBy(companyChecklistCategories.name);
+
+    const visible = filterCategoriesForUser(allCats, user.role, user.sub);
+
+    const now = new Date();
+
+    const result: Array<{
+      categoryId: string;
+      categoryName: string;
+      scopeKind: ScopeKind;
+      scopeLabel: string;
+      cycleStart: string;
+      cycleEnd: string;
+      windowEnd: string;
+      cycleLabel: string;
+      isOverdue: boolean;
+      pendingItems: Array<{ assetId: string; assetLabel: string; assetPlate: string | null; siteId: number | null }>;
+    }> = [];
+
+    for (const cat of visible) {
+      const cycle = currentCycle(
+        { cadenceKind: cat.cadenceKind as CadenceKind, cadenceDays: cat.cadenceDays, windowDays: cat.windowDays, createdAt: cat.createdAt },
+        now,
+      );
+      // Si hay ciclo y ya cerró su ventana, el pendiente pasa al historial.
+      if (cycle !== null && now.getTime() > cycle.windowEnd.getTime()) continue;
+
+      // Activos a considerar. Si es Conductor, idealmente SOLO su vehículo
+      // de asignación. Pero si su asignación no tiene `assetId` (data rota o
+      // asignación sin vehículo), dejamos que vea los pendientes del scope y
+      // confiamos en la validación server-side del POST /checklists para que
+      // no pueda inspeccionar vehículos que no son suyos.
+      let assets = await deriveAssetsForCategory(companyId, cat, userSiteId);
+      if (user.role === 'conductor') {
+        // Para scope 'pick' el `assets` viene vacío (lo decide el usuario al hacer).
+        // En ese caso NO filtramos por asset; el pendiente aparece con
+        // `pendingItems=[]` y el frontend (con restrictToAssetId) le muestra
+        // solo su vehículo al hacer la inspección.
+        if (cat.scopeKind !== 'pick' && conductorAssetId != null) {
+          assets = assets.filter((a) => a.id === conductorAssetId);
+          if (assets.length === 0) continue; // su vehículo no aplica a esta plantilla
+        }
+      }
+
+      // Filtros de fecha opcionales. Si no hay ciclo (cadenceKind='none'), no acotamos por fecha.
+      const dateGte = cycle ? gte(companyChecklists.createdAt, cycle.start) : undefined;
+      const dateLte = cycle ? lte(companyChecklists.createdAt, cycle.end) : undefined;
+
+      // Checklists ya hechos para esta categoría y este inspector.
+      const madeRows = assets.length > 0
+        ? await db
+            .select({ asset_id: companyChecklists.assetId })
+            .from(companyChecklists)
+            .where(and(
+              eq(companyChecklists.companyId, companyId),
+              eq(companyChecklists.categoryId, cat.id),
+              eq(companyChecklists.inspectorId, parseIdFlexible('company-user', user.sub)),
+              inArray(companyChecklists.assetId, assets.map((a) => a.id)),
+              ...(dateGte ? [dateGte] : []),
+              ...(dateLte ? [dateLte] : []),
+            ))
+        : [];
+
+      const madeAssetIds = new Set(madeRows.map((r) => r.asset_id).filter((x): x is number => x != null));
+
+      // Para `pick`, no consultamos `madeNoAsset` (assetId IS NULL) porque el
+      // wizard siempre envía assetId. En su lugar, dentro del bloque `pick`
+      // consultamos TODOS los checklists del inspector en este ciclo.
+
+      let pendingItems: Array<{ assetId: string; assetLabel: string; assetPlate: string | null; siteId: number | null }>;
+
+      if (cat.scopeKind === 'pick') {
+        // Para 'pick': el pendiente existe si el inspector NO ha hecho
+        // ningún checklist de esta categoría en este ciclo (con o sin assetId).
+        // Antes solo contábamos los de `assetId IS NULL`, pero el wizard SIEMPRE
+        // envía assetId, así que ese query siempre era 0. Ahora miramos el
+        // universo completo: cualquier checklist del inspector/categoría/ciclo.
+        const totalMade = await db
+          .select({ id: companyChecklists.id })
+          .from(companyChecklists)
+          .where(and(
+            eq(companyChecklists.companyId, companyId),
+            eq(companyChecklists.categoryId, cat.id),
+            eq(companyChecklists.inspectorId, parseIdFlexible('company-user', user.sub)),
+            ...(dateGte ? [dateGte] : []),
+            ...(dateLte ? [dateLte] : []),
+          ));
+        if (totalMade.length > 0) continue;
+        // El frontend abre el picker de activos.
+        pendingItems = [];
+      } else {
+        pendingItems = assets
+          .filter((a) => !madeAssetIds.has(a.id))
+          .map((a) => ({
+            assetId: toId('asset', a.id),
+            assetLabel: a.plate ? `${a.name} · ${a.plate}` : a.name,
+            assetPlate: a.plate,
+            siteId: a.siteId,
+          }));
+        if (pendingItems.length === 0) continue;
+      }
+
+      result.push({
+        categoryId: toId('checklist-category', cat.id),
+        categoryName: cat.name,
+        scopeKind: cat.scopeKind as ScopeKind,
+        scopeLabel:
+          cat.scopeKind === 'pick' ? 'Elegir al hacer' :
+          cat.scopeKind === 'site_assets' ? 'Todos los vehículos de la sede' :
+          `Todos los ${cat.scopeAssetType ?? 'activos'}`,
+        cycleStart: (cycle?.start ?? new Date(0)).toISOString(),
+        cycleEnd:   (cycle?.end   ?? new Date(0)).toISOString(),
+        windowEnd:  (cycle?.windowEnd ?? new Date(0)).toISOString(),
+        cycleLabel: cycle?.label ?? 'Sin periodicidad',
+        isOverdue: false,
+        pendingItems,
+      });
+    }
+
+    res.json({ data: result, total: result.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── GET /company/:id/checklists/vencidos ──────────────────────────────────────
+// Devuelve los pendientes del último ciclo cerrado que NO se hicieron.
+// Se computa on-demand (no hay cron). El "vencido" se persiste como un
+// checklist virtual con status='Vencido' solo si se quiere ver en historial;
+// por simplicidad, este endpoint DERIVA los vencidos sin tocar la tabla.
+
+router.get('/vencidos', requireModule('checklist'), requirePermission('checklist', 'inspecciones', 'ver'), async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const user = req.user!;
+    const userSiteId = await getUserSiteId(companyId, user.sub);
+
+    // Conductor: resolver su asignación activa (mismo bloque que /pendientes).
+    let conductorAssetId: number | null = null;
+    if (user.role === 'conductor') {
+      // Usamos parseIdFlexible (mismo método que /auth/me/driver-assignment)
+      // para extraer el id del prefijo 'company-user-'. Si el sub no matchea,
+      // el chofer simplemente no tiene fila mapeada.
+      let userIdNum: number | null = null;
+      try {
+        const sub = user.sub as string;
+        if (/^\d+$/.test(sub)) {
+          userIdNum = Number(sub);
+        } else {
+          userIdNum = parseIdFlexible('company-user', sub);
+        }
+      } catch {
+        userIdNum = null;
+      }
+      if (userIdNum) {
+        const [driverRow] = await db
+          .select({ id: companyDrivers.id })
+          .from(companyDrivers)
+          .where(and(eq(companyDrivers.userId, userIdNum), eq(companyDrivers.companyId, companyId)))
+          .limit(1);
+        if (driverRow) {
+          const [activeAssign] = await db
+            .select({ assetId: companyAssignments.assetId })
+            .from(companyAssignments)
+            .where(and(
+              eq(companyAssignments.companyId, companyId),
+              eq(companyAssignments.driverId, driverRow.id),
+              eq(companyAssignments.status, 'Activa'),
+            ))
+            .limit(1);
+          conductorAssetId = activeAssign?.assetId ?? null;
+        }
+      }
+    }
+
+    const allCats = await db
+      .select()
+      .from(companyChecklistCategories)
+      .where(eq(companyChecklistCategories.companyId, companyId))
+      .orderBy(companyChecklistCategories.name);
+
+    const visible = filterCategoriesForUser(allCats, user.role, user.sub);
+    const now = new Date();
+
+    const result: Array<{
+      categoryId: string;
+      categoryName: string;
+      cycleStart: string;
+      cycleEnd: string;
+      cycleLabel: string;
+      missedItems: Array<{ assetId: string; assetLabel: string; assetPlate: string | null }>;
+    }> = [];
+
+    for (const cat of visible) {
+      if (cat.cadenceKind === 'none') continue;
+      const prev = previousCycle(
+        { cadenceKind: cat.cadenceKind as CadenceKind, cadenceDays: cat.cadenceDays, windowDays: cat.windowDays, createdAt: cat.createdAt },
+        now,
+      );
+      if (!prev) continue;
+
+      let assets = await deriveAssetsForCategory(companyId, cat, userSiteId);
+      // Conductor: idealmente solo su vehículo, pero si su asignación no tiene
+      // `assetId` (data rota), dejamos que vea los pendientes del scope y
+      // confiamos en la validación server-side del POST /checklists.
+      if (user.role === 'conductor') {
+        if (cat.scopeKind !== 'pick' && conductorAssetId != null) {
+          assets = assets.filter((a) => a.id === conductorAssetId);
+          if (assets.length === 0) continue;
+        }
+      }
+
+      const madeRows = assets.length > 0
+        ? await db
+            .select({ asset_id: companyChecklists.assetId })
+            .from(companyChecklists)
+            .where(
+              and(
+                eq(companyChecklists.companyId, companyId),
+                eq(companyChecklists.categoryId, cat.id),
+                eq(companyChecklists.inspectorId, parseIdFlexible('company-user', user.sub)),
+                inArray(companyChecklists.assetId, assets.map((a) => a.id)),
+                gte(companyChecklists.createdAt, prev.start),
+                lte(companyChecklists.createdAt, prev.end),
+              ),
+            )
+        : [];
+
+      const madeAssetIds = new Set(madeRows.map((r) => r.asset_id).filter((x): x is number => x != null));
+
+      let missed: Array<{ assetId: string; assetLabel: string; assetPlate: string | null }>;
+
+      if (cat.scopeKind === 'pick') {
+        const madeNoAsset = await db
+          .select({ id: companyChecklists.id })
+          .from(companyChecklists)
+          .where(
+            and(
+              eq(companyChecklists.companyId, companyId),
+              eq(companyChecklists.categoryId, cat.id),
+              eq(companyChecklists.inspectorId, parseIdFlexible('company-user', user.sub)),
+              sql`${companyChecklists.assetId} IS NULL`,
+              gte(companyChecklists.createdAt, prev.start),
+              lte(companyChecklists.createdAt, prev.end),
+            ),
+          );
+        if (madeNoAsset.length === 0) {
+          // No hizo el pick del ciclo anterior → vencido virtual
+          missed = [{ assetId: '', assetLabel: '(activo no seleccionado)', assetPlate: null }];
+        } else {
+          continue;
+        }
+      } else {
+        missed = assets
+          .filter((a) => !madeAssetIds.has(a.id))
+          .map((a) => ({
+            assetId: toId('asset', a.id),
+            assetLabel: a.plate ? `${a.name} · ${a.plate}` : a.name,
+            assetPlate: a.plate,
+          }));
+        if (missed.length === 0) continue;
+      }
+
+      result.push({
+        categoryId: toId('checklist-category', cat.id),
+        categoryName: cat.name,
+        cycleStart: prev.start.toISOString(),
+        cycleEnd: prev.end.toISOString(),
+        cycleLabel: prev.label,
+        missedItems: missed,
+      });
+    }
+
+    res.json({ data: result, total: result.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ─── Serializers ──────────────────────────────────────────────────────────────
 
 function serializeCategory(c: typeof companyChecklistCategories.$inferSelect) {
@@ -696,6 +1253,17 @@ function serializeCategory(c: typeof companyChecklistCategories.$inferSelect) {
     name: c.name,
     description: c.description,
     items: c.items ?? [],
+    // Asignación
+    targetRoles: c.targetRoles ?? [],
+    targetUserIds: c.targetUserIds ?? [],
+    // Periodicidad
+    cadenceKind: c.cadenceKind,
+    cadenceDays: c.cadenceDays,
+    windowDays: c.windowDays,
+    // Alcance
+    scopeKind: c.scopeKind,
+    scopeAssetType: c.scopeAssetType,
+    scopeSiteId: c.scopeSiteId,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   };

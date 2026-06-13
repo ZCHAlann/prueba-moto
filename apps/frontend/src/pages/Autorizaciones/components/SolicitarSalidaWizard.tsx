@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, ChevronLeft, ChevronRight, Camera, Video, Upload, Check,
@@ -120,6 +120,32 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
   async function handleFile(captured: File) {
     if (!companyId) return;
 
+    const sizeMB = +(captured.size / 1024 / 1024).toFixed(2);
+
+    console.log("[wizard:capture]", {
+      step: step.id, label: step.label, type: step.type,
+      fileName: captured.name, mimeType: captured.type || "(vacío)",
+      sizeMB,
+    });
+
+    // ── Guard de tamaño para videos: bloqueamos > 50 MB antes de subir ──
+    // La política del producto es: videos de **máximo 2 minutos**.
+    // Como no podemos leer la duración antes de decodificar, usamos
+    // tamaño como proxy: un video de 2 min a 720p H.264 pesa ~25-40 MB.
+    // Si llega más de 50 MB, asumimos que es más largo o está en 1080p HEVC.
+    const MAX_VIDEO_MB = 50;
+    if (step.type === "video" && sizeMB > MAX_VIDEO_MB) {
+      toast.error(
+        `El video es demasiado grande (${sizeMB} MB). ` +
+        `La duración máxima permitida es de 2 minutos. ` +
+        `Grabe un video más corto o reduzca la calidad de la cámara a 720p.`,
+        { duration: 14000 },
+      );
+      // Limpiamos el preview
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
     // 1. Preview local inmediato
     const localUrl = URL.createObjectURL(captured);
     previewsRef.current[step.id] = localUrl;
@@ -133,8 +159,17 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
 
     // 3. Lanzar upload en background — sin await
     const isVideo = step.type === "video";
-    enqueue(step.id, toUpload, isVideo).catch(() => {
-      toast.error(`Error subiendo ${step.label} — reintentá`);
+    enqueue(step.id, toUpload, isVideo).catch((err: any) => {
+      console.error("[wizard:capture-error] full err:", err);
+      // Mostramos el mensaje real al usuario para que sepamos qué falló.
+      let msg = err?.message ?? String(err);
+      // Errores típicos de red
+      if (err?.name === "TypeError" && /fetch/i.test(msg)) {
+        msg = "No se pudo conectar al servidor. Revisá tu conexión.";
+      } else if (err?.name === "AbortError") {
+        msg = "Subida cancelada por timeout.";
+      }
+      toast.error(`${step.label}: ${msg}`, { duration: 8000 });
     });
   }
 
@@ -147,17 +182,37 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
       return;
     }
 
+    // Verificar que no haya capturas pendientes
+    const missing = MEDIA_STEP_IDS.filter((id) => !localPreviews[id]);
+    if (missing.length > 0) {
+      toast.error("Faltan capturas por subir. Completá todos los pasos antes de enviar.");
+      return;
+    }
+
     // Verificar que no haya uploads en error
     const errorSteps = MEDIA_STEP_IDS.filter((id) => getState(id) === "error");
     if (errorSteps.length > 0) {
-      toast.error("Algunos archivos fallaron al subir. Retrocedé y volvé a capturarlos.");
+      toast.error("Algunos archivos fallaron al subir. Vuelve atrás y repite esas capturas.");
+      return;
+    }
+
+    // Si todavía hay uploads en vuelo, no dejamos enviar — el usuario
+    // debe esperar a que terminen (puede tardar varios segundos si es un
+    // video pesado con muchos chunks).
+    const uploadingSteps = MEDIA_STEP_IDS.filter((id) => getState(id) === "uploading");
+    if (uploadingSteps.length > 0) {
+      toast.error(
+        `Espera a que termine de subirse el video (${uploadingSteps.length} archivo(s) en curso). ` +
+        `Esto puede tardar unos segundos.`,
+        { duration: 6000 },
+      );
       return;
     }
 
     setSubmitting(true);
     try {
       // Esperar cualquier upload que todavía esté en vuelo
-      // Si todos terminaron mientras el chofer navegaba, esto es instantáneo
+      // (no debería haber ninguno aquí, pero por seguridad)
       const urls = await resolveAll(MEDIA_STEP_IDS);
 
       const tires = ["tire_front_left", "tire_front_right", "tire_rear_left", "tire_rear_right"]
@@ -326,14 +381,11 @@ function CaptureStep({ step, previewUrl, onCapture }: {
   previewUrl: string | null;
   onCapture: (f: File) => void;
 }) {
-  const [hasCamera, setHasCamera] = useState(false);
   const [previewKind, setPreviewKind] = useState<"image" | "video" | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const videoInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    setHasCamera(typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia);
-  }, []);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const cameraVideoInputRef = useRef<HTMLInputElement>(null);
+  const galleryVideoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!previewUrl) { setPreviewKind(null); return; }
@@ -347,18 +399,30 @@ function CaptureStep({ step, previewUrl, onCapture }: {
 
   const isVideo = step.type === "video";
 
-  async function capture() {
-    if (isVideo) { videoInputRef.current?.click(); return; }
-    if (!hasCamera) { fileInputRef.current?.click(); return; }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-      const track = stream.getVideoTracks()[0];
-      const cap = new (window as any).ImageCapture(track);
-      const blob = await cap.takePhoto();
-      track.stop();
-      onCapture(new File([blob], "captura.jpg", { type: "image/jpeg" }));
-    } catch {
-      fileInputRef.current?.click();
+  /**
+   * Botón "Cámara" — fuerza la cámara nativa del dispositivo.
+   * Usamos un <input> con `capture` en lugar de getUserMedia + ImageCapture
+   * porque así se integra con el flujo nativo de iOS/Android y permite
+   * video + audio cuando el step lo requiere.
+   */
+  function openCamera() {
+    if (isVideo) {
+      cameraVideoInputRef.current?.click();
+    } else {
+      cameraInputRef.current?.click();
+    }
+  }
+
+  /**
+   * Botón "Subir archivo" — abre el selector de archivos / galería SIN
+   * forzar la cámara. NO lleva `capture` para que el SO muestre la opción
+   * de elegir de la galería/archivos.
+   */
+  function openGallery() {
+    if (isVideo) {
+      galleryVideoInputRef.current?.click();
+    } else {
+      galleryInputRef.current?.click();
     }
   }
 
@@ -373,33 +437,54 @@ function CaptureStep({ step, previewUrl, onCapture }: {
           <div className="flex flex-col items-center gap-2 text-gray-400">
             {isVideo ? <Video size={28} /> : <Camera size={28} />}
             <p className="text-xs">Sin captura</p>
-            <p className="text-[10px]">Captura o sube {isVideo ? "un video" : "una foto"} desde tu dispositivo</p>
+            <p className="text-[10px]">Tomá una {isVideo ? "video" : "foto"} o subí un archivo desde tu dispositivo</p>
           </div>
         )}
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        {hasCamera && !isVideo && (
-          <button type="button" onClick={capture}
+        {/* Para FOTOS: botón cámara (capture) + galería. Para VIDEO: solo archivo,
+            porque capture en video en iOS/Android suele colgarse en conexiones
+            lentas (intenta grabar + subir al mismo tiempo). */}
+        {!isVideo && (
+          <button type="button" onClick={openCamera}
             className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white transition">
             <Camera size={13} /> Tomar foto
           </button>
         )}
-        <button type="button" onClick={() => (isVideo ? videoInputRef.current?.click() : fileInputRef.current?.click())}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.08] px-3.5 py-2 text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition">
-          <Upload size={13} /> Subir {isVideo ? "video" : "archivo"}
+        {/* Botón galería/archivo — sin capture, abre el selector de archivos. */}
+        <button type="button" onClick={openGallery}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white transition">
+          <Upload size={13} /> {isVideo ? "Subir video" : "Subir archivo"}
         </button>
         {previewUrl && (
           <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
             <Check size={11} /> Listo
           </span>
         )}
+        {isVideo && (
+          <span className="text-[10px] text-gray-500 dark:text-gray-400">
+            Duración máxima: 2 minutos. Si el video supera los 50 MB, grabe menos tiempo o reduzca la calidad a 720p.
+          </span>
+        )}
       </div>
 
-      <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) onCapture(f); e.target.value = ""; }} />
+      {/* Inputs separados por intención: uno con capture (fuerza cámara),
+          otro sin capture (abre selector de archivos/galería). */}
+      {!isVideo && (
+        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onCapture(f); e.target.value = ""; }} />
+      )}
+      {!isVideo && (
+        <input ref={galleryInputRef} type="file" accept="image/*" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onCapture(f); e.target.value = ""; }} />
+      )}
       {isVideo && (
-        <input ref={videoInputRef} type="file" accept="video/*" capture="environment" className="hidden"
+        <input ref={cameraVideoInputRef} type="file" accept="video/*" capture="environment" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onCapture(f); e.target.value = ""; }} />
+      )}
+      {isVideo && (
+        <input ref={galleryVideoInputRef} type="file" accept="video/*" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) onCapture(f); e.target.value = ""; }} />
       )}
     </div>

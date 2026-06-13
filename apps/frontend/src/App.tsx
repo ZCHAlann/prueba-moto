@@ -35,6 +35,8 @@ import { AssignmentsPage } from "./pages/Gestion/Asignaciones/page";
 import { GaragesPage } from "./pages/Gestion/Garajes/page";
 import { SitesManagementPage } from "./pages/Gestion/Sedes/page";
 import { InsuranceManagementPage } from "./pages/Gestion/Seguros/page";
+import { GestionTalleresPage } from "./pages/Gestion/Talleres/page";
+import { GestionProveedoresPage } from "./pages/Gestion/Proveedores/page";
 import { UsersPage } from "./pages/Accesos/Usuarios/page";
 import { RolesPage } from "./pages/Accesos/Roles/page";
 import { AutorizacionesPage } from "./pages/Autorizaciones/page";
@@ -169,6 +171,8 @@ export default function App() {
           <Route path="/gestion/garajes" element={<GaragesPage />} />
           <Route path="/gestion/sedes" element={<SitesManagementPage />} />
           <Route path="/gestion/seguros" element={<InsuranceManagementPage />} />
+          <Route path="/gestion/talleres" element={<GestionTalleresPage />} />
+          <Route path="/gestion/proveedores" element={<GestionProveedoresPage />} />
           <Route path="/accesos/usuarios" element={<UsersPage />} />
           <Route path="/accesos/roles" element={<RolesPage />} />
           <Route path="/autorizaciones" element={<AutorizacionesPage />} />

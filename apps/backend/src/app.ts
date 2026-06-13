@@ -7,6 +7,7 @@ import platformRouter from './routes/platform/index';
 import companyRouter from './routes/company/index';
 import uploadRouter from './routes/upload';
 import oilCheckRouter from './routes/oil-check';
+import debugRouter from './routes/debug';
 import { errorHandler } from './middlewares/errorHandler';
 import { sanitizeRequest } from './middlewares/sanitize';
 import cookieParser from "cookie-parser";
@@ -35,6 +36,7 @@ app.use('/platform', platformRouter);
 app.use('/company/:id', companyRouter);
 app.use('/upload', uploadRouter);
 app.use('/oil-check', oilCheckRouter);
+app.use('/debug', debugRouter);  // Solo para diagnóstico. Quitar en producción.
 
 // Health check
 app.get('/health', (_req, res) => {

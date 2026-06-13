@@ -15,7 +15,13 @@ import {
   companyAssets,
   companyDrivers,
   companyAssignments,
-  companyMaintenances,
+  companyMaintenanceRecords,
+  companyMaintenanceItems,
+  companyWorkshops,
+  companySuppliers,
+  companyOdometerReadings,
+  companyNotifications,
+  companyDeviceTokens,
   companyFuelEntries,
   companyAlerts,
   companyChecklists,
@@ -148,18 +154,18 @@ export const platformTicketMessagesRelations = relations(platformTicketMessages,
 
 // ── Company Assets ──
 export const companyAssetsRelations = relations(companyAssets, ({ one, many }) => ({
-  company:     one(companies,        { fields: [companyAssets.companyId], references: [companies.id] }),
-  site:        one(companySites,     { fields: [companyAssets.siteId],    references: [companySites.id] }),
-  drivers:     many(companyAssignments),
-  fuelEntries: many(companyFuelEntries),
-  maintenances: many(companyMaintenances),
-  alerts:      many(companyAlerts),
-  insurances:  many(companyInsurancePolicies),
-  oilChanges:  many(companyOilChanges),
-  oilChecks:   many(oilChecks),
-  // NUEVOS:
-  notes:       many(assetNotes),
-  routes:      many(assetRoutes),
+  company:         one(companies,        { fields: [companyAssets.companyId], references: [companies.id] }),
+  site:            one(companySites,     { fields: [companyAssets.siteId],    references: [companySites.id] }),
+  drivers:         many(companyAssignments),
+  fuelEntries:     many(companyFuelEntries),
+  maintenances:    many(companyMaintenanceRecords),
+  odometerReadings: many(companyOdometerReadings),
+  alerts:          many(companyAlerts),
+  insurances:      many(companyInsurancePolicies),
+  oilChanges:      many(companyOilChanges),
+  oilChecks:       many(oilChecks),
+  notes:           many(assetNotes),
+  routes:          many(assetRoutes),
 }));
 
 // ── Company Drivers ──
@@ -184,10 +190,51 @@ export const companyFuelEntriesRelations = relations(companyFuelEntries, ({ one 
   driver:  one(companyDrivers, { fields: [companyFuelEntries.driverId],  references: [companyDrivers.id] }),
 }));
 
-// ── Maintenances ──
-export const companyMaintenancesRelations = relations(companyMaintenances, ({ one }) => ({
-  company: one(companies,    { fields: [companyMaintenances.companyId], references: [companies.id] }),
-  asset:   one(companyAssets, { fields: [companyMaintenances.assetId],   references: [companyAssets.id] }),
+// ── Maintenances v2 ──
+export const companyWorkshopsRelations = relations(companyWorkshops, ({ one, many }) => ({
+  company:      one(companies, { fields: [companyWorkshops.companyId], references: [companies.id] }),
+  maintenances: many(companyMaintenanceRecords),
+}));
+
+export const companySuppliersRelations = relations(companySuppliers, ({ one, many }) => ({
+  company: one(companies, { fields: [companySuppliers.companyId], references: [companies.id] }),
+  items:   many(companyMaintenanceItems),
+}));
+
+export const companyOdometerReadingsRelations = relations(companyOdometerReadings, ({ one }) => ({
+  company:   one(companies,     { fields: [companyOdometerReadings.companyId], references: [companies.id] }),
+  asset:     one(companyAssets,  { fields: [companyOdometerReadings.assetId],   references: [companyAssets.id] }),
+  createdByUser: one(companyUsers, { fields: [companyOdometerReadings.createdBy], references: [companyUsers.id] }),
+}));
+
+export const companyMaintenanceRecordsRelations = relations(companyMaintenanceRecords, ({ one, many }) => ({
+  company:    one(companies,           { fields: [companyMaintenanceRecords.companyId],  references: [companies.id] }),
+  asset:      one(companyAssets,        { fields: [companyMaintenanceRecords.assetId],    references: [companyAssets.id] }),
+  workshop:   one(companyWorkshops,     { fields: [companyMaintenanceRecords.workshopId], references: [companyWorkshops.id] }),
+  parent:     one(companyMaintenanceRecords, {
+    fields: [companyMaintenanceRecords.parentId],
+    references: [companyMaintenanceRecords.id],
+    relationName: 'maintenance_parent',
+  }),
+  items:      many(companyMaintenanceItems),
+  createdByUser:  one(companyUsers,     { fields: [companyMaintenanceRecords.createdBy],  references: [companyUsers.id], relationName: 'maint_created_by' }),
+  completedByUser: one(companyUsers,   { fields: [companyMaintenanceRecords.completedBy],references: [companyUsers.id], relationName: 'maint_completed_by' }),
+}));
+
+export const companyMaintenanceItemsRelations = relations(companyMaintenanceItems, ({ one }) => ({
+  maintenance: one(companyMaintenanceRecords, { fields: [companyMaintenanceItems.maintenanceId], references: [companyMaintenanceRecords.id] }),
+  supplier:    one(companySuppliers,           { fields: [companyMaintenanceItems.supplierId],    references: [companySuppliers.id] }),
+}));
+
+// ── Notifications ──
+export const companyNotificationsRelations = relations(companyNotifications, ({ one }) => ({
+  company: one(companies,    { fields: [companyNotifications.companyId], references: [companies.id] }),
+  user:    one(companyUsers, { fields: [companyNotifications.userId],    references: [companyUsers.id] }),
+}));
+
+export const companyDeviceTokensRelations = relations(companyDeviceTokens, ({ one }) => ({
+  user:    one(companyUsers, { fields: [companyDeviceTokens.userId],    references: [companyUsers.id] }),
+  company: one(companies,    { fields: [companyDeviceTokens.companyId], references: [companies.id] }),
 }));
 
 // ── Insurance ──

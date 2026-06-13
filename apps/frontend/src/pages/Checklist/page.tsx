@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, ClipboardCheck, ListChecks, AlertTriangle } from "lucide-react";
+import { Plus, ClipboardCheck, ListChecks, AlertTriangle, ClipboardList } from "lucide-react";
 import { useChecklistCategories, type ChecklistCategory } from "../../hooks/useChecklistCategories";
 import { useChecklists, type Checklist } from "../../hooks/useChecklists";
 import { usePermissions } from "../../hooks/usePermissions";
@@ -9,8 +9,9 @@ import { PlantillasManager } from "./components/PlantillasManager";
 import { ChecklistHistorial } from "./components/historial/ChecklistHistorial";
 import { ChecklistAnomalias } from "./components/historial/ChecklistAnomalias";
 import { ChecklistDetailDrawer } from "./components/historial/ChecklistDetailDrawer";
+import { ChecklistPendientes } from "./components/ChecklistPendientes";
 
-type Tab = "realizar" | "historial";
+type Tab = "pendientes" | "realizar" | "historial";
 type HistorialSub = "anomalias" | "todos";
 
 const ADMIN_ROLES = ["owner_empresa", "admin_empresa", "supervisor"];
@@ -37,10 +38,20 @@ export function ChecklistPage() {
   const { can } = usePermissions();
   const session = (typeof window !== "undefined") ? JSON.parse(localStorage.getItem("aplismart_session") ?? "null") : null;
   const role = (session?.role ?? "") as string;
-  const canSeeHistorial = ADMIN_ROLES.includes(role) || can("checklist", "checklist", "ver");
+  // Ver inspecciones: tab Pendientes requiere esto.
+  const canSeeInspecciones = ADMIN_ROLES.includes(role) || can("checklist", "inspecciones", "ver");
+  // Ver historial: tab Historial requiere esto (permiso separado, no heredado de inspecciones).
+  const canSeeHistorial = ADMIN_ROLES.includes(role) || can("checklist", "historial", "ver");
+  // Ver plantillas: el tab "Realizar" con el listado de plantillas requiere esto.
+  // (No bloquea el "Pendientes" — el filtro de visibilidad ya lo hace server-side.)
+  const canSeePlantillas = ADMIN_ROLES.includes(role) || can("checklist", "checklist", "ver");
   const canCreate = can("checklist", "checklist", "crear");
 
-  const [tab, setTab] = useState<Tab>("realizar");
+  // Tab inicial: si puede ver inspecciones, arranca en "Pendientes"; si no, en "Realizar".
+  const [tab, setTab] = useState<Tab>(
+    () => (ADMIN_ROLES.includes(role) || can("checklist", "inspecciones", "ver")) ? "pendientes" : "realizar"
+  );
+  // (el inicial se queda con "inspecciones" porque "Pendientes" no requiere "historial")
 
   // Wizard: controlamos apertura + plantilla preseleccionada
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -79,20 +90,48 @@ export function ChecklistPage() {
         </p>
       </div>
 
-      {/* tabs (Historial sólo para roles autorizados) */}
-      {canSeeHistorial && (
-        <div className="flex items-center gap-1 border-b border-gray-200 dark:border-white/[0.06]">
-          <TabButton active={tab === "realizar"} onClick={() => setTab("realizar")}>
-            <ClipboardCheck size={13} /> Realizar
-          </TabButton>
-          <TabButton active={tab === "historial"} onClick={() => setTab("historial")}>
-            <ListChecks size={13} /> Historial
-          </TabButton>
+      {/* tabs: cada tab requiere su permiso independiente.
+            Pendientes  -> ver inspecciones
+            Realizar    -> ver plantillas
+            Historial   -> ver historial (permiso dedicado, NO se hereda) */}
+      {(canSeeInspecciones || canSeeHistorial || canSeePlantillas) && (
+        <div className="flex items-center gap-1 overflow-x-auto border-b border-gray-200 dark:border-white/[0.06]">
+          {canSeeInspecciones && (
+            <TabButton active={tab === "pendientes"} onClick={() => setTab("pendientes")}>
+              <ClipboardList size={13} /> Pendientes
+            </TabButton>
+          )}
+          {canSeePlantillas && (
+            <TabButton active={tab === "realizar"} onClick={() => setTab("realizar")}>
+              <ClipboardCheck size={13} /> Realizar
+            </TabButton>
+          )}
+          {canSeeHistorial && (
+            <TabButton active={tab === "historial"} onClick={() => setTab("historial")}>
+              <ListChecks size={13} /> Historial
+            </TabButton>
+          )}
         </div>
       )}
 
       <AnimatePresence mode="wait">
-        {tab === "realizar" && (
+        {tab === "pendientes" && canSeeInspecciones && (
+          <motion.div key="pendientes"
+            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.18 }}>
+            <ChecklistPendientes
+              categories={categories}
+              onOpenWizard={(id) => {
+                if (id) {
+                  const c = categories.find((x) => x.id === id);
+                  if (c) openWizardFor(c);
+                }
+              }}
+            />
+          </motion.div>
+        )}
+
+        {tab === "realizar" && canSeePlantillas && (
           <motion.div key="realizar"
             initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.18 }}>

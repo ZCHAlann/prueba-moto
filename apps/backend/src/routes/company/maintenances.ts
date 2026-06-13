@@ -1,421 +1,673 @@
+// routes/company/maintenances.ts
+// CRUD del modelo unificado de mantenimientos (0006_maintenance_v2).
+// Reemplaza el archivo legacy del mismo nombre (que apuntaba a
+// company_maintenances, tabla borrada en la 0006).
+//
+// Permisos por submódulo:
+//   - maintenance.agenda      → ver
+//   - maintenance.execution   → crear/editar (cambiar status)
+//   - maintenance.records     → ver + editar notas
+//   - maintenance.workshops   → asignar taller (FK)
+//   - maintenance.suppliers   → asignar proveedor (en items)
+//
+// Acciones especiales:
+//   - POST /:id/complete → marca Completado, calcula total, reagenda según
+//     periodicidad y notifica. Solo admin/supervisor.
+//   - GET /:id/items     → devuelve los repuestos/insumos del mantenimiento.
+
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, ilike, or, inArray } from 'drizzle-orm';
 import { db } from '../../db/client';
-import { companyMaintenances, companyAssets } from '../../db/schema/operational';
+import {
+  companyMaintenanceRecords,
+  companyMaintenanceItems,
+  companyWorkshops,
+  companySuppliers,
+  companyAssets,
+  companyUsers,
+} from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
+import { requirePermission } from '../../middlewares/requirePermission';
 import { requireAdmin } from '../../middlewares/requireAdmin';
 import { requireSupervisor } from '../../middlewares/requireSupervisor';
 import { NotFoundError, AppError } from '../../lib/errors';
-import { toId, parseId } from '../../lib/ids';
+import { toId, parseId, parseIdFlexible } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
+import { rescheduleCompletedMaintenance } from '../../lib/maintenance-rescheduler';
+import { notify, notifyAdmins } from '../../lib/notification-service';
 
 const router = Router({ mergeParams: true });
 
-// ─── Schemas ─────────────────────────────────────────────────────────────────
+// ─── Enums (replicamos para zod) ──────────────────────────────────────────────
 
-const MAINTENANCE_KINDS = ['Preventivo', 'Correctivo', 'Predictivo', 'Emergencia'] as const;
-const MAINTENANCE_PRIORITIES = ['Normal', 'Alta', 'Emergente'] as const;
-const MAINTENANCE_STATUSES = ['Pendiente', 'En proceso', 'Completado'] as const;
+const MAINT_TYPES = ['Preventivo', 'Correctivo', 'Programado'] as const;
+const MAINT_STATUSES = ['Programado', 'En curso', 'PendienteAtencion', 'Completado', 'Cancelado'] as const;
+const MAINT_CATEGORIES = [
+  'Primordial:Bombas',
+  'Primordial:Motores',
+  'Aceite:Cambio',
+  'Aceite:Inventario',
+  'Otro',
+] as const;
+const CADENCE_KINDS = ['none', 'weekly', 'days', 'monthly', 'km_based'] as const;
 
-const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional().nullable();
+const isoDateString = z.string().regex(/^\d{4}-\d{2}-\d{2}(T.+)?$|^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (ISO)').optional().nullable();
+
+// ─── Item schema (subdocumento) ───────────────────────────────────────────────
+
+const itemSchema = z.object({
+  supplierId: z.string().optional().nullable(),
+  name:       safeString({ min: 1, max: 180, fieldLabel: 'Repuesto', allowEmpty: false }),
+  quantity:   z.number().positive().max(1_000_000).default(1),
+  unitCost:   z.number().nonnegative().max(1_000_000_000).default(0),
+});
+
+// ─── Maintenance schemas ─────────────────────────────────────────────────────
 
 const createMaintenanceSchema = z.object({
-  assetId: z.string().min(1, 'El activo es requerido'),
-  title: safeString({ min: 3, max: 200, fieldLabel: 'Título', allowEmpty: false }),
-  kind: z.enum(MAINTENANCE_KINDS).optional(),
-  priority: z.enum(MAINTENANCE_PRIORITIES).default('Normal'),
-  status: z.enum(MAINTENANCE_STATUSES).default('Pendiente'),
-  scheduledDate: dateString,
-  dueDate: dateString,
-  technician: z.string().optional().nullable(),
-  cost: z.number().nonnegative().max(1_000_000).optional().nullable(),
-  laborCost: z.number().nonnegative().max(1_000_000).optional().nullable(),
-  partsCost: z.number().nonnegative().max(1_000_000).optional().nullable(),
-  photoUrls: z.array(z.string().max(2_000_000)).max(20).default([]),
-  notes: validators.longTextOptional,
+  assetId:        z.string().min(1, 'El vehículo es requerido'),
+  workshopId:     z.string().optional().nullable(),
+  type:           z.enum(MAINT_TYPES).default('Programado'),
+  status:         z.enum(MAINT_STATUSES).default('Programado'),
+  category:       z.enum(MAINT_CATEGORIES).default('Otro'),
+  title:          safeString({ min: 3, max: 200, fieldLabel: 'Título', allowEmpty: false }),
+  description:    validators.longTextOptional,
+  odometerKm:     z.number().int().nonnegative().max(10_000_000).optional().nullable(),
+  cadenceKind:    z.enum(CADENCE_KINDS).default('none'),
+  cadenceValue:   z.number().int().positive().max(1_000_000).optional().nullable(),
+  nextTriggerKm:  z.number().int().nonnegative().max(10_000_000).optional().nullable(),
+  scheduledFor:   z.string().min(1, 'Fecha programada requerida'),
+  notes:          validators.longTextOptional,
+  items:          z.array(itemSchema).max(50).default([]),
 });
 
-const updateMaintenanceSchema = createMaintenanceSchema.partial();
-
-const completeMaintenanceSchema = z.object({
-  completedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional(),
-  cost: z.number().nonnegative().max(1_000_000).optional().nullable(),
-  technician: z.string().optional().nullable(),
-  notes: validators.longTextOptional,
-  photoUrls: z.array(z.string().max(2_000_000)).max(20).optional(),
+const updateMaintenanceSchema = z.object({
+  workshopId:     z.string().optional().nullable(),
+  type:           z.enum(MAINT_TYPES).optional(),
+  status:         z.enum(MAINT_STATUSES).optional(),
+  category:       z.enum(MAINT_CATEGORIES).optional(),
+  title:          safeString({ min: 3, max: 200, fieldLabel: 'Título', allowEmpty: false }).optional(),
+  description:    validators.longTextOptional,
+  odometerKm:     z.number().int().nonnegative().max(10_000_000).optional().nullable(),
+  cadenceKind:    z.enum(CADENCE_KINDS).optional(),
+  cadenceValue:   z.number().int().positive().max(1_000_000).optional().nullable(),
+  nextTriggerKm:  z.number().int().nonnegative().max(10_000_000).optional().nullable(),
+  scheduledFor:   z.string().optional(),
+  executedAt:     z.string().optional().nullable(),
+  notes:          validators.longTextOptional,
+  items:          z.array(itemSchema).max(50).optional(),
 });
 
-// ─── GET /company/:id/maintenances ────────────────────────────────────────────
-// Query: ?status=Pendiente &kind=Preventivo &assetId=asset-1 &priority=Alta
+const completeSchema = z.object({
+  completedAt: z.string().optional(),
+  odometerKm:  z.number().int().nonnegative().max(10_000_000).optional().nullable(),
+  notes:       validators.longTextOptional,
+  items:       z.array(itemSchema).max(50).optional(),
+});
 
-router.get('/', requireModule('mantenimiento'), async (req, res, next) => {
-  try {
-    const companyId = req.companyId!;
-    const { status, kind, assetId, priority } = req.query;
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-    let rows = await db
-      .select()
-      .from(companyMaintenances)
-      .where(eq(companyMaintenances.companyId, companyId))
-      .orderBy(companyMaintenances.createdAt);
-
-    if (status && typeof status === 'string') {
-      rows = rows.filter((m) => m.status === status);
-    }
-    if (kind && typeof kind === 'string') {
-      rows = rows.filter((m) => m.kind === kind);
-    }
-    if (priority && typeof priority === 'string') {
-      rows = rows.filter((m) => m.priority === priority);
-    }
-    if (assetId && typeof assetId === 'string') {
-      const parsedAssetId = parseId('asset', assetId);
-      rows = rows.filter((m) => m.assetId === parsedAssetId);
-    }
-
-    // ── Enrichment: batch-load asset names + plates ────────────────────────────
-    const assetsRows = await db
-      .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate })
-      .from(companyAssets)
-      .where(eq(companyAssets.companyId, companyId));
-    const assetMap = new Map(assetsRows.map(a => [a.id, { name: a.name, plate: a.plate }]));
-
-    res.json({ data: rows.map(m => serializeMaintenance(m, assetMap.get(m.assetId) ?? null)), total: rows.length });
-  } catch (err) {
-    next(err);
+async function loadItemsMap(maintenanceIds: number[]): Promise<Map<number, any[]>> {
+  if (!maintenanceIds.length) return new Map();
+  const items = await db
+    .select({
+      id:             companyMaintenanceItems.id,
+      maintenanceId:  companyMaintenanceItems.maintenanceId,
+      supplierId:     companyMaintenanceItems.supplierId,
+      supplierName:   companySuppliers.name,
+      name:           companyMaintenanceItems.name,
+      quantity:       companyMaintenanceItems.quantity,
+      unitCost:       companyMaintenanceItems.unitCost,
+      subtotal:       companyMaintenanceItems.subtotal,
+    })
+    .from(companyMaintenanceItems)
+    .leftJoin(companySuppliers, eq(companySuppliers.id, companyMaintenanceItems.supplierId))
+    .where(inArray(companyMaintenanceItems.maintenanceId, maintenanceIds));
+  const map = new Map<number, any[]>();
+  for (const i of items) {
+    if (!map.has(i.maintenanceId)) map.set(i.maintenanceId, []);
+    map.get(i.maintenanceId)!.push({
+      id:         toId('maintenance-item', i.id),
+      maintenanceId: toId('maintenance', i.maintenanceId),
+      supplierId: i.supplierId ? toId('supplier', i.supplierId) : null,
+      supplierName: i.supplierName,
+      name:       i.name,
+      quantity:   Number(i.quantity),
+      unitCost:   Number(i.unitCost),
+      subtotal:   Number(i.subtotal),
+    });
   }
-});
+  return map;
+}
 
-// ─── GET /company/:id/maintenances/:maintId ───────────────────────────────────
+function serializeMaintenance(m: any, items: any[]) {
+  return {
+    id:            toId('maintenance', m.id),
+    companyId:     toId('company', m.companyId),
+    assetId:       toId('asset', m.assetId),
+    assetName:     m.assetName,
+    assetPlate:    m.assetPlate,
+    workshopId:    m.workshopId ? toId('workshop', m.workshopId) : null,
+    workshopName:  m.workshopName,
+    type:          m.type,
+    status:        m.status,
+    category:      m.category,
+    title:         m.title,
+    description:   m.description,
+    odometerKm:    m.odometerKm,
+    cadenceKind:   m.cadenceKind,
+    cadenceValue:  m.cadenceValue,
+    nextTriggerKm: m.nextTriggerKm,
+    scheduledFor:  m.scheduledFor,
+    executedAt:    m.executedAt,
+    completedAt:   m.completedAt,
+    notes:         m.notes,
+    totalCost:     Number(m.totalCost),
+    parentId:      m.parentId ? toId('maintenance', m.parentId) : null,
+    createdBy:     m.createdBy ? toId('company-user', m.createdBy) : null,
+    completedBy:   m.completedBy ? toId('company-user', m.completedBy) : null,
+    createdAt:     m.createdAt,
+    updatedAt:     m.updatedAt,
+    items,
+  };
+}
 
-router.get('/:maintId', requireModule('mantenimiento'), async (req, res, next) => {
-  try {
-    const companyId = req.companyId!;
-    const maintId = parseId('maintenance', req.params.maintId);
+// ─── GET /company/:id/maintenances ───────────────────────────────────────────
 
-    const rows = await db
-      .select()
-      .from(companyMaintenances)
-      .where(
-        and(
-          eq(companyMaintenances.id, maintId),
-          eq(companyMaintenances.companyId, companyId)
-        )
-      )
-      .limit(1);
+router.get(
+  '/',
+  requireModule('maintenance'),
+  requirePermission('maintenance', 'records', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const { status, type, category, workshopId, assetId, from, to, q } = req.query as Record<string, string | undefined>;
 
-    if (!rows.length) throw new NotFoundError('Mantenimiento', req.params.maintId);
+      const where: any[] = [eq(companyMaintenanceRecords.companyId, companyId)];
+      if (status)   where.push(eq(companyMaintenanceRecords.status, status as any));
+      if (type)     where.push(eq(companyMaintenanceRecords.type, type as any));
+      if (category) where.push(eq(companyMaintenanceRecords.category, category as any));
+      if (workshopId) where.push(eq(companyMaintenanceRecords.workshopId, parseId('workshop', workshopId)));
+      if (assetId)    where.push(eq(companyMaintenanceRecords.assetId, parseId('asset', assetId)));
+      if (from)       where.push(gte(companyMaintenanceRecords.scheduledFor, new Date(from)));
+      if (to)         where.push(lte(companyMaintenanceRecords.scheduledFor, new Date(to)));
 
-    // ── Enrichment ────────────────────────────────────────────────────────────
-    const [asset] = await db
-      .select({ name: companyAssets.name, plate: companyAssets.plate })
-      .from(companyAssets)
-      .where(and(eq(companyAssets.id, rows[0].assetId), eq(companyAssets.companyId, companyId)))
-      .limit(1);
+      let query = db
+        .select({
+          m: companyMaintenanceRecords,
+          assetName:  companyAssets.name,
+          assetPlate: companyAssets.plate,
+          workshopName: companyWorkshops.name,
+        })
+        .from(companyMaintenanceRecords)
+        .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
+        .leftJoin(companyWorkshops, eq(companyWorkshops.id, companyMaintenanceRecords.workshopId))
+        .where(and(...where))
+        .orderBy(desc(companyMaintenanceRecords.scheduledFor))
+        .$dynamic();
 
-    res.json(serializeMaintenance(rows[0], asset ?? null));
-  } catch (err) {
-    next(err);
-  }
-});
+      if (q) {
+        const needle = `%${q}%`;
+        query = query.where(and(...where, or(
+          ilike(companyMaintenanceRecords.title, needle),
+          ilike(companyMaintenanceRecords.description, needle),
+        )!));
+      }
 
-// ─── POST /company/:id/maintenances ───────────────────────────────────────────
+      const rows = await query;
+      const itemsMap = await loadItemsMap(rows.map((r) => r.m.id));
+      res.json({
+        data: rows.map((r) => serializeMaintenance(r.m, itemsMap.get(r.m.id) ?? [])),
+        total: rows.length,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── GET /company/:id/maintenances/agenda ────────────────────────────────────
+// Para la pantalla de Agendar: devuelve Programados en un rango de fechas.
+
+router.get(
+  '/agenda',
+  requireModule('maintenance'),
+  requirePermission('maintenance', 'agenda', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const from = (req.query.from as string) ? new Date(req.query.from as string) : new Date();
+      const to   = (req.query.to   as string) ? new Date(req.query.to   as string) : (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d; })();
+
+      const rows = await db
+        .select({
+          m: companyMaintenanceRecords,
+          assetName:  companyAssets.name,
+          assetPlate: companyAssets.plate,
+          workshopName: companyWorkshops.name,
+        })
+        .from(companyMaintenanceRecords)
+        .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
+        .leftJoin(companyWorkshops, eq(companyWorkshops.id, companyMaintenanceRecords.workshopId))
+        .where(and(
+          eq(companyMaintenanceRecords.companyId, companyId),
+          gte(companyMaintenanceRecords.scheduledFor, from),
+          lte(companyMaintenanceRecords.scheduledFor, to),
+        ))
+        .orderBy(companyMaintenanceRecords.scheduledFor);
+
+      const itemsMap = await loadItemsMap(rows.map((r) => r.m.id));
+      res.json({
+        data: rows.map((r) => serializeMaintenance(r.m, itemsMap.get(r.m.id) ?? [])),
+        total: rows.length,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── GET /company/:id/maintenances/:id ───────────────────────────────────────
+
+router.get(
+  '/:id',
+  requireModule('maintenance'),
+  requirePermission('maintenance', 'records', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+
+      const [row] = await db
+        .select({
+          m: companyMaintenanceRecords,
+          assetName:  companyAssets.name,
+          assetPlate: companyAssets.plate,
+          workshopName: companyWorkshops.name,
+        })
+        .from(companyMaintenanceRecords)
+        .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
+        .leftJoin(companyWorkshops, eq(companyWorkshops.id, companyMaintenanceRecords.workshopId))
+        .where(and(
+          eq(companyMaintenanceRecords.id, id),
+          eq(companyMaintenanceRecords.companyId, companyId),
+        ))
+        .limit(1);
+      if (!row) throw new NotFoundError('Mantenimiento', req.params.id);
+
+      const itemsMap = await loadItemsMap([id]);
+      res.json(serializeMaintenance(row.m, itemsMap.get(id) ?? []));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── GET /company/:id/maintenances/:id/items ─────────────────────────────────
+
+router.get(
+  '/:id/items',
+  requireModule('maintenance'),
+  requirePermission('maintenance', 'records', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+
+      const itemsMap = await loadItemsMap([id]);
+      res.json({ data: itemsMap.get(id) ?? [], total: (itemsMap.get(id) ?? []).length });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── POST /company/:id/maintenances ──────────────────────────────────────────
 
 router.post(
   '/',
-  requireModule('mantenimiento'),
-  requireSupervisor,
+  requireModule('maintenance'),
+  requirePermission('maintenance', 'execution', 'crear'),
   validate(createMaintenanceSchema),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
       const body = req.body as z.infer<typeof createMaintenanceSchema>;
+      const userId = parseId('company-user', req.user!.sub);
 
       const assetId = parseId('asset', body.assetId);
+      const [asset] = await db.select({ id: companyAssets.id }).from(companyAssets)
+        .where(and(eq(companyAssets.id, assetId), eq(companyAssets.companyId, companyId))).limit(1);
+      if (!asset) throw new NotFoundError('Activo', body.assetId);
 
-      // Verificar que el activo pertenece a esta empresa
-      const asset = await db
-        .select()
-        .from(companyAssets)
-        .where(and(eq(companyAssets.id, assetId), eq(companyAssets.companyId, companyId)))
-        .limit(1);
-      if (!asset.length) throw new NotFoundError('Activo', body.assetId);
+      const total = (body.items ?? []).reduce((acc, i) => acc + (i.quantity * i.unitCost), 0);
 
       const [created] = await db
-        .insert(companyMaintenances)
-        .values({ ...body, companyId, assetId })
+        .insert(companyMaintenanceRecords)
+        .values({
+          companyId,
+          assetId,
+          workshopId:    body.workshopId ? parseId('workshop', body.workshopId) : null,
+          type:          body.type,
+          status:        body.status,
+          category:      body.category,
+          title:         body.title,
+          description:   body.description ?? null,
+          odometerKm:    body.odometerKm ?? null,
+          cadenceKind:   body.cadenceKind,
+          cadenceValue:  body.cadenceValue ?? null,
+          nextTriggerKm: body.nextTriggerKm ?? null,
+          scheduledFor:  new Date(body.scheduledFor),
+          notes:         body.notes ?? null,
+          totalCost:     total.toFixed(2),
+          createdBy:     userId,
+        })
         .returning();
 
+      // Insertar items si los hay
+      if (body.items?.length) {
+        await db.insert(companyMaintenanceItems).values(
+          body.items.map((i) => ({
+            maintenanceId: created.id,
+            supplierId: i.supplierId ? parseId('supplier', i.supplierId) : null,
+            name: i.name,
+            quantity: i.quantity.toFixed(2),
+            unitCost: i.unitCost.toFixed(2),
+            subtotal: (i.quantity * i.unitCost).toFixed(2),
+          })),
+        );
+      }
+
       await logAudit(db, companyId, {
-        entity: 'maintenances',
+        entity: 'mantenimiento',
         entityId: toId('maintenance', created.id),
         action: 'create',
         actorId: req.user!.sub,
         actorName: req.user!.name,
-        description: `Mantenimiento "${created.title}" creado para "${asset[0].name}".`,
-        metadata: {
-          maintenanceTitle: created.title,
-          kind: created.kind,
-          priority: created.priority,
-          status: created.status,
-          assetId: toId('asset', asset[0].id),
-          assetName: asset[0].name,
-          assetCode: asset[0].code,
-          scheduledDate: created.scheduledDate,
-          dueDate: created.dueDate,
-          technician: created.technician,
-        },
+        description: `Mantenimiento "${created.title}" creado.`,
       });
 
-      res.status(201).json(serializeMaintenance(created, { name: asset[0].name, plate: asset[0].plate }));
+      // Si trae taller, notificar workshop_assigned a los admins
+      if (body.workshopId) {
+        try {
+          await notifyAdmins(companyId, {
+            kind:    'workshop_assigned',
+            title:   `Mantenimiento asignado a taller`,
+            body:    body.title,
+            payload: { maintenanceId: created.id, workshopId: body.workshopId, assetId },
+          });
+        } catch (notifErr) {
+          console.warn('notifyAdmins falló (no crítico):', notifErr);
+        }
+      }
+
+      const itemsMap = await loadItemsMap([created.id]);
+      res.status(201).json(serializeMaintenance(created, itemsMap.get(created.id) ?? []));
     } catch (err) {
       next(err);
     }
-  }
+  },
 );
 
-// ─── PUT /company/:id/maintenances/:maintId ───────────────────────────────────
+// ─── PUT /company/:id/maintenances/:id ───────────────────────────────────────
 
 router.put(
-  '/:maintId',
-  requireModule('mantenimiento'),
-  requireSupervisor,
+  '/:id',
+  requireModule('maintenance'),
+  requirePermission('maintenance', 'execution', 'editar'),
   validate(updateMaintenanceSchema),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
-      const maintId = parseId('maintenance', req.params.maintId);
+      const id = parseId('maintenance', req.params.id);
       const body = req.body as z.infer<typeof updateMaintenanceSchema>;
 
       const existing = await db
         .select()
-        .from(companyMaintenances)
-        .where(
-          and(
-            eq(companyMaintenances.id, maintId),
-            eq(companyMaintenances.companyId, companyId)
-          )
-        )
+        .from(companyMaintenanceRecords)
+        .where(and(
+          eq(companyMaintenanceRecords.id, id),
+          eq(companyMaintenanceRecords.companyId, companyId),
+        ))
         .limit(1);
+      if (!existing.length) throw new NotFoundError('Mantenimiento', req.params.id);
 
-      if (!existing.length) throw new NotFoundError('Mantenimiento', req.params.maintId);
+      const update: any = { updatedAt: new Date() };
+      if (body.workshopId    !== undefined) update.workshopId    = body.workshopId ? parseId('workshop', body.workshopId) : null;
+      if (body.type          !== undefined) update.type          = body.type;
+      if (body.status        !== undefined) update.status        = body.status;
+      if (body.category      !== undefined) update.category      = body.category;
+      if (body.title         !== undefined) update.title         = body.title;
+      if (body.description   !== undefined) update.description   = body.description;
+      if (body.odometerKm    !== undefined) update.odometerKm    = body.odometerKm;
+      if (body.cadenceKind   !== undefined) update.cadenceKind   = body.cadenceKind;
+      if (body.cadenceValue  !== undefined) update.cadenceValue  = body.cadenceValue;
+      if (body.nextTriggerKm !== undefined) update.nextTriggerKm = body.nextTriggerKm;
+      if (body.scheduledFor  !== undefined) update.scheduledFor  = new Date(body.scheduledFor);
+      if (body.executedAt    !== undefined) update.executedAt    = body.executedAt ? new Date(body.executedAt) : null;
+      if (body.notes         !== undefined) update.notes         = body.notes;
 
-      const updateData: Record<string, unknown> = { ...body, updatedAt: new Date() };
-      if (body.assetId !== undefined) updateData.assetId = parseId('asset', body.assetId!);
+      // Si se están actualizando items, reemplazamos el set completo
+      if (body.items) {
+        const total = body.items.reduce((acc, i) => acc + (i.quantity * i.unitCost), 0);
+        update.totalCost = total.toFixed(2);
+        await db.delete(companyMaintenanceItems).where(eq(companyMaintenanceItems.maintenanceId, id));
+        if (body.items.length) {
+          await db.insert(companyMaintenanceItems).values(
+            body.items.map((i) => ({
+              maintenanceId: id,
+              supplierId: i.supplierId ? parseId('supplier', i.supplierId) : null,
+              name: i.name,
+              quantity: i.quantity.toFixed(2),
+              unitCost: i.unitCost.toFixed(2),
+              subtotal: (i.quantity * i.unitCost).toFixed(2),
+            })),
+          );
+        }
+      }
 
       const [updated] = await db
-        .update(companyMaintenances)
-        .set(updateData)
-        .where(
-          and(
-            eq(companyMaintenances.id, maintId),
-            eq(companyMaintenances.companyId, companyId)
-          )
-        )
+        .update(companyMaintenanceRecords)
+        .set(update)
+        .where(eq(companyMaintenanceRecords.id, id))
         .returning();
 
-      const updatedAsset = await db
-        .select()
-        .from(companyAssets)
-        .where(eq(companyAssets.id, updated.assetId))
-        .limit(1);
-
       await logAudit(db, companyId, {
-        entity: 'maintenances',
+        entity: 'mantenimiento',
         entityId: toId('maintenance', updated.id),
         action: 'update',
         actorId: req.user!.sub,
         actorName: req.user!.name,
         description: `Mantenimiento "${updated.title}" actualizado.`,
-        metadata: {
-          maintenanceTitle: updated.title,
-          kind: updated.kind,
-          priority: updated.priority,
-          status: updated.status,
-          assetId: toId('asset', updatedAsset[0]?.id),
-          assetName: updatedAsset[0]?.name,
-          assetCode: updatedAsset[0]?.code,
-          scheduledDate: updated.scheduledDate,
-          dueDate: updated.dueDate,
-          technician: updated.technician,
-          notes: updated.notes,
-        },
       });
 
-      res.json(serializeMaintenance(updated, updatedAsset[0] ? { name: updatedAsset[0].name, plate: updatedAsset[0].plate } : null));
+      const itemsMap = await loadItemsMap([id]);
+      res.json(serializeMaintenance(updated, itemsMap.get(id) ?? []));
     } catch (err) {
       next(err);
     }
-  }
+  },
 );
 
-// ─── DELETE /company/:id/maintenances/:maintId ────────────────────────────────
+// ─── POST /company/:id/maintenances/:id/complete ────────────────────────────
+
+router.post(
+  '/:id/complete',
+  requireModule('maintenance'),
+  requirePermission('maintenance', 'execution', 'editar'),
+  requireSupervisor,
+  validate(completeSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+      const body = req.body as z.infer<typeof completeSchema>;
+      const userId = parseId('company-user', req.user!.sub);
+
+      const [existing] = await db
+        .select()
+        .from(companyMaintenanceRecords)
+        .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
+        .limit(1);
+      if (!existing) throw new NotFoundError('Mantenimiento', req.params.id);
+      if (existing.status === 'Completado') throw new AppError(409, 'El mantenimiento ya está completado');
+      if (existing.status === 'Cancelado')  throw new AppError(409, 'El mantenimiento está cancelado');
+
+      const completedAt = body.completedAt ? new Date(body.completedAt) : new Date();
+      const executedAt  = existing.executedAt ?? completedAt;
+
+      // Si llegan items, reemplazamos
+      if (body.items) {
+        const total = body.items.reduce((acc, i) => acc + (i.quantity * i.unitCost), 0);
+        await db.delete(companyMaintenanceItems).where(eq(companyMaintenanceItems.maintenanceId, id));
+        if (body.items.length) {
+          await db.insert(companyMaintenanceItems).values(
+            body.items.map((i) => ({
+              maintenanceId: id,
+              supplierId: i.supplierId ? parseId('supplier', i.supplierId) : null,
+              name: i.name,
+              quantity: i.quantity.toFixed(2),
+              unitCost: i.unitCost.toFixed(2),
+              subtotal: (i.quantity * i.unitCost).toFixed(2),
+            })),
+          );
+        }
+        await db.update(companyMaintenanceRecords)
+          .set({ totalCost: total.toFixed(2) })
+          .where(eq(companyMaintenanceRecords.id, id));
+      }
+
+      const [updated] = await db
+        .update(companyMaintenanceRecords)
+        .set({
+          status:      'Completado',
+          completedAt,
+          completedBy: userId,
+          executedAt,
+          odometerKm:  body.odometerKm ?? existing.odometerKm,
+          notes:       body.notes ?? existing.notes,
+          updatedAt:   new Date(),
+        })
+        .where(eq(companyMaintenanceRecords.id, id))
+        .returning();
+
+      await logAudit(db, companyId, {
+        entity: 'mantenimiento',
+        entityId: toId('maintenance', updated.id),
+        action: 'complete',
+        actorId: req.user!.sub,
+        actorName: req.user!.name,
+        description: `Mantenimiento "${updated.title}" marcado como completado.`,
+      });
+
+      // Notificar al admin
+      await notifyAdmins(companyId, {
+        kind:  'maintenance_completed',
+        title: `Mantenimiento completado: ${updated.title ?? updated.category}`,
+        body:  body.notes ?? undefined,
+        payload: { maintenanceId: updated.id, assetId: updated.assetId, totalCost: Number(updated.totalCost) },
+      });
+
+      // Reagendar si tiene periodicidad
+      const newId = await rescheduleCompletedMaintenance({
+        completedId: id,
+        companyId,
+        executedAt,
+        odometerKm: body.odometerKm ?? null,
+      });
+
+      const itemsMap = await loadItemsMap([id]);
+      res.json({
+        ...serializeMaintenance(updated, itemsMap.get(id) ?? []),
+        rescheduledId: newId ? toId('maintenance', newId) : null,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── POST /company/:id/maintenances/:id/cancel ───────────────────────────────
+
+router.post(
+  '/:id/cancel',
+  requireModule('maintenance'),
+  requirePermission('maintenance', 'execution', 'editar'),
+  requireSupervisor,
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+
+      const existing = await db
+        .select()
+        .from(companyMaintenanceRecords)
+        .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
+        .limit(1);
+      if (!existing.length) throw new NotFoundError('Mantenimiento', req.params.id);
+      if (existing[0].status === 'Completado') throw new AppError(409, 'No se puede cancelar un mantenimiento completado');
+
+      const [updated] = await db
+        .update(companyMaintenanceRecords)
+        .set({ status: 'Cancelado', updatedAt: new Date() })
+        .where(eq(companyMaintenanceRecords.id, id))
+        .returning();
+
+      await logAudit(db, companyId, {
+        entity: 'mantenimiento',
+        entityId: toId('maintenance', updated.id),
+        action: 'cancel',
+        actorId: req.user!.sub,
+        actorName: req.user!.name,
+        description: `Mantenimiento "${updated.title}" cancelado.`,
+      });
+
+      res.json(serializeMaintenance(updated, []));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── DELETE /company/:id/maintenances/:id ────────────────────────────────────
 
 router.delete(
-  '/:maintId',
-  requireModule('mantenimiento'),
+  '/:id',
+  requireModule('maintenance'),
+  requirePermission('maintenance', 'records', 'eliminar'),
   requireAdmin,
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
-      const maintId = parseId('maintenance', req.params.maintId);
+      const id = parseId('maintenance', req.params.id);
 
       const existing = await db
         .select()
-        .from(companyMaintenances)
-        .where(
-          and(
-            eq(companyMaintenances.id, maintId),
-            eq(companyMaintenances.companyId, companyId)
-          )
-        )
+        .from(companyMaintenanceRecords)
+        .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
         .limit(1);
+      if (!existing.length) throw new NotFoundError('Mantenimiento', req.params.id);
 
-      if (!existing.length) throw new NotFoundError('Mantenimiento', req.params.maintId);
-
-      await db
-        .delete(companyMaintenances)
-        .where(
-          and(
-            eq(companyMaintenances.id, maintId),
-            eq(companyMaintenances.companyId, companyId)
-          )
-        );
+      await db.delete(companyMaintenanceRecords).where(eq(companyMaintenanceRecords.id, id));
 
       await logAudit(db, companyId, {
-        entity: 'maintenances',
-        entityId: toId('maintenance', maintId),
+        entity: 'mantenimiento',
+        entityId: toId('maintenance', id),
         action: 'delete',
         actorId: req.user!.sub,
         actorName: req.user!.name,
         description: `Mantenimiento "${existing[0].title}" eliminado.`,
-        metadata: {
-          maintenanceTitle: existing[0].title,
-          kind: existing[0].kind,
-          priority: existing[0].priority,
-        },
       });
 
       res.json({ ok: true });
     } catch (err) {
       next(err);
     }
-  }
+  },
 );
-
-// ─── POST /company/:id/maintenances/:maintId/complete ────────────────────────
-
-router.post(
-  '/:maintId/complete',
-  requireModule('mantenimiento'),
-  requireSupervisor,
-  validate(completeMaintenanceSchema),
-  async (req, res, next) => {
-    try {
-      const companyId = req.companyId!;
-      const maintId = parseId('maintenance', req.params.maintId);
-      const body = req.body as z.infer<typeof completeMaintenanceSchema>;
-
-      const existing = await db
-        .select()
-        .from(companyMaintenances)
-        .where(
-          and(
-            eq(companyMaintenances.id, maintId),
-            eq(companyMaintenances.companyId, companyId)
-          )
-        )
-        .limit(1);
-
-      if (!existing.length) throw new NotFoundError('Mantenimiento', req.params.maintId);
-
-      if (existing[0].status === 'Completado') {
-        throw new AppError(409, 'El mantenimiento ya está completado.');
-      }
-
-      const today = new Date().toISOString().split('T')[0];
-
-      const [updated] = await db
-        .update(companyMaintenances)
-        .set({
-          status: 'Completado',
-          completedDate: body.completedDate ?? today,
-          ...(body.cost !== undefined && { cost: String(body.cost) }),
-          ...(body.technician !== undefined && { technician: body.technician }),
-          ...(body.notes !== undefined && { notes: body.notes }),
-          ...(body.photoUrls !== undefined && { photoUrls: body.photoUrls }),
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(companyMaintenances.id, maintId),
-            eq(companyMaintenances.companyId, companyId)
-          )
-        )
-        .returning();
-
-      await logAudit(db, companyId, {
-        entity: 'maintenances',
-        entityId: toId('maintenance', updated.id),
-        action: 'complete',
-        actorId: req.user!.sub,
-        actorName: req.user!.name,
-        description: `Mantenimiento "${updated.title}" marcado como completado.`,
-        metadata: {
-          maintenanceTitle: updated.title,
-          completedDate: updated.completedDate,
-          technician: updated.technician,
-          cost: updated.cost,
-          notes: updated.notes,
-        },
-      });
-
-      // ── Enrichment ────────────────────────────────────────────────────────────
-      const [asset] = await db
-        .select({ name: companyAssets.name, plate: companyAssets.plate })
-        .from(companyAssets)
-        .where(and(eq(companyAssets.id, updated.assetId), eq(companyAssets.companyId, companyId)))
-        .limit(1);
-
-      res.json(serializeMaintenance(updated, asset ?? null));
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
-// ─── Serializer ───────────────────────────────────────────────────────────────
-
-function serializeMaintenance(
-  m: typeof companyMaintenances.$inferSelect,
-  assetInfo?: { name: string | null; plate: string | null } | null
-) {
-  return {
-    id: toId('maintenance', m.id),
-    companyId: toId('company', m.companyId),
-    assetId: toId('asset', m.assetId),
-    title: m.title,
-    kind: m.kind,
-    priority: m.priority,
-    status: m.status,
-    scheduledDate: m.scheduledDate,
-    dueDate: m.dueDate,
-    completedDate: m.completedDate,
-    technician: m.technician,
-    cost: m.cost ? Number(m.cost) : null,
-    laborCost: m.laborCost ? Number(m.laborCost) : null,
-    partsCost: m.partsCost ? Number(m.partsCost) : null,
-    photoUrls: m.photoUrls ?? [],
-    notes: m.notes,
-    // ── Enrichment ─────────────────────────────────────────────────────────────
-    assetName: assetInfo?.name ?? null,
-    assetPlate: assetInfo?.plate ?? null,
-    createdAt: m.createdAt,
-    updatedAt: m.updatedAt,
-  };
-}
 
 export default router;
+

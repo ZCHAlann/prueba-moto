@@ -240,36 +240,165 @@ export const companyAssignments = pgTable(
 );
 
 // ─────────────────────────────────────────────
-// Mantenimientos
+// Mantenimientos v2 (0006_maintenance_v2.sql)
 // ─────────────────────────────────────────────
+//
+// Reemplaza el `companyMaintenances` legacy (que estaba vacío y se borró en
+// la migración 0006). Modelo unificado con soporte para:
+//   * Tipo: Preventivo | Correctivo | Programado.
+//   * Estado: Programado | En curso | PendienteAtencion | Completado | Cancelado.
+//   * Categoría: Primordial (Bombas, Motores) | Aceite (Cambio, Inventario) | Otro.
+//   * Periodicidad automática: none | weekly | days(N) | monthly | km_based(K).
+//   * Taller, proveedores, repuestos (items), costo total, notas.
+//   * parent_id para trazar la cadena de reagendamientos.
 
-export const companyMaintenances = pgTable(
-  'company_maintenances',
-  {
-    id: serial('id').primaryKey(),
-    companyId: serial('company_id')
-      .notNull()
-      .references(() => companies.id, { onDelete: 'cascade' }),
-    assetId: serial('asset_id')
-      .notNull()
-      .references(() => companyAssets.id, { onDelete: 'cascade' }),
-    title: varchar('title', { length: 160 }).notNull(),
-    kind: varchar('kind', { length: 40 }),
-    priority: varchar('priority', { length: 40 }),
-    status: varchar('status', { length: 40 }).default('Pendiente'),
-    scheduledDate: date('scheduled_date'),
-    dueDate: date('due_date'),
-    completedDate: date('completed_date'),
-    technician: varchar('technician', { length: 160 }),
-    cost: numeric('cost', { precision: 12, scale: 2 }),
-    laborCost: numeric('labor_cost', { precision: 12, scale: 2 }),
-    partsCost: numeric('parts_cost', { precision: 12, scale: 2 }),
-    photoUrls: text('photo_urls').array().default([]),
-    notes: text('notes'),
-    createdAt: timestamp('created_at').notNull().defaultNow(),
-    updatedAt: timestamp('updated_at').notNull().defaultNow(),
-  }
-);
+export const maintenanceTypeEnum = pgEnum('maintenance_type_enum', [
+  'Preventivo',
+  'Correctivo',
+  'Programado',
+]);
+
+export const maintenanceStatusEnum = pgEnum('maintenance_status_enum', [
+  'Programado',
+  'En curso',
+  'PendienteAtencion',
+  'Completado',
+  'Cancelado',
+]);
+
+export const maintenanceCategoryEnum = pgEnum('maintenance_category_enum', [
+  'Primordial:Bombas',
+  'Primordial:Motores',
+  'Aceite:Cambio',
+  'Aceite:Inventario',
+  'Otro',
+]);
+
+export const maintenanceCadenceEnum = pgEnum('maintenance_cadence_enum', [
+  'none',
+  'weekly',
+  'days',
+  'monthly',
+  'km_based',
+]);
+
+export const notificationKindEnum = pgEnum('notification_kind_enum', [
+  'maintenance_due',
+  'maintenance_scheduled',
+  'maintenance_completed',
+  'maintenance_overshoot_km',
+  'workshop_assigned',
+  'supplier_invoice',
+  'system',
+]);
+
+export const devicePlatformEnum = pgEnum('device_platform_enum', [
+  'android',
+  'ios',
+  'web',
+]);
+
+// ── Talleres ─────────────────────────────────────────────────────────────────
+export const companyWorkshops = pgTable('company_workshops', {
+  id:           serial('id').primaryKey(),
+  companyId:    integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  name:         varchar('name', { length: 120 }).notNull(),
+  address:      text('address'),
+  phone:        varchar('phone', { length: 40 }),
+  contactName:  varchar('contact_name', { length: 120 }),
+  nit:          varchar('nit', { length: 40 }),
+  notes:        text('notes'),
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+  updatedAt:    timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ── Proveedores ───────────────────────────────────────────────────────────────
+export const companySuppliers = pgTable('company_suppliers', {
+  id:           serial('id').primaryKey(),
+  companyId:    integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  name:         varchar('name', { length: 120 }).notNull(),
+  contactName:  varchar('contact_name', { length: 120 }),
+  phone:        varchar('phone', { length: 40 }),
+  email:        varchar('email', { length: 180 }),
+  nit:          varchar('nit', { length: 40 }),
+  notes:        text('notes'),
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+  updatedAt:    timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ── Lecturas de odómetro ─────────────────────────────────────────────────────
+export const companyOdometerReadings = pgTable('company_odometer_readings', {
+  id:         serial('id').primaryKey(),
+  companyId:  integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  assetId:    integer('asset_id').notNull().references(() => companyAssets.id, { onDelete: 'cascade' }),
+  km:         integer('km').notNull(),
+  takenAt:    timestamp('taken_at').notNull().defaultNow(),
+  source:     varchar('source', { length: 20 }).notNull().default('manual'),
+  notes:      text('notes'),
+  createdBy:  integer('created_by').references(() => companyUsers.id, { onDelete: 'set null' }),
+});
+
+// ── Mantenimientos ───────────────────────────────────────────────────────────
+export const companyMaintenanceRecords = pgTable('company_maintenance_records', {
+  id:              serial('id').primaryKey(),
+  companyId:       integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  assetId:         integer('asset_id').notNull().references(() => companyAssets.id, { onDelete: 'cascade' }),
+  workshopId:      integer('workshop_id').references(() => companyWorkshops.id, { onDelete: 'set null' }),
+  type:            maintenanceTypeEnum('type').notNull().default('Programado'),
+  status:          maintenanceStatusEnum('status').notNull().default('Programado'),
+  category:        maintenanceCategoryEnum('category').notNull().default('Otro'),
+  title:           varchar('title', { length: 200 }),
+  description:     text('description'),
+  odometerKm:      integer('odometer_km'),
+  cadenceKind:     maintenanceCadenceEnum('cadence_kind').notNull().default('none'),
+  cadenceValue:    integer('cadence_value'),
+  nextTriggerKm:   integer('next_trigger_km'),
+  scheduledFor:    timestamp('scheduled_for').notNull(),
+  executedAt:      timestamp('executed_at'),
+  completedAt:     timestamp('completed_at'),
+  notes:           text('notes'),
+  totalCost:       numeric('total_cost', { precision: 12, scale: 2 }).notNull().default('0'),
+  parentId:        integer('parent_id'),
+  createdBy:       integer('created_by').references(() => companyUsers.id, { onDelete: 'set null' }),
+  completedBy:     integer('completed_by').references(() => companyUsers.id, { onDelete: 'set null' }),
+  createdAt:       timestamp('created_at').notNull().defaultNow(),
+  updatedAt:       timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ── Items / repuestos ────────────────────────────────────────────────────────
+export const companyMaintenanceItems = pgTable('company_maintenance_items', {
+  id:             serial('id').primaryKey(),
+  maintenanceId:  integer('maintenance_id').notNull().references(() => companyMaintenanceRecords.id, { onDelete: 'cascade' }),
+  supplierId:     integer('supplier_id').references(() => companySuppliers.id, { onDelete: 'set null' }),
+  name:           varchar('name', { length: 180 }).notNull(),
+  quantity:       numeric('quantity', { precision: 10, scale: 2 }).notNull().default('1'),
+  unitCost:       numeric('unit_cost', { precision: 12, scale: 2 }).notNull().default('0'),
+  subtotal:       numeric('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
+});
+
+// ── Notificaciones in-app ────────────────────────────────────────────────────
+export const companyNotifications = pgTable('company_notifications', {
+  id:         serial('id').primaryKey(),
+  companyId:  integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  userId:     integer('user_id').notNull().references(() => companyUsers.id, { onDelete: 'cascade' }),
+  kind:       notificationKindEnum('kind').notNull(),
+  title:      varchar('title', { length: 200 }).notNull(),
+  body:       text('body'),
+  payload:    jsonb('payload').notNull().default({}),
+  readAt:     timestamp('read_at'),
+  createdAt:  timestamp('created_at').notNull().defaultNow(),
+});
+
+// ── Tokens de dispositivo (FCM / Web Push) ───────────────────────────────────
+export const companyDeviceTokens = pgTable('company_device_tokens', {
+  id:          serial('id').primaryKey(),
+  userId:      integer('user_id').notNull().references(() => companyUsers.id, { onDelete: 'cascade' }),
+  companyId:   integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  token:       text('token').notNull().unique(),
+  platform:    devicePlatformEnum('platform').notNull(),
+  lastSeenAt:  timestamp('last_seen_at').notNull().defaultNow(),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
+});
 
 // ─────────────────────────────────────────────
 // Combustible
@@ -319,6 +448,37 @@ export const companyAlerts = pgTable('company_alerts', {
 // ─────────────────────────────────────────────
 // Checklist categorías
 // ─────────────────────────────────────────────
+//
+// Una "categoría" es la plantilla que define QUÉ se inspecciona (items).
+// Desde 2026-06 soporta asignación, periodicidad y alcance:
+//
+//  - Asignación (target_roles + target_user_ids):
+//      * Ambos vacíos  -> visible para todos los usuarios de la empresa.
+//      * Alguno lleno  -> visible solo si el usuario está en la unión (rol O user_id).
+//
+//  - Periodicidad (cadence_kind + cadence_days + window_days):
+//      * 'none'  -> no hay ciclo, no genera pendientes.
+//      * 'weekly'-> ciclo lunes 00:00 — domingo 23:59 (semana natural).
+//      * 'days'  -> ciclo cada N días corridos (cadence_days).
+//      * window_days = margen desde el inicio del ciclo para hacer el checklist.
+//                      Vencido -> no se puede hacer, pasa al historial.
+//
+//  - Alcance (scope_kind + scope_asset_type + scope_site_id):
+//      * 'pick'         -> el usuario elige el activo al hacer el checklist.
+//      * 'site_assets'  -> aplica a todos los vehículos de la sede del usuario.
+//      * 'asset_type'   -> aplica a todos los activos de un tipo (Vehiculo, etc.).
+//
+export const checklistCadenceKindEnum = pgEnum('checklist_cadence_kind_enum', [
+  'none',
+  'weekly',
+  'days',
+]);
+
+export const checklistScopeKindEnum = pgEnum('checklist_scope_kind_enum', [
+  'pick',
+  'site_assets',
+  'asset_type',
+]);
 
 export const companyChecklistCategories = pgTable(
   'company_checklist_categories',
@@ -330,6 +490,23 @@ export const companyChecklistCategories = pgTable(
     name: varchar('name', { length: 160 }).notNull(),
     description: text('description'),
     items: text('items').array().default([]),
+
+    // ── Asignación (opcional) ──
+    targetRoles: text('target_roles').array().notNull().default([]),
+    targetUserIds: text('target_user_ids').array().notNull().default([]),
+
+    // ── Periodicidad ──
+    cadenceKind: checklistCadenceKindEnum('cadence_kind')
+      .notNull()
+      .default('none'),
+    cadenceDays: integer('cadence_days'),
+    windowDays: integer('window_days').notNull().default(7),
+
+    // ── Alcance del activo ──
+    scopeKind: checklistScopeKindEnum('scope_kind').notNull().default('pick'),
+    scopeAssetType: varchar('scope_asset_type', { length: 40 }),
+    scopeSiteId: integer('scope_site_id'),
+
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   }

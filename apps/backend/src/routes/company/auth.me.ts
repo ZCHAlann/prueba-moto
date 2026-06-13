@@ -246,4 +246,79 @@ router.patch('/password', async (req, res, next) => {
   }
 });
 
+// ─── GET /api/company/:companyId/auth/me/driver-assignment ────────────────────
+// Devuelve la asignación ACTIVA del usuario actual (si su rol es 'conductor').
+// Si no es conductor, devuelve { hasAssignment: false }.
+// Se usa para que el frontend restrinja el checklist wizard al vehículo
+// de la asignación, sin que el conductor pueda elegir otro.
+
+import { companyDrivers, companyAssignments, companyAssets } from '../../db/schema/operational';
+
+router.get('/driver-assignment', async (req, res, next) => {
+  try {
+    const { userId, companyId } = getJwtIdentity(req);
+    const role = req.user!.role;
+    if (role !== 'conductor') {
+      return res.json({ hasAssignment: false });
+    }
+
+    // 1) Resolver el driverId del usuario.
+    const [driverRow] = await db
+      .select({ id: companyDrivers.id, firstName: companyDrivers.firstName, lastName: companyDrivers.lastName })
+      .from(companyDrivers)
+      .where(and(eq(companyDrivers.userId, userId), eq(companyDrivers.companyId, companyId)))
+      .limit(1);
+
+    if (!driverRow) {
+      return res.json({ hasAssignment: false, reason: 'not_a_driver' });
+    }
+
+    // 2) Buscar asignación activa.
+    const [assignment] = await db
+      .select({
+        assignmentId:   companyAssignments.id,
+        assetId:        companyAssignments.assetId,
+        startDate:      companyAssignments.startDate,
+        assetName:      companyAssets.name,
+        assetCode:      companyAssets.code,
+        assetPlate:     companyAssets.plate,
+        assetBrand:     companyAssets.brand,
+        assetModel:     companyAssets.model,
+      })
+      .from(companyAssignments)
+      .leftJoin(companyAssets, eq(companyAssets.id, companyAssignments.assetId))
+      .where(and(
+        eq(companyAssignments.companyId, companyId),
+        eq(companyAssignments.driverId, driverRow.id),
+        eq(companyAssignments.status, 'Activa'),
+      ))
+      .limit(1);
+
+    if (!assignment) {
+      return res.json({ hasAssignment: false, reason: 'no_active_assignment' });
+    }
+
+    return res.json({
+      hasAssignment: true,
+      assignment: {
+        id: toId('assignment', assignment.assignmentId),
+        assetId: toId('asset', assignment.assetId),
+        driverId: toId('driver', driverRow.id),
+        driverName: `${driverRow.firstName ?? ''} ${driverRow.lastName ?? ''}`.trim() || '—',
+        startDate: assignment.startDate,
+        asset: {
+          id: toId('asset', assignment.assetId),
+          name: assignment.assetName,
+          code: assignment.assetCode,
+          plate: assignment.assetPlate,
+          brand: assignment.assetBrand,
+          model: assignment.assetModel,
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

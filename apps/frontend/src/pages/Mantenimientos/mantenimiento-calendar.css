@@ -1,0 +1,96 @@
+/*
+  mantenimiento-calendar.css
+  Importar en MantenimientosPage o en el CSS global de la app.
+  Afecta solo los elementos .fc dentro de .fc-container.
+*/
+
+/* ── Reset de fondo/borde nativo de FC ── */
+.fc-container .fc {
+  background: transparent;
+  height: 100%;
+}
+
+.fc-container .fc-theme-standard td,
+.fc-container .fc-theme-standard th,
+.fc-container .fc-theme-standard .fc-scrollgrid {
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+/* ── Cabecera de días (DOM, LUN, …) ── */
+.fc-container .fc-col-header-cell-cushion {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 8px 4px;
+}
+
+/* ── Número de día ── */
+.fc-container .fc-daygrid-day-number {
+  color: #9ca3af;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.fc-container .fc-day-today {
+  background: rgba(59, 130, 246, 0.08) !important;
+}
+
+.fc-container .fc-day-today .fc-daygrid-day-number {
+  color: #60a5fa;
+  font-weight: 700;
+}
+
+/* ── Eventos ── */
+.fc-container .fc-event {
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border: none !important;
+  cursor: pointer;
+}
+
+.fc-container .fc-event:hover {
+  filter: brightness(1.15);
+}
+
+/* ── "más eventos" link ── */
+.fc-container .fc-daygrid-more-link {
+  color: #60a5fa;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* ── Scrollgrid sin borde exterior ── */
+.fc-container .fc-scrollgrid {
+  border: none !important;
+}
+
+.fc-container .fc-scrollgrid-section > td {
+  border: none;
+}
+
+/* ── Vista semana / lista ── */
+.fc-container .fc-timegrid-slot-label-cushion,
+.fc-container .fc-list-event-title,
+.fc-container .fc-list-day-cushion {
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.fc-container .fc-list-event:hover td {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.fc-container .fc-list-empty {
+  background: transparent;
+  color: #6b7280;
+}
+
+/* ── Selección de rango ── */
+.fc-container .fc-highlight {
+  background: rgba(59, 130, 246, 0.15);
+  border-radius: 4px;
+}

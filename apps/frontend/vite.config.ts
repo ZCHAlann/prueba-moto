@@ -34,7 +34,7 @@ export default defineConfig({
         ws: true,
         changeOrigin: true,
         secure: false,
-        rewrite: (path) => path, // ← añade esto, fuerza que Vite procese el path
+        rewrite: (path) => path, 
       },
     },
   },

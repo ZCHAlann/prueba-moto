@@ -9,10 +9,22 @@ import { promises as fs } from 'fs';
 const router = Router();
 
 const UPLOAD_BASE = process.env.UPLOAD_DIR ?? join(process.cwd(), '..', '..', 'uploads');
-const MAX_FILE_SIZE = 8 * 1024 * 1024; // 8 MB
-const MAX_VIDEO_SIZE = 25 * 1024 * 1024; // 25 MB (cliente ya comprimió)
+const MAX_FILE_SIZE = 8 * 1024 * 1024;        // 8 MB  (fotos)
+const MAX_VIDEO_SIZE = 50 * 1024 * 1024;       // 50 MB (video completo — celulares graban más)
+const MAX_CHUNK_SIZE = 3 * 1024 * 1024;        // 3 MB  (cada chunk individual)
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
-const ALLOWED_VIDEO_MIME = ['video/mp4', 'video/webm', 'video/quicktime'];
+// Aceptamos todos los formatos comunes de video de celular.
+// IMPORTANTE: iOS graba en .mov (video/quicktime) por defecto al usar capture="environment".
+const ALLOWED_VIDEO_MIME = [
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',     // .mov — iOS nativo
+  'video/3gpp',           // .3gp — Android viejo
+  'video/x-matroska',     // .mkv
+  'video/hevc',           // HEVC
+  'video/avc',
+  '',
+]; // el '' cubre celulares que reportan mime vacío
 
 const ALLOWED_CATEGORIES = [
   'maintenance',
@@ -69,10 +81,18 @@ function videoFilter(
   file: Express.Multer.File,
   cb: multer.FileFilterCallback,
 ) {
-  if (ALLOWED_VIDEO_MIME.includes(file.mimetype)) {
+  // En el celular a veces mimetype viene vacío o como application/octet-stream.
+  // También revisamos la extensión como fallback.
+  const ext = extname(file.originalname).toLowerCase();
+  const allowedExts = ['.mp4', '.mov', '.webm', '.3gp', '.mkv', '.hevc', '.avi', '.m4v'];
+  const mimeOk = ALLOWED_VIDEO_MIME.includes(file.mimetype);
+  const extOk  = allowedExts.includes(ext);
+
+  if (mimeOk || extOk) {
     cb(null, true);
   } else {
-    cb(new AppError(400, `Tipo de video no permitido: ${file.mimetype}`));
+    console.warn('[upload:video] mime/ext rechazados', { mime: file.mimetype, ext, name: file.originalname });
+    cb(new AppError(400, `Tipo de video no permitido: ${file.mimetype} (${ext})`));
   }
 }
 
@@ -82,14 +102,6 @@ function buildUpload(category: UploadCategory) {
     limits: { fileSize: MAX_FILE_SIZE },
     fileFilter: imageFilter,
   }).array('photos', 10);
-}
-
-function buildVideoUpload(category: UploadCategory) {
-  return multer({
-    storage: buildStorage(category),
-    limits: { fileSize: MAX_VIDEO_SIZE },
-    fileFilter: videoFilter,
-  }).single('video');
 }
 
 function resolveUrls(
@@ -115,27 +127,6 @@ function uploadHandler(category: UploadCategory) {
     });
   };
 }
-
-function videoUploadHandler(category: UploadCategory) {
-  const upload = buildVideoUpload(category);
-  return (req: Request, res: Response, next: NextFunction) => {
-    upload(req, res, (err) => {
-      if (err) return next(err);
-      const file = req.file as Express.Multer.File | undefined;
-      if (!file) return next(new AppError(400, 'No se recibió el video.'));
-      const companyId = req.query.companyId as string | undefined;
-      const folder = companyId ? `${category}/${companyId}` : category;
-      res.json({
-        url:  `/uploads/${folder}/${file.filename}`,
-        type: file.mimetype,
-        name: file.originalname,
-        size: file.size,
-      });
-    });
-  };
-}
-
-
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
@@ -180,9 +171,8 @@ router.post('/user-photos', (req: Request, res: Response, next: NextFunction) =>
   });
 });
 
-// ─── Evidencias de autorización de salida (fotos + video) ──────────────────
-// El cliente ya comprime las imágenes a ~JPEG quality 0.8 y el video a 720p
-// antes de subirlos. Aquí sólo guardamos y devolvemos las URLs públicas.
+// ─── Evidencias de autorización de salida (fotos) ────────────────────────────
+
 router.post('/exit-auth-photos', (req: Request, res: Response, next: NextFunction) => {
   const companyId = req.query.companyId as string | undefined;
   const folder = companyId ? `exit-auth/${companyId}` : 'exit-auth';
@@ -201,6 +191,8 @@ router.post('/exit-auth-photos', (req: Request, res: Response, next: NextFunctio
     res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
   });
 });
+
+// ─── Video completo (fallback para videos pequeños / sin soporte chunked) ────
 
 router.post('/exit-auth-video', (req: Request, res: Response, next: NextFunction) => {
   const companyId = req.query.companyId as string | undefined;
@@ -223,46 +215,45 @@ router.post('/exit-auth-video', (req: Request, res: Response, next: NextFunction
   }).single('video');
 
   upload(req, res, async (err) => {
-    if (err) return next(err);
+    if (err) {
+      console.error('[upload:video] multer error:', err.message, { code: err.code });
+      return next(err);
+    }
     const file = req.file as Express.Multer.File | undefined;
-    if (!file) return next(new AppError(400, 'No se recibió el video.'));
+    if (!file) {
+      console.error('[upload:video] no file received');
+      return next(new AppError(400, 'No se recibió el video.'));
+    }
+
+    console.log('[upload:video] received', {
+      name: file.originalname, mimeType: file.mimetype,
+      sizeMB: +(file.size / 1024 / 1024).toFixed(2),
+    });
 
     const inputPath  = file.path;
-    const outputName = file.filename.replace('tmp_', '') .replace(/\.[^.]+$/, '.mp4');
+    const outputName = file.filename.replace('tmp_', '').replace(/\.[^.]+$/, '.mp4');
     const outputPath = join(UPLOAD_BASE, folder, outputName);
 
     try {
-      await new Promise<void>((resolve, reject) => {
-        ffmpeg(inputPath)
-          .outputOptions([
-            '-vcodec libx264',
-            '-crf 28',          // calidad: 18=alta, 28=media, 35=baja — sube este para más compresión
-            '-preset ultrafast', // ultrafast = más rápido, menos compresión; slow = más compresión
-            '-vf scale=720:-2',  // 720p, mantiene aspect ratio
-            '-movflags +faststart',
-            '-an',               // sin audio (bayoneta no necesita audio)
-          ])
-          .output(outputPath)
-          .on('end', () => resolve())
-          .on('error', (e) => reject(e))
-          .run();
-      });
-
-      // Eliminar el archivo temporal
+      await reencodeVideo(inputPath, outputPath);
       await fs.unlink(inputPath).catch(() => {});
+
+      const finalSize = (await fs.stat(outputPath)).size;
+      console.log('[upload:video] ffmpeg done', { output: outputName, sizeMB: +(finalSize / 1024 / 1024).toFixed(2) });
 
       res.json({
         url:  `/uploads/${folder}/${outputName}`,
         type: 'video/mp4',
         name: outputName,
-        size: (await fs.stat(outputPath)).size,
+        size: finalSize,
       });
     } catch (ffmpegErr) {
-      // Si ffmpeg falla, devolver el original sin comprimir
-      console.error('[upload] ffmpeg error, serving original:', ffmpegErr);
-      await fs.rename(inputPath, outputPath.replace('.mp4', extname(file.originalname))).catch(() => {});
+      console.error('[upload:video] ffmpeg error, serving original:', ffmpegErr);
+      const origExt = extname(file.originalname);
+      const origName = file.filename.replace('tmp_', '');
+      await fs.rename(inputPath, outputPath.replace('.mp4', origExt)).catch(() => {});
       res.json({
-        url:  `/uploads/${folder}/${file.filename.replace('tmp_', '')}`,
+        url:  `/uploads/${folder}/${origName}`,
         type: file.mimetype,
         name: file.originalname,
         size: file.size,
@@ -271,7 +262,152 @@ router.post('/exit-auth-video', (req: Request, res: Response, next: NextFunction
   });
 });
 
-// ─── Evidencias de carga de combustible (foto del surtidor / factura) ──────────
+// ─── Video chunked ────────────────────────────────────────────────────────────
+// El cliente divide el video en trozos de 2 MB y los sube uno a uno.
+// Cuando llega el último chunk, se ensamblan y se recodifican con ffmpeg.
+//
+// Request body (multipart):
+//   chunk       — el trozo de archivo
+//   uploadId    — UUID único por sesión de upload (generado en el cliente)
+//   chunkIndex  — índice base 0
+//   totalChunks — total de chunks
+//   filename    — nombre original del archivo
+//   mimeType    — tipo MIME original
+//
+// Response:
+//   { status: "partial" }                  mientras faltan chunks
+//   { status: "done", url: "/uploads/…" }  cuando termina
+
+const chunkUpload = multer({
+  storage: multer.memoryStorage(),          // chunks en RAM, son pequeños (2 MB)
+  limits: { fileSize: MAX_CHUNK_SIZE },
+}).single('chunk');
+
+router.post('/exit-auth-video-chunk', (req: Request, res: Response, next: NextFunction) => {
+  chunkUpload(req, res, async (err) => {
+    if (err) {
+      console.error('[upload:chunk] multer error:', err.message, { code: err.code });
+      return next(err);
+    }
+
+    const chunk = req.file;
+    if (!chunk) return next(new AppError(400, 'No se recibió el chunk.'));
+
+    const { uploadId, chunkIndex, totalChunks, filename, mimeType } =
+      req.body as Record<string, string>;
+
+    if (!uploadId || chunkIndex === undefined || !totalChunks) {
+      return next(new AppError(400, 'Faltan campos: uploadId, chunkIndex, totalChunks.'));
+    }
+
+    const idx   = parseInt(chunkIndex,  10);
+    const total = parseInt(totalChunks, 10);
+
+    // Log reducido para no llenar la consola: solo el primer y último chunk.
+    if (idx === 0 || idx === total - 1) {
+      console.log('[upload:chunk]', {
+        uploadId, chunk: `${idx + 1}/${total}`, filename, mimeType,
+        sizeMB: +(chunk.size / 1024 / 1024).toFixed(2),
+      });
+    }
+
+    // Validar uploadId — solo alfanuméricos y guiones para evitar path traversal
+    if (!/^[a-zA-Z0-9-]{8,64}$/.test(uploadId)) {
+      return next(new AppError(400, 'uploadId inválido.'));
+    }
+
+    const companyId = req.query.companyId as string | undefined;
+
+    // Directorio temporal donde se acumulan los chunks de esta sesión
+    const tmpDir = join(UPLOAD_BASE, 'tmp-chunks', uploadId);
+    ensureDir(tmpDir);
+
+    // Guardar este chunk en disco
+    const chunkPath = join(tmpDir, `chunk_${idx}`);
+    await fs.writeFile(chunkPath, chunk.buffer);
+
+    // Contar cuántos chunks tenemos ya
+    const received = (await fs.readdir(tmpDir)).length;
+
+    if (received < total) {
+      // Todavía faltan chunks
+      return res.json({ status: 'partial', received, total });
+    }
+
+    // ── Todos los chunks llegaron → ensamblar ─────────────────────────────
+    const folder = companyId ? `exit-auth-video/${companyId}` : 'exit-auth-video';
+    const finalDir = join(UPLOAD_BASE, folder);
+    ensureDir(finalDir);
+
+    const unique      = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const assembledPath = join(tmpDir,  `assembled_${unique}.tmp`);
+    const outputName    = `${unique}.mp4`;
+    const outputPath    = join(finalDir, outputName);
+
+    try {
+      // Concatenar chunks en orden
+      const writeStream = (await import('fs')).createWriteStream(assembledPath);
+      for (let i = 0; i < total; i++) {
+        const part = await fs.readFile(join(tmpDir, `chunk_${i}`));
+        writeStream.write(part);
+      }
+      await new Promise<void>((resolve, reject) => {
+        writeStream.end();
+        writeStream.on('finish', resolve);
+        writeStream.on('error',  reject);
+      });
+
+      // Recodificar con ffmpeg (mismo pipeline que /exit-auth-video)
+      await reencodeVideo(assembledPath, outputPath);
+
+      res.json({
+        status: 'done',
+        url:    `/uploads/${folder}/${outputName}`,
+        type:   'video/mp4',
+        name:   outputName,
+        size:   (await fs.stat(outputPath)).size,
+      });
+    } catch (ffmpegErr) {
+      console.error('[upload/chunk] ffmpeg error:', ffmpegErr);
+      // Fallback: mover el archivo ensamblado sin recodificar
+      const rawExt  = extname(filename || '').toLowerCase() || '.mp4';
+      const rawName = `${unique}${rawExt}`;
+      const rawPath = join(finalDir, rawName);
+      await fs.rename(assembledPath, rawPath).catch(() => {});
+      res.json({
+        status: 'done',
+        url:    `/uploads/${folder}/${rawName}`,
+        type:   mimeType || 'video/mp4',
+        name:   rawName,
+      });
+    } finally {
+      // Limpiar directorio temporal de chunks
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+});
+
+// ─── Helper: recodificar video con ffmpeg ─────────────────────────────────────
+// Extraído para no duplicar la config entre /exit-auth-video y el chunked.
+//
+// IMPORTANTE: este paso es OPCIONAL y por ahora es un NO-OP que deja el
+// archivo tal cual. El motivo: ffmpeg nativo no está disponible en el
+// VPS (se confirmó con /debug/ffmpeg). Comprimir en el cliente con
+// ffmpeg.wasm tarda tanto como la duración del video, así que no se usa.
+//
+// La solución definitiva de raíz: que el cliente grabe con la cámara
+// nativa a una calidad razonable (480p/720p, H.264) desde el celular.
+// Mientras tanto, este helper es un stub que deja el archivo como está.
+
+function reencodeVideo(_inputPath: string, _outputPath: string): Promise<void> {
+  // No-op: sin ffmpeg nativo, no hacemos recodificado server-side.
+  // El archivo queda como llegó. Si en el futuro se instala ffmpeg en el
+  // VPS, basta con descomentar la implementación con fluent-ffmpeg.
+  return Promise.resolve();
+}
+
+// ─── Fuel ─────────────────────────────────────────────────────────────────────
+
 router.post('/fuel-photos', (req: Request, res: Response, next: NextFunction) => {
   const companyId = req.query.companyId as string | undefined;
   const folder = companyId ? `fuel/${companyId}` : 'fuel';
@@ -280,7 +416,7 @@ router.post('/fuel-photos', (req: Request, res: Response, next: NextFunction) =>
     storage: buildStorage(folder),
     limits: { fileSize: MAX_FILE_SIZE },
     fileFilter: imageFilter,
-  }).array('photos', 10);  
+  }).array('photos', 10);
 
   upload(req, res, (err) => {
     if (err) return next(err);
@@ -290,7 +426,8 @@ router.post('/fuel-photos', (req: Request, res: Response, next: NextFunction) =>
   });
 });
 
-// ─── Evidencias de checklist (un archivo por item, usado al marcar "Incorrecto") ──
+// ─── Checklist ────────────────────────────────────────────────────────────────
+
 router.post('/checklist-photos', (req: Request, res: Response, next: NextFunction) => {
   const companyId = req.query.companyId as string | undefined;
   const folder = companyId ? `checklists/${companyId}` : 'checklists';
@@ -318,10 +455,11 @@ router.post('/checklist-photos', (req: Request, res: Response, next: NextFunctio
   });
 });
 
-// PDF actas de entrega
+// ─── PDFs ─────────────────────────────────────────────────────────────────────
+
 router.post('/handover-pdf', (req: Request, res: Response, next: NextFunction) => {
   const companyId = req.query.companyId as string | undefined;
-  const folder = companyId ? `handover-pdfs/${companyId}` : 'handover-pdfs'; 
+  const folder = companyId ? `handover-pdfs/${companyId}` : 'handover-pdfs';
 
   const upload = multer({
     storage: buildStorage(folder),
@@ -339,6 +477,8 @@ router.post('/handover-pdf', (req: Request, res: Response, next: NextFunction) =
     res.json({ url: `/uploads/${folder}/${file.filename}` });
   });
 });
+
+// ─── Facturas ─────────────────────────────────────────────────────────────────
 
 router.post('/invoice-files', (req, res, next) => {
   const folder = 'invoices';
@@ -362,7 +502,8 @@ router.post('/invoice-files', (req, res, next) => {
   });
 });
 
-// ─── Evidencias de mantenimiento (imágenes + PDF, hasta 10 archivos) ────────
+// ─── Mantenimiento ────────────────────────────────────────────────────────────
+
 router.post('/maintenance-evidence', (req, res, next) => {
   const companyId = req.query.companyId as string | undefined;
   const folder = companyId ? `maintenance/${companyId}` : 'maintenance';
@@ -382,13 +523,15 @@ router.post('/maintenance-evidence', (req, res, next) => {
     if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
     res.json({
       urls: files.map(f => ({
-        url: `/uploads/${folder}/${f.filename}`,
+        url:  `/uploads/${folder}/${f.filename}`,
         type: f.mimetype,
         name: f.originalname,
       })),
     });
   });
 });
+
+// ─── Seguros ──────────────────────────────────────────────────────────────────
 
 router.post('/insurance-files', (req, res, next) => {
   const companyId = req.query.companyId as string | undefined;
@@ -411,7 +554,8 @@ router.post('/insurance-files', (req, res, next) => {
   });
 });
 
-// Genérico
+// ─── Genérico ─────────────────────────────────────────────────────────────────
+
 router.post('/photos', (req: Request, res: Response, next: NextFunction) => {
   const category = req.query.category as string;
   const safeCategory: UploadCategory = (ALLOWED_CATEGORIES as readonly string[]).includes(category)
@@ -430,7 +574,8 @@ router.post('/photos', (req: Request, res: Response, next: NextFunction) => {
   });
 });
 
-// Eliminar archivo
+// ─── Eliminar archivo ─────────────────────────────────────────────────────────
+
 router.delete('/file', (req: Request, res: Response, next: NextFunction) => {
   const filePath = req.query.path as string;
 

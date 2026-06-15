@@ -2,7 +2,63 @@ export const MODULE_TREE = {
   dashboard: {
     label: "Dashboard",
     submodules: {
-      dashboard: "Dashboard",
+      // ── KPIs globales ──
+      kpis_flotas:                  "KPIs de flota",
+      kpis_mantenimiento:           "KPIs de mantenimiento",
+      kpis_combustible:             "KPIs de combustible",
+      kpis_conductores:             "KPIs de conductores",
+
+      // ── Gráficas de series ──
+      chart_combustible_mes:        "Gráfica combustible por mes",
+      chart_mantenimientos_mes:     "Gráfica mantenimientos por mes",
+      chart_flotas_estado:          "Gráfica flota por estado",
+      chart_flotas_categoria:       "Gráfica flota por categoría",
+      chart_conductores_licencia:   "Gráfica conductores por licencia",
+
+      // ── Alertas: pieza consolidada ──
+      feed_alertas:                 "Feed de alertas activas",
+
+      // ── Actividad y próximos ──
+      timeline_actividad:           "Timeline de actividad reciente",
+      tabla_proximos_mantenimientos: "Tabla próximos mantenimientos",
+
+      // ── Por sede ──
+      flota_por_sede:               "Flota agrupada por sede",
+      kpis_por_sede:                "KPIs por sede",
+
+      // ── Por garaje ──
+      flota_por_garaje:             "Flota agrupada por garaje",
+      ocupacion_garajes:            "Ocupación de garajes",
+
+      // ── Combustible profundo ──
+      consumo_por_vehiculo:         "Consumo de combustible por vehículo",
+      costo_por_vehiculo:           "Costo de combustible por vehículo",
+      consumo_por_conductor:        "Consumo de combustible por conductor",
+
+      // ── Asignaciones y conductores ──
+      estado_asignaciones:           "Estado de asignaciones",
+      disponibilidad_conductores:   "Disponibilidad de conductores",
+      kpis_mis_vehiculos:           "Mis vehículos asignados",
+
+      // ── Seguros ──
+      polizas_por_vencer:           "Pólizas de seguro por vencer",
+      cobertura_activos:             "Cobertura de seguros en activos",
+
+      // ── Checklists ──
+      kpis_checklists:               "KPIs de inspecciones",
+      checklists_pendientes:         "Inspecciones pendientes",
+
+      // ── Aceite e inventario ──
+      proximo_cambio_aceite:         "Próximos cambios de aceite",
+      inventario_bajo:               "Inventario bajo mínimo",
+
+      // ── Aires acondicionados ──
+      kpis_ac:                       "KPIs de aires acondicionados",
+      servicios_ac_pendientes:       "Servicios de A/C pendientes",
+
+      // ── Auditoría ──
+      actividad_por_usuario:         "Actividad por usuario",
+      actividad_por_entidad:        "Actividad por entidad",
     },
   },
   gestion: {

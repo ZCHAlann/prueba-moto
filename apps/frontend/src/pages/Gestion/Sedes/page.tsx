@@ -8,6 +8,7 @@ import { useAssets } from "@/hooks/useAssets";
 import { useDrivers } from "@/hooks/useDrivers";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LocationPickerModal } from "@/components/ui/map/LocationPicker";
+import { RowActionMenu } from "@/components/ui/table/RowActionMenu";
 import type { OperationalSite, SiteStatus } from "@/types/fleet";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -140,62 +141,16 @@ function RowMenu({
   onEdit: () => void;
   onToggle: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  const item = (label: string, onClick: () => void, danger = false) => (
-    <button
-      onClick={() => { onClick(); setOpen(false); }}
-      className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg text-left transition
-        ${danger
-          ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
-          : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.06]"}`}
-    >
-      {label}
-    </button>
-  );
-
+  const isActive = site.status === "Activa";
   return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <circle cx="8" cy="3" r="1.5" />
-          <circle cx="8" cy="8" r="1.5" />
-          <circle cx="8" cy="13" r="1.5" />
-        </svg>
-      </button>
-
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.92, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.92, y: -4 }}
-            transition={{ duration: 0.12 }}
-            className="absolute right-0 z-20 mt-1 w-44 rounded-xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-gray-900 shadow-xl p-1"
-          >
-            {item("Ver detalle", onDetail)}
-            {hasPermission && item("Editar", onEdit)}
-            {hasPermission && item(
-              site.status === "Activa" ? "Inactivar" : "Reactivar",
-              onToggle,
-              site.status === "Activa",
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+    <RowActionMenu
+      ariaLabel="Acciones de la sede"
+      items={[
+        { label: "Ver detalle",                      onClick: onDetail, tone: "default" },
+        { label: "Editar",                           onClick: onEdit,   tone: "default", disabled: !hasPermission },
+        { label: isActive ? "Inactivar" : "Reactivar", onClick: onToggle, tone: isActive ? "warning" : "success", disabled: !hasPermission },
+      ]}
+    />
   );
 }
 
@@ -849,10 +804,10 @@ export function SitesManagementPage() {
               <table className="w-full min-w-[760px]">
                 <thead>
                   <tr className="border-b border-gray-200 dark:border-white/[0.06]">
-                    {["Código", "Sede", "Contacto", "Estado", "Referencias", ""].map((h) => (
+                    {["Código", "Sede", "Contacto", "Estado", "Referencias", ""].map((h, i, arr) => (
                       <th
                         key={h}
-                        className="px-5 py-3 text-left text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide"
+                        className={`px-5 py-3 text-left text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide ${i === arr.length - 1 ? "" : ""}`}
                       >
                         {h}
                       </th>
@@ -886,7 +841,7 @@ export function SitesManagementPage() {
                           {site.assetCount} flota · {site.driverCount} conductores
                         </p>
                       </td>
-                      <td className="px-5 py-3.5">
+                      <td className=" group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
                         <RowMenu
                           site={site}
                           hasPermission={can("gestion", "sedes", "editar")}

@@ -7,6 +7,7 @@ import { useAssetCenter } from "../../../hooks/useInsurancesPolicies";
 import { useAssets } from "@/hooks/useAssets";
 import { usePermissions } from "@/hooks/usePermissions";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
+import { RowActionMenu } from "../../../components/ui/table/RowActionMenu";
 import type { Asset } from "@/types/activo";
 import type { InsurancePolicy, InsuranceStatus } from "../../../hooks/useInsurancesPolicies";
 
@@ -356,47 +357,15 @@ function RowMenu({ onDetail, onEdit, onDelete, canEdit, canDelete }: {
   onDetail: () => void; onEdit: () => void; onDelete: () => void;
   canEdit: boolean; canDelete: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, []);
-
-  const item = (label: string, icon: React.ReactNode, onClick: () => void, danger = false) => (
-    <button
-      onClick={() => { onClick(); setOpen(false); }}
-      className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg text-left transition
-        ${danger ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
-                 : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.06]"}`}
-    >
-      {icon}{label}
-    </button>
-  );
-
   return (
-    <div ref={ref} className="relative">
-      <button onClick={() => setOpen((v) => !v)} className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition">
-        <IconDots />
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.93, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.93, y: -4 }}
-            transition={{ duration: 0.12 }}
-            className="absolute right-0 z-20 mt-1 w-44 rounded-xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-gray-900 shadow-xl p-1"
-          >
-            {item("Ver detalle", <IconShield size={13} />, onDetail)}
-            {canEdit   && item("Editar",    <IconEdit size={13} />,  onEdit)}
-            {canDelete && item("Eliminar",  <IconTrash size={13} />, onDelete, true)}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+    <RowActionMenu
+      ariaLabel="Acciones de la póliza"
+      items={[
+        { label: "Ver detalle", icon: <IconShield size={13} />, onClick: onDetail, tone: "default" },
+        { label: "Editar",      icon: <IconEdit size={13} />,   onClick: onEdit,   tone: "default", disabled: !canEdit },
+        { label: "Eliminar",    icon: <IconTrash size={13} />,  onClick: onDelete, tone: "danger",  disabled: !canDelete },
+      ]}
+    />
   );
 }
 
@@ -971,8 +940,11 @@ export function InsuranceManagementPage() {
               <table className="w-full min-w-[780px]">
                 <thead>
                   <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                    {["Vehículo", "Aseguradora / Póliza", "Cobertura", "Vencimiento", "Doc.", "Estado", ""].map((h) => (
-                      <th key={h} className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-400">{h}</th>
+                    {["Vehículo", "Aseguradora / Póliza", "Cobertura", "Vencimiento", "Doc.", "Estado", ""].map((h, i, arr) => (
+                      <th
+                        key={h}
+                        className={`px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-400 ${i === arr.length - 1 ? "" : ""}`}
+                      >{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1025,7 +997,7 @@ export function InsuranceManagementPage() {
                           )}
                         </td>
                         <td className="px-5 py-3.5"><StatusBadge status={item.status} /></td>
-                        <td className="px-5 py-3.5" onClick={(e) => e.stopPropagation()}>
+                        <td className=" group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02] px-5 py-3.5" onClick={(e) => e.stopPropagation()}>
                           <RowMenu
                             onDetail={() => setDetailPolicy(item)}
                             onEdit={() => openEdit(item)}

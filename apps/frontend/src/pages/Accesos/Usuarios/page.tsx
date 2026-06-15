@@ -10,8 +10,12 @@ import { useCompanyRoles } from "@/hooks/useCompanyRoles";
 import type { PlatformRole } from "@/types/platform";
 import { MODULE_TREE, type ActionKey, type PermissionMap } from "@/lib/module-tree";
 import { PermissionEditor } from "@/components/users/PermissionEditor";
+import { RowActionMenu } from "@/components/ui/table/RowActionMenu";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
+
+const PAGE_SIZE = 8;
 
 const ROLE_LABELS: Record<string, string> = {
   owner_empresa:  "Dueño / Propietario",
@@ -21,7 +25,6 @@ const ROLE_LABELS: Record<string, string> = {
   conductor:      "Conductor",
 };
 
-// Platform roles: tienen acceso total sin chequear el catálogo.
 const PLATFORM_ROLES: PlatformRole[] = ["owner_empresa", "admin_empresa"];
 
 // ─── Permisos por defecto por rol ─────────────────────────────────────────────
@@ -88,9 +91,6 @@ const COMPANY_ROLES: PlatformRole[] = [
   "conductor",
 ];
 
-// Keys de los roles de empresa (los 3 default). Se filtran contra el
-// catálogo real que viene del backend — si por algún motivo no están
-// aún, igual los mostramos para no romper el select.
 const DEFAULT_COMPANY_ROLE_KEYS = new Set(["supervisor", "operador", "conductor"]);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -102,7 +102,6 @@ type UserFormState = {
   role: PlatformRole;
   status: "active" | "inactive";
   permissions: PermissionMap;
-  // profileData fields
   fullName: string;
   lastName: string;
   phone: string;
@@ -110,7 +109,6 @@ type UserFormState = {
   area: string;
   documentNumber: string;
   notes: string;
-  /** URL pública de la foto subida al backend. */
   photoUrl: string | null;
 };
 
@@ -162,7 +160,7 @@ function validateForm(form: UserFormState): UserFormErrors {
   if (form.phone && form.phone.trim()) {
     if (!/^\d{10}$/.test(form.phone)) errors.phone = "El teléfono debe tener exactamente 10 dígitos.";
   }
-  if (!form.role)            errors.role     = "El rol es obligatorio.";
+  if (!form.role) errors.role = "El rol es obligatorio.";
   return errors;
 }
 
@@ -192,7 +190,7 @@ function validateEditForm(form: UserFormState): UserFormErrors {
   if (form.phone && form.phone.trim()) {
     if (!/^\d{10}$/.test(form.phone)) errors.phone = "El teléfono debe tener exactamente 10 dígitos.";
   }
-  if (!form.role)            errors.role     = "El rol es obligatorio.";
+  if (!form.role) errors.role = "El rol es obligatorio.";
   return errors;
 }
 
@@ -239,7 +237,6 @@ function formToUpdateInput(form: UserFormState): UpdateCompanyUserInput {
   return input;
 }
 
-// FIX 1 — userToForm: fallback a firstName + lastName cuando no hay fullName
 function userToForm(user: CompanyUser): UserFormState {
   const p = user.profileData;
   return {
@@ -306,7 +303,7 @@ function FormField({
   );
 }
 
-// ─── KPI Card — FIX 4: barra lateral + ícono + fondo por acento ───────────────
+// ─── KPI Card ─────────────────────────────────────────────────────────────────
 
 function KpiCard({
   label,
@@ -330,13 +327,10 @@ function KpiCard({
 
   return (
     <div className="relative rounded-xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] px-5 py-4 overflow-hidden flex items-start gap-4">
-      {/* Barra lateral de color */}
       <div className={`absolute left-0 top-0 bottom-0 w-1 ${cfg.bar}`} />
-      {/* Ícono */}
       <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${cfg.bg} ${cfg.text}`}>
         {icon}
       </div>
-      {/* Texto */}
       <div>
         <p className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide">{label}</p>
         <p className="text-2xl font-bold text-gray-800 dark:text-white leading-tight">{value}</p>
@@ -388,56 +382,14 @@ function RowMenu({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  const item = (label: string, onClick: () => void, danger = false) => (
-    <button
-      onClick={() => { onClick(); setOpen(false); }}
-      className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg text-left transition
-        ${danger
-          ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
-          : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.06]"}`}
-    >
-      {label}
-    </button>
-  );
-
   return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <circle cx="8" cy="3" r="1.5" />
-          <circle cx="8" cy="8" r="1.5" />
-          <circle cx="8" cy="13" r="1.5" />
-        </svg>
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.92, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.92, y: -4 }}
-            transition={{ duration: 0.12 }}
-            className="absolute right-0 z-20 mt-1 w-40 rounded-xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-gray-900 shadow-xl p-1"
-          >
-            {item("Editar", onEdit)}
-            {item("Eliminar", onDelete, true)}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+    <RowActionMenu
+      ariaLabel="Acciones del usuario"
+      items={[
+        { label: "Editar",   onClick: onEdit,   tone: "default" },
+        { label: "Eliminar", onClick: onDelete, tone: "danger" },
+      ]}
+    />
   );
 }
 
@@ -536,7 +488,7 @@ function UserFormModal({
   onCreate: (input: CreateCompanyUserInput) => Promise<void>;
   onUpdate: (id: string, input: UpdateCompanyUserInput) => Promise<void>;
 }) {
-  const { session } = useAuth(); 
+  const { session } = useAuth();
   const [form, setForm]         = useState<UserFormState>(() => createEmptyForm(siteOptions[0] ?? ""));
   const [errors, setErrors]     = useState<UserFormErrors>({});
   const [saving, setSaving]     = useState(false);
@@ -559,18 +511,15 @@ function UserFormModal({
     setErrors((prev) => { const next = { ...prev }; delete next[key]; return next; });
     setForm((prev) => {
       const next = { ...prev, [key]: value };
-
       if (!user && !usernameTouched && (key === "fullName" || key === "documentNumber")) {
         next.username = autoUsername(
           key === "fullName" ? value : prev.fullName,
           key === "documentNumber" ? value : prev.documentNumber,
         );
       }
-
       if (key === "role") {
         next.permissions = ROLE_DEFAULT_PERMISSIONS[value] ?? {};
       }
-
       return next;
     });
   };
@@ -583,7 +532,6 @@ function UserFormModal({
       toast.error("Formulario incompleto", { description: "Completa los campos obligatorios." });
       return;
     }
-
     setSaving(true);
     try {
       if (user) {
@@ -622,7 +570,7 @@ function UserFormModal({
           >
             <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-gray-900 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
 
-              {/* ── Header ── */}
+              {/* Header */}
               <div className="flex items-center justify-between px-4 py-5 sm:px-6 border-b border-gray-200 dark:border-white/[0.06] shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-500 dark:text-blue-400">
@@ -650,15 +598,13 @@ function UserFormModal({
                 </button>
               </div>
 
-              {/* ── Body ── */}
+              {/* Body */}
               <form onSubmit={handleSubmit} className="flex flex-col overflow-hidden">
                 <div className="overflow-y-auto px-4 py-5 sm:px-6 space-y-5">
 
-                  {/* ── Foto del usuario ── */}
+                  {/* Foto */}
                   <div>
-                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
-                      Foto
-                    </p>
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Foto</p>
                     <div className="flex items-center gap-4">
                       <div className="h-20 w-20 overflow-hidden rounded-2xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.05]">
                         {form.photoUrl ? (
@@ -703,98 +649,54 @@ function UserFormModal({
                     </div>
                   </div>
 
-                  {/* ── Datos personales ── */}
+                  {/* Datos personales */}
                   <div>
-                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
-                      Datos personales
-                    </p>
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Datos personales</p>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <FormField label="Nombre completo *" error={errors.fullName}>
-                        <input
-                          className={inputCls}
-                          placeholder="Nombres completos"
-                          maxLength={80}
-                          value={form.fullName}
+                        <input className={inputCls} placeholder="Nombres completos" maxLength={80} value={form.fullName}
                           onKeyDown={(e) => { if (/\d/.test(e.key)) e.preventDefault(); }}
-                          onChange={(e) => set("fullName", e.target.value)}
-                        />
+                          onChange={(e) => set("fullName", e.target.value)} />
                       </FormField>
                       <FormField label="Apellidos" error={errors.lastName}>
-                        <input
-                          className={inputCls}
-                          placeholder="Apellidos"
-                          maxLength={80}
-                          value={form.lastName}
+                        <input className={inputCls} placeholder="Apellidos" maxLength={80} value={form.lastName}
                           onKeyDown={(e) => { if (/\d/.test(e.key)) e.preventDefault(); }}
-                          onChange={(e) => set("lastName", e.target.value)}
-                        />
+                          onChange={(e) => set("lastName", e.target.value)} />
                       </FormField>
                       <FormField label="Documento de identidad" error={errors.documentNumber}>
-                        <input
-                          className={inputCls}
-                          placeholder="Cédula / DNI (10 dígitos)"
-                          maxLength={10}
-                          value={form.documentNumber}
+                        <input className={inputCls} placeholder="Cédula / DNI (10 dígitos)" maxLength={10} value={form.documentNumber}
                           onKeyDown={(e) => { if (!/[0-9]/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key)) e.preventDefault(); }}
-                          onChange={(e) => set("documentNumber", e.target.value.replace(/\D/g, '').slice(0, 10))}
-                        />
+                          onChange={(e) => set("documentNumber", e.target.value.replace(/\D/g, '').slice(0, 10))} />
                       </FormField>
                       <FormField label="Teléfono" error={errors.phone}>
-                        <input
-                          className={inputCls}
-                          placeholder="Número de contacto (10 dígitos)"
-                          maxLength={10}
-                          value={form.phone}
+                        <input className={inputCls} placeholder="Número de contacto (10 dígitos)" maxLength={10} value={form.phone}
                           onKeyDown={(e) => { if (!/[0-9]/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key)) e.preventDefault(); }}
-                          onChange={(e) => set("phone", e.target.value.replace(/\D/g, '').slice(0, 10))}
-                        />
+                          onChange={(e) => set("phone", e.target.value.replace(/\D/g, '').slice(0, 10))} />
                       </FormField>
                     </div>
                   </div>
 
-                  {/* ── Datos laborales ── */}
+                  {/* Datos laborales */}
                   <div>
-                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
-                      Datos laborales
-                    </p>
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Datos laborales</p>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <FormField label="Sede" error={errors.site}>
-                        <select
-                          className={inputCls}
-                          value={form.site}
-                          onChange={(e) => set("site", e.target.value)}
-                        >
+                        <select className={inputCls} value={form.site} onChange={(e) => set("site", e.target.value)}>
                           <option value="">Seleccionar sede…</option>
-                          {siteOptions.map((s) => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
+                          {siteOptions.map((s) => <option key={s} value={s}>{s}</option>)}
                         </select>
                       </FormField>
                       <FormField label="Área / Cargo">
-                        <input
-                          className={inputCls}
-                          placeholder="Ej. Coordinación técnica"
-                          value={form.area}
-                          onChange={(e) => set("area", e.target.value)}
-                        />
+                        <input className={inputCls} placeholder="Ej. Coordinación técnica" value={form.area}
+                          onChange={(e) => set("area", e.target.value)} />
                       </FormField>
-                          <FormField label="Rol *" error={errors.role}>
-                        <select
-                          className={inputCls}
-                          value={form.role}
-                          onChange={(e) => set("role", e.target.value)}
-                        >
-                          {roleOptions.map((o) => (
-                            <option key={o.key} value={o.key}>{o.label}</option>
-                          ))}
+                      <FormField label="Rol *" error={errors.role}>
+                        <select className={inputCls} value={form.role} onChange={(e) => set("role", e.target.value)}>
+                          {roleOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
                         </select>
                       </FormField>
                       <FormField label="Estado">
-                        <select
-                          className={inputCls}
-                          value={form.status}
-                          onChange={(e) => set("status", e.target.value)}
-                        >
+                        <select className={inputCls} value={form.status} onChange={(e) => set("status", e.target.value)}>
                           <option value="active">Activo</option>
                           <option value="inactive">Inactivo</option>
                         </select>
@@ -802,96 +704,53 @@ function UserFormModal({
                     </div>
                   </div>
 
-                  {/* ── Credenciales ── */}
+                  {/* Credenciales */}
                   <div>
-                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
-                      Credenciales de acceso
-                    </p>
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Credenciales de acceso</p>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <FormField label="Correo electrónico *" error={errors.email}>
-                        <input
-                          type="email"
-                          className={inputCls}
-                          placeholder="correo@empresa.com"
-                          maxLength={120}
-                          value={form.email}
-                          onChange={(e) => set("email", e.target.value.toLowerCase().trim())}
-                        />
+                        <input type="email" className={inputCls} placeholder="correo@empresa.com" maxLength={120} value={form.email}
+                          onChange={(e) => set("email", e.target.value.toLowerCase().trim())} />
                       </FormField>
-                      <FormField
-                        label="Usuario *"
-                        error={errors.username}
-                        hint={!user ? "Se genera automáticamente del nombre." : undefined}
-                      >
-                        <input
-                          className={inputCls}
-                          placeholder="nombre de usuario"
-                          maxLength={40}
-                          value={form.username}
-                          onChange={(e) => {
-                            setUsernameTouched(true);
-                            set("username", e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''));
-                          }}
-                        />
+                      <FormField label="Usuario *" error={errors.username} hint={!user ? "Se genera automáticamente del nombre." : undefined}>
+                        <input className={inputCls} placeholder="nombre de usuario" maxLength={40} value={form.username}
+                          onChange={(e) => { setUsernameTouched(true); set("username", e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, '')); }} />
                       </FormField>
-                      <FormField
-                        label={user ? "Nueva contraseña (opcional)" : "Contraseña *"}
-                        error={errors.password}
-                        hint={user ? "Dejar vacío para no cambiarla." : undefined}
-                      >
-                        <input
-                          type="password"
-                          className={inputCls}
-                          placeholder={user ? "Dejar vacío para mantener" : "Mínimo 8 caracteres"}
-                          maxLength={128}
-                          value={form.password}
-                          onChange={(e) => set("password", e.target.value)}
-                        />
+                      <FormField label={user ? "Nueva contraseña (opcional)" : "Contraseña *"} error={errors.password}
+                        hint={user ? "Dejar vacío para no cambiarla." : undefined}>
+                        <input type="password" className={inputCls} placeholder={user ? "Dejar vacío para mantener" : "Mínimo 8 caracteres"} maxLength={128} value={form.password}
+                          onChange={(e) => set("password", e.target.value)} />
                       </FormField>
                     </div>
                   </div>
 
-                  {/* ── Permisos granulares ── */}
+                  {/* Permisos */}
                   <div>
-                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
-                      Permisos por módulo
-                    </p>
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Permisos por módulo</p>
                     <PermissionEditor
                       permissions={form.permissions}
                       onChange={(next) => setForm((prev) => ({ ...prev, permissions: next }))}
                       defaultPermissions={ROLE_DEFAULT_PERMISSIONS[form.role]}
-                      readOnlyWithFullAccess={
-                        form.role === "owner_empresa" || form.role === "admin_empresa"
-                      }
+                      readOnlyWithFullAccess={form.role === "owner_empresa" || form.role === "admin_empresa"}
                     />
                   </div>
 
-                  {/* ── Notas ── */}
+                  {/* Notas */}
                   <FormField label="Observaciones">
-                    <textarea
-                      className={`${inputCls} resize-none`}
-                      rows={2}
+                    <textarea className={`${inputCls} resize-none`} rows={2}
                       placeholder="Notas relevantes del colaborador."
-                      value={form.notes}
-                      onChange={(e) => set("notes", e.target.value)}
-                    />
+                      value={form.notes} onChange={(e) => set("notes", e.target.value)} />
                   </FormField>
                 </div>
 
-                {/* ── Footer ── */}
+                {/* Footer */}
                 <div className="flex flex-col-reverse gap-2 px-4 py-4 sm:flex-row sm:justify-end sm:px-6 border-t border-gray-200 dark:border-white/[0.06] shrink-0">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="rounded-lg border border-gray-200 dark:border-white/[0.06] px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition"
-                  >
+                  <button type="button" onClick={onClose}
+                    className="rounded-lg border border-gray-200 dark:border-white/[0.06] px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition">
                     Cancelar
                   </button>
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-60 px-4 py-2 text-sm font-medium text-white transition"
-                  >
+                  <button type="submit" disabled={saving}
+                    className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-60 px-4 py-2 text-sm font-medium text-white transition">
                     {saving ? "Guardando…" : user ? "Guardar cambios" : "Crear usuario"}
                   </button>
                 </div>
@@ -914,13 +773,6 @@ export function UsersPage() {
 
   const canManage = ["owner_empresa", "admin_empresa"].includes(session?.role ?? "");
 
-  /**
-   * Options del select "Rol". Construimos a partir de:
-   *  - los 2 platform roles (owner_empresa, admin_empresa)
-   *  - los roles del catálogo persistente de la empresa
-   * Si el catálogo aún no llegó (loading), caemos al set hardcoded
-   * de 3 default para no romper el form.
-   */
   const roleOptions = useMemo(() => {
     const opts: { key: string; label: string }[] = PLATFORM_ROLES.map((r) => ({
       key: r, label: ROLE_LABELS[r] ?? r,
@@ -933,7 +785,6 @@ export function UsersPage() {
         opts.push({ key: r.key, label: r.label });
       }
     } else {
-      // fallback mientras carga
       for (const key of ["supervisor", "operador", "conductor"] as const) {
         if (seen.has(key)) continue;
         seen.add(key);
@@ -943,11 +794,8 @@ export function UsersPage() {
     return opts;
   }, [companyRoles]);
 
-  // Reusable en cualquier parte donde se necesite la lista de keys válidas
-  // (validación, defaults, etc).
-  const allRoleKeys = useMemo(() => new Set(roleOptions.map((o) => o.key)), [roleOptions]);
-
   const [query, setQuery]               = useState("");
+  const [page, setPage]                 = useState(1);
   const [modalOpen, setModalOpen]       = useState(false);
   const [editingUser, setEditingUser]   = useState<CompanyUser | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CompanyUser | null>(null);
@@ -957,7 +805,6 @@ export function UsersPage() {
     [sites]
   );
 
-  // FIX 3 — Buscador: cubre displayName, firstName, lastName y roleLabel
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return users;
@@ -965,11 +812,9 @@ export function UsersPage() {
       const p = u.profileData;
       const displayName = (
         String(p.fullName ?? "") ||
-        [String(p.firstName ?? ""), String(p.lastName ?? "")]
-          .filter(Boolean).join(" ")
+        [String(p.firstName ?? ""), String(p.lastName ?? "")].filter(Boolean).join(" ")
       ).toLowerCase();
       const roleLabel = (ROLE_LABELS[u.role] ?? u.role).toLowerCase();
-
       return (
         u.email.toLowerCase().includes(q) ||
         u.username.toLowerCase().includes(q) ||
@@ -982,6 +827,13 @@ export function UsersPage() {
       );
     });
   }, [query, users]);
+
+  // ─── Paginado ──────────────────────────────────────────────────────────────
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // Resetear página al cambiar búsqueda
+  const handleQuery = (q: string) => { setQuery(q); setPage(1); };
 
   const openCreate = () => { setEditingUser(null); setModalOpen(true); };
   const openEdit   = (u: CompanyUser) => { setEditingUser(u); setModalOpen(true); };
@@ -1017,7 +869,7 @@ export function UsersPage() {
   return (
     <>
       <div className="space-y-5">
-        {/* ── Page header ── */}
+        {/* Page header */}
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-blue-200 dark:border-blue-500/20 bg-blue-50 dark:bg-blue-500/10 px-2.5 py-1">
@@ -1030,10 +882,8 @@ export function UsersPage() {
             </p>
           </div>
           {canManage && (
-            <button
-              onClick={openCreate}
-              className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition"
-            >
+            <button onClick={openCreate}
+              className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                 <path d="M7 1v12M1 7h12" />
               </svg>
@@ -1042,75 +892,36 @@ export function UsersPage() {
           )}
         </div>
 
-        {/* ── KPI row — FIX 4: KpiCard con ícono + barra lateral ── */}
+        {/* KPI row */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiCard
-            label="Total usuarios"
-            value={String(users.length)}
-            detail="Base total de la empresa"
-            accent="blue"
-            icon={
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-                <circle cx="9" cy="7" r="4"/>
-                <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
-              </svg>
-            }
+          <KpiCard label="Total usuarios" value={String(users.length)} detail="Base total de la empresa" accent="blue"
+            icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>}
           />
-          <KpiCard
-            label="Activos"
-            value={String(totalActive)}
-            detail="Con acceso operativo"
-            accent="green"
-            icon={
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
-                <polyline points="22 4 12 14.01 9 11.01"/>
-              </svg>
-            }
+          <KpiCard label="Activos" value={String(totalActive)} detail="Con acceso operativo" accent="green"
+            icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>}
           />
-          <KpiCard
-            label="Inactivos"
-            value={String(totalInactive)}
-            detail="Acceso suspendido"
-            accent="red"
-            icon={
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="15" y1="9" x2="9" y2="15"/>
-                <line x1="9" y1="9" x2="15" y2="15"/>
-              </svg>
-            }
+          <KpiCard label="Inactivos" value={String(totalInactive)} detail="Acceso suspendido" accent="red"
+            icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>}
           />
-          <KpiCard
-            label="Módulos"
-            value={String(Object.keys(MODULE_TREE).length)}
-            detail="Disponibles para asignar"
-            accent="yellow"
-            icon={
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-                <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-              </svg>
-            }
+          <KpiCard label="Módulos" value={String(Object.keys(MODULE_TREE).length)} detail="Disponibles para asignar" accent="yellow"
+            icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>}
           />
         </div>
 
-        {/* ── Table card ── */}
+        {/* Table card */}
         <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] overflow-hidden">
           {/* Toolbar */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-5 py-4 border-b border-gray-200 dark:border-white/[0.06]">
             <div>
               <h2 className="text-sm font-semibold text-gray-800 dark:text-white">Usuarios registrados</h2>
               <p className="text-xs text-gray-400 dark:text-gray-500">
-                Roles, credenciales y estado de acceso.
+                {filtered.length} resultado{filtered.length !== 1 ? "s" : ""}
+                {totalPages > 1 && <span className="ml-2">· Pág. {page} / {totalPages}</span>}
               </p>
             </div>
             <div className="relative w-full sm:w-72">
-              <svg
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500"
-                width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-              >
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500"
+                width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <circle cx="6.5" cy="6.5" r="4.5" />
                 <path d="M10.5 10.5l3.5 3.5" />
               </svg>
@@ -1118,7 +929,7 @@ export function UsersPage() {
                 className="w-full rounded-lg border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.04] pl-9 pr-4 py-2 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-600 outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition"
                 placeholder="Buscar por nombre, usuario, rol…"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => handleQuery(e.target.value)}
               />
             </div>
           </div>
@@ -1138,93 +949,115 @@ export function UsersPage() {
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px]">
-                <thead>
-                  <tr className="border-b border-gray-200 dark:border-white/[0.06]">
-                    {["Colaborador", "Credenciales", "Laboral", "Rol", "Módulos", "Estado", ""].map((h) => (
-                      <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">
-                        {h}
-                      </th>
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px]">
+                  <thead>
+                    <tr className="border-b border-gray-200 dark:border-white/[0.06]">
+                      {["Colaborador", "Credenciales", "Laboral", "Rol", "Módulos", "Estado", ""].map((h, i, arr) => {
+                        const isLast = i === arr.length - 1;
+                        return (
+                          <th key={h} className={isLast ? "" : "px-5 py-3 text-left text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide"}>
+                            {h}
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
+                    {paginated.map((u) => {
+                      const p = u.profileData;
+                      const fullName =
+                        String(p.fullName ?? "") ||
+                        [String(p.firstName ?? ""), String(p.lastName ?? "")].filter(Boolean).join(" ") ||
+                        "—";
+                      const documentNumber = String(p.documentNumber ?? "");
+                      const site = String(p.site ?? "Operativo");
+                      const area = String(p.area ?? "");
+
+                      return (
+                        <tr key={u.id} className="group hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors">
+                          <td className="px-5 py-3.5">
+                            <p className="font-semibold text-sm text-gray-800 dark:text-white">{fullName}</p>
+                            {documentNumber && <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{documentNumber}</p>}
+                          </td>
+                          <td className="px-5 py-3.5">
+                            <p className="text-sm font-medium text-gray-800 dark:text-white">@{u.username}</p>
+                            <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{u.email}</p>
+                          </td>
+                          <td className="px-5 py-3.5">
+                            <p className="text-sm text-gray-700 dark:text-gray-300">{site}</p>
+                            {area && <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{area}</p>}
+                          </td>
+                          <td className="px-5 py-3.5">
+                            <RoleBadge role={u.role} />
+                          </td>
+                          <td className="px-5 py-3.5">
+                            {["owner_empresa", "admin_empresa"].includes(u.role) ? (
+                              <span className="inline-flex items-center rounded-full bg-purple-50 dark:bg-purple-500/10 px-2 py-0.5 text-xs font-medium text-purple-700 dark:text-purple-400">
+                                Acceso total
+                              </span>
+                            ) : (
+                              <>
+                                <span className="text-sm font-medium text-gray-800 dark:text-white">
+                                  {Object.keys(u.modulePermissions).length}
+                                </span>
+                                <span className="ml-1 text-xs text-gray-400 dark:text-gray-500">
+                                  / {Object.keys(MODULE_TREE).length}
+                                </span>
+                              </>
+                            )}
+                          </td>
+                          <td className="px-5 py-3.5">
+                            <StatusBadge status={u.status} />
+                          </td>
+                          <td className="group-hover:bg-gray-50 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
+                            {canManage && (
+                              <RowMenu onEdit={() => openEdit(u)} onDelete={() => setDeleteTarget(u)} />
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* ─── Paginador ─────────────────────────────────────────────────── */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between border-t border-gray-100 dark:border-white/[0.06] px-5 py-3">
+                  <button
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => p - 1)}
+                    className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition"
+                  >
+                    <ChevronLeft size={13} />Anterior
+                  </button>
+                  <div className="flex gap-1">
+                    {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => i + 1).map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setPage(p)}
+                        className={`h-7 w-7 rounded-lg text-xs font-semibold transition ${
+                          page === p
+                            ? "bg-blue-600 text-white"
+                            : "text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.05]"
+                        }`}
+                      >
+                        {p}
+                      </button>
                     ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                  {filtered.map((u) => {
-                    const p = u.profileData;
-
-                    // FIX 2 — Columna Colaborador: fallback a firstName + lastName
-                    const fullName =
-                      String(p.fullName ?? "") ||
-                      [String(p.firstName ?? ""), String(p.lastName ?? "")]
-                        .filter(Boolean).join(" ") ||
-                      "—";
-
-                    const documentNumber = String(p.documentNumber ?? "");
-                    const site = String(p.site ?? "Operativo");
-                    const area = String(p.area ?? "");
-
-                    return (
-                      <tr key={u.id} className="group hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors">
-                        {/* Colaborador */}
-                        <td className="px-5 py-3.5">
-                          <p className="font-semibold text-sm text-gray-800 dark:text-white">{fullName}</p>
-                          {documentNumber && (
-                            <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{documentNumber}</p>
-                          )}
-                        </td>
-                        {/* Credenciales */}
-                        <td className="px-5 py-3.5">
-                          <p className="text-sm font-medium text-gray-800 dark:text-white">@{u.username}</p>
-                          <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{u.email}</p>
-                        </td>
-                        {/* Laboral */}
-                        <td className="px-5 py-3.5">
-                          <p className="text-sm text-gray-700 dark:text-gray-300">{site}</p>
-                          {area && (
-                            <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{area}</p>
-                          )}
-                        </td>
-                        {/* Rol */}
-                        <td className="px-5 py-3.5">
-                          <RoleBadge role={u.role} />
-                        </td>
-                        {/* FIX 5 — Módulos: badge "Acceso total" para admin/owner */}
-                        <td className="px-5 py-3.5">
-                          {["owner_empresa", "admin_empresa"].includes(u.role) ? (
-                            <span className="inline-flex items-center rounded-full bg-purple-50 dark:bg-purple-500/10 px-2 py-0.5 text-xs font-medium text-purple-700 dark:text-purple-400">
-                              Acceso total
-                            </span>
-                          ) : (
-                            <>
-                              <span className="text-sm font-medium text-gray-800 dark:text-white">
-                                {Object.keys(u.modulePermissions).length}
-                              </span>
-                              <span className="ml-1 text-xs text-gray-400 dark:text-gray-500">
-                                / {Object.keys(MODULE_TREE).length}
-                              </span>
-                            </>
-                          )}
-                        </td>
-                        {/* Estado */}
-                        <td className="px-5 py-3.5">
-                          <StatusBadge status={u.status} />
-                        </td>
-                        {/* Acciones */}
-                        <td className="px-5 py-3.5">
-                          {canManage && (
-                            <RowMenu
-                              onEdit={() => openEdit(u)}
-                              onDelete={() => setDeleteTarget(u)}
-                            />
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                  </div>
+                  <button
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => p + 1)}
+                    className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition"
+                  >
+                    Siguiente<ChevronRight size={13} />
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -1235,7 +1068,7 @@ export function UsersPage() {
         )}
       </div>
 
-      {/* ── Modals ── */}
+      {/* Modals */}
       <UserFormModal
         open={modalOpen}
         user={editingUser}

@@ -444,7 +444,7 @@ export default function PlatformDashboard() {
                               {daysLeft} días
                             </Badge>
                           </td>
-                          <td className="py-3 px-4">
+                          <td className="bg-transparent group-hover:bg-white/5 py-3 px-4">
                             <Button
                               size="sm"
                               variant="outline"

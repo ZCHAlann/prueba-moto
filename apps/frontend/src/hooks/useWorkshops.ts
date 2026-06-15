@@ -1,6 +1,6 @@
 // hooks/useWorkshops.ts
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useAuth } from '../context/AuthContext';
+import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "../context/AuthContext";
 
 export interface Workshop {
   id: string;
@@ -11,6 +11,8 @@ export interface Workshop {
   contactName: string | null;
   nit: string | null;
   notes: string | null;
+  latitude: number | null;
+  longitude: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -22,58 +24,88 @@ export interface WorkshopInput {
   contactName?: string | null;
   nit?: string | null;
   notes?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
-async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-    credentials: 'include',
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => res.statusText)}`);
-  return res.json() as Promise<T>;
-}
-
-export function useWorkshopsList(q?: string) {
+export function useWorkshops() {
   const { companyId } = useAuth();
-  return useQuery({
-    queryKey: ['workshops', companyId, q],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (q) params.set('q', q);
-      const qs = params.toString();
-      return jsonFetch<{ data: Workshop[]; total: number }>(`/api/company/${companyId}/workshops${qs ? `?${qs}` : ''}`);
-    },
-    enabled: !!companyId,
-  });
-}
 
-export function useCreateWorkshop() {
-  const { companyId } = useAuth();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (body: WorkshopInput) =>
-      jsonFetch<Workshop>(`/api/company/${companyId}/workshops`, { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['workshops'] }),
-  });
-}
+  const [workshops, setWorkshops] = useState<Workshop[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState<string | null>(null);
+  const [tick, setTick]           = useState(0);
 
-export function useUpdateWorkshop() {
-  const { companyId } = useAuth();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ id, body }: { id: string; body: Partial<WorkshopInput> }) =>
-      jsonFetch<Workshop>(`/api/company/${companyId}/workshops/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['workshops'] }),
-  });
-}
+  const refresh = useCallback(() => setTick((n) => n + 1), []);
 
-export function useDeleteWorkshop() {
-  const { companyId } = useAuth();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string) =>
-      jsonFetch<{ ok: boolean }>(`/api/company/${companyId}/workshops/${id}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['workshops'] }),
-  });
+  useEffect(() => {
+    if (!companyId) { setLoading(false); return; }
+    setLoading(true);
+    setError(null);
+    fetch(`/api/company/${companyId}/workshops`, { cache: "no-store" })
+      .then((res) => { if (!res.ok) throw new Error(`Error ${res.status}`); return res.json(); })
+      .then((body: { data: Workshop[] }) => {
+        setWorkshops(body.data ?? []);
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Error cargando talleres"))
+      .finally(() => setLoading(false));
+  }, [companyId, tick]);
+
+  const createWorkshop = useCallback(async (input: WorkshopInput): Promise<boolean> => {
+    if (!companyId) return false;
+    try {
+      const res = await fetch(`/api/company/${companyId}/workshops`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+      }
+      refresh();
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error creando taller");
+      return false;
+    }
+  }, [companyId, refresh]);
+
+  const updateWorkshop = useCallback(async (id: string, input: Partial<WorkshopInput>): Promise<boolean> => {
+    if (!companyId) return false;
+    try {
+      const res = await fetch(`/api/company/${companyId}/workshops/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+      }
+      refresh();
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error actualizando taller");
+      return false;
+    }
+  }, [companyId, refresh]);
+
+  const deleteWorkshop = useCallback(async (id: string): Promise<boolean> => {
+    if (!companyId) return false;
+    try {
+      const res = await fetch(`/api/company/${companyId}/workshops/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+      }
+      setWorkshops((current) => current.filter((w) => w.id !== id));
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error eliminando taller");
+      return false;
+    }
+  }, [companyId]);
+
+  return { workshops, loading, error, refresh, createWorkshop, updateWorkshop, deleteWorkshop };
 }

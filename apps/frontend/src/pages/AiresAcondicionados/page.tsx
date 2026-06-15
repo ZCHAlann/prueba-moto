@@ -15,9 +15,10 @@ import type {
   AirConditioningUnit,
 } from "../../types/fleet";
 import {
-  Search, Plus, MoreVertical, Eye, Pencil, Trash2, Wind, AlertTriangle,
+  Search, Plus, Eye, Pencil, Trash2, Wind, AlertTriangle,
   Wrench, MapPin, Image as ImageIcon,
 } from "lucide-react";
+import { RowActionMenu } from "../../components/ui/table/RowActionMenu";
 
 /* ── Stat card ──────────────────────────────────────────────────────────── */
 function StatCard({
@@ -61,73 +62,18 @@ function RowActions({
   onDelete: (u: AirConditioningUnit) => void;
   canEdit: boolean; canDelete: boolean; canCreate: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
   if (!canEdit && !canDelete && !canCreate) return null;
 
   return (
-    <div ref={ref} className="relative flex justify-end">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label="Acciones"
-        className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition-all hover:border-gray-300 hover:bg-gray-50 hover:text-gray-700 dark:border-white/[0.08] dark:hover:bg-white/[0.05] dark:hover:text-gray-300"
-      >
-        <MoreVertical size={15} />
-      </button>
-
-      {open && (
-        <div className="absolute right-0 top-9 z-50 w-48 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl ring-1 ring-black/5 dark:border-white/[0.08] dark:bg-gray-900 dark:ring-white/5">
-          <button
-            type="button"
-            onClick={() => { setOpen(false); onView(unit); }}
-            className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-700 transition hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.05]"
-          >
-            <Eye size={14} className="text-gray-400" /> Ver detalle
-          </button>
-          {canEdit && (
-            <button
-              type="button"
-              onClick={() => { setOpen(false); onEdit(unit); }}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-700 transition hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.05]"
-            >
-              <Pencil size={14} className="text-gray-400" /> Editar
-            </button>
-          )}
-          {canCreate && (
-            <button
-              type="button"
-              onClick={() => { setOpen(false); onView(unit); }}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-700 transition hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.05]"
-            >
-              <Wrench size={14} className="text-gray-400" /> Mantenimiento
-            </button>
-          )}
-          {canDelete && (
-            <>
-              <div className="mx-3 border-t border-gray-100 dark:border-white/[0.06]" />
-              <button
-                type="button"
-                onClick={() => { setOpen(false); onDelete(unit); }}
-                className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-rose-600 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
-              >
-                <Trash2 size={14} /> Eliminar
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
+    <RowActionMenu
+      ariaLabel="Acciones de la unidad A/C"
+      items={[
+        { label: "Ver detalle",   icon: <Eye size={13} />,     onClick: () => onView(unit),   tone: "default" },
+        { label: "Editar",        icon: <Pencil size={13} />,  onClick: () => onEdit(unit),   tone: "default", disabled: !canEdit },
+        { label: "Mantenimiento", icon: <Wrench size={13} />,  onClick: () => onView(unit),   tone: "default", disabled: !canCreate },
+        { label: "Eliminar",      icon: <Trash2 size={13} />,  onClick: () => onDelete(unit), tone: "danger",  disabled: !canDelete },
+      ]}
+    />
   );
 }
 
@@ -297,11 +243,21 @@ export default function AcPage() {
               <table className="w-full min-w-[860px]">
                 <thead>
                   <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                    {["Código", "Unidad", "Tipo", "Marca / Modelo", "Sede", "Estado", ""].map((h, i) => (
-                      <th key={i} className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                        {h}
-                      </th>
-                    ))}
+                    {["Código", "Unidad", "Tipo", "Marca / Modelo", "Sede", "Estado", ""].map((h, i, arr) => {
+                      const isLast = i === arr.length - 1;
+                      return (
+                        <th
+                          key={i}
+                          className={
+                            isLast
+                              ? ""
+                              : "px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500"
+                          }
+                        >
+                          {h}
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
@@ -350,7 +306,7 @@ export default function AcPage() {
                       <td className="px-5 py-4">
                         <StatusPill label={unit.status} tone={statusTone(unit.status)} />
                       </td>
-                      <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                      <td className=" group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02] px-5 py-4" onClick={(e) => e.stopPropagation()}>
                         <RowActions
                           unit={unit}
                           onView={setToView}

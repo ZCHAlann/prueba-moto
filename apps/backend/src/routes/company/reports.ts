@@ -5,7 +5,7 @@
 // del archivo, por si se requiere en el futuro.
 
 import { Router } from 'express';
-import { eq, and, gte, lte, desc } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, inArray } from 'drizzle-orm';
 import { db } from '../../db/client';
 import {
   companyMaintenanceRecords,
@@ -24,21 +24,9 @@ const router = Router({ mergeParams: true });
 
 async function loadItemsForMaintenanceIds(ids: number[]) {
   if (!ids.length) return new Map<number, any[]>();
-  const items = await db
-    .select({
-      id:             companyMaintenanceItems.id,
-      maintenanceId:  companyMaintenanceItems.maintenanceId,
-      supplierId:     companyMaintenanceItems.supplierId,
-      supplierName:   companySuppliers.name,
-      name:           companyMaintenanceItems.name,
-      quantity:       companyMaintenanceItems.quantity,
-      unitCost:       companyMaintenanceItems.unitCost,
-      subtotal:       companyMaintenanceItems.subtotal,
-    })
-    .from(companyMaintenanceItems)
-    .leftJoin(companySuppliers, eq(companySuppliers.id, companyMaintenanceItems.supplierId))
-    .where(eq(companyMaintenanceItems.maintenanceId, -1));
-  // query genérica arriba; en la práctica basta con la query con `inArray`:
+  // Antes: traía TODA la tabla company_maintenance_items y filtraba en memoria
+  // (secuencial scan + O(N) en JS). Ahora filtra directo en SQL con `inArray`,
+  // lo que permite usar el índice (maintenanceId) que crea la migración 0009.
   const all = await db
     .select({
       id:             companyMaintenanceItems.id,
@@ -51,10 +39,10 @@ async function loadItemsForMaintenanceIds(ids: number[]) {
       subtotal:       companyMaintenanceItems.subtotal,
     })
     .from(companyMaintenanceItems)
-    .leftJoin(companySuppliers, eq(companySuppliers.id, companyMaintenanceItems.supplierId));
+    .leftJoin(companySuppliers, eq(companySuppliers.id, companyMaintenanceItems.supplierId))
+    .where(inArray(companyMaintenanceItems.maintenanceId, ids));
   const map = new Map<number, any[]>();
   for (const it of all) {
-    if (!ids.includes(it.maintenanceId)) continue;
     if (!map.has(it.maintenanceId)) map.set(it.maintenanceId, []);
     map.get(it.maintenanceId)!.push({
       id:            toId('maintenance-item', it.id),

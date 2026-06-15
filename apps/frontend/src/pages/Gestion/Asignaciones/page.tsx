@@ -9,6 +9,11 @@ import { HandoverWizard } from "./components/HandoerWizard";
 import type { ApiDriver } from "../../../hooks/useDrivers";
 import type { Asset } from "../../../types/activo";
 import type { ExistingHandoverData } from "../../../hooks/useHandoverWizard";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+
+// ─── constants ────────────────────────────────────────────────────────────────
+
+const PAGE_SIZE = 6;
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -52,6 +57,57 @@ function PencilIcon({ className = "h-4 w-4" }: { className?: string }) {
       <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
       <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
     </svg>
+  );
+}
+
+// ─── pagination component ─────────────────────────────────────────────────────
+
+function Pagination({
+  page,
+  totalPages,
+  onPrev,
+  onNext,
+  onPage,
+}: {
+  page: number;
+  totalPages: number;
+  onPrev: () => void;
+  onNext: () => void;
+  onPage: (p: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between border-t border-gray-100 dark:border-white/[0.06] px-5 py-3">
+      <button
+        disabled={page <= 1}
+        onClick={onPrev}
+        className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition-colors"
+      >
+        <ChevronLeft size={13} />Anterior
+      </button>
+      <div className="flex gap-1">
+        {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => i + 1).map((p) => (
+          <button
+            key={p}
+            onClick={() => onPage(p)}
+            className={`h-7 w-7 rounded-lg text-xs font-semibold transition-colors ${
+              page === p
+                ? "bg-brand-500 text-white"
+                : "text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-white/[0.05]"
+            }`}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+      <button
+        disabled={page >= totalPages}
+        onClick={onNext}
+        className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition-colors"
+      >
+        Siguiente<ChevronRight size={13} />
+      </button>
+    </div>
   );
 }
 
@@ -168,6 +224,10 @@ export function AssignmentsPage() {
   // ── table search ──────────────────────────────────────────────────────────
   const [query, setQuery] = useState("");
 
+  // ── pagination ────────────────────────────────────────────────────────────
+  const [activePage,  setActivePage]  = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
+
   // ── derived ───────────────────────────────────────────────────────────────
   const activeAssignments = useMemo(
     () => assignments.filter((a) => a.status === "Activa"),
@@ -214,6 +274,19 @@ export function AssignmentsPage() {
     [drawerAssignmentId, rows],
   );
 
+  // ── pagination derived ────────────────────────────────────────────────────
+  const totalActivePages  = Math.max(1, Math.ceil(activeAssignments.length / PAGE_SIZE));
+  const paginatedActive   = activeAssignments.slice(
+    (activePage - 1) * PAGE_SIZE,
+    activePage * PAGE_SIZE,
+  );
+
+  const totalHistoryPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const paginatedRows     = filteredRows.slice(
+    (historyPage - 1) * PAGE_SIZE,
+    historyPage * PAGE_SIZE,
+  );
+
   // Wizard create — objetos seleccionados
   const wizardDriver = selectedDriverId ? drivers.find((d) => d.id === selectedDriverId) ?? null : null;
   const wizardAsset  = selectedAssetId  ? assets.find((a) => a.id === selectedAssetId)   ?? null : null;
@@ -256,7 +329,6 @@ export function AssignmentsPage() {
     const assignment = assignments.find((a) => a.id === assignmentId);
     if (!assignment) return;
 
-    // Armar ExistingHandoverData desde la asignación
     const existing: ExistingHandoverData = {
       actaNumber:       assignment.actaNumber       ?? null,
       actaDate:         assignment.actaDate         ?? null,
@@ -427,23 +499,33 @@ export function AssignmentsPage() {
           {/* active assignments */}
           {activeAssignments.length > 0 && (
             <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] overflow-hidden">
-              <div className="border-b border-gray-200 dark:border-white/[0.06] px-5 py-4">
-                <h2 className="text-base font-semibold text-gray-800 dark:text-white">Asignaciones activas</h2>
-                <p className="mt-0.5 text-sm text-gray-400 dark:text-gray-500">Pares conductor ↔ vehículo en curso.</p>
+              <div className="border-b border-gray-200 dark:border-white/[0.06] px-5 py-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-gray-800 dark:text-white">Asignaciones activas</h2>
+                  <p className="mt-0.5 text-sm text-gray-400 dark:text-gray-500">Pares conductor ↔ vehículo en curso.</p>
+                </div>
+                {totalActivePages > 1 && (
+                  <span className="text-xs text-gray-400 dark:text-gray-500">
+                    Pág. {activePage} / {totalActivePages}
+                  </span>
+                )}
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[700px]">
                   <thead>
                     <tr className="border-b border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02]">
                       {["Conductor", "Código", "Vehículo", "Placa", "Desde", "Días", "Acta", "Acciones"].map((h) => (
-                        <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                        <th
+                          key={h}
+                          className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500"
+                        >
                           {h}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {activeAssignments.map((a) => {
+                    {paginatedActive.map((a) => {
                       const asset  = assets.find((x) => x.id === a.assetId);
                       const driver = drivers.find((x) => x.id === a.driverId);
                       const days   = daysSince(a.startDate);
@@ -472,7 +554,6 @@ export function AssignmentsPage() {
                               ) : (
                                 <span className="text-xs text-gray-400">Sin acta</span>
                               )}
-                              {/* ── Botón editar acta ── */}
                               {canFinalize && (
                                 <button
                                   type="button"
@@ -506,6 +587,14 @@ export function AssignmentsPage() {
                   </tbody>
                 </table>
               </div>
+              {/* ── Active assignments pagination ── */}
+              <Pagination
+                page={activePage}
+                totalPages={totalActivePages}
+                onPrev={() => setActivePage((p) => p - 1)}
+                onNext={() => setActivePage((p) => p + 1)}
+                onPage={setActivePage}
+              />
             </div>
           )}
         </div>
@@ -517,11 +606,23 @@ export function AssignmentsPage() {
           <div className="flex flex-col gap-3 border-b border-gray-200 dark:border-white/[0.06] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-base font-semibold text-gray-800 dark:text-white">Historial de asignaciones</h2>
-              <p className="mt-0.5 text-sm text-gray-400">{assignments.length} registros en total</p>
+              <p className="mt-0.5 text-sm text-gray-400">
+                {assignments.length} registros en total
+                {totalHistoryPages > 1 && (
+                  <span className="ml-2 text-gray-400 dark:text-gray-500">· Pág. {historyPage} / {totalHistoryPages}</span>
+                )}
+              </p>
             </div>
-            <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setHistoryPage(1); // reset to first page on new search
+              }}
               placeholder="Buscar por conductor, placa…"
-              className="w-full rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-brand-400 dark:focus:border-brand-500 transition-colors sm:w-64" />
+              className="w-full rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-brand-400 dark:focus:border-brand-500 transition-colors sm:w-64"
+            />
           </div>
 
           {filteredRows.length === 0 ? (
@@ -529,81 +630,95 @@ export function AssignmentsPage() {
               <p className="text-sm font-medium text-gray-400">Sin registros</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px]">
-                <thead>
-                  <tr className="border-b border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02]">
-                    {["#", "Conductor", "Código", "Vehículo", "Placa", "Desde", "Estado", "Acta", "Acciones"].map((h) => (
-                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRows.map((row, index) => (
-                    <tr key={row.id}
-                      className="border-b border-gray-100 dark:border-white/[0.04] last:border-0 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors">
-                      <td className="px-4 py-3.5 text-sm text-gray-400">{index + 1}</td>
-                      <td className="px-4 py-3.5">
-                        <p className="text-sm font-semibold text-gray-800 dark:text-white">{row.driverName}</p>
-                      </td>
-                      <td className="px-4 py-3.5 text-sm text-gray-400">{row.driverCode}</td>
-                      <td className="px-4 py-3.5 text-sm text-gray-600 dark:text-gray-300">{row.unit}</td>
-                      <td className="px-4 py-3.5">
-                        <p className="text-sm font-semibold text-gray-800 dark:text-white">{row.plate}</p>
-                      </td>
-                      <td className="px-4 py-3.5 text-sm text-gray-500">{row.startDate}</td>
-                      <td className="px-4 py-3.5">
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold border ${
-                          row.status === "Activa"
-                            ? "bg-success-50 dark:bg-success-500/10 border-success-200 dark:border-success-500/20 text-success-600 dark:text-success-400"
-                            : "bg-gray-50 dark:bg-white/[0.03] border-gray-200 dark:border-white/[0.06] text-gray-500 dark:text-gray-400"
-                        }`}>
-                          {row.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-2">
-                          {row.handoverUrl ? (
-                            <a href={row.handoverUrl} target="_blank" rel="noopener noreferrer"
-                              className="flex items-center gap-1 text-brand-600 dark:text-brand-400 text-xs hover:opacity-80">
-                              <DocumentIcon className="h-3.5 w-3.5" /> Ver acta
-                            </a>
-                          ) : (
-                            <span className="text-xs text-gray-400">Sin acta</span>
-                          )}
-                          {/* ── Botón editar acta (historial también) ── */}
-                          {canFinalize && (
-                            <button
-                              type="button"
-                              onClick={() => handleEditActa(row.id)}
-                              className="flex items-center gap-1 text-xs text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition-colors"
-                              title="Editar acta"
-                            >
-                              <PencilIcon className="h-3.5 w-3.5" />
-                              {row.handoverUrl ? "Editar" : "Crear acta"}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-2">
-                          <button type="button" onClick={() => setDrawerAssignmentId(row.id)}
-                            className="rounded-lg border border-gray-200 dark:border-white/[0.06] px-2.5 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition-colors">
-                            Detalle
-                          </button>
-                          {canFinalize && row.status === "Activa" && (
-                            <button type="button" onClick={() => handleFinalize(row.id, row.plate)}
-                              className="rounded-lg border border-error-200 dark:border-error-500/20 px-2.5 py-1 text-xs font-medium text-error-600 dark:text-error-400 hover:bg-error-50 dark:hover:bg-error-500/10 transition-colors">
-                              Finalizar
-                            </button>
-                          )}
-                        </div>
-                      </td>
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[900px]">
+                  <thead>
+                    <tr className="border-b border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02]">
+                      {["#", "Conductor", "Código", "Vehículo", "Placa", "Desde", "Estado", "Acta", "Acciones"].map((h) => (
+                        <th
+                          key={h}
+                          className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500"
+                        >{h}</th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {paginatedRows.map((row, index) => (
+                      <tr key={row.id}
+                        className="border-b border-gray-100 dark:border-white/[0.04] last:border-0 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors">
+                        <td className="px-4 py-3.5 text-sm text-gray-400">
+                          {(historyPage - 1) * PAGE_SIZE + index + 1}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <p className="text-sm font-semibold text-gray-800 dark:text-white">{row.driverName}</p>
+                        </td>
+                        <td className="px-4 py-3.5 text-sm text-gray-400">{row.driverCode}</td>
+                        <td className="px-4 py-3.5 text-sm text-gray-600 dark:text-gray-300">{row.unit}</td>
+                        <td className="px-4 py-3.5">
+                          <p className="text-sm font-semibold text-gray-800 dark:text-white">{row.plate}</p>
+                        </td>
+                        <td className="px-4 py-3.5 text-sm text-gray-500">{row.startDate}</td>
+                        <td className="px-4 py-3.5">
+                          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold border ${
+                            row.status === "Activa"
+                              ? "bg-success-50 dark:bg-success-500/10 border-success-200 dark:border-success-500/20 text-success-600 dark:text-success-400"
+                              : "bg-gray-50 dark:bg-white/[0.03] border-gray-200 dark:border-white/[0.06] text-gray-500 dark:text-gray-400"
+                          }`}>
+                            {row.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-2">
+                            {row.handoverUrl ? (
+                              <a href={row.handoverUrl} target="_blank" rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-brand-600 dark:text-brand-400 text-xs hover:opacity-80">
+                                <DocumentIcon className="h-3.5 w-3.5" /> Ver acta
+                              </a>
+                            ) : (
+                              <span className="text-xs text-gray-400">Sin acta</span>
+                            )}
+                            {canFinalize && (
+                              <button
+                                type="button"
+                                onClick={() => handleEditActa(row.id)}
+                                className="flex items-center gap-1 text-xs text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition-colors"
+                                title="Editar acta"
+                              >
+                                <PencilIcon className="h-3.5 w-3.5" />
+                                {row.handoverUrl ? "Editar" : "Crear acta"}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-2">
+                            <button type="button" onClick={() => setDrawerAssignmentId(row.id)}
+                              className="rounded-lg border border-gray-200 dark:border-white/[0.06] px-2.5 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition-colors">
+                              Detalle
+                            </button>
+                            {canFinalize && row.status === "Activa" && (
+                              <button type="button" onClick={() => handleFinalize(row.id, row.plate)}
+                                className="rounded-lg border border-error-200 dark:border-error-500/20 px-2.5 py-1 text-xs font-medium text-error-600 dark:text-error-400 hover:bg-error-50 dark:hover:bg-error-500/10 transition-colors">
+                                Finalizar
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* ── History pagination ── */}
+              <Pagination
+                page={historyPage}
+                totalPages={totalHistoryPages}
+                onPrev={() => setHistoryPage((p) => p - 1)}
+                onNext={() => setHistoryPage((p) => p + 1)}
+                onPage={setHistoryPage}
+              />
+            </>
           )}
         </div>
       )}
@@ -736,7 +851,6 @@ export function AssignmentsPage() {
                       Sin acta adjunta
                     </p>
                   )}
-                  {/* Editar acta desde el drawer también */}
                   {canFinalize && (
                     <button
                       type="button"

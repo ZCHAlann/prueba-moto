@@ -7,6 +7,7 @@ import { useChecklistAnomalies, type VehicleAnomaly } from "../../../../hooks/us
 import type { Checklist } from "../../../../hooks/useChecklists";
 import { ChecklistDetailDrawer } from "./ChecklistDetailDrawer";
 import { useAuth } from "../../../../context/AuthContext";
+import { toast } from "sonner";
 
 type Props = {
   onOpenChecklist?: (c: Checklist) => void;
@@ -173,8 +174,7 @@ export function ChecklistAnomalias({ onOpenChecklist, pageSize = 7 }: Props) {
         throw new Error("HTTP " + res.status);
       }
       const json = await res.json();
-      console.log("[Anomalias] fetch ok, total filas:", Array.isArray(json) ? json.length : (json.data?.length ?? 0));
-
+      
       const all: Checklist[] = (Array.isArray(json) ? json : json.data ?? []).map(
         (raw: Record<string, unknown>) => ({
           id:           String(raw.id),
@@ -212,7 +212,6 @@ export function ChecklistAnomalias({ onOpenChecklist, pageSize = 7 }: Props) {
         );
       });
 
-      console.log("[Anomalias] filtered para asset", key, "→", filtered.length, "fila(s)");
 
       if (filtered.length === 0) {
         toast.info("Sin inspecciones con hallazgo en este período");

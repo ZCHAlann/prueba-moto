@@ -159,7 +159,9 @@ export default function MotorHistoryRoute() {
     );
   }, [data, search]);
 
-  const totalPages = data?.page ?? 1;
+  const totalPages = data
+    ? Math.max(1, Math.ceil(data.total / data.pageSize))
+    : 1;
 
   return (
     <div className="space-y-6">
@@ -212,7 +214,6 @@ export default function MotorHistoryRoute() {
               {loading ? "Cargando..." : `${data?.total ?? 0} evento${(data?.total ?? 0) !== 1 ? "s" : ""} registrado${(data?.total ?? 0) !== 1 ? "s" : ""}`}
             </p>
           </div>
-          {/* Pagination info */}
           {!loading && totalPages > 1 && (
             <span className="text-xs text-gray-400 dark:text-gray-500">
               Pág. {page} / {totalPages}
@@ -271,23 +272,20 @@ export default function MotorHistoryRoute() {
               <ChevronLeft size={13} /> Anterior
             </button>
             <div className="flex items-center gap-1">
-              {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-                const p = i + 1;
-                return (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setPage(p)}
-                    className={`h-7 w-7 rounded-lg text-xs font-semibold transition
-                      ${page === p
-                        ? "bg-orange-500 text-white shadow-sm"
-                        : "text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.05]"
-                      }`}
-                  >
-                    {p}
-                  </button>
-                );
-              })}
+              {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => i + 1).map(p => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPage(p)}
+                  className={`h-7 w-7 rounded-lg text-xs font-semibold transition
+                    ${page === p
+                      ? "bg-orange-500 text-white shadow-sm"
+                      : "text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.05]"
+                    }`}
+                >
+                  {p}
+                </button>
+              ))}
             </div>
             <button
               type="button"

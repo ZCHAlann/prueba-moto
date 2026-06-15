@@ -2,25 +2,22 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, X } from "lucide-react";
+import { Plus, X, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useCompanyRoles, type CompanyRole, type PermissionMap } from "@/hooks/useCompanyRoles";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
-import {
-  MODULE_TREE,
-  type ActionKey,
-} from "@/lib/module-tree";
+import { MODULE_TREE, type ActionKey } from "@/lib/module-tree";
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const ALL_ACTIONS: ActionKey[] = ["ver", "crear", "editar", "eliminar"];
 
 const ACTION_CONFIG: Record<ActionKey, { label: string; color: string; ring: string; dot: string }> = {
-  ver:      { label: "Ver",      color: "bg-blue-500/10 text-blue-600 dark:text-blue-400",                 ring: "ring-blue-500/30",    dot: "bg-blue-500"    },
-  crear:    { label: "Crear",    color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",         ring: "ring-emerald-500/30", dot: "bg-emerald-500" },
-  editar:   { label: "Editar",   color: "bg-amber-500/10 text-amber-600 dark:text-amber-400",              ring: "ring-amber-500/30",   dot: "bg-amber-500"   },
-  eliminar: { label: "Eliminar", color: "bg-red-500/10 text-red-600 dark:text-red-400",                    ring: "ring-red-500/30",     dot: "bg-red-500"     },
+  ver:      { label: "Ver",      color: "bg-blue-500/10 text-blue-600 dark:text-blue-400",           ring: "ring-blue-500/30",    dot: "bg-blue-500"    },
+  crear:    { label: "Crear",    color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",   ring: "ring-emerald-500/30", dot: "bg-emerald-500" },
+  editar:   { label: "Editar",   color: "bg-amber-500/10 text-amber-600 dark:text-amber-400",         ring: "ring-amber-500/30",   dot: "bg-amber-500"   },
+  eliminar: { label: "Eliminar", color: "bg-red-500/10 text-red-600 dark:text-red-400",               ring: "ring-red-500/30",     dot: "bg-red-500"     },
 };
 
 const PLATFORM_ROLES = [
@@ -28,21 +25,19 @@ const PLATFORM_ROLES = [
   { key: "admin_empresa", label: "Administrador" },
 ];
 
-// Paletas de los roles custom. Coinciden con los strings que guarda
-// el backend en `company_roles.palette`.
 const PALETTES: Array<{ name: string; activeCls: string; countCls: string }> = [
   { name: "Esmeralda", activeCls: "bg-emerald-600 text-white border-emerald-600 shadow-sm", countCls: "bg-white/20 text-white" },
   { name: "Rosa",      activeCls: "bg-pink-600 text-white border-pink-600 shadow-sm",       countCls: "bg-white/20 text-white" },
   { name: "Púrpura",   activeCls: "bg-purple-600 text-white border-purple-600 shadow-sm",   countCls: "bg-white/20 text-white" },
   { name: "Naranja",   activeCls: "bg-orange-600 text-white border-orange-600 shadow-sm",   countCls: "bg-white/20 text-white" },
-  { name: "Indigo",    activeCls: "bg-indigo-600 text-white border-indigo-600 shadow-sm",    countCls: "bg-white/20 text-white" },
+  { name: "Indigo",    activeCls: "bg-indigo-600 text-white border-indigo-600 shadow-sm",   countCls: "bg-white/20 text-white" },
 ];
 
 function paletteCls(name: string) {
   return PALETTES.find((p) => p.name === name) ?? PALETTES[0];
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function countPerms(p: PermissionMap): number {
   return Object.values(p).reduce(
@@ -60,7 +55,20 @@ function slugify(text: string): string {
     .slice(0, 40);
 }
 
-// ─── Toggle Switch ───────────────────────────────────────────────────────────
+// ─── Module icons ─────────────────────────────────────────────────────────────
+
+const MODULE_ICONS: Record<string, React.ReactNode> = {
+  dashboard:       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>,
+  gestion:         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>,
+  motores:         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M4.22 4.22l2.12 2.12m11.32 11.32 2.12 2.12M2 12h3m14 0h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>,
+  mantenimiento:   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>,
+  checklist:       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>,
+  alertas:         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>,
+  reportes:        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+  geolocalizacion: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>,
+};
+
+// ─── Toggle Switch ────────────────────────────────────────────────────────────
 
 function Toggle({ checked, onChange, action, readonly }: {
   checked: boolean; onChange: () => void; action: ActionKey; readonly: boolean;
@@ -81,30 +89,130 @@ function Toggle({ checked, onChange, action, readonly }: {
         checked ? cfg.ring : "",
       ].join(" ")}
     >
-      <span
-        className={[
-          "pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-200",
-          checked ? "translate-x-4" : "translate-x-0",
-        ].join(" ")}
-      />
+      <span className={[
+        "pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-200",
+        checked ? "translate-x-4" : "translate-x-0",
+      ].join(" ")} />
     </button>
   );
 }
 
-// ─── Module icons ────────────────────────────────────────────────────────────
+// ─── Module Row (collapsible) ─────────────────────────────────────────────────
 
-const MODULE_ICONS: Record<string, React.ReactNode> = {
-  dashboard: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>),
-  gestion: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>),
-  motores: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M4.22 4.22l2.12 2.12m11.32 11.32 2.12 2.12M2 12h3m14 0h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>),
-  mantenimiento: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>),
-  checklist: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>),
-  alertas: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>),
-  reportes: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>),
-  geolocalizacion: (<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>),
-};
+function ModuleSection({
+  modKey,
+  modDef,
+  draft,
+  canManage,
+  onToggle,
+  onSetAll,
+}: {
+  modKey: string;
+  modDef: (typeof MODULE_TREE)[keyof typeof MODULE_TREE];
+  draft: PermissionMap;
+  canManage: boolean;
+  onToggle: (mod: string, sub: string, action: ActionKey) => void;
+  onSetAll: (mod: string, sub: string | null, all: boolean) => void;
+}) {
+  const subs = Object.entries(modDef.submodules);
+  const activeSubCount = subs.filter(([s]) => (draft[modKey]?.[s]?.length ?? 0) > 0).length;
+  const [open, setOpen] = useState(false);
 
-// ─── Main Page ───────────────────────────────────────────────────────────────
+  return (
+    <>
+      {/* ── Module header ── */}
+      <tr className="border-t border-gray-100 dark:border-white/[0.05]">
+        <td colSpan={5} className="bg-gray-50/80 dark:bg-white/[0.025]">
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            className="flex w-full items-center gap-2 px-4 py-2.5 text-left"
+          >
+            {/* Chevron */}
+            <ChevronDown
+              size={13}
+              className={`shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-200 ${open ? "" : "-rotate-90"}`}
+            />
+            {/* Icon */}
+            <span className="text-gray-400 dark:text-gray-500 shrink-0">
+              {MODULE_ICONS[modKey] ?? (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <circle cx="12" cy="12" r="9" />
+                </svg>
+              )}
+            </span>
+            {/* Label */}
+            <span className="text-xs font-bold text-gray-600 dark:text-gray-300">{modDef.label}</span>
+            {/* Counter */}
+            <span className="text-[10px] text-gray-400 dark:text-gray-600 tabular-nums">
+              {activeSubCount}/{subs.length}
+            </span>
+            {/* Todo / Nada */}
+            {canManage && (
+              <div className="flex gap-1 ml-1" onClick={(e) => e.stopPropagation()}>
+                <button
+                  type="button"
+                  onClick={() => onSetAll(modKey, null, true)}
+                  className="text-[10px] text-blue-500 dark:text-blue-400 hover:underline leading-none"
+                >
+                  Todo
+                </button>
+                <span className="text-gray-300 dark:text-white/20 text-[10px]">·</span>
+                <button
+                  type="button"
+                  onClick={() => onSetAll(modKey, null, false)}
+                  className="text-[10px] text-gray-400 dark:text-gray-500 hover:underline leading-none"
+                >
+                  Nada
+                </button>
+              </div>
+            )}
+          </button>
+        </td>
+      </tr>
+
+      {/* ── Submodule rows ── */}
+      {open && subs.map(([subKey, subLabel]) => {
+        const activeActions = (draft[modKey]?.[subKey] ?? []) as ActionKey[];
+        const hasAny = activeActions.length > 0;
+        return (
+          <tr
+            key={`sub-${modKey}-${subKey}`}
+            className={[
+              "border-t border-gray-100 dark:border-white/[0.03] transition-colors",
+              hasAny
+                ? "bg-white dark:bg-white/[0.02] hover:bg-gray-50/50 dark:hover:bg-white/[0.03]"
+                : "bg-white dark:bg-transparent hover:bg-gray-50/50 dark:hover:bg-white/[0.02]",
+            ].join(" ")}
+          >
+            <td className="px-4 py-2.5">
+              <span className={[
+                "text-[13px] pl-8",
+                hasAny ? "text-gray-700 dark:text-gray-200" : "text-gray-400 dark:text-gray-600",
+              ].join(" ")}>
+                {subLabel as string}
+              </span>
+            </td>
+            {ALL_ACTIONS.map((action) => (
+              <td key={action} className="px-2 py-2.5 text-center">
+                <div className="flex justify-center">
+                  <Toggle
+                    checked={activeActions.includes(action)}
+                    onChange={() => onToggle(modKey, subKey, action)}
+                    action={action}
+                    readonly={!canManage}
+                  />
+                </div>
+              </td>
+            ))}
+          </tr>
+        );
+      })}
+    </>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function RolesPage() {
   const { can } = usePermissions();
@@ -112,7 +220,6 @@ export function RolesPage() {
 
   const { roles, loading, createRole, updateRole, deleteRole } = useCompanyRoles();
 
-  // ── Limpieza de localStorage viejo (migración suave one-shot) ─────────────
   useEffect(() => {
     try {
       localStorage.removeItem("aplismart_role_permissions");
@@ -121,18 +228,14 @@ export function RolesPage() {
   }, []);
 
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
-  const [draft, setDraft]             = useState<PermissionMap>({});
-  const [dirty, setDirty]             = useState(false);
-  const [saving, setSaving]           = useState(false);
+  const [draft, setDraft]                   = useState<PermissionMap>({});
+  const [dirty, setDirty]                   = useState(false);
+  const [saving, setSaving]                 = useState(false);
   const [showNewRoleModal, setShowNewRoleModal] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<CompanyRole | null>(null);
+  const [pendingDelete, setPendingDelete]   = useState<CompanyRole | null>(null);
 
-  // Cuando llegan los roles, seleccionamos el primero por defecto
   useEffect(() => {
-    if (roles.length === 0) {
-      setSelectedRoleId(null);
-      return;
-    }
+    if (roles.length === 0) { setSelectedRoleId(null); return; }
     if (!selectedRoleId || !roles.find((r) => r.id === selectedRoleId)) {
       const first = roles[0];
       setSelectedRoleId(first.id);
@@ -157,7 +260,7 @@ export function RolesPage() {
   const handleToggleAction = (mod: string, sub: string, action: ActionKey) => {
     if (!canManage) return;
     setDraft((prev) => {
-      const current: ActionKey[] = prev[mod]?.[sub] ?? [];
+      const current = (prev[mod]?.[sub] ?? []) as ActionKey[];
       let next: ActionKey[];
       if (action === "ver") {
         next = current.includes("ver") ? [] : ["ver"];
@@ -194,9 +297,7 @@ export function RolesPage() {
     try {
       await updateRole(selectedRole.id, { permissions: draft });
       setDirty(false);
-      toast.success("Plantilla guardada", {
-        description: `Permisos de "${selectedRole.label}" actualizados.`,
-      });
+      toast.success("Plantilla guardada", { description: `Permisos de "${selectedRole.label}" actualizados.` });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error al guardar");
     } finally {
@@ -207,34 +308,22 @@ export function RolesPage() {
   const handleReset = () => {
     if (!canManage || !selectedRole) return;
     setDraft(selectedRole.permissions ?? {});
-    setDirty(true);
+    setDirty(false);
   };
 
   const handleCreateRole = async (def: { label: string; description: string; sourceKey: string; palette: string }) => {
     if (!canManage) return;
-    // Generar key única (basada en label, sin colisionar con la lista actual)
     const existingKeys = new Set(roles.map((r) => r.key));
     let baseKey = slugify(def.label) || `rol_${Date.now()}`;
     let key = baseKey;
     let suffix = 1;
-    while (existingKeys.has(key)) {
-      key = `${baseKey}_${suffix++}`;
-    }
-    // Sembrar permisos copiando del rol fuente
+    while (existingKeys.has(key)) key = `${baseKey}_${suffix++}`;
     const sourceRole = roles.find((r) => r.key === def.sourceKey);
     const seed = sourceRole?.permissions ?? {};
     try {
-      await createRole({
-        key,
-        label: def.label.trim(),
-        description: def.description.trim(),
-        palette: def.palette,
-        permissions: seed,
-      });
+      await createRole({ key, label: def.label.trim(), description: def.description.trim(), palette: def.palette, permissions: seed });
       setShowNewRoleModal(false);
-      toast.success("Rol creado", {
-        description: `"${def.label.trim()}" se agregó a las plantillas.`,
-      });
+      toast.success("Rol creado", { description: `"${def.label.trim()}" se agregó a las plantillas.` });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error al crear el rol");
     }
@@ -244,10 +333,7 @@ export function RolesPage() {
     if (!canManage) return;
     const role = roles.find((r) => r.id === id);
     if (!role) return;
-    if (role.isSystem) {
-      toast.error("Los roles del sistema no se pueden eliminar.");
-      return;
-    }
+    if (role.isSystem) { toast.error("Los roles del sistema no se pueden eliminar."); return; }
     setPendingDelete(role);
   };
 
@@ -257,9 +343,7 @@ export function RolesPage() {
     setPendingDelete(null);
     try {
       await deleteRole(role.id);
-      toast.success("Plantilla eliminada", {
-        description: `"${role.label}" se quitó de la lista.`,
-      });
+      toast.success("Plantilla eliminada", { description: `"${role.label}" se quitó de la lista.` });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error al eliminar");
     }
@@ -355,10 +439,8 @@ export function RolesPage() {
 
           <div className="flex gap-2 flex-wrap">
             {PLATFORM_ROLES.map((role) => (
-              <span
-                key={role.key}
-                className="inline-flex items-center gap-1.5 rounded-full border border-green-200 dark:border-green-500/20 bg-green-50 dark:bg-green-500/10 px-3 py-1.5 text-xs font-medium text-green-700 dark:text-green-400"
-              >
+              <span key={role.key}
+                className="inline-flex items-center gap-1.5 rounded-full border border-green-200 dark:border-green-500/20 bg-green-50 dark:bg-green-500/10 px-3 py-1.5 text-xs font-medium text-green-700 dark:text-green-400">
                 {role.label}
                 <span className="opacity-60 text-[10px]">acceso total</span>
               </span>
@@ -417,6 +499,7 @@ export function RolesPage() {
       {/* ── Permissions table ── */}
       <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] flex flex-col min-h-0 flex-1 overflow-hidden">
 
+        {/* Sticky header */}
         <div className="shrink-0 border-b border-gray-100 dark:border-white/[0.06] overflow-x-auto" style={{ scrollbarWidth: "thin" }}>
           <table className="w-full table-fixed min-w-[560px]">
             <colgroup>
@@ -433,10 +516,7 @@ export function RolesPage() {
                 </th>
                 {ALL_ACTIONS.map((action) => (
                   <th key={action} className="px-2 py-3 text-center text-[11px] font-semibold uppercase tracking-wider">
-                    <span className={[
-                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5",
-                      ACTION_CONFIG[action].color,
-                    ].join(" ")}>
+                    <span className={["inline-flex items-center gap-1 rounded-full px-2 py-0.5", ACTION_CONFIG[action].color].join(" ")}>
                       <span className={["h-1.5 w-1.5 rounded-full", ACTION_CONFIG[action].dot].join(" ")} />
                       {ACTION_CONFIG[action].label}
                     </span>
@@ -447,6 +527,7 @@ export function RolesPage() {
           </table>
         </div>
 
+        {/* Scrollable body */}
         <div className="overflow-y-auto overflow-x-auto flex-1" style={{ scrollbarWidth: "thin" }}>
           <AnimatePresence mode="wait">
             <motion.table
@@ -463,87 +544,17 @@ export function RolesPage() {
                 <col className="w-[14%]" />
               </colgroup>
               <tbody>
-                {Object.entries(MODULE_TREE).map(([modKey, modDef]) => {
-                  const subs = Object.entries(modDef.submodules);
-                  const activeSubCount = subs.filter(
-                    ([s]) => (draft[modKey]?.[s]?.length ?? 0) > 0
-                  ).length;
-
-                  return (
-                    <tbody key={`mod-${modKey}`}>
-                      {/* Module header row */}
-                      <tr className="border-t border-gray-100 dark:border-white/[0.04]">
-                        <td colSpan={5} className="px-4 py-2 bg-gray-50/60 dark:bg-white/[0.02]">
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-400 dark:text-gray-500 shrink-0">
-                              {MODULE_ICONS[modKey] ?? (
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                                  <circle cx="12" cy="12" r="9" />
-                                </svg>
-                              )}
-                            </span>
-                            <span className="text-xs font-bold text-gray-600 dark:text-gray-300">{modDef.label}</span>
-                            <span className="text-[10px] text-gray-400 dark:text-gray-600 tabular-nums">
-                              {activeSubCount}/{subs.length}
-                            </span>
-                            {canManage && (
-                              <div className="flex gap-1 ml-1">
-                                <button type="button" onClick={() => handleSetAll(modKey, null, true)}
-                                  className="text-[10px] text-blue-500 dark:text-blue-400 hover:underline leading-none">
-                                  Todo
-                                </button>
-                                <span className="text-gray-300 dark:text-white/20 text-[10px]">·</span>
-                                <button type="button" onClick={() => handleSetAll(modKey, null, false)}
-                                  className="text-[10px] text-gray-400 dark:text-gray-500 hover:underline leading-none">
-                                  Nada
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-
-                      {/* Submodule rows */}
-                      {subs.map(([subKey, subLabel]) => {
-                        const activeActions: ActionKey[] = draft[modKey]?.[subKey] ?? [];
-                        const hasAny = activeActions.length > 0;
-
-                        return (
-                          <tr
-                            key={`sub-${modKey}-${subKey}`}
-                            className={[
-                              "border-t border-gray-100 dark:border-white/[0.03] transition-colors",
-                              hasAny
-                                ? "bg-white dark:bg-white/[0.02] hover:bg-gray-50/50 dark:hover:bg-white/[0.03]"
-                                : "bg-white dark:bg-transparent hover:bg-gray-50/50 dark:hover:bg-white/[0.02]",
-                            ].join(" ")}
-                          >
-                            <td className="px-4 py-2.5">
-                              <span className={[
-                                "text-[13px] pl-5",
-                                hasAny ? "text-gray-700 dark:text-gray-200" : "text-gray-400 dark:text-gray-600",
-                              ].join(" ")}>
-                                {subLabel as string}
-                              </span>
-                            </td>
-                            {ALL_ACTIONS.map((action) => (
-                              <td key={action} className="px-2 py-2.5 text-center">
-                                <div className="flex justify-center">
-                                  <Toggle
-                                    checked={activeActions.includes(action)}
-                                    onChange={() => handleToggleAction(modKey, subKey, action)}
-                                    action={action}
-                                    readonly={!canManage}
-                                  />
-                                </div>
-                              </td>
-                            ))}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  );
-                })}
+                {Object.entries(MODULE_TREE).map(([modKey, modDef]) => (
+                  <ModuleSection
+                    key={modKey}
+                    modKey={modKey}
+                    modDef={modDef}
+                    draft={draft}
+                    canManage={canManage}
+                    onToggle={handleToggleAction}
+                    onSetAll={handleSetAll}
+                  />
+                ))}
               </tbody>
             </motion.table>
           </AnimatePresence>
@@ -580,11 +591,9 @@ export function RolesPage() {
   );
 }
 
-// ─── New Role Modal ──────────────────────────────────────────────────────────
+// ─── New Role Modal ───────────────────────────────────────────────────────────
 
-function NewRoleModal({
-  open, onClose, existingRoles, onCreate,
-}: {
+function NewRoleModal({ open, onClose, existingRoles, onCreate }: {
   open: boolean;
   onClose: () => void;
   existingRoles: CompanyRole[];
@@ -598,8 +607,7 @@ function NewRoleModal({
 
   useEffect(() => {
     if (open) {
-      setLabel("");
-      setDescription("");
+      setLabel(""); setDescription("");
       setSourceKey(existingRoles[0]?.key ?? "supervisor");
       setPalette(PALETTES[0].name);
       setTouched(false);
@@ -666,8 +674,7 @@ function NewRoleModal({
                   <label className="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
                     Descripción
                   </label>
-                  <textarea
-                    value={description} maxLength={250}
+                  <textarea value={description} maxLength={250}
                     onChange={(e) => setDescription(e.target.value.slice(0, 250))}
                     placeholder="Responsabilidades o alcance del rol (opcional)" rows={2}
                     className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition resize-none"
@@ -679,16 +686,12 @@ function NewRoleModal({
                     <label className="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
                       Copiar permisos de
                     </label>
-                    <div className="relative">
-                      <select
-                        value={sourceKey} onChange={(e) => setSourceKey(e.target.value)}
-                        className="w-full h-10 px-3 pr-8 rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] text-sm text-gray-800 dark:text-white focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 appearance-none transition"
-                      >
-                        {existingRoles.map((r) => (
-                          <option key={r.id} value={r.key}>{r.label}</option>
-                        ))}
-                      </select>
-                    </div>
+                    <select value={sourceKey} onChange={(e) => setSourceKey(e.target.value)}
+                      className="w-full h-10 px-3 pr-8 rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] text-sm text-gray-800 dark:text-white focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/10 appearance-none transition">
+                      {existingRoles.map((r) => (
+                        <option key={r.id} value={r.key}>{r.label}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">

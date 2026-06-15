@@ -1,5 +1,25 @@
+// pages/Dashboard/page.tsx
+//
+// Dashboard con granularidad por submódulo: cada elemento (KPI, gráfica, feed)
+// se muestra solo si el usuario tiene el permiso `can("dashboard", "<submodulo>", "ver")`.
+// Los permisos vienen del JWT (cargados desde `company_users.module_permissions`
+// en la BD, con defaults por rol aplicados en la migración 0008).
+//
+// Si el usuario no tiene NINGÚN submódulo visible, se muestra un empty state
+// amigable. Si tiene solo algunos, el grid se reorganiza automáticamente.
+//
+// Organización visual:
+//   1. Header con saludo + fecha + filtro de período
+//   2. SECCIÓN 1 — Resumen (KPIs globales)
+//   3. SECCIÓN 2 — Combustible (charts + cards inteligentes)
+//   4. SECCIÓN 3 — Flota y mantenimiento (charts + próximos)
+//   5. SECCIÓN 4 — Personas (conductores + asignaciones)
+//   6. SECCIÓN 5 — Recursos (sedes, garajes, A/C, checklists, aceite, inventario, seguros)
+//   7. SECCIÓN 6 — Atención (alertas + actividad reciente)
+
 import { useMemo, lazy, Suspense, useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthContext";
+import { usePermissions } from "../../hooks/usePermissions";
 import { KpiCard } from "../../components/dashboard/kpi-card";
 import { AlertsFeed } from "../../components/dashboard/alerts-feed";
 import { MaintenanceTable } from "../../components/dashboard/maintenance-table";
@@ -7,47 +27,41 @@ import { useDashboardAnalytics } from "../../hooks/useDashboardAnalytics";
 import { useAlerts } from "../../hooks/useAlerts";
 import type { ApexOptions } from "apexcharts";
 import type { AlertItem } from "../../components/dashboard/alerts-feed";
-import { Wrench, Truck, User, Fuel, Bell, Circle } from "lucide-react";
+import {
+  Wrench, Truck, User, Fuel, Bell, Circle, LayoutGrid, ChevronDown, ChevronUp,
+  Calendar, Activity, Settings,
+} from "lucide-react";
+import {
+  FlotaPorSedeCard,
+  KpisPorSedeCard,
+  FlotaPorGarajeCard,
+  OcupacionGarajesCard,
+  ConsumoPorVehiculoCard,
+  CostoPorVehiculoCard,
+  ConsumoPorConductorCard,
+  EstadoAsignacionesCard,
+  DisponibilidadConductoresCard,
+  KpisMisVehiculosCard,
+  PolizasPorVencerCard,
+  CoberturaActivosCard,
+  KpisChecklistsCard,
+  ChecklistsPendientesCard,
+  ProximoCambioAceiteCard,
+  InventarioBajoCard,
+  KpisAcCard,
+  ServiciosAcPendientesCard,
+  ActividadPorUsuarioCard,
+  ActividadPorEntidadCard,
+} from "./DashboardIntelligent";
 
 // ─── Lazy-load ReactApexChart — never blocks initial paint ───────────────────
 const ReactApexChart = lazy(() => import("react-apexcharts"));
 
-/* ─── Icons ──────────────────────────────────────────────────────────────── */
-function TruckIcon() {
-  return (
-    <svg className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 17a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm10 0a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM1 1h11l3 9H4L1 1zm13 0h4l3 9h-4.5" />
-    </svg>
-  );
-}
-function WrenchIcon() {
-  return (
-    <svg className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-    </svg>
-  );
-}
-function BellIcon() {
-  return (
-    <svg className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0 1 18 14.158V11a6 6 0 0 0-5-5.917V4a1 1 0 1 0-2 0v1.083A6 6 0 0 0 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 1 1-6 0v-1m6 0H9" />
-    </svg>
-  );
-}
-function FuelIcon() {
-  return (
-    <svg className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h12v13H3zM3 8h12M8 21v-5m0 0H6m2 0h2m6-9 2 2-2 2m2-2h-4" />
-    </svg>
-  );
-}
-
-/* ─── Skeleton ───────────────────────────────────────────────────────────── */
+/* ─── Helpers ─────────────────────────────────────────────────────────────── */
 function Sk({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-gray-200 dark:bg-white/[0.06] ${className}`} />;
 }
-
-function ChartSkeleton({ height }: { height: string }) {
+function ChartSkeleton({ height = "h-[260px]" }: { height?: string }) {
   return (
     <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
       <Sk className="h-5 w-40 mb-5" />
@@ -56,18 +70,77 @@ function ChartSkeleton({ height }: { height: string }) {
   );
 }
 
-/* ─── ChartCard ──────────────────────────────────────────────────────────── */
-function ChartCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+/** Encabezado de sección: número + label + descripción + acciones opcionales. */
+function SectionHeader({
+  number, title, subtitle, accent = "violet", collapsible, collapsed, onToggle,
+}: {
+  number: string;
+  title: string;
+  subtitle?: string;
+  accent?: "violet" | "sky" | "emerald" | "amber" | "rose" | "slate" | "cyan";
+  collapsible?: boolean;
+  collapsed?: boolean;
+  onToggle?: () => void;
+}) {
+  const accentText: Record<NonNullable<typeof accent>, string> = {
+    violet: "text-violet-400",
+    sky:    "text-sky-400",
+    emerald: "text-emerald-400",
+    amber:  "text-amber-400",
+    rose:   "text-rose-400",
+    slate:  "text-slate-300",
+    cyan:   "text-cyan-400",
+  };
   return (
-    <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] px-5 pb-5 pt-5">
-      <div className="mb-5">
-        <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">{title}</h3>
-        {subtitle && <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{subtitle}</p>}
+    <div className="flex items-center gap-3 px-1">
+      <span className={`text-[10px] font-black tracking-widest ${accentText[accent]} opacity-70`}>
+        {number}
+      </span>
+      <h2 className="text-sm font-bold uppercase tracking-wider text-gray-700 dark:text-white/80">{title}</h2>
+      {subtitle && <span className="text-xs text-gray-400 dark:text-gray-500 hidden sm:inline">— {subtitle}</span>}
+      <div className="ml-auto">
+        {collapsible && onToggle && (
+          <button
+            type="button"
+            onClick={onToggle}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:bg-white/[0.04] hover:text-white"
+            aria-label={collapsed ? "Expandir" : "Colapsar"}
+          >
+            {collapsed ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
+          </button>
+        )}
       </div>
+    </div>
+  );
+}
+
+/** Grid responsive "auto-fit" — la card se estira a su contenido y el grid llena huecos. */
+function AutoGrid({ children, minWidth = 320 }: { children: React.ReactNode; minWidth?: number }) {
+  return (
+    <div
+      className="grid gap-4 md:gap-5"
+      style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${minWidth}px, 1fr))` }}
+    >
       {children}
     </div>
   );
 }
+
+/** Misma idea que AutoGrid pero aplicada inline a grids que necesitan
+ * compartir estilos con otros grids (sin crear un wrapper). */
+const autoFitStyle = (minWidth: number): React.CSSProperties => ({
+  gridTemplateColumns: `repeat(auto-fit, minmax(${minWidth}px, 1fr))`,
+});
+
+/* ─── Iconos para los KPIs ──────────────────────────────────────────────── */
+function IconTruck()    { return <Truck    size={20} strokeWidth={1.8} />; }
+function IconWrench()   { return <Wrench   size={20} strokeWidth={1.8} />; }
+function IconBell()     { return <Bell     size={20} strokeWidth={1.8} />; }
+function IconFuel()     { return <Fuel     size={20} strokeWidth={1.8} />; }
+function IconUser()     { return <User     size={20} strokeWidth={1.8} />; }
+function IconActivity() { return <Activity  size={16} strokeWidth={1.8} />; }
+function IconCal()      { return <Calendar size={14} strokeWidth={1.8} />; }
+function IconSettings() { return <Settings size={14} strokeWidth={1.8} />; }
 
 /* ─── Event meta ─────────────────────────────────────────────────────────── */
 function getEventMeta(entity: string) {
@@ -87,66 +160,60 @@ const BASE_AXIS_STYLE = { fontSize: "12px", colors: "#e5e7eb" as string | string
 const BASE_YAXIS_STYLE = { fontSize: "12px", colors: ["#6B7280"] };
 const GRID_BORDER = "rgba(156,163,175,0.12)";
 
-/* ─── Chart option factories — all accept `theme` now ───────────────────── */
 function makeAreaOptions(categories: string[], theme: "dark" | "light"): ApexOptions {
   return {
     legend: { show: false },
     colors: ["#465FFF", "#10b981"],
-    chart: { fontFamily: "Outfit, sans-serif", height: 310, type: "line", toolbar: { show: false }, background: "transparent" },
-    stroke: { curve: "straight", width: [2, 2] },
-    fill: { type: "gradient", gradient: { opacityFrom: 0.55, opacityTo: 0 } },
-    markers: { size: 0, strokeColors: "#fff", strokeWidth: 2, hover: { size: 6 } },
-    grid: { xaxis: { lines: { show: false } }, yaxis: { lines: { show: true } }, borderColor: GRID_BORDER },
+    chart: { fontFamily: "Outfit, sans-serif", height: 280, type: "line", toolbar: { show: false }, background: "transparent" },
+    stroke: { curve: "smooth", width: [2.5, 2.5] },
+    fill: { type: "gradient", gradient: { opacityFrom: 0.5, opacityTo: 0 } },
+    markers: { size: 0, strokeColors: "#fff", strokeWidth: 2, hover: { size: 5 } },
+    grid: { xaxis: { lines: { show: false } }, yaxis: { lines: { show: true } }, borderColor: GRID_BORDER, padding: { top: 0, right: 0 } },
     dataLabels: { enabled: false },
     xaxis: { type: "category", categories, axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: BASE_AXIS_STYLE } },
     yaxis: { labels: { style: BASE_YAXIS_STYLE } },
-    tooltip: { theme },
-  };
-}
-
-function makeBarOptions(categories: string[], theme: "dark" | "light"): ApexOptions {
-  return {
-    colors: ["#465fff"],
-    chart: { fontFamily: "Outfit, sans-serif", type: "bar", height: 180, toolbar: { show: false }, background: "transparent" },
-    plotOptions: { bar: { horizontal: false, columnWidth: "39%", borderRadius: 5, borderRadiusApplication: "end" } },
-    dataLabels: { enabled: false },
-    stroke: { show: true, width: 4, colors: ["transparent"] },
-    xaxis: { categories, axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: BASE_AXIS_STYLE } },
-    yaxis: { labels: { style: BASE_YAXIS_STYLE } },
-    grid: { yaxis: { lines: { show: true } }, borderColor: GRID_BORDER },
-    fill: { opacity: 1 },
     tooltip: { theme, x: { show: false } },
   };
 }
 
-function makeDonutOptions(labels: string[], theme: "dark" | "light"): ApexOptions {
+function makeBarOptions(categories: string[], theme: "dark" | "light", height = 220): ApexOptions {
   return {
-    chart: { type: "donut", background: "transparent", fontFamily: "Outfit, sans-serif" },
-    colors: ["#10b981", "#f59e0b", "#ef4444", "#9ca3af"],
-    labels,
-    legend: { position: "bottom", fontSize: "12px", labels: { colors: "#9ca3af" } },
+    colors: ["#465fff"],
+    chart: { fontFamily: "Outfit, sans-serif", type: "bar", height, toolbar: { show: false }, background: "transparent" },
+    plotOptions: { bar: { horizontal: false, columnWidth: "50%", borderRadius: 5, borderRadiusApplication: "end" } },
     dataLabels: { enabled: false },
-    plotOptions: { pie: { donut: { size: "65%", labels: { show: true, total: { show: true, label: "Total", color: "#9ca3af", fontSize: "13px" } } } } },
-    stroke: { width: 0 },
+    stroke: { show: true, width: 3, colors: ["transparent"] },
+    xaxis: { categories, axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: BASE_AXIS_STYLE } },
+    yaxis: { labels: { style: BASE_YAXIS_STYLE } },
+    grid: { yaxis: { lines: { show: true } }, borderColor: GRID_BORDER },
+    fill: { opacity: 1, type: "gradient", gradient: { opacityFrom: 0.85, opacityTo: 0.5 } },
+    tooltip: { theme, x: { show: false } },
+  };
+}
+
+function makeDonutOptions(labels: string[], theme: "dark" | "light", height = 240): ApexOptions {
+  return {
+    chart: { type: "donut", background: "transparent", fontFamily: "Outfit, sans-serif", height },
+    colors: ["#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#8b5cf6", "#9ca3af"],
+    labels,
+    legend: { position: "bottom", fontSize: "11px", labels: { colors: "#9ca3af" }, markers: { size: 6 } },
+    dataLabels: { enabled: false },
+    plotOptions: { pie: { donut: { size: "70%", labels: { show: true, total: { show: true, label: "Total", color: "#9ca3af", fontSize: "13px" }, value: { color: "#e5e7eb", fontSize: "12px" } } } } },
+    stroke: { width: 2, colors: ["transparent"] },
     tooltip: { theme },
   };
 }
 
-function makeHBarOptions(categories: string[], theme: "dark" | "light"): ApexOptions {
+function makeHBarOptions(categories: string[], colors: string[], theme: "dark" | "light", height = 240): ApexOptions {
   return {
-    colors: ["#465fff"],
-    chart: { fontFamily: "Outfit, sans-serif", type: "bar", height: 180, toolbar: { show: false }, background: "transparent" },
-    plotOptions: { bar: { horizontal: true, borderRadius: 4, barHeight: "55%" } },
-    dataLabels: { enabled: false },
-    // En barras horizontales, las categorías van en xaxis pero se renderizan en el eje Y visual
-    xaxis: {
-      categories,
-      axisBorder: { show: false },
-      axisTicks: { show: false },
-      labels: { style: BASE_YAXIS_STYLE },
-    },
+    colors,
+    chart: { fontFamily: "Outfit, sans-serif", type: "bar", height, toolbar: { show: false }, background: "transparent" },
+    plotOptions: { bar: { horizontal: true, borderRadius: 4, barHeight: "55%", distributed: true } },
+    dataLabels: { enabled: true, style: { fontSize: "11px", colors: ["#fff"] } },
+    xaxis: { categories, axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: BASE_YAXIS_STYLE } },
     yaxis: { labels: { style: BASE_YAXIS_STYLE } },
     grid: { xaxis: { lines: { show: true } }, yaxis: { lines: { show: false } }, borderColor: GRID_BORDER },
+    legend: { show: false },
     tooltip: { theme },
   };
 }
@@ -162,19 +229,101 @@ const SkeletonKpi = (
   </div>
 );
 
-/* ─── Component ──────────────────────────────────────────────────────────── */
+/* ─── Visibility hook: deriva los booleanos para los 24 submódulos ───────── */
+function useDashboardVisibility() {
+  const { can } = usePermissions();
+  const v = (sub: string): boolean => can("dashboard", sub, "ver");
+  type BoolGroup = Record<string, boolean>;
+  const vis = {
+    kpis: {
+      flotas:         v("kpis_flotas"),
+      mantenimiento: v("kpis_mantenimiento"),
+      combustible:    v("kpis_combustible"),
+      // alertas se ve junto con feed_alertas
+    },
+    charts: {
+      combustibleMes:      v("chart_combustible_mes"),
+      mantenimientosMes:   v("chart_mantenimientos_mes"),
+      flotasEstado:        v("chart_flotas_estado"),
+      flotasCategoria:     v("chart_flotas_categoria"),
+      conductoresLicencia: v("chart_conductores_licencia"),
+    },
+    alerts: {
+      feed: v("feed_alertas"),
+    },
+    activity: {
+      timeline:     v("timeline_actividad"),
+      proximosMtto: v("tabla_proximos_mantenimientos"),
+    },
+    // Grupos por dominio — cada grupo tiene un accent color
+    sections: {
+      combustible: {
+        consumoPorVehiculo: v("consumo_por_vehiculo"),
+        costoPorVehiculo:    v("costo_por_vehiculo"),
+        consumoPorConductor: v("consumo_por_conductor"),
+      } as BoolGroup,
+      flota: {
+        flotaPorSede:     v("flota_por_sede"),
+        kpisPorSede:      v("kpis_por_sede"),
+        flotaPorGaraje:   v("flota_por_garaje"),
+        ocupacionGarajes: v("ocupacion_garajes"),
+      } as BoolGroup,
+      personas: {
+        estadoAsignaciones:        v("estado_asignaciones"),
+        disponibilidadConductores: v("disponibilidad_conductores"),
+        kpisMisVehiculos:          v("kpis_mis_vehiculos"),
+      } as BoolGroup,
+      recursos: {
+        kpisAc:                v("kpis_ac"),
+        serviciosAcPendientes: v("servicios_ac_pendientes"),
+        kpisChecklists:        v("kpis_checklists"),
+        checklistsPendientes:  v("checklists_pendientes"),
+        proximoCambioAceite:   v("proximo_cambio_aceite"),
+        inventarioBajo:        v("inventario_bajo"),
+        polizasPorVencer:      v("polizas_por_vencer"),
+        coberturaActivos:      v("cobertura_activos"),
+      } as BoolGroup,
+      auditoria: {
+        actividadPorUsuario:  v("actividad_por_usuario"),
+        actividadPorEntidad: v("actividad_por_entidad"),
+      } as BoolGroup,
+    },
+  };
+  return vis;
+}
+
+function countVisible(sections: Record<string, unknown> | Record<string, Record<string, boolean>>): number {
+  const values = Object.values(sections);
+  return values.reduce<number>((acc, g) => {
+    if (g && typeof g === "object" && !Array.isArray(g)) {
+      return acc + Object.values(g as Record<string, unknown>).filter(Boolean).length;
+    }
+    return acc + (g ? 1 : 0);
+  }, 0);
+}
+
+/* ─── Periodo (placeholder para futuro date-range filter) ───────────────── */
+function usePeriod(): { from: Date; to: Date; label: string } {
+  const now = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+  return { from, to: now, label: "Últimos 12 meses" };
+}
+
+/* ─── Componente principal ───────────────────────────────────────────────── */
 export function DashboardOverview() {
   const { session } = useAuth();
   const companyId = session?.companyId ?? null;
+  const firstName = (session?.name ?? "").split(" ")[0] || "equipo";
 
   const { data: an, loading } = useDashboardAnalytics(companyId);
   const { alerts } = useAlerts();
+  const vis = useDashboardVisibility();
+  const period = usePeriod();
 
-  // ── Detectar tema dinámicamente (Tailwind dark mode = class en <html>) ───
+  // ── Tema ──
   const [isDark, setIsDark] = useState(
     () => document.documentElement.classList.contains("dark")
   );
-
   useEffect(() => {
     const observer = new MutationObserver(() => {
       setIsDark(document.documentElement.classList.contains("dark"));
@@ -182,39 +331,52 @@ export function DashboardOverview() {
     observer.observe(document.documentElement, { attributeFilter: ["class"] });
     return () => observer.disconnect();
   }, []);
-
   const theme = isDark ? "dark" : "light";
 
-  // ── KPIs ─────────────────────────────────────────────────────────────────
+  // ── Colapsable state de secciones ──
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const toggle = (k: string) => setCollapsed((p) => ({ ...p, [k]: !p[k] }));
+
+  // ── KPIs (filtrado por permisos) ──
   const kpiCards = useMemo(() => {
     const k = an?.kpis;
     if (!k) return [];
     const pctAssets = k.totalAssets > 0 ? `+${Math.round((k.operativeAssets / k.totalAssets) * 100)}%` : undefined;
     return [
-      { label: "Vehículos",       value: k.totalAssets.toString(),                  badge: pctAssets,  tone: "success" as const, icon: <TruckIcon />,  href: "/flotas"        },
-      { label: "Mantenimientos",  value: k.openMaintenances.toString(),             badge: undefined,  tone: "warning" as const, icon: <WrenchIcon />, href: "/mantenimiento" },
-      { label: "Alertas activas", value: k.openAlerts.toString(),                   badge: k.criticalAlerts > 0 ? `-${k.criticalAlerts} críticas` : undefined, tone: "error" as const, icon: <BellIcon />, href: "/alertas" },
-      { label: "Combustible (L)", value: k.totalFuelLiters.toLocaleString("es-EC"), badge: undefined,  tone: "brand" as const,   icon: <FuelIcon />,   href: "/combustible"   },
-    ];
-  }, [an?.kpis]);
+      { key: "kpis_flotas",        label: "Vehículos",       value: k.totalAssets.toString(),                  badge: pctAssets,  tone: "success" as const, icon: <IconTruck />,  href: "/flotas"        },
+      { key: "kpis_mantenimiento", label: "Mantenimientos",  value: k.openMaintenances.toString(),             badge: undefined,  tone: "warning" as const, icon: <IconWrench />, href: "/mantenimiento" },
+      { key: "kpis_alertas",       label: "Alertas activas", value: k.openAlerts.toString(),                   badge: k.criticalAlerts > 0 ? `-${k.criticalAlerts} críticas` : undefined, tone: "error" as const, icon: <IconBell />, href: "/alertas" },
+      { key: "kpis_combustible",   label: "Combustible (L)", value: k.totalFuelLiters.toLocaleString("es-EC"), badge: undefined,  tone: "brand" as const,   icon: <IconFuel />,   href: "/combustible"   },
+    ].filter((c) => {
+      if (c.key === "kpis_flotas")        return vis.kpis.flotas;
+      if (c.key === "kpis_mantenimiento") return vis.kpis.mantenimiento;
+      if (c.key === "kpis_alertas")       return vis.alerts.feed;
+      if (c.key === "kpis_combustible")   return vis.kpis.combustible;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [an?.kpis, vis]);
 
-  // ── Chart options — todas memoizadas con `theme` como dependencia ────────
+  // ── Charts base ──
   const c = an?.charts;
-
-  const areaOptions  = useMemo(() => makeAreaOptions(c?.fuelOverTime.categories ?? [], theme),        [c?.fuelOverTime.categories, theme]);
-  const barOptions   = useMemo(() => makeBarOptions(c?.maintenancesByMonth.categories ?? [], theme),  [c?.maintenancesByMonth.categories, theme]);
+  const areaOptions = useMemo(() => makeAreaOptions(c?.fuelOverTime.categories ?? [], theme),  [c?.fuelOverTime.categories, theme]);
+  const barOptions  = useMemo(() => makeBarOptions(c?.maintenancesByMonth.categories ?? [], theme), [c?.maintenancesByMonth.categories, theme]);
   const donutOptions = useMemo(
     () => makeDonutOptions(c?.assetsByStatus.filter(d => d.value > 0).map(d => d.name) ?? [], theme),
     [c?.assetsByStatus, theme]
   );
-  const hBarOptions  = useMemo(
-    () => makeHBarOptions(c?.driversByLicense.map(d => d.name) ?? [], theme),
+  const hBarOptions = useMemo(
+    () => makeHBarOptions(c?.driversByLicense.map(d => d.name) ?? [], ["#465fff"], theme),
     [c?.driversByLicense, theme]
   );
+  const catBarOptions = useMemo(
+    () => makeBarOptions(c?.assetsByCategory.map(d => d.name) ?? [], theme, 220),
+    [c?.assetsByCategory, theme]
+  );
 
-  // ── Alert feed ───────────────────────────────────────────────────────────
+  // ── Alertas ──
   const alertItems = useMemo<AlertItem[]>(() =>
-    alerts.filter(a => a.status !== "Cerrada").slice(0, 6).map(a => ({
+    alerts.filter(a => a.status !== "Cerrada").slice(0, 8).map(a => ({
       title:       a.title,
       description: a.notes || `${a.type} en estado ${a.status}.`,
       severity:    a.severity as AlertItem["severity"],
@@ -222,154 +384,441 @@ export function DashboardOverview() {
     })),
   [alerts]);
 
+  // ── Empty state ──
+  const totalVisible = kpiCards.length
+    + (vis.charts.combustibleMes ? 1 : 0) + (vis.charts.mantenimientosMes ? 1 : 0)
+    + (vis.charts.flotasEstado ? 1 : 0) + (vis.charts.flotasCategoria ? 1 : 0) + (vis.charts.conductoresLicencia ? 1 : 0)
+    + (vis.alerts.feed ? 1 : 0) + (vis.activity.timeline ? 1 : 0) + (vis.activity.proximosMtto ? 1 : 0)
+    + countVisible(vis.sections);
+
+  if (!loading && totalVisible === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center text-center min-h-[60vh] gap-5 px-4">
+        <div className="grid h-20 w-20 place-items-center rounded-2xl bg-gradient-to-br from-violet-500/10 to-sky-500/10 text-violet-400 ring-1 ring-violet-500/20">
+          <LayoutGrid size={32} strokeWidth={1.5} />
+        </div>
+        <div>
+          <h2 className="text-xl font-bold text-gray-800 dark:text-white/90">Sin acceso a elementos del dashboard</h2>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 max-w-md mx-auto leading-relaxed">
+            Tu rol no tiene permisos para ver ningún elemento del dashboard.
+            Para empezar a ver información, el administrador debe asignarte permisos desde
+            <span className="font-mono text-violet-400 mx-1">Accesos → Roles</span>.
+          </p>
+        </div>
+        <a
+          href="/accesos/roles"
+          className="inline-flex items-center gap-2 rounded-xl bg-violet-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-violet-500/20 hover:bg-violet-400 transition-colors"
+        >
+          <IconSettings />
+          Ir a Roles
+        </a>
+      </div>
+    );
+  }
+
+  // Helpers de colapso
+  const isCollapsed = (k: string) => !!collapsed[k];
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-widest text-emerald-500 mb-1">Centro de control</p>
-        <h1 className="text-2xl font-bold text-gray-800 dark:text-white/90">ApliSmart Motors</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Visibilidad operativa: flota, mantenimiento y combustible.</p>
-      </div>
-
-      {/* KPIs */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 md:gap-6">
-        {loading
-          ? Array.from({ length: 4 }).map((_, i) => <div key={i}>{SkeletonKpi}</div>)
-          : kpiCards.map(card => <KpiCard key={card.label} {...card} />)
-        }
-      </div>
-
-      {/* Fila 1: Área combustible + Donut */}
-      <div className="grid gap-4 xl:grid-cols-3 md:gap-6">
-        <div className="xl:col-span-2">
-          {loading || !c
-            ? <ChartSkeleton height="h-[310px]" />
-            : (
-              <ChartCard title="Combustible por mes" subtitle="Litros cargados y costo acumulado">
-                <div className="max-w-full overflow-x-hidden">
-                  <div className="min-w-[600px] xl:min-w-full">
-                    <Suspense fallback={<Sk className="h-[310px]" />}>
-                      <ReactApexChart
-                        options={areaOptions}
-                        series={[
-                          { name: "Litros",    data: c.fuelOverTime.liters },
-                          { name: "Costo USD", data: c.fuelOverTime.cost   },
-                        ]}
-                        type="area"
-                        height={310}
-                      />
-                    </Suspense>
-                  </div>
-                </div>
-              </ChartCard>
-            )
-          }
-        </div>
+    <div className="space-y-7">
+      {/* ─── HEADER ────────────────────────────────────────────────────── */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          {loading || !c
-            ? <ChartSkeleton height="h-[310px]" />
-            : (
-              <ChartCard title="Flota por estado" subtitle="Distribución operativa">
-                <Suspense fallback={<Sk className="h-[310px]" />}>
-                  <ReactApexChart
-                    options={donutOptions}
-                    series={c.assetsByStatus.map(d => d.value).filter(v => v > 0)}
-                    type="donut"
-                    height={310}
-                  />
-                </Suspense>
-              </ChartCard>
-            )
-          }
+          <p className="text-xs font-semibold uppercase tracking-widest text-emerald-500 mb-1">Centro de control</p>
+          <h1 className="text-2xl font-bold text-gray-800 dark:text-white/90">
+            Hola, {firstName}
+          </h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-2">
+            <IconCal /> {period.label} · <span className="font-mono text-xs">{period.from.toISOString().slice(0,10)} → {period.to.toISOString().slice(0,10)}</span>
+          </p>
         </div>
-      </div>
-
-      {/* Fila 2: Barras mantenimientos + Barras licencias */}
-      <div className="grid gap-4 xl:grid-cols-3 md:gap-6">
-        <div className="xl:col-span-2">
-          {loading || !c
-            ? <ChartSkeleton height="h-[180px]" />
-            : (
-              <ChartCard title="Mantenimientos por mes" subtitle="Órdenes programadas en el año">
-                <div className="max-w-full overflow-x-auto">
-                  <div className="-ml-5 min-w-[600px] xl:min-w-full pl-2">
-                    <Suspense fallback={<Sk className="h-[180px]" />}>
-                      <ReactApexChart
-                        options={barOptions}
-                        series={[{ name: "Cantidad", data: c.maintenancesByMonth.count }]}
-                        type="bar"
-                        height={180}
-                      />
-                    </Suspense>
-                  </div>
-                </div>
-              </ChartCard>
-            )
-          }
-        </div>
-        <div>
-          {loading || !c
-            ? <ChartSkeleton height="h-[180px]" />
-            : (
-              <ChartCard title="Conductores por licencia">
-                <Suspense fallback={<Sk className="h-[180px]" />}>
-                  <ReactApexChart
-                    options={hBarOptions}
-                    series={[{ name: "Conductores", data: c.driversByLicense.map(d => d.value) }]}
-                    type="bar"
-                    height={180}
-                  />
-                </Suspense>
-              </ChartCard>
-            )
-          }
-        </div>
-      </div>
-
-      {/* Fila 3: Alertas + Actividad reciente */}
-      <div className="grid gap-4 xl:grid-cols-2 md:gap-6">
-        <div>
-          <h2 className="mb-3 text-lg font-semibold text-gray-800 dark:text-white/90">Alertas recientes</h2>
-          <AlertsFeed items={alertItems} />
-        </div>
-        <div>
-          <h2 className="mb-3 text-lg font-semibold text-gray-800 dark:text-white/90">Actividad reciente</h2>
-          {an?.recentActivity && an.recentActivity.length > 0 && (
-            <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-white/[0.03] px-5 py-5 overflow-y-auto max-h-[480px]">
-              {an.recentActivity.slice(0, 8).map((e, i) => {
-                const isLast = i === Math.min(an.recentActivity.length - 1, 7);
-                const { icon, color, bgColor, textColor, label } = getEventMeta(e.entity);
-                return (
-                  <div key={e.id} className="flex gap-0">
-                    <div className="flex flex-col items-center w-10 flex-shrink-0">
-                      <div className="w-2.5 h-2.5 rounded-full mt-1 ring-2 ring-gray-900 flex-shrink-0" style={{ background: color }} />
-                      {!isLast && <div className="w-px flex-1 min-h-6 bg-gray-200 dark:bg-gray-700 mt-1" />}
-                    </div>
-                    <div className="flex-1 pb-5 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span
-                          className="text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1"
-                          style={{ background: bgColor, color: textColor }}
-                        >
-                          {icon}
-                          {label}
-                        </span>
-                      </div>
-                      <p className="text-sm font-medium text-gray-800 dark:text-white/90 leading-snug">{e.description}</p>
-                      <p className="text-xs text-gray-400 mt-1">{e.actor}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {vis.activity.timeline && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 text-emerald-400 px-3 py-1 text-[10px] font-bold uppercase tracking-wider">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              En vivo
+            </span>
           )}
         </div>
       </div>
 
-      {/* Próximos mantenimientos */}
-      <section>
-        <MaintenanceTable />
-      </section>
+      {/* ─── SECCIÓN 1 · RESUMEN ────────────────────────────────────── */}
+      {kpiCards.length > 0 && (
+        <section className="space-y-3">
+          <SectionHeader number="01" title="Resumen" subtitle="Indicadores clave en un vistazo" accent="violet" />
+          <div className="grid gap-4 md:gap-5" style={autoFitStyle(220)}>
+            {loading
+              ? Array.from({ length: kpiCards.length }).map((_, i) => <div key={i}>{SkeletonKpi}</div>)
+              : kpiCards.map(card => {
+                  const { key, ...rest } = card;
+                  return <KpiCard key={key} {...rest} />;
+                })
+            }
+          </div>
+        </section>
+      )}
+
+      {/* ─── SECCIÓN 2 · COMBUSTIBLE ─────────────────────────────────── */}
+      {(vis.charts.combustibleMes || vis.charts.flotasEstado || vis.charts.flotasCategoria || countVisible(vis.sections.combustible) > 0) && (
+        <section className="space-y-3">
+          <SectionHeader
+            number="02"
+            title="Combustible & Flota"
+            subtitle="Tendencias de carga y distribución de vehículos"
+            accent="amber"
+            collapsible
+            collapsed={isCollapsed("combustible")}
+            onToggle={() => toggle("combustible")}
+          />
+          {!isCollapsed("combustible") && (
+            <div className="space-y-5">
+              {/* Fila 1: 2 charts principales */}
+              <div className="grid gap-5" style={autoFitStyle(420)}>
+                {vis.charts.combustibleMes && (
+                  <div>
+                    {loading || !c
+                      ? <ChartSkeleton height="h-[280px]" />
+                      : (
+                        <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
+                          <div className="mb-4 flex items-center gap-2.5">
+                            <div className="grid h-9 w-9 place-items-center rounded-xl bg-amber-500/10 text-amber-400">
+                              <IconFuel />
+                            </div>
+                            <div>
+                              <h3 className="text-[15px] font-semibold text-gray-800 dark:text-white/90">Combustible por mes</h3>
+                              <p className="text-xs text-gray-500 dark:text-gray-400">Litros cargados y costo acumulado</p>
+                            </div>
+                            <a href="/combustible" className="ml-auto text-[10px] font-semibold text-violet-400 hover:text-violet-300">Ver más →</a>
+                          </div>
+                          <div className="max-w-full overflow-x-hidden">
+                            <div className="min-w-[500px] xl:min-w-full">
+                              <Suspense fallback={<Sk className="h-[280px]" />}>
+                                <ReactApexChart
+                                  options={areaOptions}
+                                  series={[
+                                    { name: "Litros",    data: c.fuelOverTime.liters },
+                                    { name: "Costo USD", data: c.fuelOverTime.cost   },
+                                  ]}
+                                  type="area" height={280}
+                                />
+                              </Suspense>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    }
+                  </div>
+                )}
+                {vis.charts.flotasEstado && (
+                  <div>
+                    {loading || !c
+                      ? <ChartSkeleton height="h-[280px]" />
+                      : (
+                        <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
+                          <div className="mb-4 flex items-center gap-2.5">
+                            <div className="grid h-9 w-9 place-items-center rounded-xl bg-sky-500/10 text-sky-400">
+                              <IconTruck />
+                            </div>
+                            <div>
+                              <h3 className="text-[15px] font-semibold text-gray-800 dark:text-white/90">Flota por estado</h3>
+                              <p className="text-xs text-gray-500 dark:text-gray-400">Distribución operativa</p>
+                            </div>
+                            <a href="/flotas" className="ml-auto text-[10px] font-semibold text-violet-400 hover:text-violet-300">Ver más →</a>
+                          </div>
+                          <Suspense fallback={<Sk className="h-[280px]" />}>
+                            <ReactApexChart
+                              options={donutOptions}
+                              series={c.assetsByStatus.map(d => d.value).filter(v => v > 0)}
+                              type="donut" height={280}
+                            />
+                          </Suspense>
+                        </div>
+                      )
+                    }
+                  </div>
+                )}
+              </div>
+
+              {/* Fila 2: charts secundarios (mantenimientos + categoría + licencias) */}
+              {(vis.charts.mantenimientosMes || vis.charts.flotasCategoria || vis.charts.conductoresLicencia) && (
+                <div className="grid gap-5" style={autoFitStyle(320)}>
+                  {(vis.charts.mantenimientosMes || vis.charts.flotasCategoria) && (
+                    <div>
+                      {vis.charts.mantenimientosMes && (
+                        loading || !c
+                          ? <ChartSkeleton height="h-[220px]" />
+                          : (
+                            <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
+                              <div className="mb-4 flex items-center gap-2.5">
+                                <div className="grid h-9 w-9 place-items-center rounded-xl bg-violet-500/10 text-violet-400">
+                                  <IconWrench />
+                                </div>
+                                <div>
+                                  <h3 className="text-[15px] font-semibold text-gray-800 dark:text-white/90">Mantenimientos por mes</h3>
+                                  <p className="text-xs text-gray-500 dark:text-gray-400">Órdenes programadas en el año</p>
+                                </div>
+                                <a href="/mantenimiento" className="ml-auto text-[10px] font-semibold text-violet-400 hover:text-violet-300">Ver más →</a>
+                              </div>
+                              <Suspense fallback={<Sk className="h-[220px]" />}>
+                                <ReactApexChart
+                                  options={barOptions}
+                                  series={[{ name: "Cantidad", data: c.maintenancesByMonth.count }]}
+                                  type="bar" height={220}
+                                />
+                              </Suspense>
+                            </div>
+                          )
+                      )}
+                    </div>
+                  )}
+                  {vis.charts.conductoresLicencia && (
+                    <div>
+                      {loading || !c
+                        ? <ChartSkeleton height="h-[220px]" />
+                        : (
+                          <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
+                            <div className="mb-4 flex items-center gap-2.5">
+                              <div className="grid h-9 w-9 place-items-center rounded-xl bg-amber-500/10 text-amber-400">
+                                <IconUser />
+                              </div>
+                              <div>
+                                <h3 className="text-[15px] font-semibold text-gray-800 dark:text-white/90">Conductores por licencia</h3>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">Distribución por tipo</p>
+                              </div>
+                            </div>
+                            <Suspense fallback={<Sk className="h-[220px]" />}>
+                              <ReactApexChart
+                                options={hBarOptions}
+                                series={[{ name: "Conductores", data: c.driversByLicense.map(d => d.value) }]}
+                                type="bar" height={220}
+                              />
+                            </Suspense>
+                          </div>
+                        )
+                      }
+                    </div>
+                  )}
+                  {vis.charts.flotasCategoria && (
+                    <div>
+                      {loading || !c
+                        ? <ChartSkeleton height="h-[220px]" />
+                        : (
+                          <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
+                            <div className="mb-4 flex items-center gap-2.5">
+                              <div className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-500/10 text-emerald-400">
+                                <IconTruck />
+                              </div>
+                              <div>
+                                <h3 className="text-[15px] font-semibold text-gray-800 dark:text-white/90">Flota por categoría</h3>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">Camionetas, SUV, etc.</p>
+                              </div>
+                            </div>
+                            <Suspense fallback={<Sk className="h-[220px]" />}>
+                              <ReactApexChart
+                                options={catBarOptions}
+                                series={[{ name: "Cantidad", data: c.assetsByCategory.map(d => d.value) }]}
+                                type="bar" height={220}
+                              />
+                            </Suspense>
+                          </div>
+                        )
+                      }
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Fila 3: consumo/costo por vehículo (cards inteligentes) */}
+              {(vis.sections.combustible.consumoPorVehiculo || vis.sections.combustible.costoPorVehiculo || vis.sections.combustible.consumoPorConductor) && (
+                <AutoGrid minWidth={360}>
+                  {vis.sections.combustible.consumoPorVehiculo && <ConsumoPorVehiculoCard data={an?.intelligent.consumoPorVehiculo ?? []} loading={loading} />}
+                  {vis.sections.combustible.costoPorVehiculo    && <CostoPorVehiculoCard     data={an?.intelligent.costoPorVehiculo    ?? []} loading={loading} />}
+                  {vis.sections.combustible.consumoPorConductor && <ConsumoPorConductorCard />}
+                </AutoGrid>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ─── SECCIÓN 3 · FLOTA Y SEDES/GARAJES ─────────────────────────── */}
+      {countVisible(vis.sections.flota) > 0 && (
+        <section className="space-y-3">
+          <SectionHeader
+            number="03"
+            title="Flota por ubicación"
+            subtitle="Distribución por sede y garaje"
+            accent="sky"
+            collapsible
+            collapsed={isCollapsed("flota")}
+            onToggle={() => toggle("flota")}
+          />
+          {!isCollapsed("flota") && (
+            <AutoGrid minWidth={360}>
+              {vis.sections.flota.flotaPorSede     && <FlotaPorSedeCard     data={an?.intelligent.flotaPorSede     ?? []} loading={loading} />}
+              {vis.sections.flota.kpisPorSede      && <KpisPorSedeCard      data={an?.intelligent.kpisPorSede      ?? []} loading={loading} />}
+              {vis.sections.flota.flotaPorGaraje   && <FlotaPorGarajeCard   data={an?.intelligent.flotaPorGaraje   ?? []} loading={loading} />}
+              {vis.sections.flota.ocupacionGarajes && <OcupacionGarajesCard data={an?.intelligent.ocupacionGarajes ?? []} loading={loading} />}
+            </AutoGrid>
+          )}
+        </section>
+      )}
+
+      {/* ─── SECCIÓN 4 · PERSONAS (conductores, asignaciones) ─────────── */}
+      {countVisible(vis.sections.personas) > 0 && (
+        <section className="space-y-3">
+          <SectionHeader
+            number="04"
+            title="Personas"
+            subtitle="Conductores y asignaciones"
+            accent="emerald"
+            collapsible
+            collapsed={isCollapsed("personas")}
+            onToggle={() => toggle("personas")}
+          />
+          {!isCollapsed("personas") && (
+            <AutoGrid minWidth={360}>
+              {vis.sections.personas.estadoAsignaciones        && <EstadoAsignacionesCard />}
+              {vis.sections.personas.disponibilidadConductores && <DisponibilidadConductoresCard />}
+              {vis.sections.personas.kpisMisVehiculos          && <KpisMisVehiculosCard />}
+            </AutoGrid>
+          )}
+        </section>
+      )}
+
+      {/* ─── SECCIÓN 5 · RECURSOS (A/C, checklists, aceite, inventario, seguros) ─ */}
+      {countVisible(vis.sections.recursos) > 0 && (
+        <section className="space-y-3">
+          <SectionHeader
+            number="05"
+            title="Recursos & Servicios"
+            subtitle="Aires acondicionados, checklists, aceite, inventario, seguros"
+            accent="rose"
+            collapsible
+            collapsed={isCollapsed("recursos")}
+            onToggle={() => toggle("recursos")}
+          />
+          {!isCollapsed("recursos") && (
+            <AutoGrid minWidth={360}>
+              {vis.sections.recursos.kpisAc                && <KpisAcCard />}
+              {vis.sections.recursos.serviciosAcPendientes && <ServiciosAcPendientesCard />}
+              {vis.sections.recursos.kpisChecklists        && <KpisChecklistsCard />}
+              {vis.sections.recursos.checklistsPendientes  && <ChecklistsPendientesCard />}
+              {vis.sections.recursos.proximoCambioAceite   && <ProximoCambioAceiteCard />}
+              {vis.sections.recursos.inventarioBajo        && <InventarioBajoCard />}
+              {vis.sections.recursos.polizasPorVencer      && <PolizasPorVencerCard />}
+              {vis.sections.recursos.coberturaActivos      && <CoberturaActivosCard />}
+            </AutoGrid>
+          )}
+        </section>
+      )}
+
+      {/* ─── SECCIÓN 6 · ATENCIÓN (alertas + actividad) ───────────────── */}
+      {(vis.alerts.feed || vis.activity.timeline) && (
+        <section className="space-y-3">
+          <SectionHeader
+            number="06"
+            title="Atención"
+            subtitle="Alertas activas y actividad reciente"
+            accent="rose"
+            collapsible
+            collapsed={isCollapsed("atencion")}
+            onToggle={() => toggle("atencion")}
+          />
+          {!isCollapsed("atencion") && (
+            <div className="grid gap-5" style={autoFitStyle(420)}>
+              {vis.alerts.feed && (
+                <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
+                  <div className="mb-4 flex items-center gap-2.5">
+                    <div className="grid h-9 w-9 place-items-center rounded-xl bg-rose-500/10 text-rose-400">
+                      <IconBell />
+                    </div>
+                    <div>
+                      <h3 className="text-[15px] font-semibold text-gray-800 dark:text-white/90">Alertas activas</h3>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">{alerts.filter(a => a.status !== "Cerrada").length} abiertas</p>
+                    </div>
+                    <a href="/alertas" className="ml-auto text-[10px] font-semibold text-violet-400 hover:text-violet-300">Ver más →</a>
+                  </div>
+                  <AlertsFeed items={alertItems} />
+                </div>
+              )}
+              {vis.activity.timeline && (
+                <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
+                  <div className="mb-4 flex items-center gap-2.5">
+                    <div className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-500/10 text-emerald-400">
+                      <IconActivity />
+                    </div>
+                    <div>
+                      <h3 className="text-[15px] font-semibold text-gray-800 dark:text-white/90">Actividad reciente</h3>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Últimos eventos en la empresa</p>
+                    </div>
+                    <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 text-emerald-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      En vivo
+                    </span>
+                  </div>
+                  {an?.recentActivity && an.recentActivity.length > 0 ? (
+                    <div className="overflow-y-auto max-h-[480px] -mx-2 px-2">
+                      {an.recentActivity.slice(0, 10).map((e, i) => {
+                        const isLast = i === Math.min(an.recentActivity.length - 1, 9);
+                        const { icon, color, bgColor, textColor, label } = getEventMeta(e.entity);
+                        return (
+                          <div key={e.id} className="flex gap-0">
+                            <div className="flex flex-col items-center w-8 shrink-0">
+                              <div className="w-2.5 h-2.5 rounded-full mt-1.5 ring-2 ring-white dark:ring-[#0F172A] shrink-0" style={{ background: color }} />
+                              {!isLast && <div className="w-px flex-1 min-h-4 bg-gray-200 dark:bg-gray-700 mt-1" />}
+                            </div>
+                            <div className="flex-1 pb-4 min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold flex items-center gap-1" style={{ background: bgColor, color: textColor }}>
+                                  {icon}{label}
+                                </span>
+                              </div>
+                              <p className="text-[13px] font-medium text-gray-800 dark:text-white/90 leading-snug">{e.description}</p>
+                              <p className="text-[11px] text-gray-400 mt-0.5">{e.actor}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-400 text-center py-8">Sin actividad reciente</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ─── PRÓXIMOS MANTENIMIENTOS ─────────────────────────────────── */}
+      {vis.activity.proximosMtto && (
+        <section className="space-y-3">
+          <SectionHeader number="07" title="Próximos mantenimientos" subtitle="Mantenimientos programados" accent="violet" />
+          <MaintenanceTable />
+        </section>
+      )}
+
+      {/* ─── SECCIÓN 8 · AUDITORÍA (al final, opcional) ──────────────── */}
+      {countVisible(vis.sections.auditoria) > 0 && (
+        <section className="space-y-3">
+          <SectionHeader
+            number="08"
+            title="Auditoría"
+            subtitle="Actividad por usuario y entidad"
+            accent="slate"
+            collapsible
+            collapsed={isCollapsed("auditoria")}
+            onToggle={() => toggle("auditoria")}
+          />
+          {!isCollapsed("auditoria") && (
+            <AutoGrid minWidth={400}>
+              {vis.sections.auditoria.actividadPorUsuario  && <ActividadPorUsuarioCard />}
+              {vis.sections.auditoria.actividadPorEntidad && <ActividadPorEntidadCard />}
+            </AutoGrid>
+          )}
+        </section>
+      )}
     </div>
   );
 }

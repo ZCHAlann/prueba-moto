@@ -18,8 +18,6 @@ export type ApiFuelEntry = {
   photoUrl: string | null;
   createdAt: string;
   updatedAt: string;
-  // ── Backend enrichment (display-only) ──────────────────────────────────────
-  /** Vehicle plate — avoids separate useAssets() call */
   assetPlate: string | null;
   assetBrand: string | null;
   assetModel: string | null;
@@ -35,6 +33,8 @@ export type CreateFuelPayload = {
   notes?: string;
   photoUrl?: string | null;
 };
+
+export type UpdateFuelPayload = Partial<CreateFuelPayload>;
 
 function mapApi(raw: Record<string, unknown>): ApiFuelEntry {
   return {
@@ -52,14 +52,12 @@ function mapApi(raw: Record<string, unknown>): ApiFuelEntry {
     photoUrl: (raw.photoUrl as string | null) ?? null,
     createdAt: (raw.createdAt as string) ?? "",
     updatedAt: (raw.updatedAt as string) ?? "",
-    // ── Backend enrichment ──────────────────────────────────────────────────────
     assetPlate: (raw.assetPlate as string | null) ?? null,
     assetBrand: (raw.assetBrand as string | null) ?? null,
     assetModel: (raw.assetModel as string | null) ?? null,
   };
 }
 
-/** Sube 1 foto al endpoint de combustible y devuelve la URL pública. */
 export async function uploadFuelPhoto(file: File, companyId: number): Promise<string> {
   const fd = new FormData();
   fd.append("photos", file);
@@ -105,15 +103,15 @@ export function useFuel() {
     const res = await fetch(`/api/company/${companyId}/fuel`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",   // ← también faltaba esto
+      credentials: "include",
       body: JSON.stringify({
-        assetId: payload.assetId,   // ← camelCase
-        date: payload.date,
-        liters: payload.liters,
-        cost: payload.cost,
+        assetId:  payload.assetId,
+        date:     payload.date,
+        liters:   payload.liters,
+        cost:     payload.cost,
         odometer: payload.odometer,
-        station: payload.station,
-        notes: payload.notes ?? "",
+        station:  payload.station,
+        notes:    payload.notes ?? "",
         photoUrl: payload.photoUrl ?? null,
       }),
     });
@@ -123,11 +121,36 @@ export function useFuel() {
     return created;
   }, [companyId]);
 
+  const updateFuelEntry = useCallback(async (id: string, payload: UpdateFuelPayload): Promise<ApiFuelEntry> => {
+    const res = await fetch(`/api/company/${companyId}/fuel/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        ...(payload.assetId  !== undefined && { assetId:  payload.assetId  }),
+        ...(payload.date     !== undefined && { date:     payload.date     }),
+        ...(payload.liters   !== undefined && { liters:   payload.liters   }),
+        ...(payload.cost     !== undefined && { cost:     payload.cost     }),
+        ...(payload.odometer !== undefined && { odometer: payload.odometer }),
+        ...(payload.station  !== undefined && { station:  payload.station  }),
+        ...(payload.notes    !== undefined && { notes:    payload.notes    }),
+        ...(payload.photoUrl !== undefined && { photoUrl: payload.photoUrl }),
+      }),
+    });
+    if (!res.ok) throw new Error(`Error ${res.status}`);
+    const updated = mapApi(await res.json());
+    setFuelEntries((prev) => prev.map((e) => e.id === id ? updated : e));
+    return updated;
+  }, [companyId]);
+
   const deleteFuelEntry = useCallback(async (id: string): Promise<void> => {
-    const res = await fetch(`/api/company/${companyId}/fuel/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/company/${companyId}/fuel/${id}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
     if (!res.ok) throw new Error(`Error ${res.status}`);
     setFuelEntries((prev) => prev.filter((e) => e.id !== id));
   }, [companyId]);
 
-  return { fuelEntries, loading, error, refresh, createFuelEntry, deleteFuelEntry };
+  return { fuelEntries, loading, error, refresh, createFuelEntry, updateFuelEntry, deleteFuelEntry };
 }

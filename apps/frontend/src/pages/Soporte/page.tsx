@@ -436,7 +436,7 @@ function TicketRow({ ticket, index, onClick }: { ticket: CompanyTicket; index: n
       <td className="px-5 py-3.5 text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">
         {formatDateShort(ticket.createdAt)}
       </td>
-      <td className="px-5 py-3.5">
+      <td className=" px-5 py-3.5">
         <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-semibold text-[#465fff] border border-[#465fff]/30 bg-[#465fff]/5 px-2 py-1 rounded-lg">
           Ver
         </span>
@@ -555,9 +555,21 @@ export default function SoportePage() {
           <table className="w-full min-w-[760px]">
             <thead>
               <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                {["Nº", "Título", "Estado", "Prioridad", "Asignado", "Creado", ""].map((h, i) => (
-                  <th key={i} className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-400">{h}</th>
-                ))}
+                {["Nº", "Título", "Estado", "Prioridad", "Asignado", "Creado", ""].map((h, i, arr) => {
+                  const isLast = i === arr.length - 1;
+                  return (
+                    <th
+                      key={i}
+                      className={
+                        isLast
+                          ? ""
+                          : "px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-400"
+                      }
+                    >
+                      {h}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">

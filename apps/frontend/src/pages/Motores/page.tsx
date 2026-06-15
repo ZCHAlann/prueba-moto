@@ -4,13 +4,16 @@ import { toast } from "sonner";
 import { useMotors } from "../../hooks/useMotors";
 import { StatusPill } from "../../components/common/StatusPill";
 import { ModulePageHeader } from "../../components/features/modules/ModulePageHeader";
-import { Search, Plus, MoreVertical, Eye, Pencil, Trash2, Cpu, AlertTriangle } from "lucide-react";
+import { Search, Plus, Eye, Pencil, Trash2, Cpu, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 import { MotorCreateModal } from "../../components/motors/motor-create-modal";
 import { MotorEditModal } from "../../components/motors/motor-editar-modal";
 import type { Asset } from "../../types/activo";
 import { useNavigate } from "react-router";
 import { usePermissions } from "../../hooks/usePermissions";
 import { useGarages } from "../../hooks/useGarages";
+import { RowActionMenu } from "../../components/ui/table/RowActionMenu";
+
+const PAGE_SIZE = 8;
 
 /* ── Confirm delete dialog ── */
 function ConfirmDeleteDialog({
@@ -79,53 +82,26 @@ function ConfirmDeleteDialog({
 
 /* ── Stat card ── */
 function StatCard({
-  label,
-  value,
-  detail,
-  tone,
-  icon,
+  label, value, detail, tone, icon,
 }: {
-  label: string;
-  value: string;
-  detail: string;
+  label: string; value: string; detail: string;
   tone: "info" | "success" | "warning" | "neutral";
   icon?: React.ReactNode;
 }) {
   const toneMap = {
-    info: {
-      bg: "bg-blue-50 dark:bg-blue-500/10",
-      text: "text-blue-600 dark:text-blue-400",
-      bar: "bg-blue-400",
-    },
-    success: {
-      bg: "bg-emerald-50 dark:bg-emerald-500/10",
-      text: "text-emerald-600 dark:text-emerald-400",
-      bar: "bg-emerald-400",
-    },
-    warning: {
-      bg: "bg-amber-50 dark:bg-amber-500/10",
-      text: "text-amber-600 dark:text-amber-400",
-      bar: "bg-amber-400",
-    },
-    neutral: {
-      bg: "bg-gray-100 dark:bg-white/[0.05]",
-      text: "text-gray-500 dark:text-gray-400",
-      bar: "bg-gray-300 dark:bg-gray-600",
-    },
+    info:    { bg: "bg-blue-50 dark:bg-blue-500/10",     text: "text-blue-600 dark:text-blue-400",     bar: "bg-blue-400"                    },
+    success: { bg: "bg-emerald-50 dark:bg-emerald-500/10", text: "text-emerald-600 dark:text-emerald-400", bar: "bg-emerald-400"               },
+    warning: { bg: "bg-amber-50 dark:bg-amber-500/10",   text: "text-amber-600 dark:text-amber-400",   bar: "bg-amber-400"                    },
+    neutral: { bg: "bg-gray-100 dark:bg-white/[0.05]",   text: "text-gray-500 dark:text-gray-400",     bar: "bg-gray-300 dark:bg-gray-600"    },
   };
   const t = toneMap[tone];
-
   return (
     <div className="group relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 transition-all duration-200 hover:shadow-md dark:border-white/[0.06] dark:bg-white/[0.03] dark:hover:bg-white/[0.05]">
       <div className={`absolute inset-x-0 top-0 h-0.5 ${t.bar} opacity-60`} />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-            {label}
-          </p>
-          <h4 className="mt-2 text-3xl font-bold tabular-nums text-gray-800 dark:text-white">
-            {value}
-          </h4>
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">{label}</p>
+          <h4 className="mt-2 text-3xl font-bold tabular-nums text-gray-800 dark:text-white">{value}</h4>
           <p className="mt-1.5 truncate text-xs text-gray-400 dark:text-gray-500">{detail}</p>
         </div>
         <div className={`shrink-0 rounded-xl p-2.5 ${t.bg}`}>
@@ -136,82 +112,24 @@ function StatCard({
   );
 }
 
-/* ── Row actions dropdown ── */
+/* ── Row actions ── */
 function RowActions({
-  motor,
-  onDelete,
-  onEdit,
-  canEdit,
-  canDelete,
+  motor, onDelete, onEdit, canEdit, canDelete,
 }: {
-  motor: Asset;
-  onDelete: (m: Asset) => void;
-  onEdit: (m: Asset) => void;
-  canEdit: boolean;
-  canDelete: boolean;
+  motor: Asset; onDelete: (m: Asset) => void; onEdit: (m: Asset) => void;
+  canEdit: boolean; canDelete: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  // Si no tiene ninguna acción disponible, no mostrar el menú
+  const navigate = useNavigate();
   if (!canEdit && !canDelete) return null;
-
   return (
-    <div ref={ref} className="relative flex justify-end">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label="Acciones"
-        className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition-all hover:border-gray-300 hover:bg-gray-50 hover:text-gray-700 dark:border-white/[0.08] dark:hover:bg-white/[0.05] dark:hover:text-gray-300"
-      >
-        <MoreVertical size={15} />
-      </button>
-
-      {open && (
-        <div className="absolute right-0 top-9 z-50 w-44 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl ring-1 ring-black/5 dark:border-white/[0.08] dark:bg-gray-900 dark:ring-white/5">
-          <Link
-            to={`/motores/${motor.id}`}
-            onClick={() => setOpen(false)}
-            className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-700 transition hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.05]"
-          >
-            <Eye size={14} className="text-gray-400" />
-            Ver detalle
-          </Link>
-          {canEdit && (
-            <button
-              type="button"
-              onClick={() => { setOpen(false); onEdit(motor); }}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-700 transition hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.05]"
-            >
-              <Pencil size={14} className="text-gray-400" />
-              Editar
-            </button>
-          )}
-          {canDelete && (
-            <>
-              <div className="mx-3 border-t border-gray-100 dark:border-white/[0.06]" />
-              <button
-                type="button"
-                onClick={() => { setOpen(false); onDelete(motor); }}
-                className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-sm text-rose-600 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"
-              >
-                <Trash2 size={14} />
-                Eliminar
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
+    <RowActionMenu
+      ariaLabel="Acciones del motor"
+      items={[
+        { label: "Ver detalle", icon: <Eye size={13} />,    onClick: () => navigate(`/motores/${motor.id}`), tone: "default" },
+        { label: "Editar",      icon: <Pencil size={13} />, onClick: () => onEdit(motor),                     tone: "default", disabled: !canEdit },
+        { label: "Eliminar",    icon: <Trash2 size={13} />, onClick: () => onDelete(motor),                   tone: "danger",  disabled: !canDelete },
+      ]}
+    />
   );
 }
 
@@ -227,9 +145,7 @@ function EmptyState({ hasFilters }: { hasFilters: boolean }) {
           {hasFilters ? "Sin coincidencias" : "Sin motores registrados"}
         </p>
         <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-          {hasFilters
-            ? "Prueba ajustando los filtros de búsqueda."
-            : "Registra el primer motor para comenzar."}
+          {hasFilters ? "Prueba ajustando los filtros de búsqueda." : "Registra el primer motor para comenzar."}
         </p>
       </div>
     </div>
@@ -240,19 +156,19 @@ function EmptyState({ hasFilters }: { hasFilters: boolean }) {
 export function MotorsPage() {
   const { motors, deleteMotor } = useMotors();
   const { can } = usePermissions();
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("Todos");
-  const [showModal, setShowModal] = useState(false);
-  const [motorToEdit, setMotorToEdit] = useState<Asset | null>(null);
+  const [query, setQuery]           = useState("");
+  const [status, setStatus]         = useState("Todos");
+  const [page, setPage]             = useState(1);
+  const [showModal, setShowModal]   = useState(false);
+  const [motorToEdit, setMotorToEdit]     = useState<Asset | null>(null);
   const [motorToDelete, setMotorToDelete] = useState<Asset | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [deleting, setDeleting]           = useState(false);
   const navigate = useNavigate();
   const { garages } = useGarages();
 
   const canCreate = can("motores", "lista_motores", "crear");
   const canEdit   = can("motores", "lista_motores", "editar");
   const canDelete = can("motores", "lista_motores", "eliminar");
-  
 
   const filtered = useMemo(() => {
     const value = query.trim().toLowerCase();
@@ -268,6 +184,12 @@ export function MotorsPage() {
     });
   }, [motors, query, status]);
 
+  // ─── Paginado ──────────────────────────────────────────────────────────────
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const setFilter = (fn: () => void) => { fn(); setPage(1); };
+
   const statusTone = (s: string) =>
     s === "Operativo" ? "success" : s === "En mantenimiento" ? "warning" : "danger";
 
@@ -279,19 +201,13 @@ export function MotorsPage() {
     try {
       const ok = await deleteMotor(motorToDelete.id);
       if (ok) {
-        toast.success("Motor eliminado", {
-          description: "El registro técnico fue retirado correctamente.",
-        });
+        toast.success("Motor eliminado", { description: "El registro técnico fue retirado correctamente." });
         setMotorToDelete(null);
       } else {
-        toast.error("No se pudo eliminar el motor", {
-          description: "Intenta de nuevo o contacta al soporte.",
-        });
+        toast.error("No se pudo eliminar el motor", { description: "Intenta de nuevo o contacta al soporte." });
       }
     } catch {
-      toast.error("Error inesperado", {
-        description: "No se pudo completar la operación.",
-      });
+      toast.error("Error inesperado", { description: "No se pudo completar la operación." });
     } finally {
       setDeleting(false);
     }
@@ -320,9 +236,9 @@ export function MotorsPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 md:gap-5 sm:grid-cols-3 md:grid-cols-4">
-        <StatCard label="Total"             value={motors.length.toString()}                                                detail="Base técnica registrada" tone="info"    />
-        <StatCard label="Operativos"        value={motors.filter((m) => m.status === "Operativo").length.toString()}        detail="Listos para uso"         tone="success" />
-        <StatCard label="Mantenimiento"     value={motors.filter((m) => m.status === "En mantenimiento").length.toString()} detail="Intervenidos por taller" tone="warning" />
+        <StatCard label="Total"             value={motors.length.toString()}                                                 detail="Base técnica registrada" tone="info"    />
+        <StatCard label="Operativos"        value={motors.filter((m) => m.status === "Operativo").length.toString()}         detail="Listos para uso"         tone="success" />
+        <StatCard label="Mantenimiento"     value={motors.filter((m) => m.status === "En mantenimiento").length.toString()}  detail="Intervenidos por taller" tone="warning" />
         <StatCard label="Fuera de servicio" value={motors.filter((m) => m.status === "Fuera de servicio").length.toString()} detail="Fuera de operación"      tone="neutral" />
       </div>
 
@@ -334,14 +250,14 @@ export function MotorsPage() {
             <input
               type="text"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => setFilter(() => setQuery(e.target.value))}
               placeholder="Código, serie, marca o modelo..."
               className="h-10 w-full rounded-xl border border-gray-200 bg-transparent pl-9 pr-4 text-sm text-gray-800 placeholder:text-gray-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/10 dark:border-white/[0.08] dark:text-white dark:placeholder:text-gray-500"
             />
           </div>
           <select
             value={status}
-            onChange={(e) => setStatus(e.target.value)}
+            onChange={(e) => setFilter(() => setStatus(e.target.value))}
             className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-700 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-500/10 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-300"
           >
             {["Todos", "Operativo", "En mantenimiento", "Fuera de servicio"].map((s) => (
@@ -358,10 +274,11 @@ export function MotorsPage() {
             <h3 className="text-sm font-semibold text-gray-800 dark:text-white">Lista de motores</h3>
             <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
               {filtered.length} {filtered.length !== 1 ? "resultados" : "resultado"}
+              {totalPages > 1 && <span className="ml-2">· Pág. {page} / {totalPages}</span>}
               {hasFilters && (
                 <button
                   type="button"
-                  onClick={() => { setQuery(""); setStatus("Todos"); }}
+                  onClick={() => { setQuery(""); setStatus("Todos"); setPage(1); }}
                   className="ml-2 text-orange-500 underline-offset-2 hover:underline"
                 >
                   Limpiar filtros
@@ -380,19 +297,22 @@ export function MotorsPage() {
               <table className="w-full min-w-[860px]">
                 <thead>
                   <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                    {["Código", "Serie", "Motor", "Aceite", "Ubicación", "Estado", ""].map((h, i) => (
-                      <th key={i} className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                        {h}
-                      </th>
-                    ))}
+                    {["Código", "Serie", "Motor", "Aceite", "Ubicación", "Estado", ""].map((h, i, arr) => {
+                      const isLast = i === arr.length - 1;
+                      return (
+                        <th key={i} className={isLast ? "" : "px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500"}>
+                          {h}
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                  {filtered.map((motor) => (
+                  {paginated.map((motor) => (
                     <tr
                       key={motor.id}
                       onClick={() => navigate(`/motores/${motor.id}`)}
-                      className="group transition-colors hover:bg-gray-50/80 dark:hover:bg-white/[0.02] cursor-pointer"
+                      className="group cursor-pointer transition-colors hover:bg-gray-50/80 dark:hover:bg-white/[0.02]"
                     >
                       <td className="px-5 py-4">
                         <span className="inline-flex items-center gap-1.5">
@@ -410,21 +330,13 @@ export function MotorsPage() {
                         {motor.oilCapacity && <span className="ml-1 text-gray-400">/ {motor.oilCapacity}</span>}
                       </td>
                       <td className="px-5 py-4 text-sm text-gray-500 dark:text-gray-400">
-                        {motor.garageId
-                          ? garages.find(g => g.id === motor.garageId)?.name ?? "—"
-                          : "—"}
+                        {motor.garageId ? garages.find(g => g.id === motor.garageId)?.name ?? "—" : "—"}
                       </td>
                       <td className="px-5 py-4">
                         <StatusPill label={motor.status} tone={statusTone(motor.status)} />
                       </td>
-                      <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
-                        <RowActions
-                          motor={motor}
-                          onDelete={setMotorToDelete}
-                          onEdit={setMotorToEdit}
-                          canEdit={canEdit}
-                          canDelete={canDelete}
-                        />
+                      <td className="group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02] px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                        <RowActions motor={motor} onDelete={setMotorToDelete} onEdit={setMotorToEdit} canEdit={canEdit} canDelete={canDelete} />
                       </td>
                     </tr>
                   ))}
@@ -434,7 +346,7 @@ export function MotorsPage() {
 
             {/* Mobile */}
             <div className="divide-y divide-gray-100 dark:divide-white/[0.04] md:hidden">
-              {filtered.map((motor) => (
+              {paginated.map((motor) => (
                 <div key={motor.id} className="space-y-2.5 p-4">
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -443,13 +355,7 @@ export function MotorsPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <StatusPill label={motor.status} tone={statusTone(motor.status)} />
-                      <RowActions
-                        motor={motor}
-                        onDelete={setMotorToDelete}
-                        onEdit={setMotorToEdit}
-                        canEdit={canEdit}
-                        canDelete={canDelete}
-                      />
+                      <RowActions motor={motor} onDelete={setMotorToDelete} onEdit={setMotorToEdit} canEdit={canEdit} canDelete={canDelete} />
                     </div>
                   </div>
                   <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">{motor.brand} {motor.model}</p>
@@ -466,6 +372,41 @@ export function MotorsPage() {
                 </div>
               ))}
             </div>
+
+            {/* ─── Paginador ─────────────────────────────────────────────── */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between border-t border-gray-100 dark:border-white/[0.06] px-5 py-3">
+                <button
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => p - 1)}
+                  className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition"
+                >
+                  <ChevronLeft size={13} />Anterior
+                </button>
+                <div className="flex gap-1">
+                  {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => i + 1).map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={`h-7 w-7 rounded-lg text-xs font-semibold transition ${
+                        page === p
+                          ? "bg-orange-500 text-white"
+                          : "text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.05]"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => p + 1)}
+                  className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition"
+                >
+                  Siguiente<ChevronRight size={13} />
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>

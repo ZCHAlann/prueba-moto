@@ -171,8 +171,7 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
         .map((it) => responses[it])
         .filter((r): r is ChecklistInspectionItem => !!r);
 
-      console.log("[checklist] itemsArr a enviar:", itemsArr); // debug temporal
-
+    
       const observed = itemsArr.some((i) => i.hasItem === "NO");
       const status: ChecklistStatus = observed ? "Observado" : "Aprobado";
       const findings = itemsArr

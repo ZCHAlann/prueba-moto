@@ -6,6 +6,8 @@ import { useAssets } from "../../hooks/useAssets";
 import { usePermissions } from "../../hooks/usePermissions";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 
+const PAGE_SIZE = 7;
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function dueDateLabel(dateStr: string): { label: string; cls: string } {
@@ -15,42 +17,113 @@ function dueDateLabel(dateStr: string): { label: string; cls: string } {
   const due = new Date(dateStr);
   due.setHours(0, 0, 0, 0);
   const diff = Math.round((due.getTime() - now.getTime()) / 86400000);
-  if (diff < 0) return { label: `Vencida hace ${Math.abs(diff)}d`, cls: "text-error-600 dark:text-error-400 font-semibold" };
-  if (diff === 0) return { label: "Vence hoy", cls: "text-error-600 dark:text-error-400 font-semibold" };
-  if (diff === 1) return { label: "Vence mañana", cls: "text-warning-600 dark:text-warning-400 font-semibold" };
-  if (diff <= 7) return { label: `Vence en ${diff}d`, cls: "text-warning-600 dark:text-warning-400" };
-  return { label: `Vence en ${diff}d`, cls: "text-gray-400 dark:text-gray-500" };
+  if (diff < 0)  return { label: `Vencida hace ${Math.abs(diff)}d`, cls: "text-error-600 dark:text-error-400 font-semibold" };
+  if (diff === 0) return { label: "Vence hoy",                       cls: "text-error-600 dark:text-error-400 font-semibold" };
+  if (diff === 1) return { label: "Vence mañana",                    cls: "text-warning-600 dark:text-warning-400 font-semibold" };
+  if (diff <= 7)  return { label: `Vence en ${diff}d`,               cls: "text-warning-600 dark:text-warning-400" };
+  return            { label: `Vence en ${diff}d`,                    cls: "text-gray-400 dark:text-gray-500" };
 }
 
 const severityBorder: Record<AlertSeverity, string> = {
-  Alta: "border-l-error-500",
+  Alta:  "border-l-error-500",
   Media: "border-l-warning-500",
-  Baja: "border-l-brand-400",
+  Baja:  "border-l-brand-400",
 };
 
 const severityBadge: Record<AlertSeverity, string> = {
-  Alta: "bg-error-50 text-error-700 border-error-200 dark:bg-error-500/10 dark:text-error-400 dark:border-error-500/20",
+  Alta:  "bg-error-50 text-error-700 border-error-200 dark:bg-error-500/10 dark:text-error-400 dark:border-error-500/20",
   Media: "bg-warning-50 text-warning-700 border-warning-200 dark:bg-warning-500/10 dark:text-warning-400 dark:border-warning-500/20",
-  Baja: "bg-brand-50 text-brand-700 border-brand-200 dark:bg-brand-500/10 dark:text-brand-400 dark:border-brand-500/20",
+  Baja:  "bg-brand-50 text-brand-700 border-brand-200 dark:bg-brand-500/10 dark:text-brand-400 dark:border-brand-500/20",
 };
 
 const statusBadge: Record<AlertStatus, string> = {
-  Abierta: "bg-error-50 text-error-700 border-error-200 dark:bg-error-500/10 dark:text-error-400 dark:border-error-500/20",
+  Abierta:        "bg-error-50 text-error-700 border-error-200 dark:bg-error-500/10 dark:text-error-400 dark:border-error-500/20",
   "En seguimiento": "bg-warning-50 text-warning-700 border-warning-200 dark:bg-warning-500/10 dark:text-warning-400 dark:border-warning-500/20",
-  Cerrada: "bg-success-50 text-success-700 border-success-200 dark:bg-success-500/10 dark:text-success-400 dark:border-success-500/20",
+  Cerrada:        "bg-success-50 text-success-700 border-success-200 dark:bg-success-500/10 dark:text-success-400 dark:border-success-500/20",
 };
 
 const nextStatus: Record<AlertStatus, AlertStatus> = {
-  Abierta: "En seguimiento",
+  Abierta:          "En seguimiento",
   "En seguimiento": "Cerrada",
-  Cerrada: "Abierta",
+  Cerrada:          "Abierta",
 };
 
 const nextStatusLabel: Record<AlertStatus, string> = {
-  Abierta: "Marcar en seguimiento",
+  Abierta:          "Marcar en seguimiento",
   "En seguimiento": "Marcar como cerrada",
-  Cerrada: "Reabrir",
+  Cerrada:          "Reabrir",
 };
+
+// ── Paginator ─────────────────────────────────────────────────────────────────
+
+function Paginator({
+  page,
+  totalPages,
+  total,
+  onChange,
+}: {
+  page: number;
+  totalPages: number;
+  total: number;
+  onChange: (p: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+
+  const pages: (number | "...")[] = [];
+  if (totalPages <= 5) {
+    for (let i = 1; i <= totalPages; i++) pages.push(i);
+  } else {
+    pages.push(1);
+    if (page > 3) pages.push("...");
+    for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
+    if (page < totalPages - 2) pages.push("...");
+    pages.push(totalPages);
+  }
+
+  return (
+    <div className="flex items-center justify-between border-t border-gray-100 dark:border-white/[0.06] px-5 py-3">
+      <p className="text-xs text-gray-400 dark:text-gray-500">
+        {total} alerta{total !== 1 ? "s" : ""} · página {page} de {totalPages}
+      </p>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => onChange(page - 1)}
+          disabled={page === 1}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-white/[0.08] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition text-xs"
+        >
+          ‹
+        </button>
+        {pages.map((p, i) =>
+          p === "..." ? (
+            <span key={`ellipsis-${i}`} className="px-1 text-xs text-gray-400">…</span>
+          ) : (
+            <button
+              key={p}
+              type="button"
+              onClick={() => onChange(p as number)}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg text-xs font-semibold transition ${
+                page === p
+                  ? "bg-brand-500 text-white border border-brand-500"
+                  : "border border-gray-200 dark:border-white/[0.08] text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04]"
+              }`}
+            >
+              {p}
+            </button>
+          )
+        )}
+        <button
+          type="button"
+          onClick={() => onChange(page + 1)}
+          disabled={page === totalPages}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-white/[0.08] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition text-xs"
+        >
+          ›
+        </button>
+      </div>
+    </div>
+  );
+}
 
 // ── KPI bar ───────────────────────────────────────────────────────────────────
 
@@ -66,11 +139,11 @@ function KpiBar({
   onFilter: (f: FilterValue) => void;
 }) {
   const stats: { label: string; value: number; filter: FilterValue; colorCls: string; activeCls: string }[] = [
-    { label: "Todas",      value: alerts.length,                                          filter: "Todas",           colorCls: "text-gray-800 dark:text-white",             activeCls: "border-gray-800 dark:border-white" },
-    { label: "Abiertas",   value: alerts.filter((a) => a.status === "Abierta").length,    filter: "Abierta",         colorCls: "text-error-600 dark:text-error-400",         activeCls: "border-error-500" },
-    { label: "Seguimiento",value: alerts.filter((a) => a.status === "En seguimiento").length, filter: "En seguimiento", colorCls: "text-warning-600 dark:text-warning-400",  activeCls: "border-warning-500" },
-    { label: "Cerradas",   value: alerts.filter((a) => a.status === "Cerrada").length,    filter: "Cerrada",         colorCls: "text-success-600 dark:text-success-400",     activeCls: "border-success-500" },
-    { label: "Críticas",   value: alerts.filter((a) => a.severity === "Alta").length,     filter: "Todas",           colorCls: "text-error-600 dark:text-error-400",         activeCls: "border-error-500" },
+    { label: "Todas",       value: alerts.length,                                                filter: "Todas",           colorCls: "text-gray-800 dark:text-white",             activeCls: "border-gray-800 dark:border-white" },
+    { label: "Abiertas",    value: alerts.filter((a) => a.status === "Abierta").length,          filter: "Abierta",         colorCls: "text-error-600 dark:text-error-400",         activeCls: "border-error-500" },
+    { label: "Seguimiento", value: alerts.filter((a) => a.status === "En seguimiento").length,   filter: "En seguimiento",  colorCls: "text-warning-600 dark:text-warning-400",     activeCls: "border-warning-500" },
+    { label: "Cerradas",    value: alerts.filter((a) => a.status === "Cerrada").length,          filter: "Cerrada",         colorCls: "text-success-600 dark:text-success-400",     activeCls: "border-success-500" },
+    { label: "Críticas",    value: alerts.filter((a) => a.severity === "Alta").length,           filter: "Todas",           colorCls: "text-error-600 dark:text-error-400",         activeCls: "border-error-500" },
   ];
 
   return (
@@ -139,7 +212,6 @@ function AlertCard({
       className={`group relative overflow-hidden rounded-2xl border border-l-4 border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] transition hover:border-gray-300 dark:hover:border-white/[0.12] ${severityBorder[alert.severity]}`}
     >
       <div className="flex items-start gap-4 p-4">
-        {/* left: main info */}
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{alert.title}</p>
@@ -178,7 +250,6 @@ function AlertCard({
           )}
         </div>
 
-        {/* right: actions */}
         {showActions && (
           <div className="flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
             {canEdit && (
@@ -240,10 +311,7 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 }
 
 function CreateDrawer({
-  open,
-  onClose,
-  assets,
-  onSave,
+  open, onClose, assets, onSave,
 }: {
   open: boolean;
   onClose: () => void;
@@ -257,7 +325,7 @@ function CreateDrawer({
   function validate() {
     const e: typeof errors = {};
     if (!form.title.trim()) e.title = "El título es requerido";
-    if (!form.dueDate) e.dueDate = "La fecha límite es requerida";
+    if (!form.dueDate)      e.dueDate = "La fecha límite es requerida";
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -265,13 +333,8 @@ function CreateDrawer({
   async function handleSave() {
     if (!validate()) return;
     setSaving(true);
-    try {
-      await onSave(form);
-      setForm(emptyForm());
-      onClose();
-    } finally {
-      setSaving(false);
-    }
+    try { await onSave(form); setForm(emptyForm()); onClose(); }
+    finally { setSaving(false); }
   }
 
   return (
@@ -291,32 +354,25 @@ function CreateDrawer({
             transition={{ type: "spring", damping: 28, stiffness: 300 }}
             className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-white/[0.06] shadow-2xl"
           >
-            {/* header */}
             <div className="flex items-center justify-between gap-3 border-b border-gray-100 dark:border-white/[0.06] px-4 py-5 sm:px-6">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">Nueva alerta</p>
                 <h2 className="mt-1 text-base font-semibold text-gray-800 dark:text-white">Crear alerta operativa</h2>
               </div>
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-xl border border-gray-200 dark:border-white/[0.08] p-2 text-gray-400 transition hover:bg-gray-50 dark:hover:bg-white/[0.05] hover:text-gray-600 dark:hover:text-gray-300"
-              >
+              <button type="button" onClick={onClose}
+                className="rounded-xl border border-gray-200 dark:border-white/[0.08] p-2 text-gray-400 transition hover:bg-gray-50 dark:hover:bg-white/[0.05] hover:text-gray-600 dark:hover:text-gray-300">
                 <svg className="h-5 w-5" viewBox="0 0 20 20" fill="none">
                   <path d="M5 5l10 10M15 5l-10 10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
                 </svg>
               </button>
             </div>
 
-            {/* body */}
             <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 space-y-4">
               <div>
                 <FieldLabel>Título</FieldLabel>
-                <input
-                  value={form.title}
+                <input value={form.title}
                   onChange={e => { setForm(f => ({ ...f, title: e.target.value.slice(0, 200) })); setErrors(er => ({ ...er, title: undefined })); }}
-                  placeholder="Ej. Vencimiento SOAT"
-                  maxLength={200}
+                  placeholder="Ej. Vencimiento SOAT" maxLength={200}
                   className={`${inputCls} ${errors.title ? "border-error-300 focus:border-error-500 focus:ring-error-500/10" : ""}`}
                 />
                 {errors.title && <p className="mt-1 text-xs text-error-500">{errors.title}</p>}
@@ -329,7 +385,7 @@ function CreateDrawer({
                     <option value="">Sin vehículo asignado</option>
                     {assets.map(a => (
                       <option key={a.id} value={a.id}>
-                        {a.plate || a.code || a.name} {a.brand && a.model ? `— ${a.brand} ${a.model}` : ""}
+                        {a.plate || a.code || a.name}{a.brand && a.model ? ` — ${a.brand} ${a.model}` : ""}
                       </option>
                     ))}
                   </select>
@@ -382,32 +438,21 @@ function CreateDrawer({
 
               <div>
                 <FieldLabel>Notas (opcional)</FieldLabel>
-                <textarea
-                  value={form.notes}
+                <textarea value={form.notes}
                   onChange={e => setForm(f => ({ ...f, notes: e.target.value.slice(0, 2000) }))}
-                  placeholder="Detalle adicional sobre esta alerta…"
-                  rows={4}
-                  maxLength={2000}
+                  placeholder="Detalle adicional sobre esta alerta…" rows={4} maxLength={2000}
                   className={`${inputCls} resize-none`}
                 />
               </div>
             </div>
 
-            {/* footer */}
             <div className="border-t border-gray-100 dark:border-white/[0.06] px-4 py-4 sm:px-6 flex flex-col-reverse gap-2 sm:flex-row sm:gap-3">
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 rounded-xl border border-gray-200 dark:border-white/[0.08] py-2.5 text-sm font-semibold text-gray-500 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-white/[0.05]"
-              >
+              <button type="button" onClick={onClose}
+                className="flex-1 rounded-xl border border-gray-200 dark:border-white/[0.08] py-2.5 text-sm font-semibold text-gray-500 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-white/[0.05]">
                 Cancelar
               </button>
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={saving}
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-brand-500 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95 disabled:opacity-50"
-              >
+              <button type="button" onClick={handleSave} disabled={saving}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-brand-500 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95 disabled:opacity-50">
                 {saving && (
                   <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
@@ -438,12 +483,11 @@ export function AlertsPage() {
   const [filter, setFilter]       = useState<FilterValue>("Todas");
   const [search, setSearch]       = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [page, setPage]           = useState(1);
 
-  // ── Asset label from backend enrichment (avoids useAssets() call) ──────────────
   const assetLabel = (alert: ApiAlert) => {
     if (!alert.assetName && !alert.assetPlate) return "";
-    const parts = [alert.assetPlate, alert.assetName].filter(Boolean);
-    return parts.join(" — ");
+    return [alert.assetPlate, alert.assetName].filter(Boolean).join(" — ");
   };
 
   const filtered = useMemo(() => {
@@ -459,40 +503,28 @@ export function AlertsPage() {
       .filter(a => !q || a.title.toLowerCase().includes(q) || (a.notes ?? "").toLowerCase().includes(q) || assetLabel(a).toLowerCase().includes(q));
   }, [alerts, filter, search]);
 
+  // Reset página cuando cambian filtros o búsqueda
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  function setFilterAndReset(f: FilterValue) { setFilter(f); setPage(1); }
+  function setSearchAndReset(s: string)      { setSearch(s); setPage(1); }
+
   async function handleStatusChange(id: string, status: AlertStatus) {
-    try {
-      await updateAlert(id, { status });
-      toast.success(`Alerta marcada como ${status}`);
-    } catch {
-      toast.error("Error al actualizar estado");
-    }
+    try { await updateAlert(id, { status }); toast.success(`Alerta marcada como ${status}`); }
+    catch { toast.error("Error al actualizar estado"); }
   }
 
   async function handleDelete(id: string) {
-    try {
-      await deleteAlert(id);
-      toast.success("Alerta eliminada");
-    } catch {
-      toast.error("Error al eliminar");
-    }
+    try { await deleteAlert(id); toast.success("Alerta eliminada"); }
+    catch { toast.error("Error al eliminar"); }
   }
 
   async function handleCreate(form: FormState) {
     try {
-      await createAlert({
-        assetId:  form.assetId,
-        title:    form.title,
-        type:     form.type,
-        severity: form.severity,
-        status:   "Abierta",
-        dueDate:  form.dueDate,
-        notes:    form.notes,
-      });
+      await createAlert({ assetId: form.assetId, title: form.title, type: form.type, severity: form.severity, status: "Abierta", dueDate: form.dueDate, notes: form.notes });
       toast.success("Alerta creada");
-    } catch {
-      toast.error("Error al crear alerta");
-      throw new Error();
-    }
+    } catch { toast.error("Error al crear alerta"); throw new Error(); }
   }
 
   return (
@@ -509,11 +541,8 @@ export function AlertsPage() {
           </p>
         </div>
         {canCreate && (
-          <button
-            type="button"
-            onClick={() => setDrawerOpen(true)}
-            className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm font-semibold text-brand-600 transition hover:bg-brand-100 dark:border-brand-500/20 dark:bg-brand-500/[0.08] dark:text-brand-400 dark:hover:bg-brand-500/[0.15]"
-          >
+          <button type="button" onClick={() => setDrawerOpen(true)}
+            className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm font-semibold text-brand-600 transition hover:bg-brand-100 dark:border-brand-500/20 dark:bg-brand-500/[0.08] dark:text-brand-400 dark:hover:bg-brand-500/[0.15]">
             <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none">
               <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
             </svg>
@@ -523,7 +552,7 @@ export function AlertsPage() {
       </div>
 
       {/* KPI bar */}
-      <KpiBar alerts={alerts} active={filter} onFilter={setFilter} />
+      <KpiBar alerts={alerts} active={filter} onFilter={setFilterAndReset} />
 
       {/* list */}
       <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03]">
@@ -531,18 +560,18 @@ export function AlertsPage() {
         <div className="flex flex-col gap-3 border-b border-gray-100 dark:border-white/[0.06] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-sm font-semibold text-gray-800 dark:text-white">Feed de alertas</h2>
-            <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{filtered.length} alerta{filtered.length !== 1 ? "s" : ""}</p>
+            <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+              {filtered.length} alerta{filtered.length !== 1 ? "s" : ""}
+              {totalPages > 1 && <span className="ml-1">· pág. {page} de {totalPages}</span>}
+            </p>
           </div>
           <div className="relative">
             <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" viewBox="0 0 16 16" fill="none">
               <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.4"/>
               <path d="M10.5 10.5l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
             </svg>
-            <input
-              type="text"
-              placeholder="Buscar alerta, vehículo…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
+            <input type="text" placeholder="Buscar alerta, vehículo…"
+              value={search} onChange={e => setSearchAndReset(e.target.value)}
               className="h-9 w-64 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-transparent py-2 pl-9 pr-4 text-sm text-gray-700 dark:text-gray-300 placeholder:text-gray-400 dark:placeholder:text-gray-600 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10"
             />
           </div>
@@ -552,7 +581,7 @@ export function AlertsPage() {
           {loading ? (
             <div className="space-y-3">
               {[1, 2, 3].map(i => (
-                <div key={i} className="h-20 animate-pulse rounded-2xl bg-gray-100 dark:bg-white/[0.04]"/>
+                <div key={i} className="h-20 animate-pulse rounded-2xl bg-gray-100 dark:bg-white/[0.04]" />
               ))}
             </div>
           ) : filtered.length === 0 ? (
@@ -561,11 +590,8 @@ export function AlertsPage() {
                 {search || filter !== "Todas" ? "Sin resultados para ese filtro" : "No hay alertas registradas"}
               </p>
               {!search && filter === "Todas" && canCreate && (
-                <button
-                  type="button"
-                  onClick={() => setDrawerOpen(true)}
-                  className="mt-3 text-sm font-semibold text-brand-500 hover:text-brand-600 dark:text-brand-400"
-                >
+                <button type="button" onClick={() => setDrawerOpen(true)}
+                  className="mt-3 text-sm font-semibold text-brand-500 hover:text-brand-600 dark:text-brand-400">
                   Crear primera alerta →
                 </button>
               )}
@@ -573,7 +599,7 @@ export function AlertsPage() {
           ) : (
             <div className="space-y-2">
               <AnimatePresence initial={false}>
-                {filtered.map(alert => (
+                {paged.map(alert => (
                   <AlertCard
                     key={alert.id}
                     alert={alert}
@@ -588,6 +614,13 @@ export function AlertsPage() {
             </div>
           )}
         </div>
+
+        <Paginator
+          page={page}
+          totalPages={totalPages}
+          total={filtered.length}
+          onChange={setPage}
+        />
       </div>
 
       {canCreate && (

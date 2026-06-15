@@ -884,8 +884,11 @@ export function LeadsPage() {
                       <table className="w-full min-w-[900px] text-sm">
                         <thead>
                           <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                            {["Empresa","Contacto","Estado","Fuente","Valor","Pipeline","Creado",""].map(h => (
-                              <th key={h} className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                            {["Empresa","Contacto","Estado","Fuente","Valor","Pipeline","Creado",""].map((h, i, arr) => (
+                              <th
+                                key={h}
+                                className={`px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 ${i === arr.length - 1 ? "" : ""}`}
+                              >
                                 {h}
                               </th>
                             ))}
@@ -935,7 +938,7 @@ export function LeadsPage() {
                                 <td className="px-5 py-3.5 text-xs text-gray-500 dark:text-gray-400">
                                   {fmtDate(lead.createdAt)}
                                 </td>
-                                <td className="px-5 py-3.5">
+                                <td className=" group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
                                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
                                     onClick={e => e.stopPropagation()}
                                   >

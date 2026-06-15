@@ -1,6 +1,7 @@
 // pages/Mantenimientos/Agendar.tsx
 // Drag & drop migrado a HTML5 nativo (dataTransfer) para compatibilidad
 // total con FullCalendar — sin dnd-kit. El diseño visual es idéntico.
+// Light/dark theme completo siguiendo el patrón de GaragesPage.
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import FullCalendar from "@fullcalendar/react";
@@ -91,21 +92,24 @@ function VehicleCard({
       className={`
         group flex items-center gap-2.5 rounded-xl border cursor-grab active:cursor-grabbing
         select-none transition-all duration-150
-        border-white/[0.06] bg-white/[0.03] hover:bg-white/[0.07] hover:border-violet-500/40
+        border-gray-200 dark:border-white/[0.06]
+        bg-white dark:bg-white/[0.03]
+        hover:bg-violet-50 dark:hover:bg-white/[0.07]
+        hover:border-violet-300 dark:hover:border-violet-500/40
         ${dragging ? "opacity-30 scale-95" : ""}
         ${compact ? "p-2 justify-center" : "p-2.5"}
       `}
     >
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-500/10 text-violet-400">
+      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-100 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400">
         <Car size={14} />
       </div>
       {!compact && (
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-white truncate leading-tight">
+          <p className="text-sm font-medium text-gray-800 dark:text-white truncate leading-tight">
             {asset.plate ?? asset.name}
           </p>
           {asset.plate && (
-            <p className="text-[11px] text-gray-500 truncate">{asset.name}</p>
+            <p className="text-[11px] text-gray-400 dark:text-gray-500 truncate">{asset.name}</p>
           )}
         </div>
       )}
@@ -134,21 +138,21 @@ function FloatingDragCard({
         pointerEvents: "none",
         zIndex: 9999,
       }}
-      className="rounded-xl border border-violet-500/60 bg-[#0f1320] shadow-2xl px-3 py-2.5 w-56"
+      className="rounded-xl border border-violet-300 dark:border-violet-500/60 bg-white dark:bg-[#0f1320] shadow-2xl px-3 py-2.5 w-56"
     >
       <div className="flex items-center gap-2.5">
-        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-500/20 text-violet-400">
+        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-100 dark:bg-violet-500/20 text-violet-600 dark:text-violet-400">
           <Car size={14} />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-white truncate">{asset.plate ?? asset.name}</p>
-          {asset.plate && <p className="text-[11px] text-gray-500 truncate">{asset.name}</p>}
+          <p className="text-sm font-medium text-gray-800 dark:text-white truncate">{asset.plate ?? asset.name}</p>
+          {asset.plate && <p className="text-[11px] text-gray-400 dark:text-gray-500 truncate">{asset.name}</p>}
         </div>
       </div>
       {dateLabel && (
-        <div className="mt-2 pt-2 border-t border-violet-500/30 text-[11px] text-violet-200">
-          <span className="font-semibold uppercase tracking-wider text-violet-300/80">Agendar para</span>
-          <div className="font-semibold text-white mt-0.5">{dateLabel}</div>
+        <div className="mt-2 pt-2 border-t border-violet-200 dark:border-violet-500/30 text-[11px] text-violet-700 dark:text-violet-200">
+          <span className="font-semibold uppercase tracking-wider text-violet-500 dark:text-violet-300/80">Agendar para</span>
+          <div className="font-semibold text-gray-800 dark:text-white mt-0.5">{dateLabel}</div>
         </div>
       )}
     </div>
@@ -221,24 +225,19 @@ export function MantenimientosAgendar() {
   }, [assetsList, search]);
 
   // ── Listeners globales para drag HTML5 sobre el calendario ───────────────
-  // dragover/drop no se pueden poner en FullCalendar directamente,
-  // así que los ponemos en el contenedor del calendario.
   const handleCalDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     if (!e.dataTransfer.types.includes("application/motors-asset")) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
     setCursorPos({ x: e.clientX, y: e.clientY });
 
-    // Hit-test: buscamos la celda .fc-daygrid-day bajo el cursor
     const el   = document.elementFromPoint(e.clientX, e.clientY);
     const cell = el?.closest<HTMLElement>(".fc-daygrid-day[data-date]");
     const date = cell?.dataset.date ?? null;
-    // No resaltar días pasados
     setHoveredDate(date && !isPastDate(date) ? date : null);
   }, []);
 
   const handleCalDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    // Solo limpiar si salimos del contenedor completo
     if (!calendarWrap.current?.contains(e.relatedTarget as Node)) {
       setHoveredDate(null);
     }
@@ -277,7 +276,6 @@ export function MantenimientosAgendar() {
     setModalOpen(true);
   }, [canCreate]);
 
-  // Limpiar si el drag termina fuera del calendario (dragend global)
   useEffect(() => {
     const cleanup = () => {
       dragAssetRef.current = null;
@@ -330,24 +328,29 @@ export function MantenimientosAgendar() {
     return () => ro.disconnect();
   }, []);
 
-  // Estilo dark del FC + highlight del día destino
+  // Estilos FullCalendar: light y dark adaptativos vía media query + clase .dark
   useEffect(() => {
     if (document.getElementById("agendar-fc-styles")) return;
     const style = document.createElement("style");
     style.id = "agendar-fc-styles";
     style.innerHTML = `
-      .fc { --fc-border-color: rgba(255,255,255,0.06); --fc-page-bg-color: transparent; --fc-neutral-bg-color: rgba(255,255,255,0.02); color: #fff; font-family: inherit; }
+      /* ── Light base ── */
+      .fc {
+        --fc-border-color: rgba(0,0,0,0.08);
+        --fc-page-bg-color: transparent;
+        --fc-neutral-bg-color: rgba(0,0,0,0.02);
+        color: #1f2937;
+        font-family: inherit;
+      }
       .fc .fc-toolbar { display: none; }
-      .fc .fc-col-header-cell-cushion { color: #9ca3af; font-weight: 600; font-size: 10px; padding: 6px 4px; text-transform: uppercase; letter-spacing: 0.05em; text-decoration: none; }
-      .fc .fc-daygrid-day-number { color: #d1d5db; font-size: 13px; font-weight: 600; padding: 4px 6px; text-decoration: none; }
-      .fc .fc-day-today { background: rgba(124,58,237,0.08) !important; }
-      .fc .fc-day-today .fc-daygrid-day-number { color: #a78bfa; }
-      .fc .fc-day-other .fc-daygrid-day-number { color: #4b5563; }
+      .fc .fc-col-header-cell-cushion { color: #6b7280; font-weight: 600; font-size: 10px; padding: 6px 4px; text-transform: uppercase; letter-spacing: 0.05em; text-decoration: none; }
+      .fc .fc-daygrid-day-number { color: #374151; font-size: 13px; font-weight: 600; padding: 4px 6px; text-decoration: none; }
+      .fc .fc-day-today { background: rgba(124,58,237,0.06) !important; }
+      .fc .fc-day-today .fc-daygrid-day-number { color: #7c3aed; }
+      .fc .fc-day-other .fc-daygrid-day-number { color: #9ca3af; }
       .fc .fc-daygrid-day-frame { min-height: 0 !important; padding: 2px; box-sizing: border-box; }
-      .fc .fc-daygrid-day-frame:hover { background: rgba(255,255,255,0.02); }
-      .fc .fc-daygrid-body,
-      .fc .fc-daygrid-body table,
-      .fc .fc-scrollgrid-sync-table { height: 100% !important; }
+      .fc .fc-daygrid-day-frame:hover { background: rgba(0,0,0,0.02); }
+      .fc .fc-daygrid-body, .fc .fc-daygrid-body table, .fc .fc-scrollgrid-sync-table { height: 100% !important; }
       .fc .fc-scroller { overflow: hidden !important; height: 100% !important; }
       .fc .fc-scroller-harness, .fc .fc-scroller-harness-liquid { height: 100% !important; }
       .fc .fc-scroller-liquid-absolute { overflow: hidden !important; top: 0 !important; bottom: 0 !important; left: 0 !important; right: 0 !important; }
@@ -355,59 +358,67 @@ export function MantenimientosAgendar() {
       .agenda-event { border-radius: 8px !important; padding: 4px 8px !important; font-size: 11px !important; font-weight: 500 !important; margin: 2px 4px !important; line-height: 1.3 !important; }
       .agenda-event .fc-event-title { white-space: pre-line !important; }
       .fc .fc-scrollgrid { border: none !important; }
-      .fc-theme-standard td, .fc-theme-standard th, .fc-theme-standard .fc-scrollgrid { border-color: rgba(255,255,255,0.04) !important; }
+      .fc-theme-standard td, .fc-theme-standard th, .fc-theme-standard .fc-scrollgrid { border-color: rgba(0,0,0,0.06) !important; }
       .fc-list { border: none !important; }
-      .fc-list-day-cushion { background: rgba(255,255,255,0.04) !important; }
-      .fc-list-event:hover td { background: rgba(124,58,237,0.08) !important; }
-      .fc-list-event-title, .fc-list-event-time { color: #fff !important; }
-      .fc-highlight { background: rgba(124,58,237,0.15) !important; }
+      .fc-list-day-cushion { background: rgba(0,0,0,0.03) !important; }
+      .fc-list-event:hover td { background: rgba(124,58,237,0.05) !important; }
+      .fc-list-event-title, .fc-list-event-time { color: #1f2937 !important; }
+      .fc-highlight { background: rgba(124,58,237,0.10) !important; }
       .fc .fc-day-past { opacity: 0.45; }
-      .fc .fc-day-past .fc-daygrid-day-number { color: #4b5563 !important; }
+      .fc .fc-day-past .fc-daygrid-day-number { color: #9ca3af !important; }
       .fc .fc-day-past .fc-daygrid-day-frame { cursor: not-allowed !important; }
 
-      /* DROP TARGET: día destino durante el drag */
+      /* ── Dark overrides ── */
+      .dark .fc {
+        --fc-border-color: rgba(255,255,255,0.06);
+        --fc-neutral-bg-color: rgba(255,255,255,0.02);
+        color: #fff;
+      }
+      .dark .fc .fc-col-header-cell-cushion { color: #9ca3af; }
+      .dark .fc .fc-daygrid-day-number { color: #d1d5db; }
+      .dark .fc .fc-day-today { background: rgba(124,58,237,0.08) !important; }
+      .dark .fc .fc-day-today .fc-daygrid-day-number { color: #a78bfa; }
+      .dark .fc .fc-day-other .fc-daygrid-day-number { color: #4b5563; }
+      .dark .fc .fc-daygrid-day-frame:hover { background: rgba(255,255,255,0.02); }
+      .dark .fc-theme-standard td, .dark .fc-theme-standard th, .dark .fc-theme-standard .fc-scrollgrid { border-color: rgba(255,255,255,0.04) !important; }
+      .dark .fc-list-day-cushion { background: rgba(255,255,255,0.04) !important; }
+      .dark .fc-list-event:hover td { background: rgba(124,58,237,0.08) !important; }
+      .dark .fc-list-event-title, .dark .fc-list-event-time { color: #fff !important; }
+      .dark .fc-highlight { background: rgba(124,58,237,0.15) !important; }
+      .dark .fc .fc-day-past .fc-daygrid-day-number { color: #4b5563 !important; }
+
+      /* DROP TARGET */
       .fc-daygrid-day.fc-day-drop-target {
-        background: rgba(124, 58, 237, 0.30) !important;
-        box-shadow: inset 0 0 0 2px #a78bfa, 0 0 0 4px rgba(124,58,237,0.4) !important;
+        background: rgba(124, 58, 237, 0.15) !important;
+        box-shadow: inset 0 0 0 2px #7c3aed, 0 0 0 4px rgba(124,58,237,0.2) !important;
         transition: background 100ms ease, box-shadow 100ms ease;
         z-index: 5;
         border-radius: 6px;
         position: relative;
       }
-      .fc-daygrid-day.fc-day-drop-target .fc-daygrid-day-number {
-        color: #ffffff !important;
-        font-weight: 700;
+      .dark .fc-daygrid-day.fc-day-drop-target {
+        background: rgba(124, 58, 237, 0.30) !important;
+        box-shadow: inset 0 0 0 2px #a78bfa, 0 0 0 4px rgba(124,58,237,0.4) !important;
       }
+      .fc-daygrid-day.fc-day-drop-target .fc-daygrid-day-number { color: #7c3aed !important; font-weight: 700; }
+      .dark .fc-daygrid-day.fc-day-drop-target .fc-daygrid-day-number { color: #ffffff !important; }
       .fc-daygrid-day.fc-day-drop-target::after {
         content: "Soltar aquí";
-        position: absolute;
-        bottom: 6px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: #7c3aed;
-        color: #fff;
-        font-size: 10px;
-        font-weight: 700;
-        padding: 3px 10px;
-        border-radius: 999px;
-        z-index: 6;
-        pointer-events: none;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        box-shadow: 0 4px 12px rgba(124,58,237,0.4);
-        white-space: nowrap;
+        position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+        background: #7c3aed; color: #fff; font-size: 10px; font-weight: 700;
+        padding: 3px 10px; border-radius: 999px; z-index: 6; pointer-events: none;
+        text-transform: uppercase; letter-spacing: 0.05em;
+        box-shadow: 0 4px 12px rgba(124,58,237,0.4); white-space: nowrap;
       }
 
       /* Atenúa los demás días durante el drag */
       .fc.fc-has-dragging .fc-daygrid-day:not(.fc-day-drop-target) .fc-daygrid-day-frame {
-        opacity: 0.5;
-        transition: opacity 120ms ease;
+        opacity: 0.5; transition: opacity 120ms ease;
       }
     `;
     document.head.appendChild(style);
   }, []);
 
-  // Aplica la clase CSS al día destino y el estado global fc-has-dragging
   useEffect(() => {
     document.querySelectorAll(".fc-day-drop-target")
       .forEach((el) => el.classList.remove("fc-day-drop-target"));
@@ -428,31 +439,32 @@ export function MantenimientosAgendar() {
 
   return (
     <>
-      {/* Tarjeta flotante que sigue al cursor durante el drag */}
       <FloatingDragCard
         asset={activeAsset}
         dateLabel={hoveredDate ? fmtHumanDate(hoveredDate) : null}
         pos={cursorPos}
       />
 
-      <div className="flex h-full gap-0 overflow-hidden rounded-2xl border border-white/[0.06] bg-[#0b0f1a] relative">
+      <div className="flex h-full gap-0 overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-[#0b0f1a] relative">
 
         {/* ── Sidebar ──────────────────────────────────────────────────────── */}
         <div
           className={`
-            flex flex-col shrink-0 border-r border-white/[0.06] transition-all duration-300 overflow-hidden
+            flex flex-col shrink-0 border-r border-gray-200 dark:border-white/[0.06]
+            transition-all duration-300 overflow-hidden
+            bg-gray-50 dark:bg-transparent
             ${sidebarOpen ? "w-[260px]" : "w-[56px]"}
           `}
         >
-          <div className="flex items-center justify-between px-3 py-3 border-b border-white/[0.06] min-h-[52px]">
+          <div className="flex items-center justify-between px-3 py-3 border-b border-gray-200 dark:border-white/[0.06] min-h-[52px]">
             {sidebarOpen && (
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
                 Vehículos
               </span>
             )}
             <button
               onClick={toggleSidebar}
-              className="ml-auto grid h-7 w-7 place-items-center rounded-lg text-gray-500 hover:text-gray-300 hover:bg-white/[0.06] transition"
+              className="ml-auto grid h-7 w-7 place-items-center rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-white/[0.06] transition"
               title={sidebarOpen ? "Colapsar" : "Expandir"}
             >
               {sidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
@@ -462,12 +474,12 @@ export function MantenimientosAgendar() {
           {sidebarOpen && (
             <div className="px-2 pt-2 pb-1">
               <div className="relative">
-                <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500" />
+                <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
                 <input
                   placeholder="Buscar vehículo…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-6 pr-2 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-xs text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/20"
+                  className="w-full pl-6 pr-2 py-1.5 rounded-lg bg-white dark:bg-white/[0.04] border border-gray-200 dark:border-white/[0.06] text-xs text-gray-700 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-600 focus:outline-none focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20 dark:focus:ring-violet-500/20"
                 />
               </div>
             </div>
@@ -476,7 +488,7 @@ export function MantenimientosAgendar() {
           <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-2 space-y-1.5 min-h-0">
             {filteredAssets.length === 0 ? (
               sidebarOpen && (
-                <p className="text-[11px] text-gray-600 text-center py-4">Sin vehículos</p>
+                <p className="text-[11px] text-gray-400 dark:text-gray-600 text-center py-4">Sin vehículos</p>
               )
             ) : (
               filteredAssets.map((a) => (
@@ -493,9 +505,9 @@ export function MantenimientosAgendar() {
             )}
           </div>
 
-          <div className="shrink-0 border-t border-white/[0.06] px-2 py-2 space-y-1">
+          <div className="shrink-0 border-t border-gray-200 dark:border-white/[0.06] px-2 py-2 space-y-1">
             {sidebarOpen && (
-              <p className="text-[9px] font-bold uppercase tracking-widest text-gray-600 mb-1.5 px-1">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-600 mb-1.5 px-1">
                 Estados
               </p>
             )}
@@ -503,7 +515,7 @@ export function MantenimientosAgendar() {
               <div key={k} className="flex items-center gap-2 px-1">
                 <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: v }} />
                 {sidebarOpen && (
-                  <span className="text-[11px] text-gray-400 truncate">{STATUS_LABEL[k] ?? k}</span>
+                  <span className="text-[11px] text-gray-500 dark:text-gray-400 truncate">{STATUS_LABEL[k] ?? k}</span>
                 )}
               </div>
             ))}
@@ -512,31 +524,31 @@ export function MantenimientosAgendar() {
 
         {/* ── Calendario ────────────────────────────────────────────────────── */}
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden relative">
-          <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-white/[0.06] shrink-0">
+          <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-gray-200 dark:border-white/[0.06] shrink-0">
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => calendarRef.current?.getApi().prev()}
-                className="grid h-7 w-7 place-items-center rounded-lg text-gray-400 hover:text-white hover:bg-white/[0.06] transition"
+                className="grid h-7 w-7 place-items-center rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.06] transition"
                 title="Anterior"
               >
                 <ChevronLeft size={15} />
               </button>
               <button
                 onClick={() => calendarRef.current?.getApi().next()}
-                className="grid h-7 w-7 place-items-center rounded-lg text-gray-400 hover:text-white hover:bg-white/[0.06] transition"
+                className="grid h-7 w-7 place-items-center rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/[0.06] transition"
                 title="Siguiente"
               >
                 <ChevronRight size={15} />
               </button>
               <button
                 onClick={() => calendarRef.current?.getApi().today()}
-                className="px-2.5 py-1 rounded-lg text-xs font-medium text-gray-300 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition"
+                className="px-2.5 py-1 rounded-lg text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white bg-gray-100 dark:bg-white/[0.04] hover:bg-gray-200 dark:hover:bg-white/[0.08] border border-gray-200 dark:border-white/[0.06] transition"
               >
                 Hoy
               </button>
             </div>
 
-            <h2 className="text-base font-semibold text-white capitalize">{fcTitle}</h2>
+            <h2 className="text-base font-semibold text-gray-800 dark:text-white capitalize">{fcTitle}</h2>
 
             <div className="flex items-center gap-1.5">
               {(["dayGridMonth", "timeGridWeek", "listWeek"] as const).map((v, i) => {
@@ -545,14 +557,14 @@ export function MantenimientosAgendar() {
                   <button
                     key={v}
                     onClick={() => calendarRef.current?.getApi().changeView(v)}
-                    className="px-2.5 py-1 rounded-lg text-xs font-medium text-gray-400 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition"
+                    className="px-2.5 py-1 rounded-lg text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white bg-gray-100 dark:bg-white/[0.04] hover:bg-gray-200 dark:hover:bg-white/[0.08] border border-gray-200 dark:border-white/[0.06] transition"
                   >
                     {labels[i]}
                   </button>
                 );
               })}
 
-              <div className="w-px h-4 bg-white/[0.08] mx-1" />
+              <div className="w-px h-4 bg-gray-200 dark:bg-white/[0.08] mx-1" />
 
               <button
                 onClick={async () => {
@@ -563,7 +575,7 @@ export function MantenimientosAgendar() {
                   setTimeout(() => URL.revokeObjectURL(url), 60_000);
                 }}
                 disabled={isLoading}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-gray-400 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition disabled:opacity-50"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white bg-gray-100 dark:bg-white/[0.04] hover:bg-gray-200 dark:hover:bg-white/[0.08] border border-gray-200 dark:border-white/[0.06] transition disabled:opacity-50"
               >
                 <Download size={12} /> PDF
               </button>
@@ -571,14 +583,14 @@ export function MantenimientosAgendar() {
               <button
                 onClick={() => { setPrefill(null); setEditing(null); setModalOpen(true); }}
                 disabled={!canCreate}
-                className="flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-semibold bg-violet-500 hover:bg-violet-400 text-white disabled:opacity-50 transition"
+                className="flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-semibold bg-violet-600 hover:bg-violet-700 dark:bg-violet-500 dark:hover:bg-violet-400 text-white disabled:opacity-50 transition"
               >
                 <Plus size={12} /> Nuevo
               </button>
             </div>
           </div>
 
-          {/* Contenedor del calendario — recibe los eventos drag HTML5 */}
+          {/* Contenedor del calendario */}
           <div
             ref={calendarWrap}
             className="flex-1 min-h-0 overflow-hidden"
@@ -624,10 +636,10 @@ export function MantenimientosAgendar() {
             />
           </div>
 
-          {/* Banner flotante "agendar para X" durante el hover sobre un día */}
+          {/* Banner flotante durante drag */}
           {activeAsset && hoveredDate && (
             <div className="pointer-events-none absolute inset-0 z-30 flex items-end justify-center pb-6">
-              <div className="rounded-2xl bg-violet-500/95 backdrop-blur px-6 py-4 shadow-2xl border border-violet-300/40 text-center min-w-[240px]">
+              <div className="rounded-2xl bg-violet-600/95 backdrop-blur px-6 py-4 shadow-2xl border border-violet-400/40 text-center min-w-[240px]">
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-violet-100/80">
                   Agendar para
                 </p>
@@ -642,7 +654,7 @@ export function MantenimientosAgendar() {
           )}
 
           {isLoading && (
-            <div className="absolute bottom-3 right-4 text-[11px] text-gray-500 animate-pulse">
+            <div className="absolute bottom-3 right-4 text-[11px] text-gray-400 dark:text-gray-500 animate-pulse">
               Cargando…
             </div>
           )}

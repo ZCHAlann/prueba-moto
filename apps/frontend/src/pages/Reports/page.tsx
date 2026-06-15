@@ -19,10 +19,15 @@ import {
   TrendingUp,
   Info,
   Loader2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { ExportToolbar } from "../../components/ui/export-toolbar/ExportToolbar";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const PAGE_SIZE = 6;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -146,6 +151,57 @@ function ReportTab({
   );
 }
 
+// ─── Pagination component ─────────────────────────────────────────────────────
+
+function Pagination({
+  page,
+  totalPages,
+  onPrev,
+  onNext,
+  onPage,
+}: {
+  page: number;
+  totalPages: number;
+  onPrev: () => void;
+  onNext: () => void;
+  onPage: (p: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between border-t border-gray-100 dark:border-white/[0.06] px-5 py-3">
+      <button
+        disabled={page <= 1}
+        onClick={onPrev}
+        className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition-colors"
+      >
+        <ChevronLeft size={13} />Anterior
+      </button>
+      <div className="flex gap-1">
+        {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => i + 1).map((p) => (
+          <button
+            key={p}
+            onClick={() => onPage(p)}
+            className={`h-7 w-7 rounded-lg text-xs font-semibold transition-colors ${
+              page === p
+                ? "bg-brand-500 text-white"
+                : "text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-white/[0.05]"
+            }`}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+      <button
+        disabled={page >= totalPages}
+        onClick={onNext}
+        className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition-colors"
+      >
+        Siguiente<ChevronRight size={13} />
+      </button>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export function ReportsPage() {
@@ -159,7 +215,6 @@ export function ReportsPage() {
   const { inventory,    loading: loadingInventory }    = useInventory();
   const { items: exitAuths, loading: loadingExitAuths, fetchList: fetchExitAuths } = useExitAuthorizations();
 
-  // Las autorizaciones requieren una llamada explícita (no se cargan en mount).
   useEffect(() => {
     void fetchExitAuths();
   }, [fetchExitAuths]);
@@ -170,9 +225,22 @@ export function ReportsPage() {
     loadingFuel || loadingInventory || loadingExitAuths;
 
   const [activeId, setActiveId] = useState("rep-001");
-  const [search, setSearch] = useState("");
-  const [draft, setDraft] = useState<DateRange>({ from: "", to: "" });
-  const [applied, setApplied] = useState<DateRange>({ from: "", to: "" });
+  const [search, setSearch]     = useState("");
+  const [page, setPage]         = useState(1);
+  const [draft, setDraft]       = useState<DateRange>({ from: "", to: "" });
+  const [applied, setApplied]   = useState<DateRange>({ from: "", to: "" });
+
+  // Reset page when tab or search changes
+  function handleTabChange(id: string) {
+    setActiveId(id);
+    setPage(1);
+    setSearch("");
+  }
+
+  function handleSearchChange(value: string) {
+    setSearch(value);
+    setPage(1);
+  }
 
   // ─── Preview ───────────────────────────────────────────────────────────────
 
@@ -224,16 +292,22 @@ export function ReportsPage() {
         { key: "date",        label: "Fecha asignación" },
       ];
       const rows: ReportRow[] = assignments.map((a) => {
-        const driver = drivers.find((d) => d.id === a.driverId);
-        const asset  = assets.find((x) => x.id === a.assetId);
+        // prefer backend-enriched fields, fall back to local join
+        const driver     = drivers.find((d) => d.id === a.driverId);
+        const asset      = assets.find((x) => x.id === a.assetId);
+        const driverName = a.driverName ?? driver?.name ?? "Sin conductor";
+        const driverCode = a.driverCode ?? driver?.code ?? "—";
+        const plate      = a.assetPlate ?? asset?.plate ?? "—";
+        const brand      = a.assetBrand ?? asset?.brand ?? "—";
+        const assetType  = asset?.category ?? "—";
         return {
-          document:    driver?.code         ?? "—",
-          name:        driver?.name         ?? "Sin conductor",
-          licenseType: driver?.licenseType  ?? "—",
+          document:    driverCode,
+          name:        driverName,
+          licenseType: driver?.licenseType ?? "—",
           phone:       driver?.phone        ?? "—",
-          plate:       asset?.plate         ?? "—",
-          type:        asset?.category      ?? "—",
-          brand:       asset?.brand         ?? "—",
+          plate,
+          type:        assetType,
+          brand,
           status:      a.status,
           date:        a.startDate,
           __date:      a.startDate,
@@ -245,9 +319,9 @@ export function ReportsPage() {
         columns,
         rows,
         summary: [
-          { label: "Asignaciones", value: assignments.length.toString(),                                          detail: "Base histórica", tone: "info"    },
-          { label: "Activas",      value: assignments.filter((a) => a.status === "Activa").length.toString(),     detail: "En curso",       tone: "success" },
-          { label: "Con acta",     value: assignments.filter((a) => a.handoverFileName).length.toString(),        detail: "Soporte PDF",    tone: "neutral" },
+          { label: "Asignaciones", value: assignments.length.toString(),                                      detail: "Base histórica", tone: "info"    },
+          { label: "Activas",      value: assignments.filter((a) => a.status === "Activa").length.toString(), detail: "En curso",       tone: "success" },
+          { label: "Con acta",     value: assignments.filter((a) => !!a.handoverUrl).length.toString(),       detail: "Soporte PDF",    tone: "neutral" },
         ],
       };
     }
@@ -366,9 +440,9 @@ export function ReportsPage() {
         columns,
         rows,
         summary: [
-          { label: "Cargas",  value: fuelEntries.length.toString(),                                       detail: "Registros emitidos", tone: "info"    },
-          { label: "Litros",  value: fuelEntries.reduce((t, e) => t + e.liters, 0).toFixed(0),            detail: "Volumen total",      tone: "warning" },
-          { label: "Costo",   value: formatCurrency(fuelEntries.reduce((t, e) => t + e.cost, 0)),         detail: "Acumulado",          tone: "success" },
+          { label: "Cargas",  value: fuelEntries.length.toString(),                               detail: "Registros emitidos", tone: "info"    },
+          { label: "Litros",  value: fuelEntries.reduce((t, e) => t + e.liters, 0).toFixed(0),    detail: "Volumen total",      tone: "warning" },
+          { label: "Costo",   value: formatCurrency(fuelEntries.reduce((t, e) => t + e.cost, 0)), detail: "Acumulado",          tone: "success" },
         ],
       };
     }
@@ -401,54 +475,56 @@ export function ReportsPage() {
         columns,
         rows,
         summary: [
-          { label: "Total",    value: alerts.length.toString(),                                          detail: "Base total",  tone: "info"    },
-          { label: "Abiertas", value: alerts.filter((a) => a.status === "Abierta").length.toString(),    detail: "Pendientes",  tone: "warning" },
-          { label: "Cerradas", value: alerts.filter((a) => a.status === "Cerrada").length.toString(),    detail: "Resueltas",   tone: "success" },
+          { label: "Total",    value: alerts.length.toString(),                                        detail: "Base total",  tone: "info"    },
+          { label: "Abiertas", value: alerts.filter((a) => a.status === "Abierta").length.toString(),  detail: "Pendientes",  tone: "warning" },
+          { label: "Cerradas", value: alerts.filter((a) => a.status === "Cerrada").length.toString(),  detail: "Resueltas",   tone: "success" },
         ],
       };
     }
 
-    // ── rep-007 Inventario (default) ───────────────────────────────────────
-    const columns: ReportColumn[] = [
-      { key: "code",        label: "Código" },
-      { key: "description", label: "Descripción" },
-      { key: "category",    label: "Categoría" },
-      { key: "stock",       label: "Stock" },
-      { key: "minStock",    label: "Mínimo" },
-      { key: "location",    label: "Ubicación" },
-      { key: "unit",        label: "Unidad" },
-    ];
-    const rows: ReportRow[] = inventory.map((e) => ({
-      code:        e.code,
-      description: e.name,
-      category:    e.category ?? "—",
-      stock:       e.stock,
-      minStock:    e.minStock,
-      location:    e.location ?? "—",
-      unit:        e.unit ?? "—",
-    }));
-    return {
-      title: "Reporte de inventario y materiales",
-      description: "Stock actual y ítems por debajo del mínimo.",
-      columns,
-      rows,
-      summary: [
-        { label: "Ítems",       value: inventory.length.toString(),                                               detail: "Catálogo actual",       tone: "info"    },
-        { label: "Bajo mínimo", value: inventory.filter((i) => i.stock <= i.minStock).length.toString(),          detail: "Requieren reposición",   tone: "warning" },
-        { label: "Stock total", value: inventory.reduce((t, i) => t + i.stock, 0).toString(),                     detail: "Unidades acumuladas",    tone: "success" },
-      ],
-    };
+    // ── rep-007 Inventario ─────────────────────────────────────────────────
+    if (activeId === "rep-007") {
+      const columns: ReportColumn[] = [
+        { key: "code",        label: "Código" },
+        { key: "description", label: "Descripción" },
+        { key: "category",    label: "Categoría" },
+        { key: "stock",       label: "Stock" },
+        { key: "minStock",    label: "Mínimo" },
+        { key: "location",    label: "Ubicación" },
+        { key: "unit",        label: "Unidad" },
+      ];
+      const rows: ReportRow[] = inventory.map((e) => ({
+        code:        e.code,
+        description: e.name,
+        category:    e.category ?? "—",
+        stock:       e.stock,
+        minStock:    e.minStock,
+        location:    e.location ?? "—",
+        unit:        e.unit ?? "—",
+      }));
+      return {
+        title: "Reporte de inventario y materiales",
+        description: "Stock actual y ítems por debajo del mínimo.",
+        columns,
+        rows,
+        summary: [
+          { label: "Ítems",       value: inventory.length.toString(),                                    detail: "Catálogo actual",      tone: "info"    },
+          { label: "Bajo mínimo", value: inventory.filter((i) => i.stock <= i.minStock).length.toString(), detail: "Requieren reposición", tone: "warning" },
+          { label: "Stock total", value: inventory.reduce((t, i) => t + i.stock, 0).toString(),          detail: "Unidades acumuladas",  tone: "success" },
+        ],
+      };
+    }
 
-    // ── rep-008 Autorizaciones ──────────────────────────────────────────────────
+    // ── rep-008 Autorizaciones ─────────────────────────────────────────────
     if (activeId === "rep-008") {
       const columns: ReportColumn[] = [
-        { key: "assetPlate",    label: "Vehículo"        },
-        { key: "driverName",    label: "Conductor"       },
-        { key: "status",        label: "Estado"          },
-        { key: "requestedAt",   label: "Solicitada"      },
-        { key: "decidedAt",     label: "Decidida"        },
-        { key: "decidedBy",     label: "Aprobada por"    },
-        { key: "decisionNotes", label: "Nota de decisión"},
+        { key: "assetPlate",    label: "Vehículo"         },
+        { key: "driverName",    label: "Conductor"        },
+        { key: "status",        label: "Estado"           },
+        { key: "requestedAt",   label: "Solicitada"       },
+        { key: "decidedAt",     label: "Decidida"         },
+        { key: "decidedBy",     label: "Aprobada por"     },
+        { key: "decisionNotes", label: "Nota de decisión" },
       ];
       const rows: ReportRow[] = exitAuths.map((a) => {
         const driver   = drivers.find((d) => d.id === a.driverId);
@@ -468,17 +544,21 @@ export function ReportsPage() {
       });
       return {
         title: "Reporte de autorizaciones de salida",
-        description: "Solicitudes de salida de vehiculos, su estado y quien las decidio.",
+        description: "Solicitudes de salida de vehículos, su estado y quién las decidió.",
         columns,
         rows,
         summary: [
-          { label: "Total",       value: exitAuths.length.toString(),                                                                                          detail: "Solicitudes registradas", tone: "info"    },
-          { label: "Autorizadas", value: exitAuths.filter((a) => a.status === "Autorizada").length.toString(),                                                detail: "Aprobadas",                 tone: "success" },
-          { label: "Rechazadas",  value: exitAuths.filter((a) => a.status === "Rechazada").length.toString(),                                                 detail: "Denegadas",                 tone: "danger"  },
-          { label: "Pendientes",  value: exitAuths.filter((a) => a.status === "Pendiente").length.toString(),                                                 detail: "En espera",                 tone: "warning" },
+          { label: "Total",       value: exitAuths.length.toString(),                                              detail: "Solicitudes registradas", tone: "info"    },
+          { label: "Autorizadas", value: exitAuths.filter((a) => a.status === "Autorizada").length.toString(),    detail: "Aprobadas",               tone: "success" },
+          { label: "Rechazadas",  value: exitAuths.filter((a) => a.status === "Rechazada").length.toString(),     detail: "Denegadas",               tone: "danger"  },
+          { label: "Pendientes",  value: exitAuths.filter((a) => a.status === "Pendiente").length.toString(),     detail: "En espera",               tone: "warning" },
         ],
       };
     }
+
+    // Fallback vacío (nunca debería llegar aquí)
+    return { title: "", description: "", columns: [], rows: [], summary: [] };
+
   }, [activeId, assets, drivers, assignments, maintenances, checklists, alerts, fuelEntries, inventory, exitAuths]);
 
   // ─── Filtered rows ─────────────────────────────────────────────────────────
@@ -487,10 +567,14 @@ export function ReportsPage() {
     () => preview.rows.filter((r) => isInRange(String(r.__date ?? ""), applied)),
     [applied, preview.rows]
   );
-  const visibleRows = useMemo(
-    () => filterRows(rangedRows, preview.columns, search),
-    [rangedRows, preview.columns, search]
-  );
+
+  const visibleRows = useMemo(() => {
+    const filtered = filterRows(rangedRows, preview.columns, search);
+    return filtered;
+  }, [rangedRows, preview.columns, search]);
+
+  const totalPages  = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
+  const pagedRows   = visibleRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -514,6 +598,9 @@ export function ReportsPage() {
           <span className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-500 dark:border-white/[0.06] dark:bg-white/[0.03] dark:text-gray-400">
             <FileBarChart2 size={13} className="text-brand-500" />
             {visibleRows.length} registros
+            {totalPages > 1 && (
+              <span className="ml-1 text-gray-400">· Pág. {page}/{totalPages}</span>
+            )}
           </span>
         </div>
       </div>
@@ -545,7 +632,7 @@ export function ReportsPage() {
               key={r.id}
               label={r.label}
               active={activeId === r.id}
-              onClick={() => setActiveId(r.id)}
+              onClick={() => handleTabChange(r.id)}
             />
           ))}
         </div>
@@ -553,30 +640,23 @@ export function ReportsPage() {
         {/* Date filter */}
         <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto]">
-
-              {/* Desde */}
               <DatePicker
                 label="Desde"
                 value={draft.from}
                 onChange={(v) => setDraft((p) => ({ ...p, from: v }))}
                 maxDate={draft.to || undefined}
               />
-
-              {/* Hasta */}
               <DatePicker
                 label="Hasta"
                 value={draft.to}
                 onChange={(v) => setDraft((p) => ({ ...p, to: v }))}
                 minDate={draft.from || undefined}
               />
-
-              {/* Consultar */}
               <div className="flex items-end">
                 <button
                   type="button"
-                  onClick={() => setApplied(draft)}
+                  onClick={() => { setApplied(draft); setPage(1); }}
                   className="inline-flex h-10 items-center gap-2 rounded-xl bg-brand-500 px-5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95"
                 >
                   Consultar
@@ -584,7 +664,6 @@ export function ReportsPage() {
               </div>
             </div>
 
-            {/* Applied badge */}
             <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
               <CalendarRange size={13} className="shrink-0 text-brand-400" />
               <div>
@@ -602,15 +681,12 @@ export function ReportsPage() {
                 </p>
               </div>
             </div>
-
           </div>
         </div>
 
         {/* Search + Export */}
         <div className="border-b border-gray-100 px-5 py-3 dark:border-white/[0.06]">
           <div className="flex items-center gap-3">
-
-            {/* Buscador */}
             <div className="relative flex-1 max-w-sm">
               <Search
                 size={14}
@@ -619,13 +695,11 @@ export function ReportsPage() {
               <input
                 type="text"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 placeholder="Buscar dentro del reporte..."
                 className="h-9 w-full rounded-xl border border-gray-200 bg-transparent pl-9 pr-4 text-sm text-gray-700 placeholder:text-gray-400 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:text-gray-300 dark:placeholder:text-gray-500"
               />
             </div>
-
-            {/* Export */}
             <ExportToolbar
               title={preview.title}
               columns={preview.columns}
@@ -633,7 +707,6 @@ export function ReportsPage() {
               subtitle={`Rango: ${applied.from || "inicio abierto"} — ${applied.to || "fin abierto"}`}
               filename={`reporte-${activeId}`}
             />
-
           </div>
         </div>
 
@@ -652,39 +725,50 @@ export function ReportsPage() {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                  {preview.columns.map((col) => (
-                    <th
-                      key={col.key}
-                      className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500"
-                    >
-                      {col.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                {visibleRows.map((row, i) => (
-                  <tr
-                    key={i}
-                    className="transition-colors hover:bg-gray-50/80 dark:hover:bg-white/[0.02]"
-                  >
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[900px] text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 dark:border-white/[0.06]">
                     {preview.columns.map((col) => (
-                      <td
+                      <th
                         key={col.key}
-                        className="px-5 py-3.5 text-gray-600 dark:text-gray-300"
+                        className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500"
                       >
-                        {String(row[col.key] ?? "—")}
-                      </td>
+                        {col.label}
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
+                  {pagedRows.map((row, i) => (
+                    <tr
+                      key={i}
+                      className="transition-colors hover:bg-gray-50/80 dark:hover:bg-white/[0.02]"
+                    >
+                      {preview.columns.map((col) => (
+                        <td
+                          key={col.key}
+                          className="px-5 py-3.5 text-gray-600 dark:text-gray-300"
+                        >
+                          {String(row[col.key] ?? "—")}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* ── Pagination ── */}
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              onPrev={() => setPage((p) => p - 1)}
+              onNext={() => setPage((p) => p + 1)}
+              onPage={setPage}
+            />
+          </>
         )}
 
       </div>

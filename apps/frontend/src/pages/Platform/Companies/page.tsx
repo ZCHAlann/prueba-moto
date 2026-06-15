@@ -953,8 +953,11 @@ export function CompaniesPage() {
                       <table className="w-full min-w-[860px] text-sm">
                         <thead>
                           <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                            {["Empresa","Plan","Estado","Módulos","Contacto","Creada",""].map(h => (
-                              <th key={h} className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                            {["Empresa","Plan","Estado","Módulos","Contacto","Creada",""].map((h, i, arr) => (
+                              <th
+                                key={h}
+                                className={`px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 ${i === arr.length - 1 ? "" : ""}`}
+                              >
                                 {h}
                               </th>
                             ))}
@@ -1018,7 +1021,7 @@ export function CompaniesPage() {
                                   </td>
 
                                   {/* Acciones */}
-                                  <td className="px-5 py-3.5">
+                                  <td className=" group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
                                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                       <motion.button type="button" whileTap={{ scale:0.9 }}
                                         onClick={() => setDrawerCompany(company)}

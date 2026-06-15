@@ -80,7 +80,8 @@ coverage/
 apps/backend/scripts/seed.ts
 */seeds.ts
 */seeds/*.ts
-*/migrations/*.ts
+*/migrations/*.sql
 */migration/*.ts
 drizzle/*
 */drizzle/
+apps/backend/migrations/*

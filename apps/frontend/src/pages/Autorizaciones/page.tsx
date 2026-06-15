@@ -56,15 +56,10 @@ export function AutorizacionesPage() {
         if (!ctx) return;
         setConductorCtx(ctx);
 
-        // resto de los logs de debug del popup, igual que antes
-        console.log("[popup] ctx.authorizations:", ctx.authorizations.map(a => ({ id: a.id, status: a.status })));
-        console.log("[popup] shownIds:", [...shownIds]);
-
         const decided = ctx.authorizations.find(
           (a) => a.status !== "Pendiente" && !shownIds.has(a.id)
         );
-        console.log("[popup] decided:", decided);
-        console.log("[popup] driverId match:", ctx.driverId, decided?.driverId, String(ctx.driverId) === String(decided?.driverId));
+      
       });
       void fetchList();
     } else {
@@ -80,11 +75,8 @@ export function AutorizacionesPage() {
     if (wsChangeCount === prevWsCount.current) return;
     prevWsCount.current = wsChangeCount;
 
-    console.log("[popup] wsChangeCount cambió a", wsChangeCount);
 
     void fetchConductorContext().then((ctx) => {
-      console.log("[popup] ctx.authorizations:", ctx?.authorizations.map(a => ({ id: a.id, status: a.status })));
-      console.log("[popup] shownIds:", [...shownIds]);
       if (!ctx) return;
       setConductorCtx(ctx);
 
@@ -314,9 +306,21 @@ function EntrantesTab({ items, loading, onOpen }: {
         <table className="w-full min-w-[640px] text-sm">
           <thead className="border-b border-gray-100 dark:border-white/[0.06]">
             <tr>
-              {["Hora", "Vehículo", "Conductor", "Estado", ""].map((h) => (
-                <th key={h} className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{h}</th>
-              ))}
+              {["Hora", "Vehículo", "Conductor", "Estado", ""].map((h, i, arr) => {
+                const isLast = i === arr.length - 1;
+                return (
+                  <th
+                    key={h}
+                    className={
+                      isLast
+                        ? ""
+                        : "px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400"
+                    }
+                  >
+                    {h}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
@@ -326,7 +330,7 @@ function EntrantesTab({ items, loading, onOpen }: {
                 <td className="px-5 py-3.5 font-semibold text-gray-800 dark:text-gray-200">{a.assetPlate ?? a.assetLabel ?? "—"}</td>
                 <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300">{a.driverName ?? "—"}</td>
                 <td className="px-5 py-3.5"><StatusPill status={a.status} /></td>
-                <td className="px-5 py-3.5 text-right text-xs text-emerald-600 dark:text-emerald-400 font-semibold opacity-0 group-hover:opacity-100 transition">Revisar →</td>
+                <td className=" group-hover:bg-gray-50/60 dark:group-hover:bg-white/[0.02] px-5 py-3.5 text-right text-xs text-emerald-600 dark:text-emerald-400 font-semibold opacity-0 group-hover:opacity-100 transition">Revisar →</td>
               </tr>
             ))}
           </tbody>
@@ -395,9 +399,21 @@ function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, d
             <table className="w-full min-w-[720px] text-sm">
               <thead className="border-b border-gray-100 dark:border-white/[0.06]">
                 <tr>
-                  {["Decidida", "Vehículo", "Conductor", "Aprobador", "Estado", ""].map((h) => (
-                    <th key={h} className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{h}</th>
-                  ))}
+                  {["Decidida", "Vehículo", "Conductor", "Aprobador", "Estado", ""].map((h, i, arr) => {
+                    const isLast = i === arr.length - 1;
+                    return (
+                      <th
+                        key={h}
+                        className={
+                          isLast
+                            ? ""
+                            : "px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400"
+                        }
+                      >
+                        {h}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
@@ -408,7 +424,7 @@ function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, d
                     <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300">{a.driverName ?? "—"}</td>
                     <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300">{a.decidedByName ?? "—"}</td>
                     <td className="px-5 py-3.5"><StatusPill status={a.status} /></td>
-                    <td className="px-5 py-3.5 text-right text-xs text-emerald-600 dark:text-emerald-400 font-semibold opacity-0 group-hover:opacity-100 transition">Ver →</td>
+                    <td className=" group-hover:bg-gray-50/60 dark:group-hover:bg-white/[0.02] px-5 py-3.5 text-right text-xs text-emerald-600 dark:text-emerald-400 font-semibold opacity-0 group-hover:opacity-100 transition">Ver →</td>
                   </tr>
                 ))}
               </tbody>

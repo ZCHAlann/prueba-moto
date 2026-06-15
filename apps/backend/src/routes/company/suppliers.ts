@@ -27,6 +27,9 @@ const createSupplierSchema = z.object({
   email:        z.string().trim().email('Email inválido').max(180).nullable().optional(),
   nit:          z.string().trim().max(40).nullable().optional(),
   notes:        validators.longTextOptional,
+  address:      safeString({ max: 500, fieldLabel: 'Dirección', allowEmpty: true }).nullable().optional(),
+  latitude:     validators.latitude.optional().nullable(),
+  longitude:    validators.longitude.optional().nullable(),
 });
 
 const updateSupplierSchema = createSupplierSchema.partial();
@@ -219,6 +222,9 @@ function serializeSupplier(s: typeof companySuppliers.$inferSelect) {
     email:       s.email,
     nit:         s.nit,
     notes:       s.notes,
+    address:     s.address,
+    latitude:    s.latitude,
+    longitude:   s.longitude,
     createdAt:   s.createdAt,
     updatedAt:   s.updatedAt,
   };

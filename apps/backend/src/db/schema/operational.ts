@@ -308,6 +308,8 @@ export const companyWorkshops = pgTable('company_workshops', {
   contactName:  varchar('contact_name', { length: 120 }),
   nit:          varchar('nit', { length: 40 }),
   notes:        text('notes'),
+  latitude:     doublePrecision('latitude'),
+  longitude:    doublePrecision('longitude'),
   createdAt:    timestamp('created_at').notNull().defaultNow(),
   updatedAt:    timestamp('updated_at').notNull().defaultNow(),
 });
@@ -322,6 +324,9 @@ export const companySuppliers = pgTable('company_suppliers', {
   email:        varchar('email', { length: 180 }),
   nit:          varchar('nit', { length: 40 }),
   notes:        text('notes'),
+  address:      text('address'),
+  latitude:     doublePrecision('latitude'),
+  longitude:    doublePrecision('longitude'),
   createdAt:    timestamp('created_at').notNull().defaultNow(),
   updatedAt:    timestamp('updated_at').notNull().defaultNow(),
 });

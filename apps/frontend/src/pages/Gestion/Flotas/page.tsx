@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useDrivers } from "@/hooks/useDrivers";
 import { useSites } from "@/hooks/useSites";
+import { RowActionMenu } from "../../../components/ui/table/RowActionMenu";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -627,49 +628,16 @@ function RowMenu({ onView, onEdit, onMaintenance, onDelete, canEdit, canDelete, 
   vehicle: Asset; onView: () => void; onEdit: () => void; onMaintenance: () => void; onDelete: () => void;
   canEdit: boolean; canDelete: boolean; canMaintenance: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function handle(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); }
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [open]);
-
-  const items = [
-    { label: "Ver detalle",         icon: <Eye size={13} />,    action: onView,        cls: "text-gray-700 dark:text-gray-300",   show: true           },
-    { label: "Editar",              icon: <Pencil size={13} />, action: onEdit,        cls: "text-gray-700 dark:text-gray-300",   show: canEdit        },
-    { label: "Nuevo mantenimiento", icon: <Wrench size={13} />, action: onMaintenance, cls: "text-amber-600 dark:text-amber-400", show: canMaintenance },
-    { label: "Eliminar",            icon: <Trash2 size={13} />, action: onDelete,      cls: "text-rose-600 dark:text-rose-400",   show: canDelete      },
-  ].filter(i => i.show);
-
-  if (items.length <= 1) {
-    return (
-      <button onClick={e => { e.stopPropagation(); onView(); }}
-        className="rounded-lg border border-sky-200 px-2 py-1 text-[11px] font-semibold text-sky-600 hover:bg-sky-50 dark:border-sky-500/20 dark:text-sky-400 whitespace-nowrap">
-        Ver
-      </button>
-    );
-  }
-
   return (
-    <div className="relative" ref={ref}>
-      <button onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
-        className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.08]">
-        <MoreHorizontal size={14} />
-      </button>
-      {open && (
-        <div className="absolute right-0 z-30 mt-1 w-48 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg dark:border-white/[0.08] dark:bg-[#0d1320]">
-          {items.map(item => (
-            <button key={item.label} onClick={e => { e.stopPropagation(); item.action(); setOpen(false); }}
-              className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold hover:bg-gray-50 dark:hover:bg-white/[0.05] ${item.cls}`}>
-              {item.icon}{item.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <RowActionMenu
+      ariaLabel="Acciones de vehículo"
+      items={[
+        { label: "Ver detalle",         icon: <Eye size={13} />,    onClick: onView,        tone: "default" },
+        { label: "Editar",              icon: <Pencil size={13} />, onClick: onEdit,        tone: "default", disabled: !canEdit },
+        { label: "Nuevo mantenimiento", icon: <Wrench size={13} />, onClick: onMaintenance, tone: "warning", disabled: !canMaintenance },
+        { label: "Eliminar",            icon: <Trash2 size={13} />, onClick: onDelete,      tone: "danger",  disabled: !canDelete },
+      ]}
+    />
   );
 }
 

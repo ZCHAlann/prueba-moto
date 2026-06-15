@@ -29,6 +29,8 @@ const createWorkshopSchema = z.object({
   contactName:  safeString({ max: 120, fieldLabel: 'Contacto', allowEmpty: true }).nullable().optional(),
   nit:          z.string().trim().max(40).nullable().optional(),
   notes:        validators.longTextOptional,
+  latitude:     validators.latitude.optional().nullable(),
+  longitude:    validators.longitude.optional().nullable(),
 });
 
 const updateWorkshopSchema = createWorkshopSchema.partial();
@@ -221,6 +223,8 @@ function serializeWorkshop(w: typeof companyWorkshops.$inferSelect) {
     contactName: w.contactName,
     nit:         w.nit,
     notes:       w.notes,
+    latitude:    w.latitude,
+    longitude:   w.longitude,
     createdAt:   w.createdAt,
     updatedAt:   w.updatedAt,
   };

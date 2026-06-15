@@ -120,13 +120,7 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
   async function handleFile(captured: File) {
     if (!companyId) return;
 
-    const sizeMB = +(captured.size / 1024 / 1024).toFixed(2);
-
-    console.log("[wizard:capture]", {
-      step: step.id, label: step.label, type: step.type,
-      fileName: captured.name, mimeType: captured.type || "(vacío)",
-      sizeMB,
-    });
+    const sizeMB = +(captured.size / 1024 / 1024).toFixed(2); 
 
     // ── Guard de tamaño para videos: bloqueamos > 50 MB antes de subir ──
     // La política del producto es: videos de **máximo 2 minutos**.
@@ -141,8 +135,6 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
         `Grabe un video más corto o reduzca la calidad de la cámara a 720p.`,
         { duration: 14000 },
       );
-      // Limpiamos el preview
-      if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
 

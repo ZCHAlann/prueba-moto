@@ -19,6 +19,11 @@ type UseMotorAssetsReturn = {
 };
 
 function mapApiToAsset(data: Record<string, unknown>, companyId: string): Asset {
+  const currentDriverData =
+    typeof data.currentDriver === "object" && data.currentDriver !== null
+      ? (data.currentDriver as Record<string, unknown>)
+      : {};
+
   return {
     id: String(data.id),
     tenantId: `tenant-company-${companyId}`,
@@ -28,6 +33,17 @@ function mapApiToAsset(data: Record<string, unknown>, companyId: string): Asset 
     category: (data.category ?? null) as Asset["category"],
     status: (data.status ?? "Operativo") as Asset["status"],
     site: String(data.siteId ?? ""),
+    siteId: String(data.siteId ?? ""),
+    garageId: String(data.garageId ?? ""),
+    currentDriver: {
+      name: String(currentDriverData.name ?? ""),
+      code: String(currentDriverData.code ?? ""),
+      phone: String(currentDriverData.phone ?? ""),
+      photoUrl:
+        currentDriverData.photoUrl == null
+          ? null
+          : String(currentDriverData.photoUrl),
+    },
     responsible: String(data.responsible ?? ""),
     brand: String(data.brand ?? ""),
     model: String(data.model ?? ""),

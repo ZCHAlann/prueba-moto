@@ -659,8 +659,11 @@ export function BillingPage() {
           <table className="w-full min-w-[800px]">
             <thead>
               <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                {["Nº Factura", "Empresa", "Plan", "Ciclo", "Total", "Estado", "Emisión", "Vencimiento", ""].map(h => (
-                  <th key={h} className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+                {["Nº Factura", "Empresa", "Plan", "Ciclo", "Total", "Estado", "Emisión", "Vencimiento", ""].map((h, i, arr) => (
+                  <th
+                    key={h}
+                    className={`px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 ${i === arr.length - 1 ? "" : ""}`}
+                  >
                     {h}
                   </th>
                 ))}

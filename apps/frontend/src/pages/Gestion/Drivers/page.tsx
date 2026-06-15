@@ -10,10 +10,11 @@ import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import { validationRules, digitsOnlyInputFilter, sanitizeString } from "../../../lib/form-validation";
 import {
   AlertTriangle, Car, ChevronDown, ChevronLeft, ChevronRight,
-  Eye, Filter, Loader2, Mail, MapPin, MoreHorizontal, Pencil,
+  Eye, Filter, Loader2, Mail, MapPin, Pencil,
   Phone, Plus, Search, Trash2, User, X,
   Fuel, Droplets, ClipboardList,
 } from "lucide-react";
+import { RowActionMenu } from "../../../components/ui/table/RowActionMenu";
 import { HandoverWizard } from "../../Gestion/Asignaciones/components/HandoerWizard";
 import type { Asset } from "../../../types/activo";
 import { FileCheck, Paperclip } from "lucide-react";
@@ -235,46 +236,17 @@ function RowMenu({ driver, canEdit, canDelete, onView, onEdit, onReport, onAssig
   onAssign: () => void;
   onDelete: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, [open]);
-
-  const items = [
-    { label: "Ver detalle",      icon: <Eye size={13} />,           action: onView,   cls: "text-gray-700 dark:text-gray-300", show: true      },
-    { label: "Editar",           icon: <Pencil size={13} />,        action: onEdit,   cls: "text-gray-700 dark:text-gray-300", show: canEdit   },
-    { label: "Crear reporte",    icon: <ClipboardList size={13} />, action: onReport, cls: "text-cyan-600 dark:text-cyan-400", show: true      },
-    { label: "Asignar vehículo", icon: <Car size={13} />,           action: onAssign, cls: "text-sky-600 dark:text-sky-400",   show: true      },
-    { label: "Eliminar",         icon: <Trash2 size={13} />,        action: onDelete, cls: "text-rose-600 dark:text-rose-400", show: canDelete },
-  ].filter(i => i.show);
-
   return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
-        className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.08]"
-      >
-        <MoreHorizontal size={14} />
-      </button>
-      {open && (
-        <div className="absolute right-0 z-30 mt-1 w-48 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg dark:border-white/[0.08] dark:bg-[#0d1320]">
-          {items.map(item => (
-            <button
-              key={item.label}
-              onClick={e => { e.stopPropagation(); item.action(); setOpen(false); }}
-              className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-semibold hover:bg-gray-50 dark:hover:bg-white/[0.05] ${item.cls}`}
-            >
-              {item.icon}{item.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <RowActionMenu
+      ariaLabel="Acciones del conductor"
+      items={[
+        { label: "Ver detalle",      icon: <Eye size={13} />,           onClick: onView,   tone: "default" },
+        { label: "Editar",           icon: <Pencil size={13} />,        onClick: onEdit,   tone: "default", disabled: !canEdit },
+        { label: "Crear reporte",    icon: <ClipboardList size={13} />, onClick: onReport, tone: "default" },
+        { label: "Asignar vehículo", icon: <Car size={13} />,           onClick: onAssign, tone: "default" },
+        { label: "Eliminar",         icon: <Trash2 size={13} />,        onClick: onDelete, tone: "danger",  disabled: !canDelete },
+      ]}
+    />
   );
 }
 
@@ -289,7 +261,7 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
 }) {
   const { sites } = useSites();
   const { session } = useAuth();
-  const sessionCompanyId = session?.companyId ?? 0;
+  const sessionCompanyId: number = session?.companyId ? Number(session.companyId) : 0;
   const [form, setForm] = useState<DriverFormState>(() => createDriverForm(driver ?? undefined));
   const [errors, setErrors] = useState<DriverFormErrors>({});
   const [saving, setSaving] = useState(false);

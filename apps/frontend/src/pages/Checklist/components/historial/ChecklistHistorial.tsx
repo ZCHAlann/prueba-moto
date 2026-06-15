@@ -43,9 +43,7 @@ export function ChecklistHistorial({ onOpenDetail, pageSize = 7 }: Props) {
   const [page, setPage] = useState(1);
   const [exportingId, setExportingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    console.log("[historial] checklists:", checklists.map(c => ({ id: c.id, status: c.status, items: c.items.length })));
-  }, [checklists]);
+
   // Live updates via WebSocket
   const { status: wsStatus } = useChecklistWebSocket((evt) => {
     // Cuando llega cualquier evento del namespace, refetch
@@ -131,9 +129,21 @@ export function ChecklistHistorial({ onOpenDetail, pageSize = 7 }: Props) {
             <table className="w-full min-w-[860px] text-sm">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                  {["Fecha", "Vehículo", "Conductor", "Categoría", "Estado", ""].map((h, i) => (
-                    <th key={i} className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">{h}</th>
-                  ))}
+                  {["Fecha", "Vehículo", "Conductor", "Categoría", "Estado", ""].map((h, i, arr) => {
+                    const isLast = i === arr.length - 1;
+                    return (
+                      <th
+                        key={i}
+                        className={
+                          isLast
+                            ? ""
+                            : "px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500"
+                        }
+                      >
+                        {h}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
@@ -157,7 +167,7 @@ export function ChecklistHistorial({ onOpenDetail, pageSize = 7 }: Props) {
                         </p>
                       </td>
                       <td className="px-5 py-3.5"><StatusPill status={c.status} /></td>
-                      <td className="px-5 py-3.5">
+                      <td className=" group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
                         <div className="flex items-center justify-end gap-1.5">
                           <button type="button" onClick={() => onOpenDetail(c)}
                             className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-500 transition hover:border-emerald-300 hover:text-emerald-600 dark:border-white/[0.08] dark:text-gray-400 dark:hover:border-emerald-500/30 dark:hover:text-emerald-400">

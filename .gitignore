@@ -85,3 +85,4 @@ apps/backend/scripts/seed.ts
 drizzle/*
 */drizzle/
 apps/backend/migrations/*
+apps/backend/scripts/*

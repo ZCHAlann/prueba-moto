@@ -332,21 +332,47 @@ router.get("/session", authenticate, async (req, res, next) => {
     const user = req.user!;
     let companyName = "";
     let photoUrl: string | null = null;
+    // Permisos frescos de BD — el JWT puede tener una versión vieja si
+    // un admin cambió los permisos. Sin recargar, leemos siempre la
+    // fuente de verdad (catálogo de roles + override per-user).
+    let modulePermissions: ModulePermissionMap = user.modulePermissions ?? {};
 
     if (user.companyId) {
-      // Leer empresa Y foto del usuario en una sola query
+      const companyUserId = Number(user.sub.replace('company-user-', ''));
+
+      // Leer empresa, foto y override per-user en una sola query
       const [row] = await db
         .select({
-          companyName : companies.name,
-          photoUrl    : companyUsers.photoUrl,
+          companyName:        companies.name,
+          photoUrl:           companyUsers.photoUrl,
+          // Importante: leer el role y modulePermissions actuales de BD
+          // para que cambios recientes se reflejen sin re-login.
+          dbRole:             companyUsers.role,
+          dbModulePermissions: companyUsers.modulePermissions,
+          dbUpdatedAt:         companyUsers.updatedAt,
         })
         .from(companyUsers)
         .leftJoin(companies, eq(companyUsers.companyId, companies.id))
-        .where(eq(companyUsers.id, Number(user.sub.replace('company-user-', ''))))
+        .where(eq(companyUsers.id, companyUserId))
         .limit(1);
 
       companyName = row?.companyName ?? "";
       photoUrl    = row?.photoUrl    ?? null;
+
+      // Recalcular permisos desde BD (catálogo rol + override)
+      const isAdminRole = ["owner_empresa", "admin_empresa"].includes(row?.dbRole ?? "");
+      if (!isAdminRole) {
+        modulePermissions = await getFinalPermissionsForUser(
+          Number(user.companyId),
+          row?.dbRole ?? "",
+          (row?.dbModulePermissions as ModulePermissionMap) ?? {},
+        );
+      } else {
+        // Admins tienen acceso total — pero igual devolvemos un objeto
+        // vacío para que el frontend haga un fallback uniforme. La
+        // lógica de admin-bypass vive en el código del cliente.
+        modulePermissions = {};
+      }
 
     } else {
       // Usuario de plataforma — leer foto de platform_users
@@ -357,6 +383,7 @@ router.get("/session", authenticate, async (req, res, next) => {
         .limit(1);
 
       photoUrl = row?.photoUrl ?? null;
+      modulePermissions = {};
     }
 
     return res.json({
@@ -368,9 +395,13 @@ router.get("/session", authenticate, async (req, res, next) => {
       companyId:         user.companyId ? String(user.companyId) : null,
       companyName,
       companyModules:    user.companyModules    ?? [],
-      modulePermissions: user.modulePermissions ?? {},
+      modulePermissions,
       permissions:       user.permissions       ?? {},
-      photoUrl,                                          // ← NUEVO
+      photoUrl,
+      // Timestamp de la última modificación del usuario. Sirve al
+      // frontend para invalidar la sesión si quedó desincronizada
+      // con BD (cambio de rol, de permisos, etc.).
+      permissionsUpdatedAt: (row as { dbUpdatedAt?: Date } | undefined)?.dbUpdatedAt?.toISOString() ?? null,
     });
   } catch (err) {
     next(err);

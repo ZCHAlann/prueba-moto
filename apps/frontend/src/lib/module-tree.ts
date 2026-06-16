@@ -64,14 +64,13 @@ export const MODULE_TREE = {
   gestion: {
     label: "Gestión",
     submodules: {
-      flotas:       "Flotas",
-      conductores:  "Conductores",
-      sedes:        "Sedes",
-      garajes:      "Garajes",
-      asignaciones: "Asignar vehículo",
-      seguros:      "Seguros vehiculares",
-      talleres:     "Talleres",
-      proveedores:  "Proveedores",
+      flotas:           "Flotas",
+      conductores:      "Conductores",
+      sedes:            "Sedes",
+      asignaciones:     "Asignar vehículo",
+      seguros:          "Seguros vehiculares",
+      talleres:         "Talleres",
+      proveedores:      "Proveedores",
     },
   },
   motores: {

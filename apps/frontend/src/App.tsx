@@ -1,4 +1,5 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router";
+import { useEffect } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router";
 import { Toaster } from "sonner";
 import { useAuth } from "./context/AuthContext";
 
@@ -108,6 +109,30 @@ function GuestPlatform({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * Vuelve a llamar a /api/auth/session cada vez que cambia la ruta.
+ * Esto garantiza que cualquier cambio de permisos/rol que se hizo en
+ * otra pestaña (o que el admin acaba de aplicar) se refleje de inmediato
+ * sin re-login. La respuesta trae siempre los permisos frescos de BD.
+ *
+ * Vive acá adentro del <Router> porque necesita useLocation.
+ */
+function SessionRefresher() {
+  const { ready, session, refreshSession } = useAuth();
+  const location = useLocation();
+
+  useEffect(() => {
+    if (!ready || !session) return;
+    refreshSession();
+    // refreshSession es estable (useCallback) y solo se llama al cambiar
+    // de ruta. No la incluimos en deps para evitar re-fires en cada
+    // cambio de referencia de su closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, ready, session?.scope]);
+
+  return null;
+}
+
+/**
  * Para la landing y solicitar-demo: si el usuario ya tiene sesion de
  * operacion, lo mandamos directo a su panel. Si tiene sesion de plataforma,
  * dejamos pasar (puede querer ver el sitio publico igual).
@@ -126,6 +151,7 @@ export default function App() {
     <Router>
       <ScrollToTop />
       <Toaster position="top-right" richColors closeButton toastOptions={{ duration: 4000 }} />
+      <SessionRefresher />
       <Routes>
 
         {/* ── Publico (no autenticado) ── */}

@@ -118,6 +118,8 @@ router.get('/', requireModule('gestion', 'asignaciones'), async (req, res, next)
     res.json({
       data: rows.map((a) => serializeAssignment(a, assetMap.get(a.assetId), driverMap.get(a.driverId))),
       total: rows.length,
+      assets: assetsRows,
+      drivers: driversRows,
     });
   } catch (err) {
     next(err);

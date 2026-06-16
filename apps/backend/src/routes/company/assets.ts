@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, ilike, or, desc } from 'drizzle-orm';
+import { eq, and, ilike, or, desc, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyAssets, companyAssignments, companyDrivers } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';

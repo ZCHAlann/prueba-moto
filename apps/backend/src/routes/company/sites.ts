@@ -177,5 +177,4 @@ function serializeSite(s: typeof companySites.$inferSelect) {
     updatedAt: s.updatedAt,
   };
 }
-
 export default router;

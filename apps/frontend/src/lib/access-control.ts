@@ -1,5 +1,6 @@
 import type { NavigationSection } from "../lib/navigation";
 import type { MasterNavItem } from "../lib/master-navigation";
+import { MODULE_TREE } from "../lib/module-tree";
 import type { PlatformRole } from "../types/platform";
 
 /* ── Mapeo: ruta → [módulo, submódulo] para chequear permisos granulares ── */
@@ -35,6 +36,7 @@ const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub
   { test: (h) => h === "/reportes" || h.startsWith("/reportes"),                                          mod: "reportes",      sub: "reportes" },
   { test: (h) => h === "/combustible" || h.startsWith("/combustible"),                                    mod: "combustible",   sub: "combustible" },
   { test: (h) => h === "/geolocalizacion" || h.startsWith("/geolocalizacion"),                            mod: "geolocalizacion", sub: "geolocalizacion" },
+  { test: (h) => h === "/autorizaciones" || h.startsWith("/autorizaciones"),                              mod: "autorizaciones", sub: "autorizaciones" },
   { test: (h) => h === "/accesos" || h.startsWith("/accesos/"),                                            mod: "accesos",       sub: "accesos" },
   { test: (h) => h === "/soporte" || h.startsWith("/soporte"),                                            mod: "soporte",       sub: "soporte" },
 ];
@@ -60,9 +62,29 @@ function canAccessItem(
 ): boolean {
   if (isCompanyAdminRole(role)) return true;
 
+  // /dashboard es especial: sus permisos viven en submódulos
+  // (kpis_*, chart_*, feed_*, etc.). El user accede a /dashboard si
+  // tiene AL MENOS UN submódulo REAL del dashboard con permiso "ver".
+  // (No se considera el placeholder `dashboard.dashboard` que algunos
+  //  roles legacy usan para activar el módulo genérico.)
+  if (href === "/dashboard" || href.startsWith("/dashboard/")) {
+    return hasAnyDashboardSubmoduleVer(modulePermissions);
+  }
+
   const ms = resolveModuleSub(href);
   if (!ms) return true; // ruta sin módulo asociado (ej. /perfil) — pasa
   return hasVer(modulePermissions, ms[0], ms[1]);
+}
+
+/** True si el user tiene AL MENOS UN submódulo real del dashboard con "ver". */
+function hasAnyDashboardSubmoduleVer(
+  modulePermissions: Record<string, Record<string, string[]>>,
+): boolean {
+  const dashboardPerms = modulePermissions?.dashboard ?? {};
+  const realSubs = Object.keys(MODULE_TREE.dashboard.submodules);
+  return realSubs.some(
+    (sub) => Array.isArray(dashboardPerms[sub]) && dashboardPerms[sub].includes("ver"),
+  );
 }
 
 export const PUBLIC_PATHS = [
@@ -387,8 +409,11 @@ export function getDefaultRouteForSession(session: {
     }
   }
 
-  // 3) Sin permisos a nada
-  return "/signin";
+  // 3) Sin permisos a nada — devolvemos /perfil (que siempre está
+  //    permitido) en lugar de /signin para evitar el loop de redirect
+  //    cuando la sesión sigue activa pero no tiene acceso a ningún
+  //    módulo. La página /perfil mostrará un mensaje claro.
+  return "/perfil";
 }
 
 export function canAccessPath(role: PlatformRole, pathname: string) {
@@ -397,7 +422,7 @@ export function canAccessPath(role: PlatformRole, pathname: string) {
   }
 
   if (isCompanyEntryPath(pathname)) {
-    return isOperationalRole(role) || role === "superadmin";
+    return isOperationalRole(role) || isUnknownOperationalRole(role) || role === "superadmin";
   }
 
   if (role === "superadmin") {
@@ -409,7 +434,24 @@ export function canAccessPath(role: PlatformRole, pathname: string) {
   }
 
   const rule = rules.find((entry) => entry.test(pathname));
-  return rule ? rule.roles.includes(role) : false;
+  if (!rule) return false;
+  // Si el role está en la lista de la regla, pasa.
+  if (rule.roles.includes(role)) return true;
+  // Roles personalizados (no platform, no en OPERATIONAL_ROLES) tienen scope
+  // operacion; los dejamos pasar para que el gating granular de `canAccessItem`
+  // decida por permisos.
+  if (isUnknownOperationalRole(role) && !isPlatformRole(role)) return true;
+  return false;
+}
+
+/**
+ * Un role "operacional desconocido" es un string que no está en
+ * OPERATIONAL_ROLES ni en PLATFORM_ROLES. En la práctica, son roles
+ * personalizados creados por el admin en `company_roles`. Su scope
+ * siempre es operación.
+ */
+function isUnknownOperationalRole(role: PlatformRole): boolean {
+  return !OPERATIONAL_ROLES.includes(role) && !PLATFORM_ROLES.includes(role);
 }
 
 export function getAccessMessage(role: PlatformRole, pathname: string) {
@@ -494,10 +536,11 @@ export function filterOperationalNavigation(
         return { ...section, items: filteredItems };
       }
 
-      // ── "dashboard" sólo es alwaysVisible si el usuario tiene
-      //    dashboard.dashboard:ver. Si no, se filtra como cualquier
-      //    otra sección y desaparece de la sidebar.
-      const hasDashboardPerm = (modulePermissions?.dashboard?.dashboard ?? []).includes("ver");
+      // ── "dashboard" sólo es alwaysVisible si el usuario tiene AL MENOS
+      //    UN submódulo REAL del dashboard con permiso "ver" (kpis_*,
+      //    chart_*, feed_*, etc.). Si no, se filtra como cualquier
+      //    otra sección.
+      const hasDashboardPerm = hasAnyDashboardSubmoduleVer(modulePermissions);
       const effectiveAlwaysVisible = isAdmin
         ? ALWAYS_VISIBLE_ADMIN
         : (hasDashboardPerm ? ALWAYS_VISIBLE : ALWAYS_VISIBLE.filter((k) => k !== "dashboard"));
@@ -532,9 +575,16 @@ export function canAccessHref(
 ): boolean {
   if (!role) return false;
   if (isPublicPath(href)) return true;
+  // /perfil es un recurso personal del usuario autenticado: cualquier role
+  // del scope operación puede acceder (incluso roles personalizados).
+  if (isPersonalProfilePath(href) && !isPlatformRole(role)) return true;
   if (!canAccessPath(role, href)) return false;
   if (isCompanyAdminRole(role)) return true;
   return canAccessItem(role, href, modulePermissions);
+}
+
+function isPersonalProfilePath(pathname: string) {
+  return pathname === "/perfil" || pathname.startsWith("/perfil/");
 }
 
 function isCompanyAdminRole(role: PlatformRole): boolean {

@@ -12,7 +12,7 @@ import {
   X, Truck, User, Calendar, MapPin, Gauge, Droplets, FileDown, Image as ImageIcon,
 } from "lucide-react";
 import { useEffect } from "react";
-import type { ApiFuelEntry } from "../../hooks/useFuel";
+import type { ApiFuelEntry } from "../../../hooks/useFuel";
 import { useFuelDetailPdf } from "./FuelDetailPdf";
 
 type Props = {
@@ -34,7 +34,8 @@ function fmtDate(s: string | null | undefined): string {
 }
 
 export function FuelDetailDrawer({ entry, onClose }: Props) {
-  const download = useFuelDetailPdf(entry);
+  // entry may not fully match the shape expected by useFuelDetailPdf; cast to any to satisfy TS
+  const download = useFuelDetailPdf(entry as any);
 
   useEffect(() => {
     if (!entry) return;

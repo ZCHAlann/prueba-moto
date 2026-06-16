@@ -1,20 +1,4 @@
 // routes/company/maintenances.ts
-// CRUD del modelo unificado de mantenimientos (0006_maintenance_v2).
-// Reemplaza el archivo legacy del mismo nombre (que apuntaba a
-// company_maintenances, tabla borrada en la 0006).
-//
-// Permisos por submódulo:
-//   - maintenance.agenda      → ver
-//   - maintenance.execution   → crear/editar (cambiar status)
-//   - maintenance.records     → ver + editar notas
-//   - maintenance.workshops   → asignar taller (FK)
-//   - maintenance.suppliers   → asignar proveedor (en items)
-//
-// Acciones especiales:
-//   - POST /:id/complete → marca Completado, calcula total, reagenda según
-//     periodicidad y notifica. Solo admin/supervisor.
-//   - GET /:id/items     → devuelve los repuestos/insumos del mantenimiento.
-
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and, gte, lte, desc, ilike, or, inArray } from 'drizzle-orm';
@@ -41,31 +25,27 @@ import { notify, notifyAdmins } from '../../lib/notification-service';
 
 const router = Router({ mergeParams: true });
 
-// ─── Enums (replicamos para zod) ──────────────────────────────────────────────
+// ─── Enums ────────────────────────────────────────────────────────────────────
 
-const MAINT_TYPES = ['Preventivo', 'Correctivo', 'Programado'] as const;
-const MAINT_STATUSES = ['Programado', 'En curso', 'PendienteAtencion', 'Completado', 'Cancelado'] as const;
-const MAINT_CATEGORIES = [
-  'Primordial:Bombas',
-  'Primordial:Motores',
-  'Aceite:Cambio',
-  'Aceite:Inventario',
-  'Otro',
-] as const;
-const CADENCE_KINDS = ['none', 'weekly', 'days', 'monthly', 'km_based'] as const;
+const MAINT_TYPES      = ['Preventivo', 'Correctivo', 'Programado'] as const;
+const MAINT_STATUSES   = ['Programado', 'En curso', 'PendienteAtencion', 'Completado', 'Cancelado'] as const;
+const MAINT_CATEGORIES = ['Primordial:Bombas', 'Primordial:Motores', 'Aceite:Cambio', 'Aceite:Inventario', 'Otro'] as const;
+const CADENCE_KINDS    = ['none', 'weekly', 'days', 'monthly', 'km_based'] as const;
 
 const isoDateString = z.string().regex(/^\d{4}-\d{2}-\d{2}(T.+)?$|^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (ISO)').optional().nullable();
 
-// ─── Item schema (subdocumento) ───────────────────────────────────────────────
+// ─── Item schema ──────────────────────────────────────────────────────────────
+// FIX: photoUrl agregado — sin esto Zod lo stripea antes de llegar al handler.
 
 const itemSchema = z.object({
   supplierId: z.string().optional().nullable(),
   name:       safeString({ min: 1, max: 180, fieldLabel: 'Repuesto', allowEmpty: false }),
   quantity:   z.number().positive().max(1_000_000).default(1),
   unitCost:   z.number().nonnegative().max(1_000_000_000).default(0),
+  photoUrl:   z.string().min(1).optional().nullable(),   // rutas relativas /uploads/… no pasan z.string().url()
 });
 
-// ─── Maintenance schemas ─────────────────────────────────────────────────────
+// ─── Maintenance schemas ──────────────────────────────────────────────────────
 
 const createMaintenanceSchema = z.object({
   assetId:        z.string().min(1, 'El vehículo es requerido'),
@@ -108,7 +88,7 @@ const completeSchema = z.object({
   items:       z.array(itemSchema).max(50).optional(),
 });
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function loadItemsMap(maintenanceIds: number[]): Promise<Map<number, any[]>> {
   if (!maintenanceIds.length) return new Map();
@@ -122,25 +102,42 @@ async function loadItemsMap(maintenanceIds: number[]): Promise<Map<number, any[]
       quantity:       companyMaintenanceItems.quantity,
       unitCost:       companyMaintenanceItems.unitCost,
       subtotal:       companyMaintenanceItems.subtotal,
+      photoUrl:       companyMaintenanceItems.photoUrl,   // ← FIX: incluir en SELECT
     })
     .from(companyMaintenanceItems)
     .leftJoin(companySuppliers, eq(companySuppliers.id, companyMaintenanceItems.supplierId))
     .where(inArray(companyMaintenanceItems.maintenanceId, maintenanceIds));
+
   const map = new Map<number, any[]>();
   for (const i of items) {
     if (!map.has(i.maintenanceId)) map.set(i.maintenanceId, []);
     map.get(i.maintenanceId)!.push({
-      id:         toId('maintenance-item', i.id),
+      id:           toId('maintenance-item', i.id),
       maintenanceId: toId('maintenance', i.maintenanceId),
-      supplierId: i.supplierId ? toId('supplier', i.supplierId) : null,
+      supplierId:   i.supplierId ? toId('supplier', i.supplierId) : null,
       supplierName: i.supplierName,
-      name:       i.name,
-      quantity:   Number(i.quantity),
-      unitCost:   Number(i.unitCost),
-      subtotal:   Number(i.subtotal),
+      name:         i.name,
+      quantity:     Number(i.quantity),
+      unitCost:     Number(i.unitCost),
+      subtotal:     Number(i.subtotal),
+      photoUrl:     i.photoUrl ?? null,                  // ← FIX: exponer en respuesta
     });
   }
   return map;
+}
+
+// Helper para construir los values de insert/upsert de items (evita duplicar código).
+// FIX: incluye photoUrl en todos los inserts.
+function buildItemValues(maintenanceId: number, items: z.infer<typeof itemSchema>[]) {
+  return items.map((i) => ({
+    maintenanceId,
+    supplierId: i.supplierId ? parseId('supplier', i.supplierId) : null,
+    name:       i.name,
+    quantity:   i.quantity.toFixed(2),
+    unitCost:   i.unitCost.toFixed(2),
+    subtotal:   (i.quantity * i.unitCost).toFixed(2),
+    photoUrl:   i.photoUrl ?? null,                      // ← FIX: persistir
+  }));
 }
 
 function serializeMaintenance(m: any, items: any[]) {
@@ -175,7 +172,7 @@ function serializeMaintenance(m: any, items: any[]) {
   };
 }
 
-// ─── GET /company/:id/maintenances ───────────────────────────────────────────
+// ─── GET / ────────────────────────────────────────────────────────────────────
 
 router.get(
   '/',
@@ -187,9 +184,9 @@ router.get(
       const { status, type, category, workshopId, assetId, from, to, q } = req.query as Record<string, string | undefined>;
 
       const where: any[] = [eq(companyMaintenanceRecords.companyId, companyId)];
-      if (status)   where.push(eq(companyMaintenanceRecords.status, status as any));
-      if (type)     where.push(eq(companyMaintenanceRecords.type, type as any));
-      if (category) where.push(eq(companyMaintenanceRecords.category, category as any));
+      if (status)     where.push(eq(companyMaintenanceRecords.status, status as any));
+      if (type)       where.push(eq(companyMaintenanceRecords.type, type as any));
+      if (category)   where.push(eq(companyMaintenanceRecords.category, category as any));
       if (workshopId) where.push(eq(companyMaintenanceRecords.workshopId, parseId('workshop', workshopId)));
       if (assetId)    where.push(eq(companyMaintenanceRecords.assetId, parseId('asset', assetId)));
       if (from)       where.push(gte(companyMaintenanceRecords.scheduledFor, new Date(from)));
@@ -198,8 +195,8 @@ router.get(
       let query = db
         .select({
           m: companyMaintenanceRecords,
-          assetName:  companyAssets.name,
-          assetPlate: companyAssets.plate,
+          assetName:    companyAssets.name,
+          assetPlate:   companyAssets.plate,
           workshopName: companyWorkshops.name,
         })
         .from(companyMaintenanceRecords)
@@ -219,9 +216,20 @@ router.get(
 
       const rows = await query;
       const itemsMap = await loadItemsMap(rows.map((r) => r.m.id));
+      const [assetsRows, workshopsRows, suppliersRows] = await Promise.all([
+        db.select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate, brand: companyAssets.brand, model: companyAssets.model })
+          .from(companyAssets).where(eq(companyAssets.companyId, companyId)),
+        db.select({ id: companyWorkshops.id, name: companyWorkshops.name })
+          .from(companyWorkshops).where(eq(companyWorkshops.companyId, companyId)),
+        db.select({ id: companySuppliers.id, name: companySuppliers.name })
+          .from(companySuppliers).where(eq(companySuppliers.companyId, companyId)),
+      ]);
       res.json({
         data: rows.map((r) => serializeMaintenance(r.m, itemsMap.get(r.m.id) ?? [])),
         total: rows.length,
+        assets: assetsRows,
+        workshops: workshopsRows,
+        suppliers: suppliersRows,
       });
     } catch (err) {
       next(err);
@@ -229,8 +237,7 @@ router.get(
   },
 );
 
-// ─── GET /company/:id/maintenances/agenda ────────────────────────────────────
-// Para la pantalla de Agendar: devuelve Programados en un rango de fechas.
+// ─── GET /agenda ──────────────────────────────────────────────────────────────
 
 router.get(
   '/agenda',
@@ -245,8 +252,8 @@ router.get(
       const rows = await db
         .select({
           m: companyMaintenanceRecords,
-          assetName:  companyAssets.name,
-          assetPlate: companyAssets.plate,
+          assetName:    companyAssets.name,
+          assetPlate:   companyAssets.plate,
           workshopName: companyWorkshops.name,
         })
         .from(companyMaintenanceRecords)
@@ -260,9 +267,20 @@ router.get(
         .orderBy(companyMaintenanceRecords.scheduledFor);
 
       const itemsMap = await loadItemsMap(rows.map((r) => r.m.id));
+      const [assetsRows, workshopsRows, suppliersRows] = await Promise.all([
+        db.select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate, brand: companyAssets.brand, model: companyAssets.model })
+          .from(companyAssets).where(eq(companyAssets.companyId, companyId)),
+        db.select({ id: companyWorkshops.id, name: companyWorkshops.name })
+          .from(companyWorkshops).where(eq(companyWorkshops.companyId, companyId)),
+        db.select({ id: companySuppliers.id, name: companySuppliers.name })
+          .from(companySuppliers).where(eq(companySuppliers.companyId, companyId)),
+      ]);
       res.json({
         data: rows.map((r) => serializeMaintenance(r.m, itemsMap.get(r.m.id) ?? [])),
         total: rows.length,
+        assets: assetsRows,
+        workshops: workshopsRows,
+        suppliers: suppliersRows,
       });
     } catch (err) {
       next(err);
@@ -270,7 +288,7 @@ router.get(
   },
 );
 
-// ─── GET /company/:id/maintenances/:id ───────────────────────────────────────
+// ─── GET /:id ─────────────────────────────────────────────────────────────────
 
 router.get(
   '/:id',
@@ -284,8 +302,8 @@ router.get(
       const [row] = await db
         .select({
           m: companyMaintenanceRecords,
-          assetName:  companyAssets.name,
-          assetPlate: companyAssets.plate,
+          assetName:    companyAssets.name,
+          assetPlate:   companyAssets.plate,
           workshopName: companyWorkshops.name,
         })
         .from(companyMaintenanceRecords)
@@ -306,7 +324,7 @@ router.get(
   },
 );
 
-// ─── GET /company/:id/maintenances/:id/items ─────────────────────────────────
+// ─── GET /:id/items ───────────────────────────────────────────────────────────
 
 router.get(
   '/:id/items',
@@ -314,9 +332,7 @@ router.get(
   requirePermission('maintenance', 'records', 'ver'),
   async (req, res, next) => {
     try {
-      const companyId = req.companyId!;
       const id = parseId('maintenance', req.params.id);
-
       const itemsMap = await loadItemsMap([id]);
       res.json({ data: itemsMap.get(id) ?? [], total: (itemsMap.get(id) ?? []).length });
     } catch (err) {
@@ -325,7 +341,7 @@ router.get(
   },
 );
 
-// ─── POST /company/:id/maintenances ──────────────────────────────────────────
+// ─── POST / ───────────────────────────────────────────────────────────────────
 
 router.post(
   '/',
@@ -367,18 +383,9 @@ router.post(
         })
         .returning();
 
-      // Insertar items si los hay
       if (body.items?.length) {
-        await db.insert(companyMaintenanceItems).values(
-          body.items.map((i) => ({
-            maintenanceId: created.id,
-            supplierId: i.supplierId ? parseId('supplier', i.supplierId) : null,
-            name: i.name,
-            quantity: i.quantity.toFixed(2),
-            unitCost: i.unitCost.toFixed(2),
-            subtotal: (i.quantity * i.unitCost).toFixed(2),
-          })),
-        );
+        // FIX: usa buildItemValues → incluye photoUrl
+        await db.insert(companyMaintenanceItems).values(buildItemValues(created.id, body.items));
       }
 
       await logAudit(db, companyId, {
@@ -390,7 +397,6 @@ router.post(
         description: `Mantenimiento "${created.title}" creado.`,
       });
 
-      // Si trae taller, notificar workshop_assigned a los admins
       if (body.workshopId) {
         try {
           await notifyAdmins(companyId, {
@@ -412,7 +418,7 @@ router.post(
   },
 );
 
-// ─── PUT /company/:id/maintenances/:id ───────────────────────────────────────
+// ─── PUT /:id ─────────────────────────────────────────────────────────────────
 
 router.put(
   '/:id',
@@ -450,22 +456,13 @@ router.put(
       if (body.executedAt    !== undefined) update.executedAt    = body.executedAt ? new Date(body.executedAt) : null;
       if (body.notes         !== undefined) update.notes         = body.notes;
 
-      // Si se están actualizando items, reemplazamos el set completo
       if (body.items) {
         const total = body.items.reduce((acc, i) => acc + (i.quantity * i.unitCost), 0);
         update.totalCost = total.toFixed(2);
         await db.delete(companyMaintenanceItems).where(eq(companyMaintenanceItems.maintenanceId, id));
         if (body.items.length) {
-          await db.insert(companyMaintenanceItems).values(
-            body.items.map((i) => ({
-              maintenanceId: id,
-              supplierId: i.supplierId ? parseId('supplier', i.supplierId) : null,
-              name: i.name,
-              quantity: i.quantity.toFixed(2),
-              unitCost: i.unitCost.toFixed(2),
-              subtotal: (i.quantity * i.unitCost).toFixed(2),
-            })),
-          );
+          // FIX: usa buildItemValues → incluye photoUrl
+          await db.insert(companyMaintenanceItems).values(buildItemValues(id, body.items));
         }
       }
 
@@ -492,7 +489,7 @@ router.put(
   },
 );
 
-// ─── POST /company/:id/maintenances/:id/complete ────────────────────────────
+// ─── POST /:id/complete ───────────────────────────────────────────────────────
 
 router.post(
   '/:id/complete',
@@ -519,21 +516,12 @@ router.post(
       const completedAt = body.completedAt ? new Date(body.completedAt) : new Date();
       const executedAt  = existing.executedAt ?? completedAt;
 
-      // Si llegan items, reemplazamos
       if (body.items) {
         const total = body.items.reduce((acc, i) => acc + (i.quantity * i.unitCost), 0);
         await db.delete(companyMaintenanceItems).where(eq(companyMaintenanceItems.maintenanceId, id));
         if (body.items.length) {
-          await db.insert(companyMaintenanceItems).values(
-            body.items.map((i) => ({
-              maintenanceId: id,
-              supplierId: i.supplierId ? parseId('supplier', i.supplierId) : null,
-              name: i.name,
-              quantity: i.quantity.toFixed(2),
-              unitCost: i.unitCost.toFixed(2),
-              subtotal: (i.quantity * i.unitCost).toFixed(2),
-            })),
-          );
+          // FIX: usa buildItemValues → incluye photoUrl
+          await db.insert(companyMaintenanceItems).values(buildItemValues(id, body.items));
         }
         await db.update(companyMaintenanceRecords)
           .set({ totalCost: total.toFixed(2) })
@@ -563,15 +551,17 @@ router.post(
         description: `Mantenimiento "${updated.title}" marcado como completado.`,
       });
 
-      // Notificar al admin
-      await notifyAdmins(companyId, {
-        kind:  'maintenance_completed',
-        title: `Mantenimiento completado: ${updated.title ?? updated.category}`,
-        body:  body.notes ?? undefined,
-        payload: { maintenanceId: updated.id, assetId: updated.assetId, totalCost: Number(updated.totalCost) },
-      });
+      try {
+        await notifyAdmins(companyId, {
+          kind:  'maintenance_completed',
+          title: `Mantenimiento completado: ${updated.title ?? updated.category}`,
+          body:  body.notes ?? undefined,
+          payload: { maintenanceId: updated.id, assetId: updated.assetId, totalCost: Number(updated.totalCost) },
+        });
+      } catch (notifErr) {
+        console.warn('notifyAdmins falló (no crítico):', notifErr);
+      }
 
-      // Reagendar si tiene periodicidad
       const newId = await rescheduleCompletedMaintenance({
         completedId: id,
         companyId,
@@ -590,7 +580,7 @@ router.post(
   },
 );
 
-// ─── POST /company/:id/maintenances/:id/cancel ───────────────────────────────
+// ─── POST /:id/cancel ─────────────────────────────────────────────────────────
 
 router.post(
   '/:id/cancel',
@@ -632,7 +622,7 @@ router.post(
   },
 );
 
-// ─── DELETE /company/:id/maintenances/:id ────────────────────────────────────
+// ─── DELETE /:id ──────────────────────────────────────────────────────────────
 
 router.delete(
   '/:id',
@@ -670,4 +660,3 @@ router.delete(
 );
 
 export default router;
-

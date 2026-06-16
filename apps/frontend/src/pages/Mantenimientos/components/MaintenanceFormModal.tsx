@@ -1,10 +1,11 @@
 // pages/Mantenimientos/components/MaintenanceFormModal.tsx
 // Modal dark/light completo. Soporta 3 modos: crear, editar, completar.
+// v2: cada repuesto/insumo puede tener una foto adjunta.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  X, Plus, Trash2, Save, Check, Calendar as CalIcon, Wrench,
-  Droplet, Cog, AlertTriangle, Building2, Package,
+  X, Plus, Trash2, Save, Check, Calendar as CalIcon,
+  Building2, Package, ImagePlus, XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -20,9 +21,28 @@ import {
 } from "../../../hooks/useMaintenancesV2";
 import { useWorkshops } from "../../../hooks/useWorkshops";
 import { useSuppliers } from "../../../hooks/useSuppliers";
-import { useAuth } from "../../../context/AuthContext";
 import { useAssets } from "../../../hooks/useAssets";
 import { usePermissions } from "../../../hooks/usePermissions";
+import { useAuth } from "../../../context/AuthContext";
+
+// ─── Upload helper ─────────────────────────────────────────────────────────────
+
+async function uploadPartPhoto(file: File, companyId?: string | number): Promise<string> {
+  const fd = new FormData();
+  fd.append("photo", file);
+  const qs = companyId ? `?companyId=${companyId}` : "";
+  const res = await fetch(`/api/upload/part-photos${qs}`, {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`Upload part-photo: HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json.url) throw new Error("Upload part-photo: respuesta sin URL");
+  return json.url as string;
+}
+
+// ─── Constants ─────────────────────────────────────────────────────────────────
 
 const TYPES: { value: MaintenanceType; label: string; active: string; idle: string }[] = [
   {
@@ -50,6 +70,24 @@ const CADENCES: { value: CadenceKind; label: string; needsValue: boolean; isKm?:
   { value: "km_based", label: "Cada N km",      needsValue: true, isKm: true },
 ];
 
+// ─── Extended item type (local only — photoUrl is UI state, not persisted via this type) ─
+
+type ItemRow = MaintenanceItemInput & {
+  /** URL pública una vez subida, o null si aún no tiene foto. */
+  photoUrl: string | null;
+  /** true mientras se sube la foto de este item. */
+  uploading: boolean;
+};
+
+// ─── Styles ────────────────────────────────────────────────────────────────────
+
+const inputCls =
+  "w-full rounded-lg border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-[#0f1320] px-3 py-2 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-400/30 dark:focus:ring-violet-500/40 focus:border-violet-400 dark:focus:border-violet-500/40 transition";
+
+const labelCls = "text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-1.5 block";
+
+// ─── Props ─────────────────────────────────────────────────────────────────────
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -58,41 +96,46 @@ interface Props {
   completeMode?: boolean;
 }
 
-// Shared input / label classes
-const inputCls =
-  "w-full rounded-lg border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-[#0f1320] px-3 py-2 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-400/30 dark:focus:ring-violet-500/40 focus:border-violet-400 dark:focus:border-violet-500/40 transition";
-
-const labelCls = "text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-1.5 block";
+// ─── Component ─────────────────────────────────────────────────────────────────
 
 export function MaintenanceFormModal({ open, onClose, prefill, maintenance, completeMode = false }: Props) {
   const { can } = usePermissions();
   const canComplete = can("maintenance", "execution", "editar");
+  const { session } = useAuth();
 
   const { assets: assetsList = [] } = useAssets();
   const { workshops } = useWorkshops();
   const { suppliers } = useSuppliers();
 
-  const isEditing = !!maintenance;
+  const isEditing    = !!maintenance;
   const isCompleting = completeMode && isEditing;
 
   const createMut   = useCreateMaintenance();
   const updateMut   = useUpdateMaintenance();
   const completeMut = useCompleteMaintenance();
 
-  // ─── Form state ────────────────────────────────────────────────────────────
-  const [assetId, setAssetId] = useState("");
-  const [workshopId, setWorkshopId] = useState<string>("");
-  const [type, setType] = useState<MaintenanceType>("Preventivo");
-  const [category, setCategory] = useState<MaintenanceCategory>("Otro");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [odometerKm, setOdometerKm] = useState<number | null>(null);
-  const [cadenceKind, setCadenceKind] = useState<CadenceKind>("none");
-  const [cadenceValue, setCadenceValue] = useState<number | null>(null);
+  // ─── Form state ──────────────────────────────────────────────────────────────
+  const [assetId,       setAssetId]       = useState("");
+  const [workshopId,    setWorkshopId]    = useState<string>("");
+  const [type,          setType]          = useState<MaintenanceType>("Preventivo");
+  const [category,      setCategory]      = useState<MaintenanceCategory>("Otro");
+  const [title,         setTitle]         = useState("");
+  const [description,   setDescription]   = useState("");
+  const [odometerKm,    setOdometerKm]    = useState<number | null>(null);
+  const [cadenceKind,   setCadenceKind]   = useState<CadenceKind>("none");
+  const [cadenceValue,  setCadenceValue]  = useState<number | null>(null);
   const [nextTriggerKm, setNextTriggerKm] = useState<number | null>(null);
-  const [scheduledFor, setScheduledFor] = useState<string>("");
-  const [items, setItems] = useState<MaintenanceItemInput[]>([]);
-  const [notes, setNotes] = useState("");
+  const [scheduledFor,  setScheduledFor]  = useState<string>("");
+  const [items,         setItems]         = useState<ItemRow[]>([]);
+  const [notes,         setNotes]         = useState("");
+
+  // Refs para los inputs file ocultos de cada item
+  const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+
+  // Extraemos el id para usarlo como dep estable — así el efecto se dispara
+  // siempre que cambie el registro abierto, incluso si la referencia del objeto
+  // es la misma (ej: mismo maintenance, modal cerrado y vuelto a abrir).
+  const maintenanceId = maintenance?.id ?? null;
 
   useEffect(() => {
     if (!open) return;
@@ -108,12 +151,25 @@ export function MaintenanceFormModal({ open, onClose, prefill, maintenance, comp
       setCadenceValue(maintenance.cadenceValue);
       setNextTriggerKm(maintenance.nextTriggerKm);
       setScheduledFor(maintenance.scheduledFor?.slice(0, 16) ?? "");
-      setItems(maintenance.items.map((i) => ({
-        supplierId: i.supplierId,
-        name: i.name,
-        quantity: i.quantity,
-        unitCost: i.unitCost,
-      })));
+      setItems(
+        maintenance.items.map((i) => {
+          // El servidor puede devolver camelCase o snake_case según el mapper.
+          // Leemos ambas variantes para ser robustos.
+          const raw = i as unknown as Record<string, unknown>;
+          const photoUrl =
+            (raw.photoUrl as string | null | undefined) ??
+            (raw.photo_url as string | null | undefined) ??
+            null;
+          return {
+            supplierId: i.supplierId,
+            name:       i.name,
+            quantity:   i.quantity,
+            unitCost:   i.unitCost,
+            photoUrl,
+            uploading:  false,
+          };
+        }),
+      );
       setNotes(maintenance.notes ?? "");
     } else {
       setAssetId(prefill?.assetId ?? "");
@@ -130,7 +186,8 @@ export function MaintenanceFormModal({ open, onClose, prefill, maintenance, comp
       setItems([]);
       setNotes("");
     }
-  }, [open, maintenance, prefill]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, maintenanceId, prefill]);
 
   const totalCost = useMemo(
     () => items.reduce((acc, i) => acc + (Number(i.quantity) || 0) * (Number(i.unitCost) || 0), 0),
@@ -138,6 +195,65 @@ export function MaintenanceFormModal({ open, onClose, prefill, maintenance, comp
   );
 
   if (!open) return null;
+
+  // ─── Item helpers ─────────────────────────────────────────────────────────────
+
+  const addItem = () =>
+    setItems((prev) => [...prev, { name: "", quantity: 1, unitCost: 0, supplierId: null, photoUrl: null, uploading: false }]);
+
+  const removeItem = (idx: number) =>
+    setItems((prev) => prev.filter((_, i) => i !== idx));
+
+  const updateItem = (idx: number, patch: Partial<ItemRow>) =>
+    setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+
+  const handlePhotoClick = (idx: number) => {
+    fileInputRefs.current[idx]?.click();
+  };
+
+  const handlePhotoChange = async (idx: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validación rápida en cliente
+    if (!["image/jpeg", "image/png", "image/webp", "image/heic"].includes(file.type)) {
+      toast.error("Solo se permiten imágenes JPG, PNG, WebP o HEIC");
+      return;
+    }
+
+    updateItem(idx, { uploading: true });
+
+    try {
+      const companyId = session?.companyId ?? undefined;
+      const url = await uploadPartPhoto(file, companyId);
+      updateItem(idx, { photoUrl: url, uploading: false });
+      toast.success("Foto del repuesto guardada");
+    } catch (err) {
+      updateItem(idx, { uploading: false });
+      toast.error("No se pudo subir la foto");
+      console.error(err);
+    } finally {
+      // Reset el input para permitir subir la misma imagen de nuevo si se quiere
+      if (fileInputRefs.current[idx]) fileInputRefs.current[idx]!.value = "";
+    }
+  };
+
+  const removePhoto = (idx: number) => {
+    updateItem(idx, { photoUrl: null });
+  };
+
+  // ─── Serialize items (strip UI-only fields) ──────────────────────────────────
+
+  const serializeItems = (): (MaintenanceItemInput & { photoUrl?: string | null })[] =>
+    items.map(({ name, quantity, unitCost, supplierId, photoUrl }) => ({
+      name,
+      quantity,
+      unitCost,
+      supplierId,
+      photoUrl: photoUrl ?? null,
+    }));
+
+  // ─── Submit handlers ──────────────────────────────────────────────────────────
 
   const submitCreate = async () => {
     if (!assetId || !title || !scheduledFor) {
@@ -149,7 +265,7 @@ export function MaintenanceFormModal({ open, onClose, prefill, maintenance, comp
       description: description || null, odometerKm: odometerKm ?? null,
       cadenceKind, cadenceValue: cadenceValue ?? null, nextTriggerKm: nextTriggerKm ?? null,
       scheduledFor: new Date(scheduledFor).toISOString(),
-      notes: notes || null, items: items.length ? items : undefined,
+      notes: notes || null, items: items.length ? serializeItems() : undefined,
     };
     try {
       await createMut.mutateAsync(payload);
@@ -168,7 +284,7 @@ export function MaintenanceFormModal({ open, onClose, prefill, maintenance, comp
           description: description || null, odometerKm: odometerKm ?? null,
           cadenceKind, cadenceValue: cadenceValue ?? null, nextTriggerKm: nextTriggerKm ?? null,
           scheduledFor: new Date(scheduledFor).toISOString(),
-          notes: notes || null, items: items.length ? items : undefined,
+          notes: notes || null, items: items.length ? serializeItems() : undefined,
         },
       });
       toast.success("Mantenimiento actualizado");
@@ -182,25 +298,35 @@ export function MaintenanceFormModal({ open, onClose, prefill, maintenance, comp
       const res = await completeMut.mutateAsync({
         id: maintenance.id,
         body: {
-          odometerKm: odometerKm ?? undefined,
-          notes: notes || undefined,
-          items: items.length ? items : undefined,
+          odometerKm:  odometerKm ?? undefined,
+          notes:       notes || undefined,
+          items:       items.length ? serializeItems() : undefined,
         },
       });
-      toast.success(res.rescheduledId ? `Completado. Reagendado: ${res.scheduledFor?.slice(0, 10)}` : "Completado");
+      toast.success(
+        res.rescheduledId
+          ? `Completado. Reagendado: ${res.scheduledFor?.slice(0, 10)}`
+          : "Completado",
+      );
       onClose();
     } catch (e) { toast.error((e as Error).message); }
   };
 
-  const addItem    = () => setItems((prev) => [...prev, { name: "", quantity: 1, unitCost: 0, supplierId: null }]);
-  const removeItem = (idx: number) => setItems((prev) => prev.filter((_, i) => i !== idx));
-  const updateItem = (idx: number, patch: Partial<MaintenanceItemInput>) =>
-    setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+  // ─── Header copy ──────────────────────────────────────────────────────────────
 
-  const headerTitle = isCompleting ? "Completar mantenimiento" : isEditing ? "Editar mantenimiento" : "Agendar mantenimiento";
+  const headerTitle = isCompleting
+    ? "Completar mantenimiento"
+    : isEditing
+    ? "Editar mantenimiento"
+    : "Agendar mantenimiento";
+
   const headerSubtitle = isCompleting
     ? "Registra el cierre, agrega los repuestos finales y confirma el odómetro."
-    : isEditing ? "Modifica la información del mantenimiento seleccionado." : "Programa un nuevo mantenimiento arrastrando un vehículo o completando los datos.";
+    : isEditing
+    ? "Modifica la información del mantenimiento seleccionado."
+    : "Programa un nuevo mantenimiento arrastrando un vehículo o completando los datos.";
+
+  // ─── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 dark:bg-black/60 backdrop-blur-sm p-3 sm:p-6 overflow-y-auto">
@@ -364,7 +490,7 @@ export function MaintenanceFormModal({ open, onClose, prefill, maintenance, comp
             </div>
           </div>
 
-          {/* Odómetro (solo en complete) */}
+          {/* Odómetro — solo en complete */}
           {isCompleting && (
             <div>
               <label className={labelCls}>Odómetro al completar (km)</label>
@@ -379,7 +505,7 @@ export function MaintenanceFormModal({ open, onClose, prefill, maintenance, comp
             </div>
           )}
 
-          {/* Items / repuestos */}
+          {/* ── Repuestos / Insumos ──────────────────────────────────────────── */}
           <div className="rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -396,49 +522,126 @@ export function MaintenanceFormModal({ open, onClose, prefill, maintenance, comp
                 <Plus size={12} /> Agregar
               </button>
             </div>
+
             {items.length === 0 ? (
-              <p className="text-xs text-gray-400 dark:text-gray-500 py-3 text-center">Sin items. Agrega repuestos o insumos.</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 py-3 text-center">
+                Sin items. Agrega repuestos o insumos.
+              </p>
             ) : (
               <div className="space-y-2">
                 {items.map((it, idx) => (
-                  <div key={idx} className="grid grid-cols-12 gap-1.5 items-center">
-                    <input
-                      className={`${inputCls} col-span-5`}
-                      placeholder="Repuesto"
-                      value={it.name}
-                      onChange={(e) => updateItem(idx, { name: e.target.value })}
-                    />
-                    <select
-                      className={`${inputCls} col-span-3`}
-                      value={it.supplierId ?? ""}
-                      onChange={(e) => updateItem(idx, { supplierId: e.target.value || null })}
-                    >
-                      <option value="">Sin proveedor</option>
-                      {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                    <input
-                      className={`${inputCls} col-span-1`}
-                      type="number" min={0} step="0.01"
-                      value={it.quantity}
-                      onChange={(e) => updateItem(idx, { quantity: Number(e.target.value) })}
-                      title="Cantidad"
-                    />
-                    <input
-                      className={`${inputCls} col-span-2`}
-                      type="number" min={0}
-                      value={it.unitCost}
-                      onChange={(e) => updateItem(idx, { unitCost: Number(e.target.value) })}
-                      title="Costo unitario"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeItem(idx)}
-                      className="col-span-1 p-1.5 text-rose-500 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-md transition"
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                  <div key={`${maintenanceId ?? "new"}-item-${idx}`} className="flex flex-col gap-1.5">
+                    {/* Fila principal */}
+                    <div className="grid grid-cols-12 gap-1.5 items-center">
+
+                      {/* Thumbnail / botón de foto */}
+                      <div className="col-span-1 flex items-center justify-center">
+                        {it.photoUrl ? (
+                          /* Thumbnail — click abre imagen en nueva pestaña, hover muestra X para quitar */
+                          <div className="relative group w-8 h-8 flex-shrink-0">
+                            <a
+                              href={it.photoUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Ver imagen completa"
+                              className="block w-8 h-8"
+                            >
+                              <img
+                                src={it.photoUrl}
+                                alt="Foto repuesto"
+                                className="w-8 h-8 rounded-md object-cover border border-gray-200 dark:border-white/[0.08] hover:opacity-80 transition cursor-pointer"
+                                onError={() => removePhoto(idx)}
+                              />
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => removePhoto(idx)}
+                              title="Quitar foto"
+                              className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full bg-rose-500 text-white shadow-sm"
+                            >
+                              <XCircle size={10} />
+                            </button>
+                          </div>
+                        ) : (
+                          /* Botón para subir */
+                          <button
+                            type="button"
+                            onClick={() => handlePhotoClick(idx)}
+                            disabled={it.uploading}
+                            title="Agregar foto del repuesto"
+                            className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-md border transition
+                              ${it.uploading
+                                ? "border-violet-300 dark:border-violet-500/40 bg-violet-50 dark:bg-violet-500/10 text-violet-400 dark:text-violet-400 animate-pulse cursor-wait"
+                                : "border-dashed border-gray-300 dark:border-white/[0.10] text-gray-300 dark:text-gray-600 hover:border-violet-400 dark:hover:border-violet-500/50 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/5"
+                              }`}
+                          >
+                            <ImagePlus size={13} />
+                          </button>
+                        )}
+
+                        {/* Input file oculto */}
+                        <input
+                          ref={(el) => { fileInputRefs.current[idx] = el; }}
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/heic"
+                          className="hidden"
+                          onChange={(e) => handlePhotoChange(idx, e)}
+                        />
+                      </div>
+
+                      {/* Nombre */}
+                      <input
+                        className={`${inputCls} col-span-4`}
+                        placeholder="Repuesto"
+                        value={it.name}
+                        onChange={(e) => updateItem(idx, { name: e.target.value })}
+                      />
+
+                      {/* Proveedor */}
+                      <select
+                        className={`${inputCls} col-span-3`}
+                        value={it.supplierId ?? ""}
+                        onChange={(e) => updateItem(idx, { supplierId: e.target.value || null })}
+                      >
+                        <option value="">Sin proveedor</option>
+                        {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+
+                      {/* Cantidad */}
+                      <input
+                        className={`${inputCls} col-span-1`}
+                        type="number" min={0} step="0.01"
+                        value={it.quantity}
+                        onChange={(e) => updateItem(idx, { quantity: Number(e.target.value) })}
+                        title="Cantidad"
+                      />
+
+                      {/* Costo unitario */}
+                      <input
+                        className={`${inputCls} col-span-2`}
+                        type="number" min={0}
+                        value={it.unitCost}
+                        onChange={(e) => updateItem(idx, { unitCost: Number(e.target.value) })}
+                        title="Costo unitario"
+                      />
+
+                      {/* Eliminar fila */}
+                      <button
+                        type="button"
+                        onClick={() => removeItem(idx)}
+                        className="col-span-1 p-1.5 text-rose-500 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-md transition"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+
+                    {/* Preview ampliado si tiene foto — al hacer hover en la miniatura
+                        queda cubierto por el tooltip nativo del browser; aquí mostramos
+                        la URL como fallback accesible. No es necesario nada más. */}
                   </div>
                 ))}
+
+                {/* Total */}
                 <div className="text-right text-sm font-semibold pt-2 border-t border-gray-100 dark:border-white/[0.04]">
                   Total:{" "}
                   <span className="text-violet-600 dark:text-violet-300">

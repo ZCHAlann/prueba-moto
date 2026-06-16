@@ -376,6 +376,7 @@ export const companyMaintenanceItems = pgTable('company_maintenance_items', {
   maintenanceId:  integer('maintenance_id').notNull().references(() => companyMaintenanceRecords.id, { onDelete: 'cascade' }),
   supplierId:     integer('supplier_id').references(() => companySuppliers.id, { onDelete: 'set null' }),
   name:           varchar('name', { length: 180 }).notNull(),
+  photoUrl:       text('photo_url'),
   quantity:       numeric('quantity', { precision: 10, scale: 2 }).notNull().default('1'),
   unitCost:       numeric('unit_cost', { precision: 12, scale: 2 }).notNull().default('0'),
   subtotal:       numeric('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),

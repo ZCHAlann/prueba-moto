@@ -84,6 +84,9 @@ function serializeUser(u: typeof companyUsers.$inferSelect) {
     profileData:       profile,
     createdAt:         u.createdAt,
     updatedAt:         u.updatedAt,
+    // Lo expone el frontend para sincronizar invalidación de sesión tras
+    // cambios de permisos/rol.
+    permissionsUpdatedAt: u.updatedAt?.toISOString() ?? null,
   };
 }
 

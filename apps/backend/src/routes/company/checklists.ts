@@ -404,7 +404,18 @@ router.get('/', requireModule('checklist'), requirePermission('checklist', 'hist
       )
     );
 
-    res.json({ data, total: data.length });
+    res.json({
+      data,
+      total: data.length,
+      assets: assetsRows.map((a) => ({ id: a.id, name: a.name })),
+      drivers: driversRows.map((d) => ({
+        id: d.id,
+        firstName: d.firstName,
+        lastName: d.lastName,
+        name: `${d.firstName} ${d.lastName}`.trim(),
+      })),
+      categories: categoriesRows.map((c) => ({ id: c.id, name: c.name })),
+    });
   } catch (err) {
     next(err);
   }

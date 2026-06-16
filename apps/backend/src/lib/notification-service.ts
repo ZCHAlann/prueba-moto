@@ -86,6 +86,8 @@ export async function notify(args: NotifyArgs): Promise<InferSelectModel<typeof 
     .values({ companyId, userId, kind, title, body: body ?? null, payload })
     .returning();
 
+  if (!row) return null;
+
   // 2) WebSocket (en tiempo real, sin esperar el FCM)
   try {
     wsBroadcast(companyId, {
@@ -138,7 +140,7 @@ export async function notifyAdmins(companyId: number, args: Omit<NotifyArgs, 'co
     .from(companyUsers)
     .where(and(
       eq(companyUsers.companyId, companyId),
-      inArray(companyUsers.role, ['admin_empresa']),
+      inArray(companyUsers.role, ['owner_empresa', 'admin_empresa']),
       eq(companyUsers.status, 'active'),
     ));
   await Promise.all(admins.map((a) => notify({ ...args, companyId, userId: a.id })));

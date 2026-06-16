@@ -31,7 +31,7 @@ const updateGarageSchema = createGarageSchema.partial();
 
 // ─── GET /company/:id/garages ─────────────────────────────────────────────────
 
-router.get('/', requireModule('gestion', 'flotas'), async (req, res, next) => {
+router.get('/', requireModule('gestion', 'garages'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
 

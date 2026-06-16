@@ -19,85 +19,87 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-export type MaintenanceType   = 'Preventivo' | 'Correctivo' | 'Programado';
-export type MaintenanceStatus = 'Programado' | 'En curso' | 'PendienteAtencion' | 'Completado' | 'Cancelado';
+export type MaintenanceType     = 'Preventivo' | 'Correctivo' | 'Programado';
+export type MaintenanceStatus   = 'Programado' | 'En curso' | 'PendienteAtencion' | 'Completado' | 'Cancelado';
 export type MaintenanceCategory = 'Primordial:Bombas' | 'Primordial:Motores' | 'Aceite:Cambio' | 'Aceite:Inventario' | 'Otro';
-export type CadenceKind = 'none' | 'weekly' | 'days' | 'monthly' | 'km_based';
+export type CadenceKind         = 'none' | 'weekly' | 'days' | 'monthly' | 'km_based';
 
 export interface MaintenanceItem {
-  id: string;
+  id:           string;
   maintenanceId: string;
-  supplierId: string | null;
+  supplierId:   string | null;
   supplierName: string | null;
-  name: string;
-  quantity: number;
-  unitCost: number;
-  subtotal: number;
+  name:         string;
+  quantity:     number;
+  unitCost:     number;
+  subtotal:     number;
+  photoUrl:     string | null;   // ← NUEVO: foto del repuesto
 }
 
 export interface Maintenance {
-  id: string;
-  companyId: string;
-  assetId: string;
-  assetName: string | null;
-  assetPlate: string | null;
-  workshopId: string | null;
-  workshopName: string | null;
-  type: MaintenanceType;
-  status: MaintenanceStatus;
-  category: MaintenanceCategory;
-  title: string | null;
-  description: string | null;
-  odometerKm: number | null;
-  cadenceKind: CadenceKind;
-  cadenceValue: number | null;
+  id:            string;
+  companyId:     string;
+  assetId:       string;
+  assetName:     string | null;
+  assetPlate:    string | null;
+  workshopId:    string | null;
+  workshopName:  string | null;
+  type:          MaintenanceType;
+  status:        MaintenanceStatus;
+  category:      MaintenanceCategory;
+  title:         string | null;
+  description:   string | null;
+  odometerKm:    number | null;
+  cadenceKind:   CadenceKind;
+  cadenceValue:  number | null;
   nextTriggerKm: number | null;
-  scheduledFor: string;
-  executedAt: string | null;
-  completedAt: string | null;
-  notes: string | null;
-  totalCost: number;
-  parentId: string | null;
-  createdBy: string | null;
-  completedBy: string | null;
-  createdAt: string;
-  updatedAt: string;
-  items: MaintenanceItem[];
+  scheduledFor:  string;
+  executedAt:    string | null;
+  completedAt:   string | null;
+  notes:         string | null;
+  totalCost:     number;
+  parentId:      string | null;
+  createdBy:     string | null;
+  completedBy:   string | null;
+  createdAt:     string;
+  updatedAt:     string;
+  items:         MaintenanceItem[];
 }
 
 export interface MaintenanceItemInput {
   supplierId?: string | null;
-  name: string;
-  quantity: number;
-  unitCost: number;
+  name:        string;
+  quantity:    number;
+  unitCost:    number;
+  photoUrl?:   string | null;    // ← NUEVO: se envía al backend al crear/editar
 }
 
 export interface MaintenanceInput {
-  assetId: string;
-  workshopId?: string | null;
-  type?: MaintenanceType;
-  status?: MaintenanceStatus;
-  category?: MaintenanceCategory;
-  title: string;
-  description?: string | null;
-  odometerKm?: number | null;
-  cadenceKind?: CadenceKind;
-  cadenceValue?: number | null;
+  assetId:        string;
+  workshopId?:    string | null;
+  type?:          MaintenanceType;
+  status?:        MaintenanceStatus;
+  category?:      MaintenanceCategory;
+  title:          string;
+  description?:   string | null;
+  odometerKm?:    number | null;
+  cadenceKind?:   CadenceKind;
+  cadenceValue?:  number | null;
   nextTriggerKm?: number | null;
-  scheduledFor: string;
-  notes?: string | null;
-  items?: MaintenanceItemInput[];
+  scheduledFor:   string;
+  notes?:         string | null;
+  items?:         MaintenanceItemInput[];
 }
 
 export interface ListFilters {
-  status?:   MaintenanceStatus;
-  type?:     MaintenanceType;
-  category?: MaintenanceCategory;
+  status?:     MaintenanceStatus;
+  type?:       MaintenanceType;
+  category?:   MaintenanceCategory;
   workshopId?: string;
-  assetId?:   string;
-  from?:      string;
-  to?:        string;
-  q?:         string;
+  assetId?:    string;
+  from?:       string;
+  to?:         string;
+  q?:          string;
 }
 
 export interface AgendaRange { from: string; to: string; }
@@ -184,10 +186,14 @@ export function useCompleteMaintenance() {
   const { companyId } = useAuth();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, body }: { id: string; body: { completedAt?: string; odometerKm?: number; notes?: string; items?: MaintenanceItemInput[] } }) => {
-      return jsonFetch<Maintenance & { rescheduledId: string | null }>(`/api/company/${companyId}/maintenances/${id}/complete`, {
-        method: 'POST', body: JSON.stringify(body),
-      });
+    mutationFn: async ({ id, body }: {
+      id: string;
+      body: { completedAt?: string; odometerKm?: number; notes?: string; items?: MaintenanceItemInput[] };
+    }) => {
+      return jsonFetch<Maintenance & { rescheduledId: string | null }>(
+        `/api/company/${companyId}/maintenances/${id}/complete`,
+        { method: 'POST', body: JSON.stringify(body) },
+      );
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['maintenances'] });

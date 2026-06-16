@@ -93,17 +93,39 @@ export async function getPermissionsForRole(
 }
 
 /**
- * Mergear permisos: los del rol son la base; los del usuario (per-user
- * override) sobrescriben entry por entry. Devuelve el shape correcto
- * para meter en el JWT.
+ * Mergear permisos: los del rol son la base, los del usuario (per-user
+ * override) se SUMAN submódulo por submódulo, acción por acción. Si
+ * el rol tiene `gestion.flotas: ["ver"]` y el per-user agrega
+ * `gestion.talleres: ["ver"]`, el resultado es:
+ *   { gestion: { flotas: ["ver"], talleres: ["ver"] } }
+ *
+ * Si tanto el rol como el per-user definen acciones para el mismo
+ * submódulo, se hace union (sin duplicados): la acción aparece una sola
+ * vez si está en cualquiera de los dos.
  */
 export function mergePermissions(
   base: ModulePermissionMap,
   override: ModulePermissionMap,
 ): ModulePermissionMap {
-  const out: ModulePermissionMap = { ...base };
-  for (const [mod, subs] of Object.entries(override)) {
-    out[mod] = { ...(out[mod] ?? {}), ...subs };
+  const out: ModulePermissionMap = {};
+
+  // 1) Copiamos todos los módulos del rol base
+  for (const [mod, subs] of Object.entries(base ?? {})) {
+    out[mod] = {};
+    for (const [sub, actions] of Object.entries(subs ?? {})) {
+      out[mod][sub] = Array.from(new Set(actions ?? []));
+    }
   }
+
+  // 2) Sumamos los del per-user override, sin pisar lo del rol
+  for (const [mod, subs] of Object.entries(override ?? {})) {
+    if (!out[mod]) out[mod] = {};
+    for (const [sub, actions] of Object.entries(subs ?? {})) {
+      const existing = out[mod][sub] ?? [];
+      const merged = Array.from(new Set([...existing, ...(actions ?? [])]));
+      out[mod][sub] = merged;
+    }
+  }
+
   return out;
 }

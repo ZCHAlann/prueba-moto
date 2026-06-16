@@ -70,7 +70,11 @@ router.get('/', requireModule('alertas'), async (req, res, next) => {
 
     const assetMap = new Map(assetsRows.map(a => [a.id, { name: a.name, plate: a.plate }]));
 
-    res.json({ data: rows.map(a => serializeAlert(a, assetMap.get(a.assetId))), total: rows.length });
+    res.json({
+      data: rows.map(a => serializeAlert(a, assetMap.get(a.assetId))),
+      total: rows.length,
+      assets: assetsRows.map((a) => ({ id: a.id, name: a.name, plate: a.plate })),
+    });
   } catch (err) {
     next(err);
   }

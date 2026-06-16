@@ -275,14 +275,37 @@ router.post("/seed", requireAdmin, async (req, res, next) => {
 
 // ── Export ───────────────────────────────────────────────────────────────────
 // Helper público: dado un companyId y un roleKey, devuelve el set
-// final de permisos (rol base + override per-user). Lo usa signToken.
+// final de permisos del usuario. Reglas:
+//   1. Si el usuario tiene override per-user (cualquier submódulo con
+//      al menos una acción), ESE override manda completamente. El rol
+//      se IGNORA — el admin está diciendo "este user tiene exactamente
+//      estos permisos, no los del rol".
+//   2. Si el user NO tiene override per-user, hereda los permisos del
+//      rol (catálogo) + los permisos derivados automáticos.
+//
+// Esto refleja el flujo del producto: el admin crea roles como plantilla
+// y luego, al asignar/crear un user, define sus permisos reales. Los
+// permisos del user son la fuente de verdad.
 export async function getFinalPermissionsForUser(
   companyId: number,
   roleKey: string,
   perUserOverride: ModulePermissionMap,
 ): Promise<ModulePermissionMap> {
+  const hasUserOverride = perUserOverride
+    && Object.values(perUserOverride).some((subs) =>
+        subs && Object.values(subs).some((actions) => Array.isArray(actions) && actions.length > 0)
+      );
+
+  // Override per-user manda completamente. NO mergeamos con el rol.
+  // NO sumamos derivados — el admin debe asignar los lookups que quiera
+  // explícitamente si la página los necesita.
+  if (hasUserOverride) {
+    return { ...perUserOverride };
+  }
+
+  // Sin override: heredar del rol tal cual.
   const base = await getPermissionsForRole(companyId, roleKey);
-  return mergePermissions(base, perUserOverride);
+  return base;
 }
 
 export default router;

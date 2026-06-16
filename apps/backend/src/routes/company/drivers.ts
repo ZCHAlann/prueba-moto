@@ -78,7 +78,11 @@ router.get('/', requireModule('gestion', 'conductores'), async (req, res, next) 
 
     const siteMap = new Map(sitesRows.map(s => [s.id, s.name]));
 
-    res.json({ data: rows.map(d => serializeDriver(d, siteMap.get(d.siteId) ?? null)), total: rows.length });
+    res.json({
+      data: rows.map(d => serializeDriver(d, siteMap.get(d.siteId) ?? null)),
+      total: rows.length,
+      sites: sitesRows,
+    });
   } catch (err) {
     next(err);
   }

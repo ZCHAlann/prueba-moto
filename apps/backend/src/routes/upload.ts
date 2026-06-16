@@ -39,6 +39,7 @@ const ALLOWED_CATEGORIES = [
   'exit-auth',
   'exit-auth-video',
   'fuel',
+  'parts',
 ] as const;
 
 type UploadCategory = (typeof ALLOWED_CATEGORIES)[number];
@@ -405,6 +406,31 @@ function reencodeVideo(_inputPath: string, _outputPath: string): Promise<void> {
   // VPS, basta con descomentar la implementación con fluent-ffmpeg.
   return Promise.resolve();
 }
+
+// ─── Fotos de repuestos / insumos ─────────────────────────────────────────────
+
+router.post('/part-photos', (req: Request, res: Response, next: NextFunction) => {
+  const companyId = req.query.companyId as string | undefined;
+  const folder = companyId ? `parts/${companyId}` : 'parts';
+
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: MAX_FILE_SIZE },
+    fileFilter: imageFilter,
+  }).single('photo');
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    const file = req.file as Express.Multer.File | undefined;
+    if (!file) return next(new AppError(400, 'No se recibió la foto.'));
+    res.json({
+      url:  `/uploads/${folder}/${file.filename}`,
+      type: file.mimetype,
+      name: file.originalname,
+      size: file.size,
+    });
+  });
+});
 
 // ─── Fuel ─────────────────────────────────────────────────────────────────────
 

@@ -74,6 +74,12 @@ router.get('/', requireModule('combustible'), async (req, res, next) => {
     res.json({
       data: rows.map(f => serializeFuel(f, assetMap.get(f.assetId))),
       total: rows.length,
+      assets: assetsRows.map(a => ({
+        id: a.id,
+        plate: a.plate,
+        brand: a.brand,
+        model: a.model,
+      })),
     });
   } catch (err) {
     next(err);

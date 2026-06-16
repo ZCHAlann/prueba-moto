@@ -2,8 +2,8 @@ import {
   createContext, useCallback, useContext,
   useEffect, useMemo, useState, type ReactNode,
 } from "react";
-import { canAccessPath, getDefaultRouteForRole, getDefaultRouteForSession } from "../lib/access-control";
-import type { PlatformModuleKey, PlatformRole } from "../types/platform";
+import { canAccessPath, getDefaultRouteForSession } from "../lib/access-control";
+import type { PlatformRole } from "../types/platform";
 import type { PermissionMap } from "../lib/module-tree";
 
 const roleLabelMap: Record<string, string> = {
@@ -24,13 +24,17 @@ export type AuthSession = {
   name: string;
   role: PlatformRole;
   companyModules: string[];
-  modulePermissions: Record<string, string[]>;
+  modulePermissions: Record<string, Record<string, string[]>>;
   permissions: PermissionMap;
   roleLabel: string;
   companyId: string | null;
   scope: "operacion" | "plataforma";
   companyName: string;
-  photoUrl: string | null;          // ← NUEVO
+  photoUrl: string | null;
+  /** Timestamp del último cambio de permisos en BD. Lo emite el backend
+   *  en `/auth/session`. Sirve para que el frontend invalide la sesión
+   *  si el JWT tiene una versión vieja. */
+  permissionsUpdatedAt: string | null;
 };
 
 type LoginInput  = { email: string; password: string; remember: boolean };
@@ -56,6 +60,12 @@ type AuthContextValue = {
   getHomePath: () => string;
   /** Actualiza photoUrl en la sesión sin recargar la página */
   refreshPhotoUrl: (url: string | null) => void;
+  /**
+   * Vuelve a llamar a `/api/auth/session` y refresca la sesión local con
+   * los permisos actuales. Usar después de cambiar permisos/roles de un
+   * usuario para que los cambios se vean sin re-login.
+   */
+  refreshSession: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -64,12 +74,13 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 function buildSession(data: Record<string, unknown>): AuthSession {
   return {
     ...(data as AuthSession),
-    companyName:       (data.companyName as string)  ?? "",
-    companyModules:    (data.companyModules as string[])   ?? [],
-    modulePermissions: (data.modulePermissions as Record<string, string[]>) ?? {},
-    permissions:       (data.permissions as PermissionMap) ?? {},
-    roleLabel:         roleLabelMap[data.role as string] ?? (data.role as string),
-    photoUrl:          (data.photoUrl as string | null) ?? null,
+    companyName:          (data.companyName as string)  ?? "",
+    companyModules:       (data.companyModules as string[])   ?? [],
+    modulePermissions:    (data.modulePermissions as Record<string, Record<string, string[]>>) ?? {},
+    permissions:          (data.permissions as PermissionMap) ?? {},
+    roleLabel:            roleLabelMap[data.role as string] ?? (data.role as string),
+    photoUrl:             (data.photoUrl as string | null) ?? null,
+    permissionsUpdatedAt: (data.permissionsUpdatedAt as string | null) ?? null,
   };
 }
 
@@ -93,6 +104,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => { mounted = false; };
   }, []);
+
+  // Nota: el re-fetch por cambio de ruta se hace en <SessionRefresher />,
+  // un componente que está dentro del <Router>. No podemos usar
+  // useLocation() aquí porque el provider se monta afuera del Router.
+  // (ver: src/App.tsx → <SessionRefresher />).
 
   // Login operadores (scope: operacion)
   const login = useCallback(async ({ email, password, remember }: LoginInput): Promise<LoginResult> => {
@@ -159,6 +175,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession((prev) => prev ? { ...prev, photoUrl: url } : prev);
   }, []);
 
+  /**
+   * Vuelve a leer la sesión del backend y actualiza el estado. Usar después
+   * de cambiar permisos/rol de cualquier usuario (incluido el actual) para
+   * que los cambios se reflejen sin re-login. La respuesta trae siempre
+   * los permisos frescos de BD.
+   */
+  const refreshSession = useCallback(async () => {
+    try {
+      const res = await fetch("/api/auth/session", { credentials: "include" });
+      if (!res.ok) return;
+      const data = await res.json();
+      setSession(buildSession(data));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const canAccessCurrentPath = useCallback(
     (pathname: string) => session ? canAccessPath(session.role, pathname) : false,
     [session]
@@ -186,7 +219,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     canAccessCurrentPath,
     getHomePath,
     refreshPhotoUrl,
-  }), [ready, session, login, loginPlatform, logout, canAccessCurrentPath, getHomePath, refreshPhotoUrl]);
+    refreshSession,
+  }), [ready, session, login, loginPlatform, logout, canAccessCurrentPath, getHomePath, refreshPhotoUrl, refreshSession]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

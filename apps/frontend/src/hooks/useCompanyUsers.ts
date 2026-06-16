@@ -20,6 +20,9 @@ export type CompanyUser = {
   photoUrl: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Timestamp del último cambio (permisos, rol, etc.) que se usa
+   *  para invalidar la sesión si cambió. */
+  permissionsUpdatedAt?: string | null;
 };
 
 export type CreateCompanyUserInput = {
@@ -64,6 +67,7 @@ function mapApiToUser(data: Record<string, unknown>): CompanyUser {
     photoUrl:          (data.photoUrl as string | null) ?? (data.photo_url as string | null) ?? null,
     createdAt:         String(data.createdAt ?? data.created_at ?? ""),
     updatedAt:         String(data.updatedAt ?? data.updated_at ?? ""),
+    permissionsUpdatedAt: (data.permissionsUpdatedAt as string | null) ?? null,
   };
 }
 
@@ -86,7 +90,7 @@ export async function uploadUserPhoto(file: File, companyId: number): Promise<st
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useCompanyUsers(): UseCompanyUsersReturn {
-  const { session } = useAuth();
+  const { session, refreshSession } = useAuth();
   const companyId = session?.companyId ? String(session.companyId) : null;
 
   const [users, setUsers]     = useState<CompanyUser[]>([]);
@@ -194,13 +198,18 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
         setUsers((current) =>
           current.map((u) => (u.id === id ? updated : u))
         );
+        // Si me actualicé a mí mismo, re-fetch de la sesión para que
+        // mis permisos/rol reflejen el cambio de inmediato.
+        if (session?.id === id) {
+          await refreshSession();
+        }
         return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error actualizando usuario");
         return false;
       }
     },
-    [companyId]
+    [companyId, session?.id, refreshSession]
   );
 
   // ── Update Permissions ─────────────────────────────────────────────────────
@@ -223,13 +232,19 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
         setUsers((current) =>
           current.map((u) => (u.id === id ? { ...u, modulePermissions } : u))
         );
+        // Si me actualicé a mí mismo, re-fetch de la sesión para que
+        // mis nuevos permisos apliquen de inmediato (sirve de invalida-
+        // ción del JWT viejo).
+        if (session?.id === id) {
+          await refreshSession();
+        }
         return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error actualizando permisos");
         return false;
       }
     },
-    [companyId]
+    [companyId, session?.id, refreshSession]
   );
 
   // ── Delete ─────────────────────────────────────────────────────────────────

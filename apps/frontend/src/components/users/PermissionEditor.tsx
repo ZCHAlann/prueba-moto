@@ -80,26 +80,118 @@ type Props = {
    * (porque tienen acceso total por construcción).
    */
   readOnlyWithFullAccess?: boolean;
+  /**
+   * Snapshot de los permisos originales al abrir el editor. Si está
+   * presente, se muestra un botón "Volver a originales" que restaura
+   * este objeto. Solo aplica en modo edición.
+   */
+  originalPermissions?: PermissionMap;
+  /**
+   * Si es true, muestra los permisos del rol + los del user sumados en
+   * la vista (modo "preview"). El admin edita y se guarda en `permissions`
+   * lo que él defina. Por defecto false.
+   */
+  combineWithRole?: boolean;
 };
+
+/** True si el objeto de permisos tiene al menos una acción en cualquier
+ *  submódulo (es decir, el user tiene un override per-user no vacío). */
+export function hasAnyPermission(permissions: PermissionMap): boolean {
+  if (!permissions) return false;
+  for (const subs of Object.values(permissions)) {
+    if (!subs) continue;
+    for (const actions of Object.values(subs)) {
+      if (Array.isArray(actions) && actions.length > 0) return true;
+    }
+  }
+  return false;
+}
 
 export function PermissionEditor({
   permissions,
   onChange,
   defaultPermissions,
   readOnlyWithFullAccess = false,
+  originalPermissions,
+  combineWithRole = false,
 }: Props) {
+  const hasUserOverride = hasAnyPermission(permissions);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [filter, setFilter]     = useState<"todos" | "asignados" | "vacios">("todos");
 
   const moduleKeys = Object.keys(MODULE_TREE);
 
+  // Si combineWithRole es true, el editor VISUALIZA los permisos del rol
+  // (defaultPermissions) sumados a los del user (permissions), pero al
+  // guardar (onChange) solo se persiste lo que el user tiene per-user.
+  // El admin edita sobre la vista combinada y eso crea/reemplaza el
+  // override per-user automáticamente.
+  const displayedPerms: PermissionMap = useMemo(() => {
+    if (!combineWithRole || !defaultPermissions) return permissions;
+    const merged: PermissionMap = {};
+    // 1) Copiamos los del rol
+    for (const [mod, subs] of Object.entries(defaultPermissions)) {
+      merged[mod] = {};
+      for (const [sub, actions] of Object.entries(subs ?? {})) {
+        merged[mod][sub] = Array.from(new Set(actions ?? []));
+      }
+    }
+    // 2) Sumamos los del user
+    for (const [mod, subs] of Object.entries(permissions)) {
+      if (!merged[mod]) merged[mod] = {};
+      for (const [sub, actions] of Object.entries(subs ?? {})) {
+        const existing = merged[mod][sub] ?? [];
+        merged[mod][sub] = Array.from(new Set([...existing, ...(actions ?? [])]));
+      }
+    }
+    return merged;
+  }, [combineWithRole, defaultPermissions, permissions]);
+
+  // Wrapper de onChange: si combineWithRole, traducimos los cambios
+  // sobre la vista combinada a "lo que debe persistir en el user".
+  // La estrategia: al activar/desactivar un permiso en la vista, lo
+  // guardamos en el override per-user SOLO si difiere de los permisos
+  // del rol. Si coincide con el rol, no lo guardamos (no se duplica).
+  const handleChange = (next: PermissionMap) => {
+    if (!combineWithRole || !defaultPermissions) {
+      onChange(next);
+      return;
+    }
+    // next es la vista combinada. Extraemos solo lo que NO está en el
+    // rol (= override del user).
+    const userOnly: PermissionMap = {};
+    for (const [mod, subs] of Object.entries(next)) {
+      for (const [sub, actions] of Object.entries(subs ?? {})) {
+        const roleActions = defaultPermissions[mod]?.[sub] ?? [];
+        const roleSet = new Set(roleActions);
+        // Lo que el user tiene extra sobre el rol
+        const extras = (actions ?? []).filter((a) => !roleSet.has(a));
+        if (extras.length > 0) {
+          if (!userOnly[mod]) userOnly[mod] = {};
+          userOnly[mod][sub] = extras;
+        }
+      }
+    }
+    onChange(userOnly);
+  };
+
+  // Restaurar los permisos originales (al abrir el modal)
+  const restoreOriginal = () => {
+    if (originalPermissions) onChange(JSON.parse(JSON.stringify(originalPermissions)));
+  };
+
+  // Quitar TODO el override (volver a heredar del rol)
+  const clearAll = () => {
+    onChange({});
+  };
+
   const visibleMods = useMemo(() => {
     if (filter === "todos") return moduleKeys;
     return moduleKeys.filter((m) => {
-      if (filter === "asignados") return !isModuleNone(permissions, m);
-      return isModuleNone(permissions, m);
+      if (filter === "asignados") return !isModuleNone(displayedPerms, m);
+      return isModuleNone(displayedPerms, m);
     });
-  }, [filter, moduleKeys, permissions]);
+  }, [filter, moduleKeys, displayedPerms]);
 
   // Permisos efectivos que se renderizan. Si es admin/owner, se
   // muestran todos los del MODULE_TREE ya marcados (sin tocar `permissions`).
@@ -117,7 +209,7 @@ export function PermissionEditor({
 
   const toggle = (mod: string, sub: string, action: ActionKey) => {
     if (readOnlyWithFullAccess) return;
-    const current = permissions[mod]?.[sub] ?? [];
+    const current = displayedPerms[mod]?.[sub] ?? [];
     let next: ActionKey[];
 
     if (action === "ver") {
@@ -132,10 +224,10 @@ export function PermissionEditor({
       }
     }
 
-    onChange({
-      ...permissions,
+    handleChange({
+      ...displayedPerms,
       [mod]: {
-        ...(permissions[mod] ?? {}),
+        ...(displayedPerms[mod] ?? {}),
         [sub]: next,
       },
     });
@@ -149,18 +241,14 @@ export function PermissionEditor({
     for (const sub of Object.keys(modDef.submodules)) {
       updated[sub] = all ? [...ACTIONS] : [];
     }
-    onChange({ ...permissions, [mod]: updated });
+    handleChange({ ...displayedPerms, [mod]: updated });
   };
 
   const applyTemplate = () => {
     if (readOnlyWithFullAccess) return;
     if (!defaultPermissions) return;
+    // Reemplaza el override con los permisos del rol (clon profundo).
     onChange(JSON.parse(JSON.stringify(defaultPermissions)));
-  };
-
-  const clearAll = () => {
-    if (readOnlyWithFullAccess) return;
-    onChange({});
   };
 
   return (
@@ -199,6 +287,17 @@ export function PermissionEditor({
               Aplicar plantilla
             </button>
           )}
+          {originalPermissions && !readOnlyWithFullAccess && (
+            <button
+              type="button"
+              onClick={restoreOriginal}
+              title="Descarta todos los cambios manuales y restaura los permisos que el usuario tenía al abrir este modal"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-700 dark:text-amber-300 transition hover:bg-amber-100 dark:hover:bg-amber-500/20"
+            >
+              <RotateCcw size={12} />
+              Volver a originales
+            </button>
+          )}
           {!readOnlyWithFullAccess && (
             <button
               type="button"
@@ -222,6 +321,40 @@ export function PermissionEditor({
             </p>
             <p className="mt-0.5 text-xs text-purple-700/80 dark:text-purple-300/80">
               Este usuario tiene rol con acceso total. Los permisos granulares no aplican.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Banner: ¿tiene override per-user o hereda del rol? ── */}
+      {!readOnlyWithFullAccess && !hasUserOverride && defaultPermissions && Object.keys(defaultPermissions).length > 0 && (
+        <div className="flex items-start gap-3 rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 px-4 py-3">
+          <Layers size={18} className="mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-blue-700 dark:text-blue-300">
+              Heredando del rol
+            </p>
+            <p className="mt-0.5 text-xs text-blue-700/80 dark:text-blue-300/80">
+              Los permisos del rol se aplican directamente. Si querés dar permisos
+              personalizados a este usuario (que no dependen del rol), tocá cualquier
+              permiso abajo o usá el botón <strong>Aplicar plantilla</strong> para
+              copiarlos como override.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {!readOnlyWithFullAccess && hasUserOverride && defaultPermissions && Object.keys(defaultPermissions).length > 0 && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-4 py-3">
+          <Sparkles size={18} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+              Permisos personalizados
+            </p>
+            <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/80">
+              Este usuario tiene permisos definidos individualmente que prevalecen
+              sobre los del rol. Si querés volver a heredar del rol, presioná
+              <strong> Limpiar todo</strong>.
             </p>
           </div>
         </div>

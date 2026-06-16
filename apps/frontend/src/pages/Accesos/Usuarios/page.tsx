@@ -42,6 +42,29 @@ function buildFullPermissions(): PermissionMap {
   return result;
 }
 
+/**
+ * Devuelve los permisos efectivos de un rol (catálogo + hardcodeados).
+ * Si el rol es custom, usa los permisos del catálogo (BD).
+ * Si es un rol hardcodeado (supervisor, operador, conductor) o platform
+ * (owner/admin), usa los defaults locales.
+ */
+function getDefaultPermissionsForRole(
+  roleKey: string,
+  companyRoles: Array<{ key: string; permissions: PermissionMap }>,
+): PermissionMap {
+  // 1) Roles platform con bypass total
+  if (roleKey === "owner_empresa" || roleKey === "admin_empresa") {
+    return buildFullPermissions();
+  }
+  // 2) Roles custom del catálogo (BD) — buscar por key
+  const fromCatalog = companyRoles.find((r) => r.key === roleKey);
+  if (fromCatalog) {
+    return fromCatalog.permissions ?? {};
+  }
+  // 3) Roles hardcodeados (supervisor, operador, conductor)
+  return ROLE_DEFAULT_PERMISSIONS[roleKey] ?? {};
+}
+
 const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionMap> = {
   owner_empresa: buildFullPermissions(),
   admin_empresa: buildFullPermissions(),
@@ -476,6 +499,8 @@ function UserFormModal({
   user,
   siteOptions,
   roleOptions,
+  companyRoles,
+  originalPermissions,
   onClose,
   onCreate,
   onUpdate,
@@ -484,6 +509,12 @@ function UserFormModal({
   user: CompanyUser | null;
   siteOptions: string[];
   roleOptions: { key: string; label: string }[];
+  companyRoles: Array<{ key: string; permissions: PermissionMap }>;
+  /**
+   * Snapshot de los permisos del usuario al abrir el modal. Se usa para
+   * el botón "Volver a originales" del editor. Solo en modo edición.
+   */
+  originalPermissions?: PermissionMap;
   onClose: () => void;
   onCreate: (input: CreateCompanyUserInput) => Promise<void>;
   onUpdate: (id: string, input: UpdateCompanyUserInput) => Promise<void>;
@@ -518,7 +549,16 @@ function UserFormModal({
         );
       }
       if (key === "role") {
-        next.permissions = ROLE_DEFAULT_PERMISSIONS[value] ?? {};
+        // Si el user ya tiene override per-user con permisos definidos,
+        // NO lo pisamos — el admin lo configuró explícitamente. Solo
+        // cambiamos los defaults si el user está "heredando" del rol
+        // anterior (override vacío).
+        const hasExisting = Object.values(prev.permissions).some(
+          (subs) => subs && Object.values(subs).some((a) => Array.isArray(a) && a.length > 0),
+        );
+        if (!hasExisting) {
+          next.permissions = getDefaultPermissionsForRole(value, companyRoles);
+        }
       }
       return next;
     });
@@ -730,7 +770,7 @@ function UserFormModal({
                     <PermissionEditor
                       permissions={form.permissions}
                       onChange={(next) => setForm((prev) => ({ ...prev, permissions: next }))}
-                      defaultPermissions={ROLE_DEFAULT_PERMISSIONS[form.role]}
+                      defaultPermissions={getDefaultPermissionsForRole(form.role, companyRoles)}
                       readOnlyWithFullAccess={form.role === "owner_empresa" || form.role === "admin_empresa"}
                     />
                   </div>
@@ -799,6 +839,9 @@ export function UsersPage() {
   const [modalOpen, setModalOpen]       = useState(false);
   const [editingUser, setEditingUser]   = useState<CompanyUser | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CompanyUser | null>(null);
+  // Snapshot de los permisos del user al abrir el modal de edición.
+  // Se usa para el botón "Volver a originales" del editor.
+  const [originalPermissionsSnapshot, setOriginalPermissionsSnapshot] = useState<PermissionMap | undefined>(undefined);
 
   const activeSites = useMemo(
     () => sites.filter((s) => s.status === "Activa").map((s) => s.name),
@@ -835,8 +878,12 @@ export function UsersPage() {
   // Resetear página al cambiar búsqueda
   const handleQuery = (q: string) => { setQuery(q); setPage(1); };
 
-  const openCreate = () => { setEditingUser(null); setModalOpen(true); };
-  const openEdit   = (u: CompanyUser) => { setEditingUser(u); setModalOpen(true); };
+  const openCreate = () => { setEditingUser(null); setOriginalPermissionsSnapshot(undefined); setModalOpen(true); };
+  const openEdit   = (u: CompanyUser) => {
+    setEditingUser(u);
+    setOriginalPermissionsSnapshot(JSON.parse(JSON.stringify(u.modulePermissions ?? {})));
+    setModalOpen(true);
+  };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -1074,6 +1121,8 @@ export function UsersPage() {
         user={editingUser}
         siteOptions={activeSites}
         roleOptions={roleOptions}
+        companyRoles={companyRoles as Array<{ key: string; permissions: PermissionMap }>}
+        originalPermissions={originalPermissionsSnapshot}
         onClose={() => setModalOpen(false)}
         onCreate={async (input) => { await createUser(input); }}
         onUpdate={async (id, input) => { await updateUser(id, input); }}

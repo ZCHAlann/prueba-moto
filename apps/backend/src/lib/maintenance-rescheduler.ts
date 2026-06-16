@@ -24,7 +24,7 @@
 
 import { db } from '../db/client';
 import { companyMaintenanceRecords } from '../db/schema/operational';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { notify, notifyAdmins } from './notification-service';
 
 interface RescheduleArgs {
@@ -72,9 +72,6 @@ export async function rescheduleCompletedMaintenance(args: RescheduleArgs): Prom
       const k = original.cadenceValue ?? 5000;
       const baseKm = args.odometerKm ?? original.odometerKm ?? 0;
       nextTriggerKm = baseKm + k;
-      // El next scheduled se programa "en 1 mes" como placeholder; el trigger
-      // real es por km. Si el km no se cruza en mucho tiempo, el job diario
-      // avisará.
       nextDate = new Date(executedAt);
       nextDate.setDate(nextDate.getDate() + 30);
       break;
@@ -104,27 +101,37 @@ export async function rescheduleCompletedMaintenance(args: RescheduleArgs): Prom
     })
     .returning();
 
-  // Notificar al admin y al usuario que creó el original (si es distinto de admin)
-  await notifyAdmins(companyId, {
-    kind:  'maintenance_scheduled',
-    title: `Mantenimiento reagendado: ${original.title ?? original.category}`,
-    body:  `Próxima ejecución: ${nextDate.toLocaleDateString('es-CO')}`,
-    payload: { maintenanceId: next.id, parentId: original.id, assetId: original.assetId },
-  });
+  if (!next) {
+    console.warn('[rescheduler] El insert del nuevo mantenimiento no retornó fila.');
+    return null;
+  }
 
-  // Si el creador NO es admin, notificarlo también
-  if (original.createdBy) {
-    const creatorId = original.createdBy;
-    // Heurística: si el rol es admin/owner, notifyAdmins ya lo cubrió. Si no,
-    // lo notificamos igual (puede ser un supervisor o un operador que agendó).
-    await notify({
-      companyId,
-      userId:    creatorId,
-      kind:      'maintenance_scheduled',
-      title:     `Mantenimiento reagendado: ${original.title ?? original.category}`,
-      body:      `Próxima ejecución: ${nextDate.toLocaleDateString('es-CO')}`,
-      payload:   { maintenanceId: next.id, parentId: original.id, assetId: original.assetId },
+  // Notificar al admin (no crítico)
+  try {
+    await notifyAdmins(companyId, {
+      kind:    'maintenance_scheduled',
+      title:   `Mantenimiento reagendado: ${original.title ?? original.category}`,
+      body:    `Próxima ejecución: ${nextDate.toLocaleDateString('es-CO')}`,
+      payload: { maintenanceId: next.id, parentId: original.id, assetId: original.assetId },
     });
+  } catch (err) {
+    console.warn('[rescheduler] notifyAdmins falló (no crítico):', (err as Error).message);
+  }
+
+  // Si el creador NO es admin, notificarlo también (no crítico)
+  if (original.createdBy) {
+    try {
+      await notify({
+        companyId,
+        userId:  original.createdBy,
+        kind:    'maintenance_scheduled',
+        title:   `Mantenimiento reagendado: ${original.title ?? original.category}`,
+        body:    `Próxima ejecución: ${nextDate.toLocaleDateString('es-CO')}`,
+        payload: { maintenanceId: next.id, parentId: original.id, assetId: original.assetId },
+      });
+    } catch (err) {
+      console.warn('[rescheduler] notify creador falló (no crítico):', (err as Error).message);
+    }
   }
 
   return next.id;
@@ -151,12 +158,17 @@ export async function notifyOverdueProgrammed(graceHours = 24): Promise<number> 
     if (m.scheduledFor > cutoff) continue;
     if ((m.payload as any)?.notifiedOverdue) continue;
 
-    await notifyAdmins(m.companyId, {
-      kind:   'maintenance_due',
-      title:  `Mantenimiento vencido: ${m.title ?? m.category}`,
-      body:   `Programado para ${m.scheduledFor.toLocaleDateString('es-CO')}`,
-      payload: { maintenanceId: m.id, assetId: m.assetId },
-    });
+    try {
+      await notifyAdmins(m.companyId, {
+        kind:    'maintenance_due',
+        title:   `Mantenimiento vencido: ${m.title ?? m.category}`,
+        body:    `Programado para ${m.scheduledFor.toLocaleDateString('es-CO')}`,
+        payload: { maintenanceId: m.id, assetId: m.assetId },
+      });
+    } catch (err) {
+      console.warn('[rescheduler] notifyAdmins overdue falló (no crítico):', (err as Error).message);
+    }
+
     // Marcar como notificado (sin columna extra, usamos el payload jsonb)
     await db
       .update(companyMaintenanceRecords)
@@ -207,12 +219,17 @@ export async function sweepKmBasedTriggers(companyId: number): Promise<number> {
       .set({ status: 'PendienteAtencion' })
       .where(eq(companyMaintenanceRecords.id, t.id));
 
-    await notifyAdmins(companyId, {
-      kind:  'maintenance_overshoot_km',
-      title: `Mantenimiento por km pendiente: ${t.title ?? t.category}`,
-      body:  `El vehículo llegó a ${lastReading.km} km (umbral ${t.nextTriggerKm})`,
-      payload: { maintenanceId: t.id, assetId: t.assetId, currentKm: lastReading.km, thresholdKm: t.nextTriggerKm },
-    });
+    try {
+      await notifyAdmins(companyId, {
+        kind:    'maintenance_overshoot_km',
+        title:   `Mantenimiento por km pendiente: ${t.title ?? t.category}`,
+        body:    `El vehículo llegó a ${lastReading.km} km (umbral ${t.nextTriggerKm})`,
+        payload: { maintenanceId: t.id, assetId: t.assetId, currentKm: lastReading.km, thresholdKm: t.nextTriggerKm },
+      });
+    } catch (err) {
+      console.warn('[rescheduler] notifyAdmins km_based falló (no crítico):', (err as Error).message);
+    }
+
     count++;
   }
   return count;

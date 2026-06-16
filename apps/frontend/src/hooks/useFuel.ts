@@ -78,6 +78,7 @@ export function useFuel() {
   const companyId = session?.companyId;
 
   const [fuelEntries, setFuelEntries] = useState<ApiFuelEntry[]>([]);
+  const [assets, setAssets] = useState<Array<{ id: number; plate: string; brand: string | null; model: string | null }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,6 +91,7 @@ export function useFuel() {
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const json = await res.json();
       setFuelEntries((json.data ?? json).map(mapApi));
+      if (Array.isArray(json.assets)) setAssets(json.assets);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar combustible");
     } finally {
@@ -152,5 +154,5 @@ export function useFuel() {
     setFuelEntries((prev) => prev.filter((e) => e.id !== id));
   }, [companyId]);
 
-  return { fuelEntries, loading, error, refresh, createFuelEntry, updateFuelEntry, deleteFuelEntry };
+  return { fuelEntries, assets, loading, error, refresh, createFuelEntry, updateFuelEntry, deleteFuelEntry };
 }

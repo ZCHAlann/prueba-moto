@@ -401,17 +401,9 @@ export function DashboardOverview() {
           <h2 className="text-xl font-bold text-gray-800 dark:text-white/90">Sin acceso a elementos del dashboard</h2>
           <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 max-w-md mx-auto leading-relaxed">
             Tu rol no tiene permisos para ver ningún elemento del dashboard.
-            Para empezar a ver información, el administrador debe asignarte permisos desde
-            <span className="font-mono text-violet-400 mx-1">Accesos → Roles</span>.
+            Para empezar a ver información, el administrador debe asignarte permisos.
           </p>
         </div>
-        <a
-          href="/accesos/roles"
-          className="inline-flex items-center gap-2 rounded-xl bg-violet-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-violet-500/20 hover:bg-violet-400 transition-colors"
-        >
-          <IconSettings />
-          Ir a Roles
-        </a>
       </div>
     );
   }

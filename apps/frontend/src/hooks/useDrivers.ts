@@ -80,6 +80,7 @@ export function useDrivers() {
   const companyId = session?.companyId;
 
   const [drivers, setDrivers] = useState<ApiDriver[]>([]);
+  const [sites, setSites] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,6 +93,7 @@ export function useDrivers() {
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const json = await res.json();
       setDrivers((json.data ?? json).map(mapApi));
+      if (Array.isArray(json.sites)) setSites(json.sites);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar conductores");
     } finally {
@@ -160,7 +162,7 @@ export function useDrivers() {
     setDrivers((prev) => prev.filter((d) => d.id !== id));
   }, [companyId]);
 
-  return { drivers, loading, error, refresh, createDriver, updateDriver, deleteDriver };
+  return { drivers, sites, loading, error, refresh, createDriver, updateDriver, deleteDriver };
 }
 
 /** Sube 1 foto al endpoint de conductores y devuelve la URL pública. */

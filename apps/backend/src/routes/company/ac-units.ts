@@ -97,7 +97,11 @@ router.get('/', requireModule('ac'), async (req, res, next) => {
       .where(eq(companySites.companyId, companyId));
     const siteMap = new Map(sitesRows.map(s => [s.id, s.name]));
 
-    res.json({ data: rows.map(u => serializeUnit(u, u.siteId ? siteMap.get(u.siteId) ?? null : null)), total: rows.length });
+    res.json({
+      data: rows.map(u => serializeUnit(u, u.siteId ? siteMap.get(u.siteId) ?? null : null)),
+      total: rows.length,
+      sites: sitesRows.map((s) => ({ id: toId('site', s.id), name: s.name })),
+    });
   } catch (err) {
     next(err);
   }

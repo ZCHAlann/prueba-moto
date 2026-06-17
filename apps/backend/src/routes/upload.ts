@@ -389,17 +389,6 @@ router.post('/exit-auth-video-chunk', (req: Request, res: Response, next: NextFu
 });
 
 // ─── Helper: recodificar video con ffmpeg ─────────────────────────────────────
-// Extraído para no duplicar la config entre /exit-auth-video y el chunked.
-//
-// IMPORTANTE: este paso es OPCIONAL y por ahora es un NO-OP que deja el
-// archivo tal cual. El motivo: ffmpeg nativo no está disponible en el
-// VPS (se confirmó con /debug/ffmpeg). Comprimir en el cliente con
-// ffmpeg.wasm tarda tanto como la duración del video, así que no se usa.
-//
-// La solución definitiva de raíz: que el cliente grabe con la cámara
-// nativa a una calidad razonable (480p/720p, H.264) desde el celular.
-// Mientras tanto, este helper es un stub que deja el archivo como está.
-
 function reencodeVideo(_inputPath: string, _outputPath: string): Promise<void> {
   // No-op: sin ffmpeg nativo, no hacemos recodificado server-side.
   // El archivo queda como llegó. Si en el futuro se instala ffmpeg en el

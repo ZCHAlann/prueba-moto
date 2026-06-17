@@ -114,6 +114,8 @@ export function useAssignments() {
   const companyId = session?.companyId;
 
   const [assignments, setAssignments] = useState<ApiAssignment[]>([]);
+  const [assets, setAssets] = useState<Array<{ id: string; name: string | null; plate: string | null; brand: string | null }>>([]);
+  const [drivers, setDrivers] = useState<Array<{ id: string; firstName: string; lastName: string; code: string | null; name: string }>>([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState<string | null>(null);
 
@@ -126,6 +128,8 @@ export function useAssignments() {
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const json = await res.json();
       setAssignments((json.data ?? json).map(mapApi));
+      if (Array.isArray(json.assets)) setAssets(json.assets);
+      if (Array.isArray(json.drivers)) setDrivers(json.drivers);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar asignaciones");
     } finally {
@@ -192,5 +196,5 @@ export function useAssignments() {
     [companyId],
   );
 
-  return { assignments, loading, error, refresh, createAssignment, updateHandover, finalizeAssignment };
+  return { assignments, assets, drivers, loading, error, refresh, createAssignment, updateHandover, finalizeAssignment };
 }

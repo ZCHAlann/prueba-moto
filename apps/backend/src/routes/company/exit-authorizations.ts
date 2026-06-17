@@ -322,6 +322,29 @@ router.get('/', requireModule('autorizaciones'), async (req, res, next) => {
         decidedByName: r.decided_by_name,
       })),
       total: rows.length,
+      assets: (await db
+        .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate, code: companyAssets.code, brand: companyAssets.brand, model: companyAssets.model })
+        .from(companyAssets)
+        .where(eq(companyAssets.companyId, companyId))
+      ).map((a) => ({
+        id: toId('asset', a.id),
+        name: a.name,
+        plate: a.plate,
+        code: a.code,
+        brand: a.brand,
+        model: a.model,
+      })),
+      drivers: (await db
+        .select({ id: companyDrivers.id, firstName: companyDrivers.firstName, lastName: companyDrivers.lastName, code: companyDrivers.code })
+        .from(companyDrivers)
+        .where(eq(companyDrivers.companyId, companyId))
+      ).map((d) => ({
+        id: toId('driver', d.id),
+        firstName: d.firstName,
+        lastName: d.lastName,
+        code: d.code,
+        name: `${d.firstName} ${d.lastName}`.trim(),
+      })),
     });
   } catch (err) {
     next(err);

@@ -59,6 +59,7 @@ export function useAlerts() {
   const companyId = session?.companyId;
 
   const [alerts, setAlerts] = useState<ApiAlert[]>([]);
+  const [assets, setAssets] = useState<Array<{ id: string; name: string | null; plate: string | null }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,6 +72,7 @@ export function useAlerts() {
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const json = await res.json();
       setAlerts((json.data ?? json).map(mapApi));
+      if (Array.isArray(json.assets)) setAssets(json.assets);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar alertas");
     } finally {
@@ -141,6 +143,7 @@ export function useAlerts() {
 
   return {
     alerts,
+    assets,
     loading,
     error,
     refresh,

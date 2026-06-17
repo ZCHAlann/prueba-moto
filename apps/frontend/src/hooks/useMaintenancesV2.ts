@@ -114,7 +114,7 @@ export function useMaintenancesList(filters: ListFilters = {}) {
       const params = new URLSearchParams();
       Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, String(v)); });
       const qs = params.toString();
-      const res = await jsonFetch<{ data: Maintenance[]; total: number }>(
+      const res = await jsonFetch<{ data: Maintenance[]; total: number; assets?: any[]; workshops?: any[]; suppliers?: any[] }>(
         `/api/company/${companyId}/maintenances${qs ? `?${qs}` : ''}`,
       );
       return res;

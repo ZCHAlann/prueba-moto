@@ -50,6 +50,13 @@
       "when": 1781440000000,
       "tag": "0006_maintenance_v2",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781530000000,
+      "tag": "0007_company_toll_entries",
+      "breakpoints": true
     }
   ]
 }

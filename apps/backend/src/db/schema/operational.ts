@@ -432,6 +432,40 @@ export const companyFuelEntries = pgTable('company_fuel_entries', {
 });
 
 // ─────────────────────────────────────────────
+// Peajes — gastos de peaje por vehículo
+// ─────────────────────────────────────────────
+
+export const companyTollEntries = pgTable('company_toll_entries', {
+  id: serial('id').primaryKey(),
+  companyId: serial('company_id')
+    .notNull()
+    .references(() => companies.id, { onDelete: 'cascade' }),
+  assetId: serial('asset_id')
+    .notNull()
+    .references(() => companyAssets.id, { onDelete: 'cascade' }),
+  driverId: integer('driver_id').references(() => companyDrivers.id, { onDelete: 'set null' }),
+  date: date('date').notNull(),
+  // Nombre del peaje / caseta (ej. "Peaje Norte Bogotá", "Caseta Autopista Medellín")
+  tollName: varchar('toll_name', { length: 200 }).notNull(),
+  // Categoría del peaje — útil para distinguir tipo de vía
+  category: varchar('category', { length: 40 }),
+  // Costo del peaje
+  amount: numeric('amount', { precision: 12, scale: 2 }).notNull(),
+  // Método de pago
+  paymentMethod: varchar('payment_method', { length: 40 }),
+  // Ruta o trayecto asociado (opcional, ej. "Bogotá → Medellín")
+  route: varchar('route', { length: 200 }),
+  // Odómetro al momento del cruce
+  odometer: numeric('odometer', { precision: 12, scale: 2 }),
+  // Cantidad de ejes declarados (camiones / buses)
+  axes: integer('axes'),
+  notes: text('notes'),
+  photoUrl: text('photo_url'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ─────────────────────────────────────────────
 // Alertas
 // ─────────────────────────────────────────────
 

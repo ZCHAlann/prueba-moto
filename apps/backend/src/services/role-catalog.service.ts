@@ -23,6 +23,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<DefaultRoleKey, ModulePermissionMa
     gestion:       { flotas: ["ver"], conductores: ["ver"], sedes: ["ver"], garajes: ["ver"], asignaciones: ["ver"], seguros: ["ver"] },
     motores:       { lista_motores: ["ver"], mantenimientos_motor: ["ver", "crear"], historial_motor: ["ver"] },
     mantenimiento: { ordenes: ["ver", "crear", "editar"], inventario: ["ver"], oil: ["ver"] },
+    combustible:   { combustible: ["ver", "crear", "editar"] },
+    peajes:        { peajes: ["ver", "crear", "editar"] },
     checklist:     { checklist: ["ver", "crear"] },
     alertas:       { alertas: ["ver"] },
     reportes:      { reportes: ["ver"] },
@@ -30,6 +32,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<DefaultRoleKey, ModulePermissionMa
   operador: {
     dashboard:       { dashboard:       ["ver"] },
     mantenimiento:   { ordenes: ["ver", "crear"], inventario: ["ver"], oil: ["ver"] },
+    combustible:     { combustible: ["ver", "crear"] },
+    peajes:          { peajes: ["ver", "crear"] },
     checklist:       { checklist:       ["ver", "crear"] },
     alertas:         { alertas:         ["ver"] },
     geolocalizacion: { geolocalizacion: ["ver"] },

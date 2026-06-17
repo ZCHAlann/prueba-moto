@@ -7,10 +7,10 @@ import { usePermissions } from "../../hooks/usePermissions";
 import { MantenimientosAgendar } from "./Agendar";
 import { MaintenanceListTab } from "./components/MaintenanceListTab";
 import {
-  Calendar as CalIcon, Wrench, Cog, Droplet, AlertTriangle,
+  Calendar as CalIcon, Wrench,
 } from "lucide-react";
 
-type Tab = "agendar" | "preventivo" | "primordial-bombas" | "primordial-motores" | "aceite-cambios";
+type Tab = "agendar" | "lista";
 
 export function MantenimientosPage() {
   const { can } = usePermissions();
@@ -19,19 +19,15 @@ export function MantenimientosPage() {
   const canSeeExecution = can("maintenance", "execution", "ver");
   const canSeeRecords   = can("maintenance", "records",   "ver");
 
+  // Default: si el user tiene permiso de ver la lista, arrancar ahí. Si no, agenda.
   const [tab, setTab] = useState<Tab>(() => {
-    if (canSeeAgenda)    return "agendar";
-    if (canSeeExecution) return "preventivo";
-    if (canSeeRecords)   return "primordial-bombas";
+    if (canSeeExecution || canSeeRecords) return "lista";
     return "agendar";
   });
 
   const tabs: Array<{ id: Tab; label: string; icon: React.ReactNode; show: boolean }> = [
-    { id: "agendar",           label: "Agendar",                 icon: <CalIcon size={14} />,        show: canSeeAgenda    },
-    { id: "preventivo",        label: "Preventivo y correctivo", icon: <Wrench size={14} />,         show: canSeeExecution },
-    { id: "primordial-bombas", label: "Primordial · Bombas",     icon: <AlertTriangle size={14} />,  show: canSeeRecords   },
-    { id: "primordial-motores",label: "Primordial · Motores",    icon: <Cog size={14} />,            show: canSeeRecords   },
-    { id: "aceite-cambios",    label: "Aceites · Cambios",       icon: <Droplet size={14} />,        show: canSeeRecords   },
+    { id: "lista",  label: "Todos los mantenimientos",  icon: <Wrench size={14} />, show: canSeeExecution || canSeeRecords },
+    { id: "agendar",label: "Agendar",                  icon: <CalIcon size={14} />, show: canSeeAgenda    },
   ];
 
   return (
@@ -70,11 +66,10 @@ export function MantenimientosPage() {
             transition={{ duration: 0.22, ease: "easeOut" }}
             className="h-full"
           >
-            {tab === "agendar"           && canSeeAgenda    && <MantenimientosAgendar />}
-            {tab === "preventivo"        && canSeeExecution && <MaintenanceListTab title="Preventivo y correctivo" />}
-            {tab === "primordial-bombas" && canSeeRecords   && <MaintenanceListTab categories={["Primordial:Bombas"]}  title="Primordial · Bombas e inyectores" />}
-            {tab === "primordial-motores"&& canSeeRecords   && <MaintenanceListTab categories={["Primordial:Motores"]} title="Primordial · Motores" />}
-            {tab === "aceite-cambios"    && canSeeRecords   && <MaintenanceListTab categories={["Aceite:Cambio"]}      title="Aceites · Cambios de aceite" />}
+            {tab === "agendar" && canSeeAgenda && <MantenimientosAgendar />}
+            {tab === "lista" && (canSeeExecution || canSeeRecords) && (
+              <MaintenanceListTab title="Mantenimientos" />
+            )}
           </motion.div>
         </AnimatePresence>
       </div>

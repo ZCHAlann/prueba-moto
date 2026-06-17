@@ -76,6 +76,7 @@ const REPORT_CATALOG: ReportDef[] = [
   { id: "rep-006", label: "Alertas" },
   { id: "rep-007", label: "Inventario" },
   { id: "rep-008", label: "Autorizaciones" },
+  { id: "rep-009", label: "Mantenimiento" },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -229,12 +230,19 @@ export function ReportsPage() {
   const [page, setPage]         = useState(1);
   const [draft, setDraft]       = useState<DateRange>({ from: "", to: "" });
   const [applied, setApplied]   = useState<DateRange>({ from: "", to: "" });
+  // Sub-filtros del tab "Mantenimiento". Solo aplican cuando activeId === "rep-009".
+  const [maintSubtab, setMaintSubtab] = useState<"todos" | "programados" | "en_proceso" | "completados">("todos");
+  const [maintCategory, setMaintCategory] = useState<"all" | "Preventivo" | "Correctivo" | "Motor" | "Inyector">("all");
 
   // Reset page when tab or search changes
   function handleTabChange(id: string) {
     setActiveId(id);
     setPage(1);
     setSearch("");
+    if (id !== "rep-009") {
+      setMaintSubtab("todos");
+      setMaintCategory("all");
+    }
   }
 
   function handleSearchChange(value: string) {
@@ -556,6 +564,51 @@ export function ReportsPage() {
       };
     }
 
+    // ── rep-009 Mantenimiento ───────────────────────────────────────────────
+    if (activeId === "rep-009") {
+      const columns: ReportColumn[] = [
+        { key: "title",       label: "Título"     },
+        { key: "kind",        label: "Tipo"       },
+        { key: "category",    label: "Categoría"  },
+        { key: "assetPlate",  label: "Vehículo"   },
+        { key: "status",      label: "Estado"     },
+        { key: "scheduledFor",label: "Programado" },
+        { key: "executedAt",  label: "Ejecutado"  },
+        { key: "workshop",    label: "Taller"     },
+        { key: "technician",  label: "Técnico"    },
+        { key: "cost",        label: "Costo total"},
+      ];
+      const rows: ReportRow[] = maintenances.map((m) => {
+        const plate = m.assetPlate ?? assets.find((x) => x.id === m.assetId)?.plate ?? "—";
+        return {
+          title:        m.title,
+          kind:         m.kind,
+          category:     m.category,
+          assetPlate:   plate,
+          status:       m.status,
+          scheduledFor: m.scheduledFor ? m.scheduledFor.slice(0, 10) : "—",
+          executedAt:   m.executedAt   ? m.executedAt.slice(0, 10)   : "—",
+          workshop:     m.workshopName ?? "—",
+          technician:   m.technician   ?? "—",
+          cost:         (m.laborCost ?? 0) + (m.partsCost ?? 0),
+          __status:     m.status, // para sub-filtros
+          __date:       m.scheduledFor,
+        };
+      });
+      return {
+        title: "Reporte de mantenimientos",
+        description: "Órdenes de trabajo con estado, costo y tipo. Use las sub-pestañas para filtrar por estado o categoría.",
+        columns,
+        rows,
+        summary: [
+          { label: "Total",        value: maintenances.length.toString(),                                          detail: "OT registradas",          tone: "info"    },
+          { label: "Programados",  value: maintenances.filter((m) => m.status === "Programado").length.toString(),  detail: "Pendientes de ejecución",  tone: "warning" },
+          { label: "En proceso",   value: maintenances.filter((m) => m.status === "En proceso").length.toString(),  detail: "En taller",                tone: "info"    },
+          { label: "Completados",  value: maintenances.filter((m) => m.status === "Completado").length.toString(),  detail: "Cerrados",                 tone: "success" },
+        ],
+      };
+    }
+
     // Fallback vacío (nunca debería llegar aquí)
     return { title: "", description: "", columns: [], rows: [], summary: [] };
 
@@ -569,9 +622,24 @@ export function ReportsPage() {
   );
 
   const visibleRows = useMemo(() => {
-    const filtered = filterRows(rangedRows, preview.columns, search);
+    let filtered = filterRows(rangedRows, preview.columns, search);
+    // Sub-filtros del tab Mantenimiento (estado + categoría)
+    if (activeId === "rep-009") {
+      if (maintSubtab !== "todos") {
+        const statusMap: Record<string, string> = {
+          programados: "Programado",
+          en_proceso:  "En proceso",
+          completados: "Completado",
+        };
+        const target = statusMap[maintSubtab];
+        filtered = filtered.filter((r) => r.__status === target);
+      }
+      if (maintCategory !== "all") {
+        filtered = filtered.filter((r) => r.category === maintCategory);
+      }
+    }
     return filtered;
-  }, [rangedRows, preview.columns, search]);
+  }, [rangedRows, preview.columns, search, activeId, maintSubtab, maintCategory]);
 
   const totalPages  = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
   const pagedRows   = visibleRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -636,6 +704,47 @@ export function ReportsPage() {
             />
           ))}
         </div>
+
+        {/* Sub-filtros del tab Mantenimiento */}
+        {activeId === "rep-009" && (
+          <div className="flex flex-col gap-3 border-b border-gray-100 px-5 py-3.5 dark:border-white/[0.06] sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {([
+                { id: "todos",       label: "Todos"      },
+                { id: "programados", label: "Programados"},
+                { id: "en_proceso",  label: "En proceso" },
+                { id: "completados", label: "Completados"},
+              ] as const).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => { setMaintSubtab(opt.id); setPage(1); }}
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                    maintSubtab === opt.id
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400 dark:text-gray-500">Categoría:</span>
+              <select
+                value={maintCategory}
+                onChange={(e) => { setMaintCategory(e.target.value as typeof maintCategory); setPage(1); }}
+                className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/40 dark:border-white/[0.06] dark:bg-white/[0.04] dark:text-gray-200"
+              >
+                <option value="all">Todas</option>
+                <option value="Preventivo">Preventivo</option>
+                <option value="Correctivo">Correctivo</option>
+                <option value="Motor">Motor</option>
+                <option value="Inyector">Inyector</option>
+              </select>
+            </div>
+          </div>
+        )}
 
         {/* Date filter */}
         <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">

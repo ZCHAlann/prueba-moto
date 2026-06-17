@@ -23,6 +23,7 @@ import {
   companyNotifications,
   companyDeviceTokens,
   companyFuelEntries,
+  companyTollEntries,
   companyAlerts,
   companyChecklists,
   companyChecklistCategories,
@@ -82,6 +83,8 @@ export const companiesRelations = relations(companies, ({ many, one }) => ({
   sites: many(companySites),
   assets: many(companyAssets),
   drivers: many(companyDrivers),
+  fuelEntries: many(companyFuelEntries),
+  tollEntries: many(companyTollEntries),
   leads: many(platformLeads),
   settings: one(companySettings, {
     fields: [companies.id],
@@ -158,6 +161,7 @@ export const companyAssetsRelations = relations(companyAssets, ({ one, many }) =
   site:            one(companySites,     { fields: [companyAssets.siteId],    references: [companySites.id] }),
   drivers:         many(companyAssignments),
   fuelEntries:     many(companyFuelEntries),
+  tollEntries:     many(companyTollEntries),
   maintenances:    many(companyMaintenanceRecords),
   odometerReadings: many(companyOdometerReadings),
   alerts:          many(companyAlerts),
@@ -174,6 +178,8 @@ export const companyDriversRelations = relations(companyDrivers, ({ one, many })
   user:        one(companyUsers, { fields: [companyDrivers.userId], references: [companyUsers.id] }), // ← NUEVO
   assignments: many(companyAssignments),
   routes:      many(assetRoutes),
+  fuelEntries: many(companyFuelEntries),
+  tollEntries: many(companyTollEntries),
 }));
 
 // ── Assignments ──
@@ -188,6 +194,13 @@ export const companyFuelEntriesRelations = relations(companyFuelEntries, ({ one 
   company: one(companies,     { fields: [companyFuelEntries.companyId], references: [companies.id] }),
   asset:   one(companyAssets,  { fields: [companyFuelEntries.assetId],   references: [companyAssets.id] }),
   driver:  one(companyDrivers, { fields: [companyFuelEntries.driverId],  references: [companyDrivers.id] }),
+}));
+
+// ── Peajes ──
+export const companyTollEntriesRelations = relations(companyTollEntries, ({ one }) => ({
+  company: one(companies,     { fields: [companyTollEntries.companyId], references: [companies.id] }),
+  asset:   one(companyAssets,  { fields: [companyTollEntries.assetId],   references: [companyAssets.id] }),
+  driver:  one(companyDrivers, { fields: [companyTollEntries.driverId],  references: [companyDrivers.id] }),
 }));
 
 // ── Maintenances v2 ──

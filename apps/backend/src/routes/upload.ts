@@ -40,6 +40,7 @@ const ALLOWED_CATEGORIES = [
   'exit-auth-video',
   'fuel',
   'parts',
+  'toll',
 ] as const;
 
 type UploadCategory = (typeof ALLOWED_CATEGORIES)[number];
@@ -135,6 +136,25 @@ router.post('/asset-photos', uploadHandler('assets'));
 router.post('/maintenance-photos', uploadHandler('maintenance'));
 router.post('/assignment-photos', uploadHandler('assignments'));
 router.post('/ac-photos', uploadHandler('ac'));
+
+router.post('/toll-photos', (req: Request, res: Response, next: NextFunction) => {
+  const companyId = req.query.companyId as string | undefined;
+  const folder = companyId ? `toll/${companyId}` : 'toll';
+
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: MAX_FILE_SIZE },
+    fileFilter: imageFilter,
+  }).array('photos', 10);
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    const files = req.files as Express.Multer.File[];
+    if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+    res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
+  });
+});
+
 
 router.post('/driver-photos', (req: Request, res: Response, next: NextFunction) => {
   const companyId = req.query.companyId as string | undefined;

@@ -127,7 +127,7 @@ function CardActions({ item, onEdit, onDelete, onStatusChange, canEdit, canDelet
           tone: "default" as const,
         })) : []),
         { label: "Editar",   icon: <Pencil size={13} />, onClick: onEdit,   tone: "default", disabled: !canEdit },
-        { label: "Eliminar", icon: <Trash2 size={13} />, onClick: onDelete, tone: "danger",  disabled: !canDelete },
+        { label: "Eliminar", icon: <Trash2 size={13} />, onClick: onDelete, tone: "danger",  disabled: !canDelete || current === "Completado" },
       ]}
     />
   );
@@ -439,7 +439,7 @@ function TableView({
                             {COLUMN_CONFIG[s].icon}
                           </button>
                         ))}
-                        {canDelete && (
+                        {canDelete && toKanban(item.status) !== "Completado" && (
                           <button
                             type="button"
                             onClick={() => onDelete(item)}
@@ -447,6 +447,14 @@ function TableView({
                           >
                             <Trash2 size={13} />
                           </button>
+                        )}
+                        {canDelete && toKanban(item.status) === "Completado" && (
+                          <span
+                            className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-300 dark:text-gray-600 cursor-not-allowed"
+                            title="Los mantenimientos completados no se pueden eliminar"
+                          >
+                            <Trash2 size={13} />
+                          </span>
                         )}
                       </div>
                     </td>
@@ -531,9 +539,19 @@ export default function MotorMaintenancesRoute() {
 
   const [search, setSearch]     = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("kanban");
+  // Rango de fechas del kanban. Por defecto muestra SOLO los del día de hoy.
+  // El user puede expandir el rango con el date range o limpiarlo para ver todos.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [dateFrom, setDateFrom] = useState<string>(todayIso);
+  const [dateTo,   setDateTo]   = useState<string>(todayIso);
+  const [dateRangeActive, setDateRangeActive] = useState<boolean>(true);
 
   // ── v2 hooks ──────────────────────────────────────────────────────────────
-  const { data, isLoading } = useMaintenancesList({ q: search || undefined });
+  const { data, isLoading } = useMaintenancesList({
+    q: search || undefined,
+    from: dateRangeActive ? dateFrom : undefined,
+    to:   dateRangeActive ? dateTo   : undefined,
+  });
   const allItems = data?.data ?? [];
 
   const updateMut   = useUpdateMaintenance();
@@ -669,6 +687,53 @@ export default function MotorMaintenancesRoute() {
               </button>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Date range (default = hoy). Si el user lo desactiva, ve todos los mantenimientos. */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] px-4 py-3 text-xs">
+        <span className="font-semibold text-gray-500 dark:text-gray-400">Rango:</span>
+        <label className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300">
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => { setDateFrom(e.target.value); setDateRangeActive(true); }}
+            className="rounded-md border border-gray-200 bg-white px-2 py-1 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-500/30"
+          />
+        </label>
+        <span className="text-gray-400">→</span>
+        <label className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300">
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => { setDateTo(e.target.value); setDateRangeActive(true); }}
+            min={dateFrom}
+            className="rounded-md border border-gray-200 bg-white px-2 py-1 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-orange-500/30"
+          />
+        </label>
+        <div className="ml-auto flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => { setDateFrom(todayIso); setDateTo(todayIso); setDateRangeActive(true); }}
+            className={`rounded-md px-2.5 py-1 font-medium transition ${
+              dateRangeActive && dateFrom === todayIso && dateTo === todayIso
+                ? "bg-orange-500 text-white"
+                : "text-gray-500 hover:text-gray-700 dark:hover:text-white"
+            }`}
+          >
+            Hoy
+          </button>
+          <button
+            type="button"
+            onClick={() => { setDateFrom(""); setDateTo(""); setDateRangeActive(false); }}
+            className={`rounded-md px-2.5 py-1 font-medium transition ${
+              !dateRangeActive
+                ? "bg-orange-500 text-white"
+                : "text-gray-500 hover:text-gray-700 dark:hover:text-white"
+            }`}
+          >
+            Todos
+          </button>
         </div>
       </div>
 

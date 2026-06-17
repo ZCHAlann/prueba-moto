@@ -133,6 +133,12 @@ export const MODULE_TREE = {
       combustible: "Combustible",
     },
   },
+  peajes: {
+    label: "Peajes",
+    submodules: {
+      peajes: "Peajes",
+    },
+  },
   geolocalizacion: {
     label: "Geolocalización",
     submodules: {

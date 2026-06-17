@@ -284,6 +284,21 @@ export const navigationSections: NavigationSection[] = [
     ],
   },
   {
+    label: "Peajes",
+    icon: "PJ",
+    description: "Gastos de peaje por vehículo",
+    accent: "amber",
+    items: [
+      {
+        label: "Peajes",
+        href: "/peajes",
+        icon: "PJ",
+        description: "Cruces, ruta y monto",
+        accent: "amber",
+      },
+    ],
+  },
+  {
     label: "Geolocalizacion",
     icon: "GL",
     description: "Ubicacion operativa y monitoreo",

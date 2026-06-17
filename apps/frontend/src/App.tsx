@@ -28,6 +28,7 @@ import { ChecklistPage } from "./pages/Checklist/page";
 import { AlertsPage } from "./pages/Alertas/page";
 import { ReportsPage } from "./pages/Reports/page";
 import { FuelPage } from "./pages/Combustible/page";
+import { PeajesPage } from "./pages/Peajes/page";
 import { ProfilePage } from "./pages/Profile/page";
 import { SettingsPage } from "./pages/Settings/page";
 import FlotasPage from "./pages/Gestion/Flotas/page";
@@ -189,6 +190,7 @@ export default function App() {
           <Route path="/alertas" element={<AlertsPage />} />
           <Route path="/reportes" element={<ReportsPage />} />
           <Route path="/combustible" element={<FuelPage />} />
+          <Route path="/peajes" element={<PeajesPage />} />
           <Route path="/perfil" element={<ProfilePage />} />
           <Route path="/configuracion" element={<SettingsPage />} />
           <Route path="/flotas" element={<FlotasPage />} />

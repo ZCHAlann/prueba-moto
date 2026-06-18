@@ -80,7 +80,7 @@ const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionMap> = {
       talleres:      ["ver"],
       proveedores:   ["ver"],
     },
-    motores:       { lista_motores: ["ver"], mantenimientos_motor: ["ver", "crear"], historial_motor: ["ver"] },
+    motores:       { lista_motores: ["ver"], historial_motor: ["ver"] },
     mantenimiento: { agenda: ["ver"], execution: ["ver", "crear", "editar"], records: ["ver"] },
     combustible:   { combustible: ["ver", "crear", "editar"] },
     peajes:        { peajes: ["ver", "crear", "editar"] },

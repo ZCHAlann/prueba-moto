@@ -17,6 +17,8 @@ import {
   companyAssignments,
   companyMaintenanceRecords,
   companyMaintenanceItems,
+  companyMaintenanceEvents,
+  companyMaintenanceCategories,
   companyWorkshops,
   companySuppliers,
   companyOdometerReadings,

@@ -4,7 +4,7 @@ import { useTheme } from '@/context/ThemeContext';
 import CardLocation from '../cards/CardLocation';
 import CardAcciones from '../cards/CardAcciones';
 import CardDailyUsage from '../cards/CardDailyUsage';
-import ModalAgendarMantenimiento from '../modals/ModalAgendarMantenimiento';
+import VehicleMaintenancesPanel from '../cards/VehicleMaintenancesPanel';
 import ModalSeguros from '../modals/ModalSeguros';
 import ModalConductor from '../modals/ModalConductor';
 import ModalNotas from '../modals/ModalNotas';
@@ -95,8 +95,7 @@ type DetailItem = { label: string; value: string | null | undefined };
 export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
-  const [modal, setModal] = useState<'mantenimiento' | 'seguros' | 'conductor' | 'notas' | 'config' | null>(null);
-  const [detailTab, setDetailTab] = useState<'vehiculo' | 'mantenimientos'>('vehiculo');
+  const [modal, setModal] = useState<'seguros' | 'conductor' | 'notas' | 'config' | null>(null);
   const [toggling, setToggling] = useState(false);
   const { can } = usePermissions();
   const canEdit   = can("motores", "lista_motores", "editar");
@@ -261,19 +260,18 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
             padding: '10px 14px 0',
             gap: 4,
           }}>
-            {(['vehiculo', 'mantenimientos'] as const).map((t) => (
+            {(['vehiculo'] as const).map((t) => (
               <button
                 key={t}
-                onClick={() => setDetailTab(t)}
                 style={{
                   padding: '6px 14px',
                   borderRadius: '8px 8px 0 0',
                   border: 'none',
-                  cursor: 'pointer',
+                  cursor: 'default',
                   fontSize: 12,
                   fontWeight: 600,
-                  background: detailTab === t ? c.tabActive : c.tabInactive,
-                  color: detailTab === t ? c.tabActiveTxt : c.tabInactiveTxt,
+                  background: c.tabActive,
+                  color: c.tabActiveTxt,
                   transition: 'all 0.12s',
                   letterSpacing: '0.01em',
                 }}
@@ -286,7 +284,7 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
           {/* Title */}
           <div style={{ padding: '14px 16px 10px' }}>
             <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: c.text }}>
-              {detailTab === 'vehiculo' ? 'Detalles del vehículo' : 'Historial de mantenimientos'}
+              Detalles del vehículo
             </p>
           </div>
 
@@ -362,7 +360,7 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
                 id: 'mantenimiento',
                 icon: <IconWrench />,
                 label: 'Mantenimiento',
-                badge: 'Agendar',
+                badge: 'Ver módulo',
                 badgeColor: c.mutedLight,
                 badgeBg: 'transparent',
               },
@@ -405,7 +403,11 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
                     key={ac.id}
                     onClick={() => {
                       if (ac.id === 'toggle') { handleToggle(); return; }
-                      setModal(ac.id as 'mantenimiento' | 'seguros' | 'conductor');
+                      if (ac.id === 'mantenimiento') {
+                        window.location.href = `/mantenimiento?assetId=${encodeURIComponent(a.id)}`;
+                        return;
+                      }
+                      setModal(ac.id as 'seguros' | 'conductor');
                     }}
                     disabled={toggling && ac.id === 'toggle'}
                     style={{
@@ -491,13 +493,10 @@ export default function TabVehiculo({ data, companyId, onRefresh }: Props) {
         <CardDailyUsage assetId={a.id} companyId={companyId} />
       </div>
 
+      {/* ── Mantenimientos del vehículo (panel unificado) ──────────────── */}
+      <VehicleMaintenancesPanel assetId={a.id} companyId={companyId} />
+
       {/* ── Modals ── */}
-      <ModalAgendarMantenimiento
-        open={modal === 'mantenimiento'}
-        onClose={() => setModal(null)}
-        assetId={a.id}
-        companyId={companyId}
-      />
       <ModalSeguros
         open={modal === 'seguros'}
         onClose={() => setModal(null)}

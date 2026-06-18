@@ -134,13 +134,6 @@ export const navigationSections: NavigationSection[] = [
         accent: "orange",
       },
       {
-        label: "Mantenimientos de motor",
-        href: "/motores/mantenimientos",
-        icon: "MM",
-        description: "Agenda y criticidad por motor",
-        accent: "orange",
-      },
-      {
         label: "Historial de motor",
         href: "/motores/historial",
         icon: "HM",

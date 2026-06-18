@@ -566,14 +566,14 @@ export function MantenimientosAgendar() {
       .fc .fc-day-other .fc-daygrid-day-number { color:#9ca3af; }
       .fc .fc-day-today { background:rgba(124,58,237,0.05) !important; }
 
-      /* ══ ALTURA FIJA DE CELDAS — nunca se expanden ══ */
+      /* ══ ALTURA NATURAL DE CELDAS — para que el contenedor scrollee ══ */
       .fc .fc-daygrid-body { width:100% !important; }
       .fc .fc-daygrid-body table { table-layout:fixed !important; width:100% !important; }
-      /* Fila de la cuadrícula: altura igual para todas */
-      .fc .fc-daygrid-body tr { height: calc((100% - 28px) / 6) !important; }
+      /* Fila de la cuadrícula: altura mínima cómoda; las celdas pueden crecer si hay muchos eventos */
+      .fc .fc-daygrid-body tr { height: 110px !important; }
       .fc .fc-daygrid-day-frame {
         min-height:0 !important;
-        height:100% !important;
+        height:auto !important;
         overflow:hidden !important;
         box-sizing:border-box;
         padding:2px;
@@ -585,13 +585,13 @@ export function MantenimientosAgendar() {
       }
       .fc .fc-daygrid-day-top { flex-shrink:0; }
 
-      /* Scrollers */
-      .fc .fc-scroller { overflow:hidden !important; height:100% !important; }
-      .fc .fc-scroller-harness, .fc .fc-scroller-harness-liquid { height:100% !important; }
-      .fc .fc-scroller-liquid-absolute { overflow:hidden !important; inset:0 !important; }
-      .fc .fc-view-harness { flex:1 1 0% !important; overflow:hidden !important; }
+      /* Scrollers: dejar que el contenedor padre (overflow-y-auto) haga el scroll */
+      .fc .fc-scroller { overflow:visible !important; height:auto !important; }
+      .fc .fc-scroller-harness, .fc .fc-scroller-harness-liquid { height:auto !important; overflow:visible !important; }
+      .fc .fc-scroller-liquid-absolute { overflow:visible !important; inset:0 !important; }
+      .fc .fc-view-harness { flex:0 0 auto !important; overflow:visible !important; }
       .fc .fc-daygrid-body, .fc .fc-daygrid-body table,
-      .fc .fc-scrollgrid-sync-table { height:100% !important; }
+      .fc .fc-scrollgrid-sync-table { height:auto !important; }
 
       /* ════════ PILLS ════════ */
       .fc .agenda-pill {
@@ -735,7 +735,7 @@ export function MantenimientosAgendar() {
       <div className="flex h-full gap-0 overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-[#0b0f1a] relative">
 
         {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-        <div className={`flex flex-col shrink-0 border-r border-gray-200 dark:border-white/[0.06] transition-all duration-300 overflow-hidden bg-gray-50 dark:bg-transparent ${sidebarOpen ? "w-[260px]" : "w-[56px]"}`}>
+        <div className={`flex flex-col shrink-0 min-h-0 border-r border-gray-200 dark:border-white/[0.06] transition-all duration-300 overflow-hidden bg-gray-50 dark:bg-transparent ${sidebarOpen ? "w-[260px]" : "w-[56px]"}`}>
 
           <div className="flex items-center justify-between px-3 py-3 border-b border-gray-200 dark:border-white/[0.06] min-h-[52px]">
             {sidebarOpen && (
@@ -841,7 +841,7 @@ export function MantenimientosAgendar() {
           {/* Calendario */}
           <div
             ref={calendarWrap}
-            className="flex-1 min-h-0 overflow-hidden"
+            className="flex-1 min-h-0 overflow-y-auto"
             onDragOver={handleCalDragOver}
             onDragLeave={handleCalDragLeave}
             onDrop={handleCalDrop}
@@ -851,8 +851,9 @@ export function MantenimientosAgendar() {
               plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
               initialView="dayGridMonth"
               headerToolbar={false}
-              expandRows={true}
-              height="100%"
+              expandRows={false}
+              height="auto"
+              contentHeight="auto"
               locale="es"
               firstDay={1}
               events={events}
@@ -921,6 +922,7 @@ export function MantenimientosAgendar() {
         onClose={() => setFormModalOpen(false)}
         prefill={prefill}
         maintenance={editing}
+        hideTypeSelector={!editing}
       />
     </>
   );

@@ -16,7 +16,6 @@ import PlatformLayout from "./layout/PlatformLayout";
 import { ScrollToTop } from "./components/common/ScrollToTop";
 import { DashboardOverview } from "./pages/Dashboard/page";
 import { MotorsPage } from "./pages/Motores/page";
-import MaintenancesPage from "./pages/Motores/Mantenimientos/page";
 import HistorialPage from "./pages/Motores/Historial/page";
 import MaintenanceGeneralPage from "./pages/Mantenimientos/page";
 import MaintenanceInventoryPage from "./pages/Mantenimientos/Inventario/page";
@@ -181,7 +180,6 @@ export default function App() {
           <Route path="/dashboard" element={<DashboardOverview />} />
           <Route path="/motores" element={<MotorsPage />} />
           <Route path="/motores/:id" element={<MotorCockpitPage />} />
-          <Route path="/motores/mantenimientos" element={<MaintenancesPage />} />
           <Route path="/motores/historial" element={<HistorialPage />} />
           <Route path="/mantenimiento" element={<MaintenanceGeneralPage />} />
           <Route path="/mantenimiento/inventario" element={<MaintenanceInventoryPage />} />

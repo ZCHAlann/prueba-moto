@@ -41,8 +41,9 @@ const fmtMoney = (n: number) =>
   new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
 
 const STATUS_LABEL: Record<string, string> = {
-  Programado: "Programado", "En curso": "En curso",
-  PendienteAtencion: "Pendiente atención", Completado: "Completado", Cancelado: "Cancelado",
+  Programado:   "Programado",
+  "En proceso": "En proceso",
+  Completado:   "Completado",
 };
 
 interface Range { from: string; to: string }

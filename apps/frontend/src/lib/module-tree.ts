@@ -77,7 +77,6 @@ export const MODULE_TREE = {
     label: "Motores",
     submodules: {
       lista_motores:        "Lista de motores",
-      mantenimientos_motor: "Mantenimientos de motor",
       historial_motor:      "Historial de motor",
     },
   },

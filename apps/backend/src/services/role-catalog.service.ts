@@ -21,7 +21,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<DefaultRoleKey, ModulePermissionMa
   supervisor: {
     dashboard:     { dashboard:              ["ver"] },
     gestion:       { flotas: ["ver"], conductores: ["ver"], sedes: ["ver"], garajes: ["ver"], asignaciones: ["ver"], seguros: ["ver"] },
-    motores:       { lista_motores: ["ver"], mantenimientos_motor: ["ver", "crear"], historial_motor: ["ver"] },
+    motores:       { lista_motores: ["ver"], historial_motor: ["ver"] },
     mantenimiento: { ordenes: ["ver", "crear", "editar"], inventario: ["ver"], oil: ["ver"] },
     combustible:   { combustible: ["ver", "crear", "editar"] },
     peajes:        { peajes: ["ver", "crear", "editar"] },

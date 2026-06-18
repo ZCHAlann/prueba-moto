@@ -336,6 +336,7 @@ router.get("/session", authenticate, async (req, res, next) => {
     // un admin cambió los permisos. Sin recargar, leemos siempre la
     // fuente de verdad (catálogo de roles + override per-user).
     let modulePermissions: ModulePermissionMap = user.modulePermissions ?? {};
+    let dbUpdatedAt: Date | null = null;
 
     if (user.companyId) {
       const companyUserId = Number(user.sub.replace('company-user-', ''));
@@ -358,6 +359,7 @@ router.get("/session", authenticate, async (req, res, next) => {
 
       companyName = row?.companyName ?? "";
       photoUrl    = row?.photoUrl    ?? null;
+      dbUpdatedAt = row?.dbUpdatedAt ?? null;
 
       // Recalcular permisos desde BD (catálogo rol + override)
       const isAdminRole = ["owner_empresa", "admin_empresa"].includes(row?.dbRole ?? "");
@@ -401,7 +403,7 @@ router.get("/session", authenticate, async (req, res, next) => {
       // Timestamp de la última modificación del usuario. Sirve al
       // frontend para invalidar la sesión si quedó desincronizada
       // con BD (cambio de rol, de permisos, etc.).
-      permissionsUpdatedAt: (row as { dbUpdatedAt?: Date } | undefined)?.dbUpdatedAt?.toISOString() ?? null,
+      permissionsUpdatedAt: dbUpdatedAt?.toISOString() ?? null,
     });
   } catch (err) {
     next(err);

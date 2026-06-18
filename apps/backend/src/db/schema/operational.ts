@@ -253,14 +253,14 @@ export const companyAssignments = pgTable(
 //   * parent_id para trazar la cadena de reagendamientos.
 
 export const maintenanceTypeEnum = pgEnum('maintenance_type_enum', [
-  'Preventivo',
   'Correctivo',
   'Programado',
 ]);
 
 export const maintenanceStatusEnum = pgEnum('maintenance_status_enum', [
   'Programado',
-  'En curso',
+  'En proceso',   // ← valor real v3
+  'En curso',     // ← mantener para compat con rows viejos
   'PendienteAtencion',
   'Completado',
   'Cancelado',
@@ -366,8 +366,43 @@ export const companyMaintenanceRecords = pgTable('company_maintenance_records', 
   parentId:        integer('parent_id'),
   createdBy:       integer('created_by').references(() => companyUsers.id, { onDelete: 'set null' }),
   completedBy:     integer('completed_by').references(() => companyUsers.id, { onDelete: 'set null' }),
+  // v3: asignación, eventos, reprogramación
+  assignedUserId:  integer('assigned_user_id').references(() => companyUsers.id, { onDelete: 'set null' }),
+  takenAt:         timestamp('taken_at'),
+  isReprogrammed:  boolean('is_reprogrammed').notNull().default(false),
+  reprogramReason: text('reprogram_reason'),
+  reprogrammedAt:  timestamp('reprogrammed_at'),
+  reprogramCount:  integer('reprogram_count').notNull().default(0),
   createdAt:       timestamp('created_at').notNull().defaultNow(),
   updatedAt:       timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ── Eventos de mantenimiento (timeline) ───────────────────────────────────────
+export const companyMaintenanceEvents = pgTable('company_maintenance_events', {
+  id:             serial('id').primaryKey(),
+  companyId:      integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  maintenanceId:  integer('maintenance_id').notNull().references(() => companyMaintenanceRecords.id, { onDelete: 'cascade' }),
+  // Tipos de evento: created, assigned, reassigned, taken, item_added, note_added,
+  // photo_uploaded, cancelled, finalized, viewed
+  kind:           varchar('kind', { length: 40 }).notNull(),
+  actorUserId:    integer('actor_user_id').references(() => companyUsers.id, { onDelete: 'set null' }),
+  actorName:      varchar('actor_name', { length: 160 }),
+  payload:        jsonb('payload').notNull().default({}),
+  createdAt:      timestamp('created_at').notNull().defaultNow(),
+});
+
+// ── Categorías de mantenimiento por empresa (custom) ─────────────────────────
+export const companyMaintenanceCategories = pgTable('company_maintenance_categories', {
+  id:          serial('id').primaryKey(),
+  companyId:   integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  key:         varchar('key', { length: 60 }).notNull(),
+  label:       varchar('label', { length: 120 }).notNull(),
+  shortLabel:  varchar('short_label', { length: 40 }),
+  color:       varchar('color', { length: 20 }).notNull().default('sky'),
+  icon:        varchar('icon', { length: 40 }).notNull().default('wrench'),
+  isSystem:    boolean('is_system').notNull().default(false),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
+  updatedAt:   timestamp('updated_at').notNull().defaultNow(),
 });
 
 // ── Items / repuestos ────────────────────────────────────────────────────────

@@ -15,7 +15,6 @@ const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub
   { test: (h) => h === "/mantenimiento/inventario",                                                         mod: "mantenimiento", sub: "inventario" },
   { test: (h) => h === "/mantenimiento/verificacion-aceite",                                              mod: "mantenimiento", sub: "oil" },
   // Motores sub-routes
-  { test: (h) => h === "/motores/mantenimientos",                                                          mod: "motores", sub: "mantenimientos_motor" },
   { test: (h) => h === "/motores/historial",                                                               mod: "motores", sub: "historial_motor" },
   // ── Parent / catch-all routes ──────────────────────────────────────────────────
   { test: (h) => h === "/dashboard" || h.startsWith("/dashboard"),                                        mod: "dashboard",     sub: "dashboard" },

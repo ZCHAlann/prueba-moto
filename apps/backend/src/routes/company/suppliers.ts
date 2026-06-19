@@ -8,8 +8,8 @@ import { eq, and, ilike, or } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companySuppliers } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
-import { requireModule } from '../../middlewares/requireModule';
-import { requirePermission } from '../../middlewares/requirePermission';
+import { requireModule, requireModuleAny } from '../../middlewares/requireModule';
+import { requirePermission, requirePermissionAny } from '../../middlewares/requirePermission';
 import { requireAdmin } from '../../middlewares/requireAdmin';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
@@ -38,7 +38,16 @@ const updateSupplierSchema = createSupplierSchema.partial();
 
 router.get(
   '/',
-  requireModule('gestion'), requirePermission('gestion', 'suppliers', 'ver'),
+  // El listado de proveedores sirve tanto a "gestion" como al form de
+  // mantenimiento (repuestos / proveedores de insumos).
+  requireModuleAny([
+    { module: 'gestion' },
+    { module: 'mantenimiento', submodule: 'execution' },
+  ]),
+  requirePermissionAny([
+    { module: 'gestion',     submodule: 'suppliers' },
+    { module: 'mantenimiento', submodule: 'execution' },
+  ], 'ver'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;

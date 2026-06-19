@@ -41,8 +41,8 @@ function serializeNotification(n: typeof companyNotifications.$inferSelect) {
 
 router.get(
   '/',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'notifications', 'ver'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'notifications', 'ver'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -77,8 +77,8 @@ router.get(
 
 router.get(
   '/unread-count',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'notifications', 'ver'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'notifications', 'ver'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -103,8 +103,8 @@ router.get(
 
 router.patch(
   '/:id/read',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'notifications', 'editar'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'notifications', 'editar'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -136,8 +136,8 @@ router.patch(
 
 router.patch(
   '/read-all',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'notifications', 'editar'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'notifications', 'editar'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -161,8 +161,8 @@ const registerDeviceSchema = z.object({
 
 router.post(
   '/devices',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'notifications', 'ver'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'notifications', 'ver'),
   validate(registerDeviceSchema),
   async (req, res, next) => {
     try {
@@ -190,8 +190,8 @@ router.post(
 
 router.delete(
   '/devices/:token',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'notifications', 'ver'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'notifications', 'ver'),
   async (req, res, next) => {
     try {
       const userId = parseId('company-user', req.user!.sub);

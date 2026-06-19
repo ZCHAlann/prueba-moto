@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { ExportToolbar } from "../../components/ui/export-toolbar/ExportToolbar";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
+import { MaintenanceReports } from "./MaintenanceReports";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -77,6 +78,7 @@ const REPORT_CATALOG: ReportDef[] = [
   { id: "rep-007", label: "Inventario" },
   { id: "rep-008", label: "Autorizaciones" },
   { id: "rep-009", label: "Mantenimiento" },
+  { id: "rep-010", label: "Costos Mtto." },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -663,35 +665,41 @@ export function ReportsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-500 dark:border-white/[0.06] dark:bg-white/[0.03] dark:text-gray-400">
-            <FileBarChart2 size={13} className="text-brand-500" />
-            {visibleRows.length} registros
-            {totalPages > 1 && (
-              <span className="ml-1 text-gray-400">· Pág. {page}/{totalPages}</span>
-            )}
-          </span>
+          {activeId !== "rep-010" && (
+            <span className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-500 dark:border-white/[0.06] dark:bg-white/[0.03] dark:text-gray-400">
+              <FileBarChart2 size={13} className="text-brand-500" />
+              {visibleRows.length} registros
+              {totalPages > 1 && (
+                <span className="ml-1 text-gray-400">· Pág. {page}/{totalPages}</span>
+              )}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* ── KPI cards ── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {preview.summary.map((item) => (
-          <StatCard key={item.label} {...item} />
-        ))}
-      </div>
+      {/* ── KPI cards (ocultas en rep-010) ── */}
+      {activeId !== "rep-010" && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {preview.summary.map((item) => (
+            <StatCard key={item.label} {...item} />
+          ))}
+        </div>
+      )}
 
       {/* ── Main card ── */}
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
 
-        {/* Card title */}
-        <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
-          <h2 className="text-sm font-semibold text-gray-800 dark:text-white">
-            {preview.title}
-          </h2>
-          <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
-            {preview.description}
-          </p>
-        </div>
+        {/* Card title (oculto en rep-010 porque MaintenanceReports trae su propio header) */}
+        {activeId !== "rep-010" && (
+          <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
+            <h2 className="text-sm font-semibold text-gray-800 dark:text-white">
+              {preview.title}
+            </h2>
+            <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+              {preview.description}
+            </p>
+          </div>
+        )}
 
         {/* Report tabs */}
         <div className="flex flex-wrap gap-2 border-b border-gray-100 px-5 py-3.5 dark:border-white/[0.06]">
@@ -793,34 +801,40 @@ export function ReportsPage() {
           </div>
         </div>
 
-        {/* Search + Export */}
-        <div className="border-b border-gray-100 px-5 py-3 dark:border-white/[0.06]">
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1 max-w-sm">
-              <Search
-                size={14}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-              />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => handleSearchChange(e.target.value)}
-                placeholder="Buscar dentro del reporte..."
-                className="h-9 w-full rounded-xl border border-gray-200 bg-transparent pl-9 pr-4 text-sm text-gray-700 placeholder:text-gray-400 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:text-gray-300 dark:placeholder:text-gray-500"
+        {/* Search + Export (oculto en rep-010) */}
+        {activeId !== "rep-010" && (
+          <div className="border-b border-gray-100 px-5 py-3 dark:border-white/[0.06]">
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1 max-w-sm">
+                <Search
+                  size={14}
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  placeholder="Buscar dentro del reporte..."
+                  className="h-9 w-full rounded-xl border border-gray-200 bg-transparent pl-9 pr-4 text-sm text-gray-700 placeholder:text-gray-400 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:text-gray-300 dark:placeholder:text-gray-500"
+                />
+              </div>
+              <ExportToolbar
+                title={preview.title}
+                columns={preview.columns}
+                rows={visibleRows}
+                subtitle={`Rango: ${applied.from || "inicio abierto"} — ${applied.to || "fin abierto"}`}
+                filename={`reporte-${activeId}`}
               />
             </div>
-            <ExportToolbar
-              title={preview.title}
-              columns={preview.columns}
-              rows={visibleRows}
-              subtitle={`Rango: ${applied.from || "inicio abierto"} — ${applied.to || "fin abierto"}`}
-              filename={`reporte-${activeId}`}
-            />
           </div>
-        </div>
+        )}
 
-        {/* Table body */}
-        {loading ? (
+        {/* Table body (oculto en rep-010: usamos MaintenanceReports) */}
+        {activeId === "rep-010" ? (
+          <div className="p-5">
+            <MaintenanceReports />
+          </div>
+        ) : loading ? (
           <div className="flex items-center justify-center gap-3 py-20 text-gray-400">
             <Loader2 size={18} className="animate-spin" />
             <span className="text-sm">Cargando datos...</span>

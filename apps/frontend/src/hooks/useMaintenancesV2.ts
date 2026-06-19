@@ -36,6 +36,12 @@ export type MaintenanceEventKind =
   | 'finalized'
   | 'viewed';
 
+export interface MaintenanceAttachment {
+  url:        string;
+  label:      string;
+  uploadedAt?: string;
+}
+
 export interface MaintenanceItem {
   id:           string;
   maintenanceId: string;
@@ -72,6 +78,8 @@ export interface Maintenance {
   title:         string | null;
   description:   string | null;
   odometerKm:    number | null;
+  // v3.1: mano de obra
+  laborCost:     number;
   cadenceKind:   CadenceKind;
   cadenceValue:  number | null;
   nextTriggerKm: number | null;
@@ -80,6 +88,13 @@ export interface Maintenance {
   completedAt:   string | null;
   notes:         string | null;
   totalCost:     number;
+  // v3.1: campos de lavada
+  carwashLocation: string | null;
+  carwashProvider: string | null;
+  carwashNotes:    string | null;
+  /** Adjuntos: facturas, fotos de evidencia, etc. (subidos mientras
+   *  el mantenimiento está "En proceso" o "Completado"). */
+  attachments:     MaintenanceAttachment[];
   parentId:      string | null;
   createdBy:     string | null;
   completedBy:   string | null;
@@ -95,6 +110,39 @@ export interface Maintenance {
   updatedAt:     string;
   items:         MaintenanceItem[];
   events:        MaintenanceEvent[];
+}
+
+export interface CarwashExtra {
+  id:            string;
+  maintenanceId: string;
+  name:          string;
+  quantity:      number;
+  unitCost:      number;
+  subtotal:      number;
+  photoUrl:      string | null;
+  createdAt:     string;
+}
+
+export interface CarwashExtraInput {
+  name:     string;
+  quantity: number;
+  unitCost: number;
+  photoUrl?: string | null;
+}
+
+export interface CarwashPhoto {
+  id:            string;
+  maintenanceId: string;
+  photoUrl:      string;
+  caption:       string | null;
+  uploadedBy:    string | null;
+  uploadedByName: string | null;
+  createdAt:     string;
+}
+
+export interface CarwashPhotoInput {
+  photoUrl: string;
+  caption?: string | null;
 }
 
 export interface MaintenanceItemInput {
@@ -115,12 +163,20 @@ export interface MaintenanceInput {
   title:          string;
   description?:   string | null;
   odometerKm?:    number | null;
+  // v3.1: mano de obra
+  laborCost?:      number;
   cadenceKind?:   CadenceKind;
   cadenceValue?:  number | null;
   nextTriggerKm?: number | null;
   scheduledFor:   string;
   notes?:         string | null;
   items?:         MaintenanceItemInput[];
+  /** Adjuntos: facturas, fotos de evidencia, etc. */
+  attachments?:   MaintenanceAttachment[];
+  // v3.1: campos de lavada
+  carwashLocation?: string | null;
+  carwashProvider?: string | null;
+  carwashNotes?:    string | null;
   assignedUserId?: string | null;
 }
 
@@ -169,6 +225,47 @@ export function useMaintenancesList(filters: ListFilters = {}) {
     },
     enabled: !!companyId,
   });
+}
+
+// ─── Upload genérico de adjunto (factura / foto de evidencia) ────────────
+// Usa el endpoint /api/upload/maintenance-evidence que ya valida mimetype
+// + extensión en el backend.
+export async function uploadMaintenanceAttachment(
+  file: File,
+  companyId: number,
+): Promise<string> {
+  // Validación client-side rápida (mismo set que combustible)
+  const ALLOWED = new Set([
+    "image/jpeg", "image/png", "image/webp", "image/gif",
+    "image/heic", "image/heif", "application/pdf",
+  ]);
+  if (!ALLOWED.has(file.type)) {
+    throw new Error(`Tipo de archivo no permitido: ${file.type || "(vacío)"}`);
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error("El archivo supera el tamaño máximo permitido (10 MB)");
+  }
+
+  const fd = new FormData();
+  fd.append("photos", file);
+  const res = await fetch(
+    `/api/upload/maintenance-evidence?companyId=${companyId}`,
+    { method: "POST", body: fd, credentials: "include" },
+  );
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const j = await res.clone().json();
+      if (j?.error) msg = j.error;
+    } catch { /* ignore */ }
+    throw new Error(`Upload adjunto: ${msg}`);
+  }
+  const json = await res.json();
+  // El endpoint devuelve `{ urls: [...] }` o `{ urls: [{url, type, name}] }`
+  const first = Array.isArray(json.urls) ? json.urls[0] : null;
+  const url = typeof first === "string" ? first : first?.url;
+  if (!url) throw new Error("Upload adjunto: respuesta sin URL");
+  return url;
 }
 
 export function useMaintenanceAgenda(range: AgendaRange) {
@@ -335,6 +432,72 @@ export function useAddMaintenanceItems() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['maintenance'] });
       qc.invalidateQueries({ queryKey: ['maintenances'] });
+    },
+  });
+}
+
+// ─── Lavada: adicionales (items extra) y fotos ───────────────────────────────
+
+export function useCarwashExtras(maintenanceId: string | null) {
+  const { companyId } = useAuth();
+  return useQuery({
+    queryKey: ['carwash-extras', companyId, maintenanceId],
+    queryFn: async () => {
+      const res = await jsonFetch<{ data: CarwashExtra[] }>(
+        `/api/company/${companyId}/maintenances/${maintenanceId}/carwash-extras`,
+      );
+      return res.data ?? [];
+    },
+    enabled: !!companyId && !!maintenanceId,
+  });
+}
+
+export function useAddCarwashExtras() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, extras }: { id: string; extras: CarwashExtraInput[] }) => {
+      return jsonFetch<{ data: CarwashExtra[] }>(
+        `/api/company/${companyId}/maintenances/${id}/carwash-extras`,
+        { method: 'POST', body: JSON.stringify({ extras }) },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenance'] });
+      qc.invalidateQueries({ queryKey: ['maintenances'] });
+      qc.invalidateQueries({ queryKey: ['carwash-extras'] });
+    },
+  });
+}
+
+export function useCarwashPhotos(maintenanceId: string | null) {
+  const { companyId } = useAuth();
+  return useQuery({
+    queryKey: ['carwash-photos', companyId, maintenanceId],
+    queryFn: async () => {
+      const res = await jsonFetch<{ data: CarwashPhoto[] }>(
+        `/api/company/${companyId}/maintenances/${maintenanceId}/carwash-photos`,
+      );
+      return res.data ?? [];
+    },
+    enabled: !!companyId && !!maintenanceId,
+  });
+}
+
+export function useAddCarwashPhotos() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, photos }: { id: string; photos: CarwashPhotoInput[] }) => {
+      return jsonFetch<{ data: CarwashPhoto[] }>(
+        `/api/company/${companyId}/maintenances/${id}/carwash-photos`,
+        { method: 'POST', body: JSON.stringify({ photos }) },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenance'] });
+      qc.invalidateQueries({ queryKey: ['maintenances'] });
+      qc.invalidateQueries({ queryKey: ['carwash-photos'] });
     },
   });
 }

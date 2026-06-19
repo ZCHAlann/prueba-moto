@@ -172,95 +172,106 @@ export const companyDrivers = pgTable(
     photoUrl: text('photo_url'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
-  },
-  (table) => [
-    unique('company_drivers_company_id_code').on(table.companyId, table.code),
-    // 1-a-1: un companyUser (rol=conductor) ↔ un driver row.
-    // Cubre el caso conductor-accede-al-sistema. Conductores legacy
-    // quedan con userId NULL y se mantienen por el driverId del FK.
-    unique('company_drivers_company_id_user_id').on(table.companyId, table.userId),
-  ]
-);
+  });
 
-// ─────────────────────────────────────────────
-// Asignaciones
-// ─────────────────────────────────────────────
+// ── Proveedores ───────────────────────────────────────────────────────────────
+export const companySuppliers = pgTable('company_suppliers', {
+  id:           serial('id').primaryKey(),
+  companyId:    integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  name:         varchar('name', { length: 120 }).notNull(),
+  contactName:  varchar('contact_name', { length: 120 }),
+  phone:        varchar('phone', { length: 40 }),
+  email:        varchar('email', { length: 180 }),
+  nit:          varchar('nit', { length: 40 }),
+  notes:        text('notes'),
+  address:      text('address'),
+  latitude:     doublePrecision('latitude'),
+  longitude:    doublePrecision('longitude'),
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+  updatedAt:    timestamp('updated_at').notNull().defaultNow(),
+});
 
-export const companyAssignments = pgTable(
-  'company_assignments',
-  {
-    id: serial('id').primaryKey(),
-    companyId: serial('company_id')
-      .notNull()
-      .references(() => companies.id, { onDelete: 'cascade' }),
-    assetId: serial('asset_id')
-      .notNull()
-      .references(() => companyAssets.id, { onDelete: 'cascade' }),
-    driverId: serial('driver_id')
-      .notNull()
-      .references(() => companyDrivers.id, { onDelete: 'cascade' }),
-    startDate: date('start_date').notNull(),
-    endDate: date('end_date'),
-    status: varchar('status', { length: 40 }).default('Activa'),
-    notes: text('notes'),
-    handoverUrl: text('handover_url'),
+// ── Asignaciones de vehículo → conductor ─────────────────────────────────────
+// Declaración reconstruida desde el snapshot 0001 (la tabla existe en BD desde
+// la migración inicial; solo faltaba la declaración TS).
+export const companyAssignments = pgTable('company_assignments', {
+  id:               serial('id').primaryKey(),
+  companyId:        integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  assetId:          integer('asset_id').notNull().references(() => companyAssets.id, { onDelete: 'cascade' }),
+  driverId:         integer('driver_id').notNull().references(() => companyDrivers.id, { onDelete: 'cascade' }),
+  startDate:        date('start_date').notNull(),
+  endDate:          date('end_date'),
+  status:           varchar('status', { length: 40 }).default('Activa'),
+  notes:            text('notes'),
+  handoverUrl:      text('handover_url'),
+  actaNumber:       varchar('acta_number', { length: 40 }),
+  actaDate:         date('acta_date'),
+  actaTime:         varchar('acta_time', { length: 10 }),
+  actaPlace:        varchar('acta_place', { length: 160 }),
+  actaArea:         varchar('acta_area', { length: 120 }),
+  driverDni:        varchar('driver_dni', { length: 40 }),
+  driverPhone:      varchar('driver_phone', { length: 40 }),
+  driverRole:       varchar('driver_role', { length: 120 }),
+  vehicleOdometer:  varchar('vehicle_odometer', { length: 40 }),
+  vehicleFuelLevel: varchar('vehicle_fuel_level', { length: 40 }),
+  vehicleCondition: varchar('vehicle_condition', { length: 80 }),
+  novedades:        jsonb('novedades').default({}),
+  accesorios:       jsonb('accesorios').default({}),
+  novedadesText:    text('novedades_text'),
+  signatureLogUrl:  text('signature_log_url'),
+  signatureRespUrl: text('signature_resp_url'),
+  vehiclePhotoUrls: text('vehicle_photo_urls').array().default([]),
+  createdAt:        timestamp('created_at').notNull().defaultNow(),
+  updatedAt:        timestamp('updated_at').notNull().defaultNow(),
+});
 
-    // ── Acta de entrega ──────────────────────
-    actaNumber:       varchar('acta_number',       { length: 40 }),
-    actaDate:         date('acta_date'),
-    actaTime:         varchar('acta_time',         { length: 10 }),
-    actaPlace:        varchar('acta_place',        { length: 160 }),
-    actaArea:         varchar('acta_area',         { length: 120 }),
+// ── Talleres (módulo "gestion" — compartido) ────────────────────────────────
+export const companyWorkshops = pgTable('company_workshops', {
+  id:           serial('id').primaryKey(),
+  companyId:    integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  name:         varchar('name', { length: 120 }).notNull(),
+  address:      text('address'),
+  phone:        varchar('phone', { length: 40 }),
+  contactName:  varchar('contact_name', { length: 120 }),
+  nit:          varchar('nit', { length: 40 }),
+  notes:        text('notes'),
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+  updatedAt:    timestamp('updated_at').notNull().defaultNow(),
+});
 
-    // ── Conductor al momento del acta ────────
-    driverDni:        varchar('driver_dni',        { length: 40 }),
-    driverPhone:      varchar('driver_phone',      { length: 40 }),
-    driverRole:       varchar('driver_role',       { length: 120 }),
+// ── Lecturas de odómetro ─────────────────────────────────────────────────────
+export const companyOdometerReadings = pgTable('company_odometer_readings', {
+  id:         serial('id').primaryKey(),
+  companyId:  integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  assetId:    integer('asset_id').notNull().references(() => companyAssets.id, { onDelete: 'cascade' }),
+  km:         integer('km').notNull(),
+  takenAt:    timestamp('taken_at').notNull().defaultNow(),
+  source:     varchar('source', { length: 20 }).notNull().default('manual'),
+  notes:      text('notes'),
+  createdBy:  integer('created_by').references(() => companyUsers.id, { onDelete: 'set null' }),
+});
 
-    // ── Estado del vehículo ──────────────────
-    vehicleOdometer:  varchar('vehicle_odometer',  { length: 40 }),
-    vehicleFuelLevel: varchar('vehicle_fuel_level',{ length: 40 }),
-    vehicleCondition: varchar('vehicle_condition', { length: 80 }),
-
-    // ── Checklists ───────────────────────────
-    novedades:        jsonb('novedades').default({}),
-    accesorios:       jsonb('accesorios').default({}),
-    novedadesText:    text('novedades_text'),
-
-    // ── Firmas ───────────────────────────────
-    signatureLogUrl:  text('signature_log_url'),
-    signatureRespUrl: text('signature_resp_url'),
-
-    // ── Fotos del vehículo ───────────────────
-    vehiclePhotoUrls: text('vehicle_photo_urls').array().default([]),
-
-    createdAt: timestamp('created_at').notNull().defaultNow(),
-    updatedAt: timestamp('updated_at').notNull().defaultNow(),
-  }
-);
-
-// ─────────────────────────────────────────────
-// Mantenimientos v2 (0006_maintenance_v2.sql)
-// ─────────────────────────────────────────────
+// ── Mantenimientos ───────────────────────────────────────────────────────────
 //
-// Reemplaza el `companyMaintenances` legacy (que estaba vacío y se borró en
-// la migración 0006). Modelo unificado con soporte para:
-//   * Tipo: Preventivo | Correctivo | Programado.
-//   * Estado: Programado | En curso | PendienteAtencion | Completado | Cancelado.
-//   * Categoría: Primordial (Bombas, Motores) | Aceite (Cambio, Inventario) | Otro.
-//   * Periodicidad automática: none | weekly | days(N) | monthly | km_based(K).
-//   * Taller, proveedores, repuestos (items), costo total, notas.
-//   * parent_id para trazar la cadena de reagendamientos.
+// Enums del módulo de mantenimiento. Alinear los valores con la BD actual:
+//   - 0006 creó maintenance_type_enum = ('Preventivo', 'Correctivo', 'Programado')
+//     y maintenance_status_enum = ('Programado','En curso','PendienteAtencion','Completado','Cancelado')
+//   - 0009 quitó 'Preventivo' del type enum → ('Correctivo', 'Programado')
+//   - 0010 agregó 'Lavada' al type enum → ('Correctivo', 'Programado', 'Lavada')
+//   - 0006 creó maintenance_category_enum y maintenance_cadence_enum (sin cambios posteriores).
+//
+// Si en el futuro agregas/quitás valores, mantené estos pgEnum sincronizados
+// con la BD — pgEnum NO valida en TS, pero el insert fallará en runtime.
 
 export const maintenanceTypeEnum = pgEnum('maintenance_type_enum', [
   'Correctivo',
   'Programado',
+  'Lavada',
 ]);
 
 export const maintenanceStatusEnum = pgEnum('maintenance_status_enum', [
   'Programado',
-  'En proceso',   // ← valor real v3
-  'En curso',     // ← mantener para compat con rows viejos
+  'En curso',
   'PendienteAtencion',
   'Completado',
   'Cancelado',
@@ -298,52 +309,6 @@ export const devicePlatformEnum = pgEnum('device_platform_enum', [
   'web',
 ]);
 
-// ── Talleres ─────────────────────────────────────────────────────────────────
-export const companyWorkshops = pgTable('company_workshops', {
-  id:           serial('id').primaryKey(),
-  companyId:    integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
-  name:         varchar('name', { length: 120 }).notNull(),
-  address:      text('address'),
-  phone:        varchar('phone', { length: 40 }),
-  contactName:  varchar('contact_name', { length: 120 }),
-  nit:          varchar('nit', { length: 40 }),
-  notes:        text('notes'),
-  latitude:     doublePrecision('latitude'),
-  longitude:    doublePrecision('longitude'),
-  createdAt:    timestamp('created_at').notNull().defaultNow(),
-  updatedAt:    timestamp('updated_at').notNull().defaultNow(),
-});
-
-// ── Proveedores ───────────────────────────────────────────────────────────────
-export const companySuppliers = pgTable('company_suppliers', {
-  id:           serial('id').primaryKey(),
-  companyId:    integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
-  name:         varchar('name', { length: 120 }).notNull(),
-  contactName:  varchar('contact_name', { length: 120 }),
-  phone:        varchar('phone', { length: 40 }),
-  email:        varchar('email', { length: 180 }),
-  nit:          varchar('nit', { length: 40 }),
-  notes:        text('notes'),
-  address:      text('address'),
-  latitude:     doublePrecision('latitude'),
-  longitude:    doublePrecision('longitude'),
-  createdAt:    timestamp('created_at').notNull().defaultNow(),
-  updatedAt:    timestamp('updated_at').notNull().defaultNow(),
-});
-
-// ── Lecturas de odómetro ─────────────────────────────────────────────────────
-export const companyOdometerReadings = pgTable('company_odometer_readings', {
-  id:         serial('id').primaryKey(),
-  companyId:  integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
-  assetId:    integer('asset_id').notNull().references(() => companyAssets.id, { onDelete: 'cascade' }),
-  km:         integer('km').notNull(),
-  takenAt:    timestamp('taken_at').notNull().defaultNow(),
-  source:     varchar('source', { length: 20 }).notNull().default('manual'),
-  notes:      text('notes'),
-  createdBy:  integer('created_by').references(() => companyUsers.id, { onDelete: 'set null' }),
-});
-
-// ── Mantenimientos ───────────────────────────────────────────────────────────
 export const companyMaintenanceRecords = pgTable('company_maintenance_records', {
   id:              serial('id').primaryKey(),
   companyId:       integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
@@ -363,6 +328,16 @@ export const companyMaintenanceRecords = pgTable('company_maintenance_records', 
   completedAt:     timestamp('completed_at'),
   notes:           text('notes'),
   totalCost:       numeric('total_cost', { precision: 12, scale: 2 }).notNull().default('0'),
+  // v3.1: mano de obra separada de los repuestos
+  laborCost:       numeric('labor_cost', { precision: 12, scale: 2 }).notNull().default('0'),
+  // v3.1: campos específicos de Lavada (cuando type='Lavada')
+  carwashLocation: varchar('carwash_location', { length: 200 }),
+  carwashProvider: varchar('carwash_provider', { length: 200 }),
+  carwashNotes:    text('carwash_notes'),
+  // Adjuntos (facturas, fotos de evidencia, etc.) subidos durante
+  // la ejecución del mantenimiento. Array jsonb:
+  //   [{ url: string, label: string, uploadedAt: string }]
+  attachments:     jsonb('attachments').notNull().default([]),
   parentId:        integer('parent_id'),
   createdBy:       integer('created_by').references(() => companyUsers.id, { onDelete: 'set null' }),
   completedBy:     integer('completed_by').references(() => companyUsers.id, { onDelete: 'set null' }),
@@ -417,6 +392,29 @@ export const companyMaintenanceItems = pgTable('company_maintenance_items', {
   subtotal:       numeric('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
 });
 
+// ── Adicionales de Lavada (items extra que el operador agrega al servicio) ───
+export const companyMaintenanceCarwashExtras = pgTable('company_maintenance_carwash_extras', {
+  id:             serial('id').primaryKey(),
+  maintenanceId:  integer('maintenance_id').notNull().references(() => companyMaintenanceRecords.id, { onDelete: 'cascade' }),
+  name:           varchar('name', { length: 180 }).notNull(),
+  quantity:       numeric('quantity', { precision: 10, scale: 2 }).notNull().default('1'),
+  unitCost:       numeric('unit_cost', { precision: 12, scale: 2 }).notNull().default('0'),
+  subtotal:       numeric('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
+  photoUrl:       text('photo_url'),
+  createdAt:      timestamp('created_at').notNull().defaultNow(),
+});
+
+// ── Fotos del servicio de Lavada (separadas de las fotos de repuestos) ─────
+export const companyMaintenanceCarwashPhotos = pgTable('company_maintenance_carwash_photos', {
+  id:             serial('id').primaryKey(),
+  maintenanceId:  integer('maintenance_id').notNull().references(() => companyMaintenanceRecords.id, { onDelete: 'cascade' }),
+  photoUrl:       text('photo_url').notNull(),
+  caption:        varchar('caption', { length: 200 }),
+  uploadedBy:     integer('uploaded_by').references(() => companyUsers.id, { onDelete: 'set null' }),
+  uploadedByName: varchar('uploaded_by_name', { length: 160 }),
+  createdAt:      timestamp('created_at').notNull().defaultNow(),
+});
+
 // ── Notificaciones in-app ────────────────────────────────────────────────────
 export const companyNotifications = pgTable('company_notifications', {
   id:         serial('id').primaryKey(),
@@ -462,6 +460,7 @@ export const companyFuelEntries = pgTable('company_fuel_entries', {
   fuelType: varchar('fuel_type', { length: 40 }),
   notes: text('notes'),
   photoUrl: text('photo_url'),
+  odometerPhotoUrl: text('odometer_photo_url'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

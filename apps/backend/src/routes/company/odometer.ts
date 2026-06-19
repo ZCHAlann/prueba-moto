@@ -30,8 +30,8 @@ const createReadingSchema = z.object({
 
 router.get(
   '/assets/:assetId/odometer',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'records', 'ver'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'records', 'ver'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -58,8 +58,8 @@ router.get(
 
 router.post(
   '/assets/:assetId/odometer',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'records', 'crear'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'records', 'crear'),
   validate(createReadingSchema),
   async (req, res, next) => {
     try {

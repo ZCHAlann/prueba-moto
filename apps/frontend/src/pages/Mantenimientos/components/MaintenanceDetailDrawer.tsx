@@ -1,13 +1,18 @@
 // pages/Mantenimientos/components/MaintenanceDetailDrawer.tsx
 //
 // Drawer lateral con toda la info del mantenimiento.
-// v3: Reasignación con dropdown de operadores (reemplaza input de texto libre).
+// v3.1: rediseño con mejor jerarquía, header con tipo, secciones
+// claramente separadas, mano de obra, lavada (cuando aplica), y
+// línea de tiempo con colores por acción y por usuario.
+// v3.2: agregado soporte de foto al agregar repuesto desde el drawer.
 
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Truck, Calendar, Hash, Download, RefreshCw, CheckCircle2, Play,
-  User as UserIcon, Clock, AlertCircle, Package,
+  User as UserIcon, Clock, AlertCircle, Package, Wrench, MapPin,
+  Store, Plus, Image as ImageIcon, Camera, DollarSign, FileText,
+  CalendarDays, TruckIcon, ClipboardList, History,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -15,10 +20,19 @@ import {
   useAddMaintenanceNote,
   useAddMaintenanceItems,
   useAssignMaintenance,
+  useCarwashExtras,
+  useAddCarwashExtras,
+  useCarwashPhotos,
+  useAddCarwashPhotos,
   type Maintenance,
+  type MaintenanceItemInput,
+  type CarwashExtraInput,
+  type CarwashPhotoInput,
 } from "../../../hooks/useMaintenancesV2";
 import { useCompanyUsers } from "../../../hooks/useCompanyUsers";
 import { useAuth } from "../../../context/AuthContext";
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function fmtDate(iso?: string | null) {
   if (!iso) return "—";
@@ -33,24 +47,181 @@ function fmtMoney(n: number | string | null | undefined) {
   return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(v);
 }
 
-const STATUS_DOT: Record<string, string> = {
-  Programado:   "bg-violet-500",
-  "En proceso": "bg-sky-500",
-  Completado:   "bg-emerald-500",
+// ─── Upload de foto de repuesto (quick-add desde el drawer) ────────────────
+
+const PART_ALLOWED_TYPES = new Set([
+  "image/jpeg", "image/png", "image/webp", "image/gif",
+  "image/heic", "image/heif", "application/pdf",
+]);
+const PART_MAX_SIZE_BYTES = 10 * 1024 * 1024;
+
+async function uploadPartPhoto(file: File, companyId?: string | number): Promise<string> {
+  if (!PART_ALLOWED_TYPES.has(file.type)) {
+    throw new Error(`Tipo de archivo no permitido: ${file.type || "(vacío)"}. Use JPG, PNG, WebP, HEIC o PDF.`);
+  }
+  if (file.size > PART_MAX_SIZE_BYTES) {
+    throw new Error("El archivo supera el tamaño máximo permitido (10 MB).");
+  }
+  if (!companyId) {
+    throw new Error("Sesión sin empresa: no se puede subir la foto.");
+  }
+
+  const fd = new FormData();
+  fd.append("photo", file);
+  const res = await fetch(`/api/upload/part-photos?companyId=${companyId}`, {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const j = await res.clone().json();
+      if (j?.error) msg = j.error;
+    } catch { /* ignore */ }
+    throw new Error(`Upload part-photo: ${msg}`);
+  }
+  const json = await res.json();
+  if (!json.url) throw new Error("Upload part-photo: respuesta sin URL");
+  return json.url as string;
+}
+
+// Color determinístico por usuario (basado en hash del id).
+function colorForUser(id: number | string | null | undefined): { ring: string; bg: string; text: string; dot: string } {
+  if (id == null) return { ring: "ring-gray-300", bg: "bg-gray-100 dark:bg-white/[0.05]", text: "text-gray-600 dark:text-gray-300", dot: "bg-gray-400" };
+  const n = typeof id === "string" ? Number(id.replace(/\D/g, "")) || 0 : id;
+  const palette = [
+    { ring: "ring-rose-300",    bg: "bg-rose-50 dark:bg-rose-500/10",       text: "text-rose-700 dark:text-rose-200",       dot: "bg-rose-500" },
+    { ring: "ring-amber-300",   bg: "bg-amber-50 dark:bg-amber-500/10",     text: "text-amber-700 dark:text-amber-200",     dot: "bg-amber-500" },
+    { ring: "ring-emerald-300", bg: "bg-emerald-50 dark:bg-emerald-500/10", text: "text-emerald-700 dark:text-emerald-200", dot: "bg-emerald-500" },
+    { ring: "ring-sky-300",     bg: "bg-sky-50 dark:bg-sky-500/10",         text: "text-sky-700 dark:text-sky-200",         dot: "bg-sky-500" },
+    { ring: "ring-violet-300",  bg: "bg-violet-50 dark:bg-violet-500/10",   text: "text-violet-700 dark:text-violet-200",   dot: "bg-violet-500" },
+    { ring: "ring-fuchsia-300", bg: "bg-fuchsia-50 dark:bg-fuchsia-500/10", text: "text-fuchsia-700 dark:text-fuchsia-200", dot: "bg-fuchsia-500" },
+    { ring: "ring-cyan-300",   bg: "bg-cyan-50 dark:bg-cyan-500/10",       text: "text-cyan-700 dark:text-cyan-200",       dot: "bg-cyan-500" },
+    { ring: "ring-orange-300",  bg: "bg-orange-50 dark:bg-orange-500/10",   text: "text-orange-700 dark:text-orange-200",   dot: "bg-orange-500" },
+  ];
+  return palette[Math.abs(n) % palette.length];
+}
+
+// Colores por tipo de evento (línea de tiempo)
+const KIND_META: Record<string, { label: string; dot: string; ring: string; tone: string }> = {
+  created:         { label: "Mantenimiento creado",       dot: "bg-violet-500",  ring: "ring-violet-300",   tone: "text-violet-700 dark:text-violet-200" },
+  assigned:        { label: "Asignado a un operador",     dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
+  reassigned:      { label: "Reasignado",                 dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
+  taken:           { label: "Operador tomó el mantenimiento", dot: "bg-amber-500", ring: "ring-amber-300",    tone: "text-amber-700 dark:text-amber-200" },
+  item_added:      { label: "Repuestos / adicionales",     dot: "bg-cyan-500",    ring: "ring-cyan-300",     tone: "text-cyan-700 dark:text-cyan-200" },
+  note_added:      { label: "Nota agregada",               dot: "bg-slate-500",   ring: "ring-slate-300",    tone: "text-slate-700 dark:text-slate-200" },
+  photo_uploaded: { label: "Foto subida",                 dot: "bg-fuchsia-500", ring: "ring-fuchsia-300",  tone: "text-fuchsia-700 dark:text-fuchsia-200" },
+  cancelled:       { label: "Reprogramado",                dot: "bg-amber-500",   ring: "ring-amber-300",    tone: "text-amber-700 dark:text-amber-200" },
+  finalized:       { label: "Finalizado",                  dot: "bg-emerald-500", ring: "ring-emerald-300",  tone: "text-emerald-700 dark:text-emerald-200" },
+  viewed:          { label: "Visualizado",                 dot: "bg-gray-400",    ring: "ring-gray-300",     tone: "text-gray-500 dark:text-gray-400" },
 };
 
-const EVENT_LABEL: Record<string, string> = {
-  created:        "Mantenimiento creado",
-  assigned:       "Asignado a un operador",
-  reassigned:     "Reasignado",
-  taken:          "Operador tomó el mantenimiento",
-  item_added:     "Repuestos agregados",
-  note_added:     "Nota agregada",
-  photo_uploaded: "Foto subida",
-  cancelled:      "Cancelado y reprogramado",
-  finalized:      "Finalizado como completado",
-  viewed:         "Visualizado por un usuario",
+const TYPE_LABEL: Record<string, string> = {
+  Programado: "Programado",
+  Correctivo: "Correctivo",
+  Lavada:     "Lavada",
 };
+
+// ─── Sub-componentes ─────────────────────────────────────────────────────────
+
+function Kpi({ label, value, accent = "violet" }: { label: string; value: string; accent?: "violet" | "emerald" | "sky" | "amber" | "rose" | "orange" }) {
+  const tones: Record<string, string> = {
+    violet:  "border-violet-200 dark:border-violet-500/20 bg-violet-50 dark:bg-violet-500/10",
+    emerald: "border-emerald-200 dark:border-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/10",
+    sky:     "border-sky-200 dark:border-sky-500/20 bg-sky-50 dark:bg-sky-500/10",
+    amber:   "border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10",
+    rose:    "border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/10",
+    orange:  "border-orange-200 dark:border-orange-500/20 bg-orange-50 dark:bg-orange-500/10",
+  };
+  const textTones: Record<string, string> = {
+    violet:  "text-violet-700 dark:text-violet-200",
+    emerald: "text-emerald-700 dark:text-emerald-200",
+    sky:     "text-sky-700 dark:text-sky-200",
+    amber:   "text-amber-700 dark:text-amber-200",
+    rose:    "text-rose-700 dark:text-rose-200",
+    orange:  "text-orange-700 dark:text-orange-200",
+  };
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${tones[accent]}`}>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">{label}</p>
+      <p className={`mt-0.5 text-base font-bold ${textTones[accent]}`}>{value}</p>
+    </div>
+  );
+}
+
+function Section({ icon, title, children, right }: {
+  icon?: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between">
+        <p className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+          {icon}
+          {title}
+        </p>
+        {right}
+      </div>
+      <div className="rounded-xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] divide-y divide-gray-100 dark:divide-white/[0.04]">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Row({ icon, label, value }: { icon?: React.ReactNode; label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-3 px-3 py-2 text-xs">
+      <span className="inline-flex shrink-0 items-center gap-1.5 text-gray-500 dark:text-gray-400">
+        {icon}
+        {label}
+      </span>
+      <span className="text-right text-gray-800 dark:text-white">{value}</span>
+    </div>
+  );
+}
+
+// ─── Timeline agrupado (viewed colapsado) ───────────────────────────────────
+
+type EventNode = {
+  id: string;
+  kind: string;
+  actorUserId: string | null;
+  actorName: string | null;
+  payload: any;
+  createdAt: string;
+};
+
+function groupViewedEvents(events: EventNode[]): Array<EventNode | { kind: "viewed_group"; count: number; users: Array<{ name: string; id: string | null; at: string }>; createdAt: string }> {
+  const out: any[] = [];
+  let i = 0;
+  while (i < events.length) {
+    const e = events[i];
+    if (e.kind !== "viewed") {
+      out.push(e);
+      i++;
+      continue;
+    }
+    // Agrupa los viewed consecutivos
+    const group: typeof events = [e];
+    let j = i + 1;
+    while (j < events.length && events[j].kind === "viewed") { group.push(events[j]); j++; }
+    if (group.length === 1) {
+      out.push(group[0]);
+    } else {
+      const users = group.map((g) => ({ name: g.actorName ?? "—", id: g.actorUserId, at: g.createdAt }));
+      // Mantener el último "at" como createdAt del grupo
+      out.push({ kind: "viewed_group", count: group.length, users, createdAt: group[group.length - 1].createdAt });
+    }
+    i = j;
+  }
+  return out;
+}
+
+// ─── Componente principal ─────────────────────────────────────────────────────
 
 export function MaintenanceDetailDrawer({
   id, isFullAccess, meId, onClose, onEdit, onTake, onFinalize, onReschedule,
@@ -68,6 +239,11 @@ export function MaintenanceDetailDrawer({
   const { session } = useAuth();
   const meRole = session?.role ?? "";
 
+  // Datos de lavada (extras y fotos)
+  const itemId = m?.id ?? null;
+  const { data: carwashExtras = [] } = useCarwashExtras(itemId);
+  const { data: carwashPhotos = [] } = useCarwashPhotos(itemId);
+
   // Usuarios de la empresa para el selector de reasignación
   const { users: companyUsers } = useCompanyUsers();
   const operadores = useMemo(
@@ -76,35 +252,67 @@ export function MaintenanceDetailDrawer({
   );
 
   const [newNote, setNewNote] = useState("");
-  const [newItem, setNewItem] = useState<{ name: string; quantity: number; unitCost: number }>({
-    name: "", quantity: 1, unitCost: 0,
+  const [newItem, setNewItem] = useState<{ name: string; quantity: number; unitCost: number; photoUrl: string | null; uploading: boolean }>({
+    name: "", quantity: 1, unitCost: 0, photoUrl: null, uploading: false,
   });
-  // Dropdown de reasignación (id del usuario seleccionado)
   const [assignTo, setAssignTo] = useState("");
+  // Estado local para nuevos adicionales / fotos de lavada
+  const [newExtra, setNewExtra] = useState<{ name: string; quantity: number; unitCost: number; photoUrl: string }>({
+    name: "", quantity: 1, unitCost: 0, photoUrl: "",
+  });
+  const [newPhoto, setNewPhoto] = useState<string>("");
+  const [newPhotoCaption, setNewPhotoCaption] = useState<string>("");
 
-  const addNoteMut  = useAddMaintenanceNote();
-  const addItemsMut = useAddMaintenanceItems();
-  const assignMut   = useAssignMaintenance();
+  const addNoteMut         = useAddMaintenanceNote();
+  const addItemsMut        = useAddMaintenanceItems();
+  const assignMut          = useAssignMaintenance();
+  const addCarwashExtraMut = useAddCarwashExtras();
+  const addCarwashPhotoMut = useAddCarwashPhotos();
 
   useEffect(() => {
     setNewNote("");
-    setNewItem({ name: "", quantity: 1, unitCost: 0 });
+    setNewItem({ name: "", quantity: 1, unitCost: 0, photoUrl: null, uploading: false });
+    setNewExtra({ name: "", quantity: 1, unitCost: 0, photoUrl: "" });
+    setNewPhoto("");
+    setNewPhotoCaption("");
     setAssignTo("");
   }, [id]);
 
-  if (!id) return null;
   const item: Maintenance | null = m ?? null;
+  const events = (item?.events ?? []) as EventNode[];
 
-  const meIdStr = meId != null ? String(meId) : null;
-  const isOwn = item ? (meIdStr != null && (item.assignedUserId === meIdStr || item.createdBy === meIdStr)) : false;
+  // IMPORTANTE: este useMemo debe ir ANTES de cualquier `return null` para
+  // no violar las Rules of Hooks. Si el componente re-renderiza con un
+  // `id` distinto, el orden de hooks debe ser estable.
+  const groupedEvents = useMemo(() => groupViewedEvents(events), [events]);
+
+  if (!id) return null;
+
+  // Normalización: el backend manda `item.assignedUserId` con el prefijo
+  // "company-user-N" (toId()), pero `meId` es un número puro. Compararlos
+  // como string siempre falla. Extraemos el id numérico de ambos para
+  // comparar apples-to-apples.
+  const idFromPrefixed = (s: string | null | undefined): number | null => {
+    if (!s) return null;
+    const m = String(s).match(/(\d+)$/);
+    return m ? Number(m[1]) : null;
+  };
+  const assignedNum = idFromPrefixed(item?.assignedUserId);
+  const createdByNum = idFromPrefixed(item?.createdBy);
+  const meIdNum     = meId != null ? meId : null;
+
+  const isOwn = item
+    ? (meIdNum != null && (assignedNum === meIdNum || createdByNum === meIdNum))
+    : false;
   const canOperate = isFullAccess || isOwn;
 
   const isProgramado = item?.status === "Programado";
   const isProceso    = item?.status === "En proceso";
   const isCompleto   = item?.status === "Completado";
+  const isLavada     = item?.type === "Lavada";
 
-  // Nombre del operador actualmente asignado (para el select por defecto)
   const currentAssignedId = item?.assignedUserId ?? "";
+  const partsCost = (item?.totalCost ?? 0) - (item?.laborCost ?? 0);
 
   return (
     <AnimatePresence>
@@ -119,35 +327,37 @@ export function MaintenanceDetailDrawer({
           <motion.aside
             initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
             transition={{ type: "spring", stiffness: 320, damping: 32 }}
-            className="fixed right-0 top-0 z-50 h-full w-full max-w-2xl overflow-y-auto bg-white shadow-2xl dark:bg-gray-900"
+            className="fixed right-0 top-0 z-50 flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl dark:bg-[#0b0f1a]"
           >
             {isLoading || !item ? (
               <div className="flex h-full items-center justify-center text-sm text-gray-400">Cargando…</div>
             ) : (
-              <div className="flex h-full flex-col">
-
-                {/* Header */}
-                <div className={`relative border-l-4 ${STATUS_DOT[item.status]?.replace("bg-", "border-l-") ?? "border-l-gray-300"} border-b border-gray-200 dark:border-white/[0.06] px-5 py-4`}>
+              <>
+                {/* ─── Header ─── */}
+                <div
+                  className="relative shrink-0 border-b border-gray-200 dark:border-white/[0.06] px-5 pt-4 pb-4"
+                  style={{
+                    background:
+                      `linear-gradient(135deg, ${statusGradient(item.status)} 0%, transparent 70%)`,
+                  }}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200">
-                          <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[item.status]}`} />
-                          {item.status}
-                        </span>
+                        <StatusBadge status={item.status} />
+                        <TypeBadge type={item.type} />
                         {item.isReprogrammed && (
-                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-                            <RefreshCw size={10} /> Re-programado
-                          </span>
-                        )}
-                        {item.type && (
-                          <span className="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-white/[0.04] dark:text-gray-300">
-                            {item.type}
+                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-200">
+                            <RefreshCw size={10} /> Re-programado{item.reprogramCount > 1 ? ` (${item.reprogramCount}×)` : ""}
                           </span>
                         )}
                       </div>
-                      <h2 className="mt-2 text-lg font-bold text-gray-800 dark:text-white">{item.title ?? "Mantenimiento"}</h2>
-                      <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500 font-mono">#{item.id}</p>
+                      <h2 className="mt-2 truncate text-lg font-bold text-gray-800 dark:text-white">
+                        {item.title ?? "Mantenimiento"}
+                      </h2>
+                      <p className="mt-0.5 font-mono text-[11px] text-gray-400 dark:text-gray-500">
+                        Folio #{item.id}
+                      </p>
                     </div>
                     <div className="flex items-center gap-1">
                       <button
@@ -159,14 +369,14 @@ export function MaintenanceDetailDrawer({
                           window.open(url, "_blank");
                           setTimeout(() => URL.revokeObjectURL(url), 60_000);
                         }}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.05] transition"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white/70 px-3 py-1.5 text-xs font-medium text-gray-700 backdrop-blur dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 hover:bg-white dark:hover:bg-white/[0.08] transition"
                       >
                         <Download size={13} /> PDF
                       </button>
                       <button
                         type="button"
                         onClick={onClose}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-white/70 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-white transition"
                       >
                         <X size={16} />
                       </button>
@@ -174,62 +384,88 @@ export function MaintenanceDetailDrawer({
                   </div>
                 </div>
 
-                {/* Body */}
+                {/* ─── Body ─── */}
                 <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm">
 
-                  {/* Reprog. reason */}
                   {item.isReprogrammed && item.reprogramReason && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-300">
                         Reprogramado{item.reprogramCount > 1 ? ` (${item.reprogramCount}×)` : ""}
                       </p>
-                      <p className="mt-1 text-sm text-amber-900 dark:text-amber-100 whitespace-pre-wrap">{item.reprogramReason}</p>
+                      <p className="mt-1 whitespace-pre-wrap text-sm text-amber-900 dark:text-amber-100">{item.reprogramReason}</p>
                       {item.reprogrammedAt && (
                         <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">Reprogramado el {fmtDateTime(item.reprogrammedAt)}</p>
                       )}
                     </div>
                   )}
 
-                  <Section title="Vehículo">
-                    <Row icon={<Truck size={12} />} label="Placa"  value={item.assetPlate ?? "—"} />
-                    <Row icon={<Truck size={12} />} label="Nombre" value={item.assetName ?? "—"} />
+                  {/* ── Vehículo ── */}
+                  <Section icon={<Truck size={11} />} title="Vehículo">
+                    <Row label="Placa"  value={item.assetPlate ?? "—"} />
+                    <Row label="Nombre" value={item.assetName ?? "—"} />
                   </Section>
 
-                  <Section title="Asignación">
+                  {/* ── Asignación ── */}
+                  <Section icon={<UserIcon size={11} />} title="Asignación">
                     <Row
-                      icon={<UserIcon size={12} />}
                       label="Asignado a"
                       value={
                         item.assignedUserName
                           ? <span className="font-medium text-sky-700 dark:text-sky-300">{item.assignedUserName}</span>
-                          : <span className="text-gray-400 italic">Libre — sin asignar</span>
+                          : <span className="italic text-gray-400">Libre — sin asignar</span>
                       }
                     />
-                    {item.takenAt && <Row icon={<Clock size={12} />} label="Tomado el" value={fmtDateTime(item.takenAt)} />}
+                    {item.takenAt && <Row icon={<Clock size={11} />} label="Tomado el" value={fmtDateTime(item.takenAt)} />}
                   </Section>
 
-                  <Section title="Programación">
-                    <Row icon={<Calendar size={12} />} label="Programado" value={fmtDateTime(item.scheduledFor)} />
-                    <Row icon={<Calendar size={12} />} label="Ejecutado"  value={fmtDateTime(item.executedAt)} />
-                    <Row icon={<Calendar size={12} />} label="Completado" value={fmtDateTime(item.completedAt)} />
+                  {/* ── Programación ── */}
+                  <Section icon={<Calendar size={11} />} title="Programación">
+                    <Row label="Programado" value={fmtDateTime(item.scheduledFor)} />
+                    <Row label="Ejecutado"  value={fmtDateTime(item.executedAt)} />
+                    <Row label="Completado" value={fmtDateTime(item.completedAt)} />
                     {item.odometerKm != null && (
-                      <Row icon={<Hash size={12} />} label="Odómetro" value={`${item.odometerKm.toLocaleString("es-CO")} km`} />
+                      <Row icon={<Hash size={11} />} label="Odómetro" value={`${item.odometerKm.toLocaleString("es-CO")} km`} />
                     )}
                   </Section>
 
+                  {/* ── Costo (mano de obra + repuestos + total) ── */}
+                  <Section icon={<DollarSign size={11} />} title="Costo">
+                    <div className="grid grid-cols-3 gap-2 px-3 py-3">
+                      {!isLavada && (
+                        <Kpi label="Mano de obra" value={fmtMoney(item.laborCost)} accent="violet" />
+                      )}
+                      <Kpi label="Repuestos / Extras" value={fmtMoney(partsCost)} accent={isLavada ? "sky" : "sky"} />
+                      <Kpi label="Total" value={fmtMoney(item.totalCost)} accent="emerald" />
+                    </div>
+                  </Section>
+
+                  {/* ── Lavada: campos específicos ── */}
+                  {isLavada && (
+                    <Section icon={<MapPin size={11} />} title="Lavada">
+                      <Row icon={<Store size={11} />}    label="Lugar / Proveedor" value={item.carwashLocation ?? "—"} />
+                      <Row icon={<UserIcon size={11} />} label="Encargado"         value={item.carwashProvider ?? "—"} />
+                      {item.carwashNotes && (
+                        <div className="px-3 py-2 text-xs">
+                          <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">Notas</p>
+                          <p className="whitespace-pre-wrap text-gray-700 dark:text-gray-200">{item.carwashNotes}</p>
+                        </div>
+                      )}
+                    </Section>
+                  )}
+
                   {item.description && (
-                    <Section title="Descripción">
+                    <Section icon={<FileText size={11} />} title="Descripción">
                       <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs text-gray-700 dark:border-white/[0.06] dark:bg-white/[0.03] dark:text-gray-200 whitespace-pre-wrap">
                         {item.description}
                       </p>
                     </Section>
                   )}
 
-                  {/* Avance: items, notas — solo en En proceso / Completado para los suyos (o admin) */}
-                  {(isProceso || isCompleto) && canOperate && (
-                    <Section title="Repuestos y avance">
+                  {/* ── Repuestos / avance — solo para Programado/Correctado en proceso ── */}
+                  {!isLavada && (isProceso || isCompleto) && canOperate && (
+                    <Section icon={<Package size={11} />} title="Repuestos y avance">
                       {item.items && item.items.length > 0 && (
-                        <ul className="divide-y divide-gray-100 dark:divide-white/[0.05] rounded-lg border border-gray-200 dark:border-white/[0.06] overflow-hidden mb-3">
+                        <ul className="divide-y divide-gray-100 dark:divide-white/[0.05]">
                           {item.items.map((it) => (
                             <li key={it.id} className="flex items-start gap-3 px-3 py-2.5 text-xs">
                               {it.photoUrl ? (
@@ -252,10 +488,14 @@ export function MaintenanceDetailDrawer({
                       )}
 
                       {isProceso && (
-                        <div className="space-y-2">
+                        <div className="space-y-2 px-3 py-2.5">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">Acciones</p>
+
                           {/* Agregar repuesto */}
-                          <details className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-2.5">
-                            <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300">+ Agregar repuesto</summary>
+                          <details className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-2.5" open>
+                            <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300 inline-flex items-center gap-1.5">
+                              <Plus size={12} /> Agregar repuesto
+                            </summary>
                             <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                               <input
                                 placeholder="Nombre"
@@ -264,24 +504,71 @@ export function MaintenanceDetailDrawer({
                                 className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5 col-span-2"
                               />
                               <input
-                                type="number" placeholder="Cant." value={newItem.quantity}
+                                type="number" min={0} placeholder="Cant." value={newItem.quantity}
                                 onChange={(e) => setNewItem((p) => ({ ...p, quantity: Number(e.target.value) }))}
                                 className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
                               />
                               <input
-                                type="number" placeholder="Costo unit." value={newItem.unitCost}
+                                type="number" min={0} placeholder="Costo unit." value={newItem.unitCost}
                                 onChange={(e) => setNewItem((p) => ({ ...p, unitCost: Number(e.target.value) }))}
                                 className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
                               />
+
+                              {/* ── Foto del repuesto (nuevo) ── */}
+                              <div className="col-span-2 flex items-center gap-2">
+                                {newItem.photoUrl ? (
+                                  <div className="relative h-10 w-10 rounded-md overflow-hidden border border-gray-200 dark:border-white/[0.08]">
+                                    <img src={newItem.photoUrl} alt="" className="h-full w-full object-cover" />
+                                    <button
+                                      type="button"
+                                      onClick={() => setNewItem((p) => ({ ...p, photoUrl: null }))}
+                                      className="absolute top-0 right-0 bg-black/60 text-white p-0.5"
+                                      title="Quitar foto"
+                                    >
+                                      <X size={10} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <label className="inline-flex items-center gap-1.5 cursor-pointer rounded-md border border-dashed border-gray-300 dark:border-white/[0.08] px-2.5 py-1 text-xs text-gray-500 dark:text-gray-400 hover:border-violet-400 dark:hover:border-violet-500/50 transition">
+                                    <Camera size={12} /> {newItem.uploading ? "Subiendo…" : "Foto (opcional)"}
+                                    <input
+                                      type="file"
+                                      accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,application/pdf"
+                                      disabled={newItem.uploading}
+                                      className="hidden"
+                                      onChange={async (e) => {
+                                        const f = e.target.files?.[0];
+                                        if (!f) return;
+                                        setNewItem((p) => ({ ...p, uploading: true }));
+                                        try {
+                                          const url = await uploadPartPhoto(f, session?.companyId);
+                                          setNewItem((p) => ({ ...p, photoUrl: url }));
+                                          toast.success("Foto subida");
+                                        } catch (err) {
+                                          toast.error((err as Error).message);
+                                        } finally {
+                                          setNewItem((p) => ({ ...p, uploading: false }));
+                                        }
+                                      }}
+                                    />
+                                  </label>
+                                )}
+                              </div>
+
                               <button
                                 onClick={async () => {
                                   if (!newItem.name.trim()) { toast.error("Nombre requerido"); return; }
                                   try {
                                     await addItemsMut.mutateAsync({
                                       id: item.id,
-                                      items: [{ name: newItem.name, quantity: newItem.quantity, unitCost: newItem.unitCost }],
+                                      items: [{
+                                        name: newItem.name,
+                                        quantity: newItem.quantity,
+                                        unitCost: newItem.unitCost,
+                                        photoUrl: newItem.photoUrl,
+                                      }],
                                     });
-                                    setNewItem({ name: "", quantity: 1, unitCost: 0 });
+                                    setNewItem({ name: "", quantity: 1, unitCost: 0, photoUrl: null, uploading: false });
                                     toast.success("Repuesto agregado");
                                     refetch();
                                   } catch (e) { toast.error((e as Error).message); }
@@ -295,7 +582,9 @@ export function MaintenanceDetailDrawer({
 
                           {/* Agregar nota */}
                           <details className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-2.5">
-                            <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300">+ Agregar nota</summary>
+                            <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300 inline-flex items-center gap-1.5">
+                              <Plus size={12} /> Agregar nota
+                            </summary>
                             <div className="mt-2 space-y-2">
                               <textarea
                                 rows={2}
@@ -325,55 +614,206 @@ export function MaintenanceDetailDrawer({
                     </Section>
                   )}
 
-                  {/* Timeline: solo para full access */}
-                  {isFullAccess && item.events && item.events.length > 0 && (
-                    <Section title="Línea de tiempo">
-                      <ol className="relative space-y-3 pl-5 before:absolute before:left-1.5 before:top-1 before:bottom-1 before:w-px before:bg-gray-200 dark:before:bg-white/[0.08]">
-                        {item.events.map((e) => (
-                          <li key={e.id} className="relative">
-                            <span className="absolute -left-5 top-1.5 h-2.5 w-2.5 rounded-full bg-blue-500 ring-2 ring-white dark:ring-gray-900" />
-                            <div className="text-xs text-gray-800 dark:text-white">
-                              <p className="font-medium">{EVENT_LABEL[e.kind] ?? e.kind}</p>
-                              <p className="text-[11px] text-gray-400 dark:text-gray-500">
-                                {fmtDateTime(e.createdAt)}{e.actorName ? ` · ${e.actorName}` : ""}
-                              </p>
-                              {e.kind === "cancelled" && (e.payload as any)?.reason && (
-                                <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-300">
-                                  Motivo: {String((e.payload as any).reason)}
-                                </p>
+                  {/* ── Lavada: adicionales y fotos ── */}
+                  {isLavada && isProceso && canOperate && (
+                    <Section icon={<Package size={11} />} title="Adicionales de la lavada">
+                      {carwashExtras.length > 0 && (
+                        <ul className="divide-y divide-gray-100 dark:divide-white/[0.05]">
+                          {carwashExtras.map((e) => (
+                            <li key={e.id} className="flex items-start gap-3 px-3 py-2.5 text-xs">
+                              {e.photoUrl ? (
+                                <img src={e.photoUrl} alt={e.name} className="h-10 w-10 rounded-md object-cover" />
+                              ) : (
+                                <div className="flex h-10 w-10 items-center justify-center rounded-md bg-sky-100 text-sky-400 dark:bg-sky-500/10">
+                                  <Package size={14} />
+                                </div>
                               )}
-                              {e.kind === "taken" && (
-                                <p className="mt-0.5 text-[11px] text-sky-700 dark:text-sky-300">
-                                  Operador tomó el mantenimiento y pasó a En proceso.
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium text-gray-800 dark:text-white truncate">{e.name}</p>
+                                <p className="text-[11px] text-gray-400 dark:text-gray-500">
+                                  {e.quantity} × {fmtMoney(e.unitCost)}
                                 </p>
-                              )}
-                              {e.kind === "finalized" && (
-                                <p className="mt-0.5 text-[11px] text-emerald-700 dark:text-emerald-300">
-                                  Mantenimiento cerrado como completado.
-                                </p>
-                              )}
-                              {e.kind === "item_added" && (
-                                <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                                  {String((e.payload as any).count ?? 0)} repuesto(s) — total {fmtMoney((e.payload as any).totalAdded ?? 0)}
-                                </p>
-                              )}
-                            </div>
-                          </li>
-                        ))}
-                      </ol>
+                              </div>
+                              <p className="text-xs font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap">{fmtMoney(e.subtotal)}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
+                      <details className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-2.5 mx-3 my-2.5" open>
+                        <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300 inline-flex items-center gap-1.5">
+                          <Plus size={12} /> Agregar adicional
+                        </summary>
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                          <input
+                            placeholder="Nombre (ej: encerado, aromatizante)"
+                            value={newExtra.name}
+                            onChange={(e) => setNewExtra((p) => ({ ...p, name: e.target.value }))}
+                            className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5 col-span-2"
+                          />
+                          <input
+                            type="number" min={0} placeholder="Cant." value={newExtra.quantity}
+                            onChange={(e) => setNewExtra((p) => ({ ...p, quantity: Number(e.target.value) }))}
+                            className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
+                          />
+                          <input
+                            type="number" min={0} placeholder="Costo unit." value={newExtra.unitCost}
+                            onChange={(e) => setNewExtra((p) => ({ ...p, unitCost: Number(e.target.value) }))}
+                            className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
+                          />
+                          <input
+                            placeholder="URL foto (opcional)"
+                            value={newExtra.photoUrl}
+                            onChange={(e) => setNewExtra((p) => ({ ...p, photoUrl: e.target.value }))}
+                            className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5 col-span-2"
+                          />
+                          <button
+                            onClick={async () => {
+                              if (!newExtra.name.trim()) { toast.error("Nombre requerido"); return; }
+                              try {
+                                await addCarwashExtraMut.mutateAsync({
+                                  id: item.id,
+                                  extras: [{
+                                    name: newExtra.name,
+                                    quantity: newExtra.quantity,
+                                    unitCost: newExtra.unitCost,
+                                    photoUrl: newExtra.photoUrl.trim() || null,
+                                  }],
+                                });
+                                setNewExtra({ name: "", quantity: 1, unitCost: 0, photoUrl: "" });
+                                toast.success("Adicional agregado");
+                                refetch();
+                              } catch (e) { toast.error((e as Error).message); }
+                            }}
+                            className="col-span-2 rounded-md bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-medium text-white transition"
+                          >
+                            Guardar adicional
+                          </button>
+                        </div>
+                      </details>
+
+                      {/* Fotos */}
+                      {carwashPhotos.length > 0 && (
+                        <div className="grid grid-cols-3 gap-2 px-3 pb-3">
+                          {carwashPhotos.map((p) => (
+                            <figure key={p.id} className="overflow-hidden rounded-md border border-gray-200 dark:border-white/[0.06]">
+                              <img src={p.photoUrl} alt={p.caption ?? "Foto"} className="h-20 w-full object-cover" />
+                              {p.caption && <figcaption className="px-1.5 py-1 text-[10px] text-gray-500 dark:text-gray-400">{p.caption}</figcaption>}
+                            </figure>
+                          ))}
+                        </div>
+                      )}
+
+                      <details className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-2.5 mx-3 my-2.5">
+                        <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300 inline-flex items-center gap-1.5">
+                          <Camera size={12} /> Subir foto
+                        </summary>
+                        <div className="mt-2 space-y-2 text-xs">
+                          <input
+                            placeholder="URL de la foto (https://...)"
+                            value={newPhoto}
+                            onChange={(e) => setNewPhoto(e.target.value)}
+                            className="w-full rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
+                          />
+                          <input
+                            placeholder="Caption (opcional)"
+                            value={newPhotoCaption}
+                            onChange={(e) => setNewPhotoCaption(e.target.value)}
+                            className="w-full rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
+                          />
+                          <button
+                            onClick={async () => {
+                              if (!newPhoto.trim()) { toast.error("URL requerida"); return; }
+                              try {
+                                await addCarwashPhotoMut.mutateAsync({
+                                  id: item.id,
+                                  photos: [{ photoUrl: newPhoto.trim(), caption: newPhotoCaption.trim() || null }],
+                                });
+                                setNewPhoto("");
+                                setNewPhotoCaption("");
+                                toast.success("Foto subida");
+                                refetch();
+                              } catch (e) { toast.error((e as Error).message); }
+                            }}
+                            className="rounded-md bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-medium text-white transition"
+                          >
+                            Subir foto
+                          </button>
+                        </div>
+                      </details>
                     </Section>
                   )}
 
-                  <Section title="Costo total">
-                    <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2.5 dark:border-violet-500/20 dark:bg-violet-500/10">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-violet-700 dark:text-violet-300">Total</p>
-                      <p className="mt-0.5 text-2xl font-bold text-violet-700 dark:text-violet-200">{fmtMoney(item.totalCost)}</p>
-                    </div>
-                  </Section>
+                  {/* ── Línea de tiempo (con colores y agrupada) ── */}
+                  {item.events && item.events.length > 0 && (
+                    <Section icon={<History size={11} />} title={`Línea de tiempo · ${item.events.length}`}>
+                      <div className="max-h-72 overflow-y-auto px-2 py-3">
+                        <ol className="relative space-y-3 pl-5 before:absolute before:left-1.5 before:top-1 before:bottom-1 before:w-px before:bg-gray-200 dark:before:bg-white/[0.08]">
+                          {groupedEvents.map((e, idx) => {
+                            if ((e as any).kind === "viewed_group") {
+                              const grp = e as any;
+                              return (
+                                <li key={`vg-${idx}`} className="relative">
+                                  <span className="absolute -left-5 top-1.5 h-2.5 w-2.5 rounded-full bg-gray-400 ring-2 ring-white dark:ring-gray-900" />
+                                  <details className="rounded-md border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] px-2.5 py-1.5 text-xs">
+                                    <summary className="cursor-pointer font-medium text-gray-700 dark:text-gray-200">
+                                      Visto por {grp.count} {grp.count === 1 ? "usuario" : "usuarios"}
+                                    </summary>
+                                    <ul className="mt-1.5 space-y-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+                                      {grp.users.map((u: any, i: number) => (
+                                        <li key={i} className="flex items-center justify-between gap-2">
+                                          <span className="inline-flex items-center gap-1.5">
+                                            <span className={`h-1.5 w-1.5 rounded-full ${colorForUser(u.id).dot}`} />
+                                            {u.name}
+                                          </span>
+                                          <span className="text-gray-400 dark:text-gray-500">{fmtDateTime(u.at)}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </details>
+                                </li>
+                              );
+                            }
+                            const ev = e as EventNode;
+                            const meta = KIND_META[ev.kind] ?? { label: ev.kind, dot: "bg-gray-400", ring: "ring-gray-300", tone: "text-gray-600" };
+                            return (
+                              <li key={ev.id} className="relative">
+                                <span className={`absolute -left-5 top-1.5 h-2.5 w-2.5 rounded-full ${meta.dot} ring-2 ring-white dark:ring-gray-900`} />
+                                <div className="text-xs text-gray-800 dark:text-white">
+                                  <p className={`font-medium ${meta.tone}`}>{meta.label}</p>
+                                  {ev.actorName && (
+                                    <p className="mt-0.5 inline-flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+                                      <span className={`h-1.5 w-1.5 rounded-full ${colorForUser(ev.actorUserId).dot}`} />
+                                      {ev.actorName}
+                                    </p>
+                                  )}
+                                  <p className="text-[11px] text-gray-400 dark:text-gray-500">{fmtDateTime(ev.createdAt)}</p>
+                                  {ev.kind === "cancelled" && (ev.payload as any)?.reason && (
+                                    <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-300">Motivo: {String((ev.payload as any).reason)}</p>
+                                  )}
+                                  {ev.kind === "item_added" && (
+                                    <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+                                      {String((ev.payload as any).count ?? 0)} {(ev.payload as any)?.kind === "carwash_extra" ? "adicional(es)" : "repuesto(s)"} — total {fmtMoney((ev.payload as any).totalAdded ?? 0)}
+                                    </p>
+                                  )}
+                                  {ev.kind === "finalized" && (
+                                    <p className="mt-0.5 text-[11px] text-emerald-700 dark:text-emerald-300">Mantenimiento cerrado como completado.</p>
+                                  )}
+                                  {ev.kind === "taken" && (
+                                    <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-300">Operador tomó el mantenimiento y pasó a En proceso.</p>
+                                  )}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ol>
+                      </div>
+                    </Section>
+                  )}
 
-                  {/* ── Reasignar operador — solo admin/owner/supervisor ─────── */}
+                  {/* ── Reasignar operador — solo admin/owner/supervisor ── */}
                   {isFullAccess && (isProgramado || isProceso) && (
-                    <Section title="Reasignar operador">
+                    <Section icon={<UserIcon size={11} />} title="Reasignar operador">
                       <div className="p-3 space-y-2">
                         <select
                           value={assignTo || currentAssignedId}
@@ -406,18 +846,18 @@ export function MaintenanceDetailDrawer({
                   )}
                 </div>
 
-                {/* Footer con acciones contextuales */}
-                <div className="flex flex-wrap justify-end gap-2 border-t border-gray-200 dark:border-white/[0.06] px-5 py-3">
+                {/* ─── Footer ─── */}
+                <div className="flex flex-wrap justify-end gap-2 border-t border-gray-200 dark:border-white/[0.06] bg-gray-50/50 dark:bg-white/[0.02] px-5 py-3">
                   <button
                     type="button"
                     onClick={onClose}
-                    className="rounded-lg border border-gray-200 dark:border-white/[0.06] px-4 py-2 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition"
+                    className="rounded-lg border border-gray-200 dark:border-white/[0.06] px-4 py-2 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition"
                   >
                     Cerrar
                   </button>
 
-                  {/* Iniciar — Programado, operador (libre o dueño) */}
-                  {isProgramado && meRole === "operador" && (!item.assignedUserId || item.assignedUserId === String(meId)) && (
+                  {/* Iniciar — Programado, operador (dueño o libre) */}
+                  {isProgramado && meRole === "operador" && (assignedNum === meIdNum || assignedNum == null) && (
                     <button
                       onClick={() => onTake(item)}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 px-4 py-2 text-xs font-semibold text-white transition"
@@ -426,7 +866,7 @@ export function MaintenanceDetailDrawer({
                     </button>
                   )}
 
-                  {/* Tomar — admin/supervisor en programado libre */}
+                  {/* Tomar — admin en programado libre */}
                   {isProgramado && isFullAccess && !item.assignedUserId && (
                     <button
                       onClick={() => onTake(item)}
@@ -437,14 +877,14 @@ export function MaintenanceDetailDrawer({
                   )}
 
                   {/* Asignado a otro — informativo */}
-                  {isProgramado && !isFullAccess && item.assignedUserId && String(item.assignedUserId) !== String(meId) && (
+                  {isProgramado && !isFullAccess && assignedNum != null && assignedNum !== meIdNum && (
                     <span className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.06] px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
                       <AlertCircle size={12} /> Asignado a {item.assignedUserName}
                     </span>
                   )}
 
                   {/* Reprogramar */}
-                  {(isProceso || isProgramado) && canOperate && (
+                  {(isProceso || isProgramado) && canOperate && !isLavada && (
                     <button
                       onClick={() => onReschedule(item)}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/10 dark:hover:bg-amber-500/20 px-4 py-2 text-xs font-semibold text-amber-700 dark:text-amber-300 transition"
@@ -469,8 +909,7 @@ export function MaintenanceDetailDrawer({
                     </span>
                   )}
                 </div>
-
-              </div>
+              </>
             )}
           </motion.aside>
         </>
@@ -479,25 +918,41 @@ export function MaintenanceDetailDrawer({
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+// ─── Helpers de status / type ───────────────────────────────────────────────
+
+function statusGradient(status: string): string {
+  switch (status) {
+    case "Programado": return "rgba(124, 58, 237, 0.10)";
+    case "En proceso": return "rgba(56, 189, 248, 0.10)";
+    case "Completado": return "rgba(16, 185, 129, 0.10)";
+    default:           return "rgba(148, 163, 184, 0.10)";
+  }
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, { dot: string; cls: string }> = {
+    Programado: { dot: "bg-violet-500",  cls: "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-200" },
+    "En proceso": { dot: "bg-sky-500",     cls: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-200" },
+    Completado: { dot: "bg-emerald-500", cls: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-200" },
+  };
+  const c = map[status] ?? { dot: "bg-gray-400", cls: "border-gray-200 bg-gray-50 text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200" };
   return (
-    <div>
-      <p className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">{title}</p>
-      <div className="rounded-xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] divide-y divide-gray-100 dark:divide-white/[0.04]">
-        {children}
-      </div>
-    </div>
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${c.cls}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
+      {status}
+    </span>
   );
 }
 
-function Row({ icon, label, value }: { icon?: React.ReactNode; label: string; value: React.ReactNode }) {
+function TypeBadge({ type }: { type: string }) {
+  const map: Record<string, string> = {
+    Programado: "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200",
+    Correctivo: "border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200",
+    Lavada:     "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200",
+  };
   return (
-    <div className="flex items-start justify-between gap-3 px-3 py-2 text-xs">
-      <span className="inline-flex shrink-0 items-center gap-1.5 text-gray-500 dark:text-gray-400">
-        {icon}
-        {label}
-      </span>
-      <span className="text-right text-gray-800 dark:text-white">{value}</span>
-    </div>
+    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-semibold ${map[type] ?? "border-gray-200 bg-gray-50 text-gray-700"}`}>
+      {TYPE_LABEL[type] ?? type}
+    </span>
   );
 }

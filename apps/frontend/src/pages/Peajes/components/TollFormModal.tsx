@@ -226,12 +226,12 @@ export function TollFormModal({ open, entry, assets, assetsLoading, companyId, s
 
                     {/* Monto */}
                     <div>
-                      <label className={labelCls}><Hash size={10} className="inline mr-1" />Monto (COP)</label>
+                      <label className={labelCls}><Hash size={10} className="inline mr-1" />Monto (USD)</label>
                       <input
                         type="number"
-                        inputMode="numeric"
+                        inputMode="decimal"
                         min="0"
-                        step="100"
+                        step="0.01"
                         value={form.amount}
                         onChange={(e) => set("amount", e.target.value)}
                         placeholder="0"
@@ -248,7 +248,7 @@ export function TollFormModal({ open, entry, assets, assetsLoading, companyId, s
                         value={form.tollName}
                         onChange={(e) => set("tollName", e.target.value)}
                         maxLength={200}
-                        placeholder="Ej. Peaje Norte, Caseta Autopista Medellín…"
+                        placeholder="Ej. Quito → Guayaquil"
                         className={`${inputCls} ${errors.tollName ? "border-rose-400 focus:border-rose-500 focus:ring-rose-500/10" : ""}`}
                       />
                       {errors.tollName && <p className={errorCls}><AlertCircle size={10} />{errors.tollName}</p>}
@@ -262,7 +262,7 @@ export function TollFormModal({ open, entry, assets, assetsLoading, companyId, s
                         value={form.route}
                         onChange={(e) => set("route", e.target.value)}
                         maxLength={200}
-                        placeholder="Ej. Bogotá → Medellín"
+                        placeholder="Ej. Quito -> Guayaquil"
                         className={inputCls}
                       />
                     </div>

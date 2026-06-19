@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, RefreshCw, Calendar, AlertCircle } from "lucide-react";
-import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import type { Maintenance } from "../../../hooks/useMaintenancesV2";
 
 export function ReprogramDialog({
@@ -15,17 +14,38 @@ export function ReprogramDialog({
   onClose: () => void;
   onConfirm: (newScheduledFor: string, reason: string) => void;
 }) {
-  const [newDate, setNewDate] = useState<string>("");
+  // Guardamos fecha (YYYY-MM-DD) y hora (HH:mm) por separado para que
+  // el datetime-local nativo funcione bien, y al confirmar mandamos
+  // el ISO completo al backend.
+  const [date, setDate]   = useState<string>("");
+  const [time, setTime]   = useState<string>("08:00");
   const [reason, setReason] = useState<string>("");
 
   useEffect(() => {
     if (open) {
-      const today = new Date();
-      today.setDate(today.getDate() + 1);
-      setNewDate(today.toISOString().slice(0, 10));
+      // Por defecto: mañana a las 08:00 (o lo que estuviera antes).
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const baseDate = target?.scheduledFor
+        ? target.scheduledFor.slice(0, 10)
+        : tomorrow.toISOString().slice(0, 10);
+      const baseTime = target?.scheduledFor
+        ? target.scheduledFor.slice(11, 16)
+        : "08:00";
+      setDate(baseDate);
+      setTime(baseTime);
       setReason("");
     }
   }, [open, target]);
+
+  const canSubmit = !!(date && time && reason.trim()) && !saving;
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    // Combinar fecha + hora y mandar ISO al backend.
+    const iso = new Date(`${date}T${time}:00`).toISOString();
+    onConfirm(iso, reason.trim());
+  };
 
   return (
     <AnimatePresence>
@@ -63,11 +83,29 @@ export function ReprogramDialog({
               </div>
 
               <div className="mt-5 space-y-4">
-                <div>
-                  <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                    <Calendar size={10} className="inline mr-1" /> Nueva fecha
-                  </label>
-                  <DatePicker value={newDate} onChange={setNewDate} />
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-2">
+                    <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                      <Calendar size={10} className="inline mr-1" /> Nueva fecha
+                    </label>
+                    <input
+                      type="date"
+                      value={date}
+                      onChange={(e) => setDate(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/10 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                      Hora
+                    </label>
+                    <input
+                      type="time"
+                      value={time}
+                      onChange={(e) => setTime(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/10 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-white"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -86,7 +124,7 @@ export function ReprogramDialog({
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
                   <p className="inline-flex items-start gap-1.5 text-[11px] text-amber-800 dark:text-amber-200">
                     <AlertCircle size={12} className="mt-0.5 shrink-0" />
-                    Los repuestos y fotos asociados se eliminarán, pero la línea de tiempo se conserva. El mantenimiento vuelve a Programado y queda asignado a vos.
+                    Los repuestos y fotos asociados se eliminan, pero la línea de tiempo se conserva. El mantenimiento vuelve a Programado, conservando la asignación.
                   </p>
                 </div>
               </div>
@@ -101,8 +139,8 @@ export function ReprogramDialog({
                 </button>
                 <button
                   type="button"
-                  disabled={saving || !newDate || !reason.trim()}
-                  onClick={() => onConfirm(newDate, reason.trim())}
+                  disabled={!canSubmit}
+                  onClick={handleSubmit}
                   className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-amber-500/20 transition"
                 >
                   <RefreshCw size={13} /> {saving ? "Reprogramando…" : "Reprogramar"}

@@ -73,7 +73,7 @@ export default function VehicleMaintenancesPanel({ assetId, companyId }: Props) 
   const { can } = usePermissions();
 
   const isFullAccess = role === 'owner_empresa' || role === 'admin_empresa' || role === 'supervisor';
-  const canCreate    = can('maintenance', 'execution', 'crear') || isFullAccess;
+  const canCreate    = can('mantenimiento', 'execution', 'crear') || isFullAccess;
   const meId         = useMemo<number | null>(() => {
     if (!user?.id) return null;
     const m = String(user.id).match(/(\d+)/);

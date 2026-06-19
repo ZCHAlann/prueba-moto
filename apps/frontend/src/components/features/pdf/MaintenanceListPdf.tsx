@@ -4,7 +4,7 @@
 // rango, tabla con bandas, totales, paginación.
 
 import { pdf, Document, Page, View, Text, StyleSheet } from "@react-pdf/renderer";
-import type { Maintenance } from "../../hooks/useMaintenancesV2";
+import type { Maintenance } from "../../../hooks/useMaintenancesV2";
 
 const s = StyleSheet.create({
   page: {

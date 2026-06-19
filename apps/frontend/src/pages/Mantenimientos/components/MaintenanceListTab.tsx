@@ -1,13 +1,3 @@
-// pages/Mantenimientos/components/MaintenanceListTab.tsx
-// Vista unificada de mantenimientos. Diseño "anterior" con chips de estado y
-// categoría. Lógica v3: asignación, eventos (timeline), reprogramación,
-// categorías custom, vista dual admin vs operador.
-//
-// Fix: el selector de Tipo (Correctivo/Programado) en el modal de creación
-// ya no se oculta — antes `hideTypeSelector={!editing}` forzaba siempre
-// "Programado" al crear desde cualquier chip, incluso desde la pestaña de
-// Correctivos. Ahora se muestra siempre y además se precarga con el tipo
-// del chip activo (typeChip) para minimizar clicks.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -36,7 +26,7 @@ import { MaintenanceFormModal } from "./MaintenanceFormModal";
 import { MaintenanceDetailDrawer } from "./MaintenanceDetailDrawer";
 import { ReprogramDialog } from "./ReprogramDialog";
 
-const PAGE_SIZE = 7;
+const PAGE_SIZE = 10;
 
 const STATUS_CFG: Record<MaintenanceStatus, { label: string; cls: string; dot: string }> = {
   Programado:    { label: "Programado",   cls: "text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-500/10 border-violet-200 dark:border-violet-500/20",   dot: "bg-violet-500 dark:bg-violet-400" },
@@ -70,6 +60,14 @@ function userIdFromSession(sub: string | undefined): number | null {
   return m ? Number(m[1]) : null;
 }
 
+// Extrae el id numérico de un string con formato "prefix-123".
+// Devuelve null si el input no matchea ese patrón.
+function idFromPrefixedString(s: string | null | undefined): number | null {
+  if (!s) return null;
+  const m = String(s).match(/(\d+)$/);
+  return m ? Number(m[1]) : null;
+}
+
 interface Props {
   title?: string;
 }
@@ -77,13 +75,13 @@ interface Props {
 export function MaintenanceListTab({ title }: Props) {
   const { session, companyId } = useAuth();
   const { can } = usePermissions();
-  const meId   = userIdFromSession(session?.sub);
+  const meId   = userIdFromSession(session?.id);
   const meRole = session?.role ?? "";
   const isFullAccess = meRole === "owner_empresa" || meRole === "admin_empresa" || meRole === "supervisor";
 
-  const canCreate = can("maintenance", "execution", "crear");
-  const canEdit   = can("maintenance", "execution", "editar");
-  const canDelete = can("maintenance", "records", "eliminar");
+  const canCreate = can("mantenimiento", "execution", "crear");
+  const canEdit   = can("mantenimiento", "execution", "editar");
+  const canDelete = can("mantenimiento", "records", "eliminar");
 
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -212,10 +210,6 @@ export function MaintenanceListTab({ title }: Props) {
     } catch (e) { toast.error((e as Error).message); }
   };
 
-  // ── Tipo a precargar en el modal al crear ──────────────────────────────────
-  // Si hay un chip de tipo activo (Correctivo / Programado), se usa como
-  // default del formulario. Si está en "Todos", el modal cae a su default
-  // interno ("Programado").
   const createPrefillType: MaintenanceType | undefined =
     typeChip === "Correctivo" || typeChip === "Programado" ? typeChip : undefined;
 
@@ -342,111 +336,113 @@ export function MaintenanceListTab({ title }: Props) {
             <p className="text-xs text-gray-400 dark:text-gray-500">Ajustá los filtros o creá un nuevo mantenimiento.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px] text-sm">
-              <thead className="bg-gray-50 dark:bg-white/[0.02] text-[10px] uppercase tracking-widest text-gray-400 dark:text-gray-500">
-                <tr>
-                  <th className="text-left px-4 py-3 font-semibold">Fecha</th>
-                  <th className="text-left px-4 py-3 font-semibold">Vehículo</th>
-                  <th className="text-left px-4 py-3 font-semibold">Título</th>
-                  <th className="text-left px-4 py-3 font-semibold">Asignado</th>
-                  <th className="text-left px-4 py-3 font-semibold">Tipo</th>
-                  <th className="text-left px-4 py-3 font-semibold">Estado</th>
-                  <th className="text-left px-4 py-3 font-semibold">Categoría</th>
-                  <th className="text-right px-4 py-3 font-semibold">Costo</th>
-                  <th className="">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                <AnimatePresence initial={false}>
-                  {pageRows.map((m, i) => {
-                  const st = STATUS_CFG[m.status as MaintenanceStatus] ?? STATUS_CFG.Programado;
-                  const ty = TYPE_CFG[m.type] ?? TYPE_CFG.Programado;
-                  const cat = allCategories[m.category] ?? { label: m.category, dot: "bg-gray-400", cls: "text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-white/[0.04]" };
-                  return (
-                    <motion.tr
-                      key={m.id}
-                      layout
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -4 }}
-                      transition={{ duration: 0.18, delay: Math.min(i, 10) * 0.025, ease: "easeOut" }}
-                      onClick={() => setDetailId(m.id)}
-                      className={`border-t border-gray-100 dark:border-white/[0.04] border-l-4 ${ty.rowAccent} cursor-pointer transition-colors ${
-                        i % 2 === 1 ? "bg-gray-50/50 dark:bg-white/[0.015]" : ""
-                      } hover:bg-blue-50/40 dark:hover:bg-white/[0.04]`}
-                    >
-                      <td className="px-4 py-3 text-gray-600 dark:text-gray-300 whitespace-nowrap">
-                        {fmtDate(m.scheduledFor)}
-                        {m.isReprogrammed && (
-                          <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300" title={m.reprogramReason ?? ""}>
-                            Reprog.
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-gray-800 dark:text-white">{m.assetPlate ?? "—"}</div>
-                        <div className="text-[11px] text-gray-400 dark:text-gray-500">{m.assetName}</div>
-                      </td>
-                      <td className="px-4 py-3 text-gray-700 dark:text-gray-200 max-w-[220px] truncate">{m.title ?? "—"}</td>
-                      <td className="px-4 py-3 text-xs text-gray-700 dark:text-gray-200">
-                        {m.assignedUserName ? (
-                          <span className="inline-flex items-center gap-1">
-                            <UserIcon size={11} className="text-gray-400" />
-                            {m.assignedUserName}
-                          </span>
-                        ) : <span className="text-gray-400 dark:text-gray-500">—</span>}
-                      </td>
-                      <td className={`px-4 py-3 font-medium text-xs ${ty.cls}`}>{ty.label}</td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border ${st.cls}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />
-                          {st.label}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium ${cat.cls}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${cat.dot}`} />
-                          {cat.label}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-200 font-medium">{fmtMoney(m.totalCost)}</td>
-                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex justify-end gap-1">
-                          {canEdit && (
-                            <button
-                              onClick={() => { setEditing(m); setModalOpen(true); }}
-                              className="p-1.5 rounded-md text-violet-600 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-500/10 transition"
-                              title="Editar"
-                            >
-                              <Pencil size={13} />
-                            </button>
-                          )}
-                          {canDelete && m.status !== "Completado" && (
-                            <button
-                              onClick={() => onDelete(m)}
-                              className="p-1.5 rounded-md text-rose-500 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition"
-                              title="Eliminar"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          )}
-                          {canDelete && m.status === "Completado" && (
-                            <span
-                              className="p-1.5 text-gray-300 dark:text-gray-600 cursor-not-allowed"
-                              title="Los mantenimientos completados no se pueden eliminar"
-                            >
-                              <Trash2 size={13} />
+          <div className="overflow-y-auto max-h-[400px]">
+            <div className="overflow-x-scroll">
+              <table className="w-full min-w-[960px] text-sm">
+                <thead className="bg-gray-50 dark:bg-white/[0.02] text-[10px] uppercase tracking-widest text-gray-400 dark:text-gray-500">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-semibold">Fecha</th>
+                    <th className="text-left px-4 py-3 font-semibold">Vehículo</th>
+                    <th className="text-left px-4 py-3 font-semibold">Título</th>
+                    <th className="text-left px-4 py-3 font-semibold">Asignado</th>
+                    <th className="text-left px-4 py-3 font-semibold">Tipo</th>
+                    <th className="text-left px-4 py-3 font-semibold">Estado</th>
+                    <th className="text-left px-4 py-3 font-semibold">Categoría</th>
+                    <th className="text-right px-4 py-3 font-semibold">Costo</th>
+                    <th className="">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <AnimatePresence initial={false}>
+                    {pageRows.map((m, i) => {
+                    const st = STATUS_CFG[m.status as MaintenanceStatus] ?? STATUS_CFG.Programado;
+                    const ty = TYPE_CFG[m.type] ?? TYPE_CFG.Programado;
+                    const cat = allCategories[m.category] ?? { label: m.category, dot: "bg-gray-400", cls: "text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-white/[0.04]" };
+                    return (
+                      <motion.tr
+                        key={m.id}
+                        layout
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -4 }}
+                        transition={{ duration: 0.18, delay: Math.min(i, 10) * 0.025, ease: "easeOut" }}
+                        onClick={() => setDetailId(m.id)}
+                        className={`border-t border-gray-100 dark:border-white/[0.04] border-l-4 ${ty.rowAccent} cursor-pointer transition-colors ${
+                          i % 2 === 1 ? "bg-gray-50/50 dark:bg-white/[0.015]" : ""
+                        } hover:bg-blue-50/40 dark:hover:bg-white/[0.04]`}
+                      >
+                        <td className="px-4 py-3 text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                          {fmtDate(m.scheduledFor)}
+                          {m.isReprogrammed && (
+                            <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300" title={m.reprogramReason ?? ""}>
+                              Reprog.
                             </span>
                           )}
-                        </div>
-                      </td>
-                    </motion.tr>
-                  );
-                })}
-                </AnimatePresence>
-              </tbody>
-            </table>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-gray-800 dark:text-white">{m.assetPlate ?? "—"}</div>
+                          <div className="text-[11px] text-gray-400 dark:text-gray-500">{m.assetName}</div>
+                        </td>
+                        <td className="px-4 py-3 text-gray-700 dark:text-gray-200 max-w-[220px] truncate">{m.title ?? "—"}</td>
+                        <td className="px-4 py-3 text-xs text-gray-700 dark:text-gray-200">
+                          {m.assignedUserName ? (
+                            <span className="inline-flex items-center gap-1">
+                              <UserIcon size={11} className="text-gray-400" />
+                              {m.assignedUserName}
+                            </span>
+                          ) : <span className="text-gray-400 dark:text-gray-500">—</span>}
+                        </td>
+                        <td className={`px-4 py-3 font-medium text-xs ${ty.cls}`}>{ty.label}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border ${st.cls}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />
+                            {st.label}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium ${cat.cls}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${cat.dot}`} />
+                            {cat.label}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-200 font-medium">{fmtMoney(m.totalCost)}</td>
+                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex justify-end gap-1">
+                            {canEdit && (
+                              <button
+                                onClick={() => { setEditing(m); setModalOpen(true); }}
+                                className="p-1.5 rounded-md text-violet-600 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-500/10 transition"
+                                title="Editar"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                            )}
+                            {canDelete && m.status !== "Completado" && (
+                              <button
+                                onClick={() => onDelete(m)}
+                                className="p-1.5 rounded-md text-rose-500 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition"
+                                title="Eliminar"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                            {canDelete && m.status === "Completado" && (
+                              <span
+                                className="p-1.5 text-gray-300 dark:text-gray-600 cursor-not-allowed"
+                                title="Los mantenimientos completados no se pueden eliminar"
+                              >
+                                <Trash2 size={13} />
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </motion.tr>
+                    );
+                  })}
+                  </AnimatePresence>
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -475,14 +471,6 @@ export function MaintenanceListTab({ title }: Props) {
         )}
       </div>
 
-      {/*
-        FIX: ya no se pasa hideTypeSelector={!editing}. Antes esto forzaba
-        "Programado" siempre al crear, sin importar desde qué chip de tipo
-        se abriera el modal. Ahora el selector de tipo siempre está visible
-        al crear desde esta vista, y se precarga con el chip de tipo activo
-        (createPrefillType) para minimizar clicks cuando el usuario ya está
-        filtrando por "Correctivo" o "Programado".
-      */}
       <MaintenanceFormModal
         open={modalOpen}
         onClose={() => { setModalOpen(false); setEditing(null); }}

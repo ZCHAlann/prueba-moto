@@ -96,8 +96,8 @@ function serializeMaintenance(m: any, items: any[]) {
 
 router.get(
   '/maintenance.json',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'records', 'ver'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'records', 'ver'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -139,8 +139,8 @@ router.get(
 
 router.get(
   '/maintenance/workshop.json',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'records', 'ver'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'records', 'ver'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -192,8 +192,8 @@ router.get(
 
 router.get(
   '/maintenance/supplier.json',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'records', 'ver'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'records', 'ver'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;

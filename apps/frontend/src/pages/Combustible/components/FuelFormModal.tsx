@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ApiFuelEntry, CreateFuelPayload } from "../../../hooks/useFuel";
-import { uploadFuelPhoto } from "../../../hooks/useFuel";
+import { uploadFuelPhoto, uploadOdometerPhoto } from "../../../hooks/useFuel";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -90,7 +90,11 @@ export function FuelFormModal({ open, entry, assets, assetsLoading, companyId, o
   const [photoFile,    setPhotoFile]    = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [odometerPhotoFile,    setOdometerPhotoFile]    = useState<File | null>(null);
+  const [odometerPhotoPreview, setOdometerPhotoPreview] = useState<string | null>(null);
+  const [uploadingOdoPhoto,    setUploadingOdoPhoto]    = useState(false);
+  const fileRef          = useRef<HTMLInputElement>(null);
+  const odometerFileRef  = useRef<HTMLInputElement>(null);
 
   // Reinicializar cuando se abre
   useEffect(() => {
@@ -99,6 +103,8 @@ export function FuelFormModal({ open, entry, assets, assetsLoading, companyId, o
     setErrors({});
     setPhotoFile(null);
     setPhotoPreview(entry?.photoUrl ?? null);
+    setOdometerPhotoFile(null);
+    setOdometerPhotoPreview(entry?.odometerPhotoUrl ?? null);
   }, [open, entry]);
 
   function set<K extends keyof FormState>(k: K, v: FormState[K]) {
@@ -117,6 +123,19 @@ export function FuelFormModal({ open, entry, assets, assetsLoading, companyId, o
     setPhotoFile(null);
     setPhotoPreview(null);
     if (fileRef.current) fileRef.current.value = "";
+  }
+
+  function handleOdometerPhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setOdometerPhotoFile(file);
+    setOdometerPhotoPreview(URL.createObjectURL(file));
+  }
+
+  function removeOdometerPhoto() {
+    setOdometerPhotoFile(null);
+    setOdometerPhotoPreview(null);
+    if (odometerFileRef.current) odometerFileRef.current.value = "";
   }
 
   async function handleSubmit() {
@@ -141,15 +160,29 @@ export function FuelFormModal({ open, entry, assets, assetsLoading, companyId, o
         photoUrl = null;
       }
 
+      // Foto del odómetro — misma lógica independiente
+      let odometerPhotoUrl: string | null = entry?.odometerPhotoUrl ?? null;
+      if (odometerPhotoFile) {
+        setUploadingOdoPhoto(true);
+        try {
+          odometerPhotoUrl = await uploadOdometerPhoto(odometerPhotoFile, companyId);
+        } finally {
+          setUploadingOdoPhoto(false);
+        }
+      } else if (!odometerPhotoPreview) {
+        odometerPhotoUrl = null;
+      }
+
       const payload: CreateFuelPayload = {
-        assetId:  form.assetId,
-        date:     form.date,
-        liters:   Number(form.liters),
-        cost:     Number(form.cost),
-        odometer: Number(form.odometer),
-        station:  form.station.trim(),
-        notes:    form.notes.trim() || undefined,
+        assetId:          form.assetId,
+        date:             form.date,
+        liters:           Number(form.liters),
+        cost:             Number(form.cost),
+        odometer:         Number(form.odometer),
+        station:          form.station.trim(),
+        notes:            form.notes.trim() || undefined,
         photoUrl,
+        odometerPhotoUrl,
       };
 
       await onSave(payload, isEdit ? entry!.id : undefined);
@@ -277,8 +310,8 @@ export function FuelFormModal({ open, entry, assets, assetsLoading, companyId, o
                   </div>
                 </div>
 
-                {/* Odómetro */}
-                <div>
+                {/* Odómetro (km) + foto */}
+                <div className="space-y-2">
                   <label className={labelCls}>
                     <Gauge size={10} className="inline mr-1" />
                     Odómetro (km)
@@ -295,6 +328,49 @@ export function FuelFormModal({ open, entry, assets, assetsLoading, companyId, o
                   {errors.odometer && (
                     <p className={errorCls}><AlertCircle size={10} />{errors.odometer}</p>
                   )}
+
+                  {/* Foto del odómetro */}
+                  <div className="pt-1">
+                    <p className="mb-1.5 flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500">
+                      <Camera size={10} />
+                      Foto del odómetro
+                      <span className="font-normal">(opcional)</span>
+                    </p>
+
+                    {odometerPhotoPreview ? (
+                      <div className="relative w-full overflow-hidden rounded-xl border border-gray-200 dark:border-white/[0.08]">
+                        <img
+                          src={odometerPhotoPreview}
+                          alt="Foto del odómetro"
+                          className="h-28 w-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={removeOdometerPhoto}
+                          className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => odometerFileRef.current?.click()}
+                        className="flex h-14 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 text-xs text-gray-400 transition hover:border-brand-400 hover:bg-brand-50/40 hover:text-brand-500 dark:border-white/[0.10] dark:hover:border-brand-500/40 dark:hover:bg-brand-500/[0.05]"
+                      >
+                        <Camera size={13} />
+                        Subir foto del odómetro
+                      </button>
+                    )}
+
+                    <input
+                      ref={odometerFileRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif"
+                      className="hidden"
+                      onChange={handleOdometerPhotoChange}
+                    />
+                  </div>
                 </div>
 
                 {/* Estación */}
@@ -364,7 +440,7 @@ export function FuelFormModal({ open, entry, assets, assetsLoading, companyId, o
                   <input
                     ref={fileRef}
                     type="file"
-                    accept="image/*"
+                    accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif"
                     className="hidden"
                     onChange={handlePhotoChange}
                   />
@@ -390,7 +466,16 @@ export function FuelFormModal({ open, entry, assets, assetsLoading, companyId, o
                 className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-600 active:scale-95 disabled:opacity-50 transition"
               >
                 {saving
-                  ? <><Loader2 size={14} className="animate-spin" />{uploadingPhoto ? "Subiendo foto…" : "Guardando…"}</>
+                  ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      {uploadingPhoto
+                        ? "Subiendo recibo…"
+                        : uploadingOdoPhoto
+                          ? "Subiendo foto odómetro…"
+                          : "Guardando…"}
+                    </>
+                  )
                   : isEdit ? "Guardar cambios" : "Registrar carga"
                 }
               </button>

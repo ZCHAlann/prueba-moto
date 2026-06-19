@@ -1,6 +1,3 @@
-// pages/Mantenimientos/page.tsx
-// Light/dark theme completo.
-
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { usePermissions } from "../../hooks/usePermissions";
@@ -15,9 +12,9 @@ type Tab = "agendar" | "lista";
 export function MantenimientosPage() {
   const { can } = usePermissions();
 
-  const canSeeAgenda    = can("maintenance", "agenda",    "ver");
-  const canSeeExecution = can("maintenance", "execution", "ver");
-  const canSeeRecords   = can("maintenance", "records",   "ver");
+  const canSeeAgenda    = can("mantenimiento", "agenda",    "ver");
+  const canSeeExecution = can("mantenimiento", "execution", "ver");
+  const canSeeRecords   = can("mantenimiento", "records",   "ver");
 
   // Default: si el user tiene permiso de ver la lista, arrancar ahí. Si no, agenda.
   const [tab, setTab] = useState<Tab>(() => {

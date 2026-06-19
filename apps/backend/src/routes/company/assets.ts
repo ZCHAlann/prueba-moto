@@ -4,7 +4,7 @@ import { eq, and, ilike, or, desc, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyAssets, companyAssignments, companyDrivers } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
-import { requireModule } from '../../middlewares/requireModule';
+import { requireModule, requireModuleAny } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
@@ -52,7 +52,12 @@ const updateAssetSchema = createAssetSchema.partial();
 // ─── GET /company/:id/assets ──────────────────────────────────────────────────
 // Query: ?status=Operativo &siteId=site-1 &search=placa
 
-router.get('/', requireModule('gestion', 'flotas'), async (req, res, next) => {
+// El listado de activos sirve tanto al módulo "gestion" (Flotas) como a
+// "mantenimiento" (el form de mantenimiento necesita elegir vehículo).
+router.get('/', requireModuleAny([
+  { module: 'gestion', submodule: 'flotas' },
+  { module: 'mantenimiento', submodule: 'execution' },
+]), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const { status, siteId, search, assetType } = req.query;

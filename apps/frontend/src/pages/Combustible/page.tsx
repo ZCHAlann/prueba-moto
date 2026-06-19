@@ -1,16 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Fuel, Plus, X, Droplets, DollarSign, Gauge,
   MapPin, TrendingUp, TrendingDown, ChevronRight,
-  Flame, BarChart3, Camera, ChevronLeft,
-  Pencil, Trash2, AlertTriangle,
+  Flame, BarChart3, ChevronLeft,
+  Pencil, Trash2,
   Download, Calendar, Table2, CalendarRange as CalRangeIcon,
   FileText, FileDown, Sheet, Copy, Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
+import type { ApexOptions } from "apexcharts";
 import { useFuel, type ApiFuelEntry, type CreateFuelPayload } from "../../hooks/useFuel";
 import { usePermissions } from "../../hooks/usePermissions";
 import { RowActionMenu } from "../../components/ui/table/RowActionMenu";
@@ -27,6 +28,10 @@ import { useAuth } from "../../context/AuthContext";
 import { FuelDetailDrawer } from "./components/FuelDetailDrawer";
 import { DeleteConfirm } from "./components/DeleteConfirm";
 import { FuelFormModal } from "./components/FuelFormModal";
+import { FuelInsights } from "./FuelInsights";
+
+// ─── Lazy ApexCharts (igual que el dashboard) ──────────────────────────────
+const ReactApexChart = lazy(() => import("react-apexcharts"));
 
 // ─── Export columns ────────────────────────────────────────────────────────────
 
@@ -42,17 +47,406 @@ const EXPORT_COLS: ExportColumn[] = [
 
 const PAGE_SIZE = 7;
 
+// ─── Palette ───────────────────────────────────────────────────────────────
+const CHART_COLORS = [
+  "#465FFF", "#10b981", "#f59e0b", "#06b6d4",
+  "#8b5cf6", "#f43f5e", "#22c55e", "#eab308",
+  "#a78bfa", "#fb7185", "#38bdf8", "#4ade80",
+];
+
+const MONTHS_ES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmt(n: number, decimals = 2) {
   return n.toLocaleString("es-EC", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
+function fmtMonth(ym: string) {
+  const [y, m] = ym.split("-");
+  return `${MONTHS_ES[Number(m) - 1]} ${y.slice(2)}`;
+}
+
 function fmtDate(ymd: string) {
   if (!ymd) return "—";
   const [y, m, d] = ymd.split("-");
-  const months = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
-  return `${d} ${months[Number(m) - 1]} ${y}`;
+  return `${d} ${MONTHS_ES[Number(m) - 1]} ${y}`;
+}
+
+function Sk({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded-lg bg-gray-200 dark:bg-white/[0.06] ${className}`} />;
+}
+
+// ─── Chart data builders ───────────────────────────────────────────────────
+
+type AssetMeta = { id: string; plate: string };
+
+function buildMonthBuckets(
+  fuelEntries: ApiFuelEntry[],
+  activeAssets: AssetMeta[]
+): { months: string[]; labels: string[]; seriesByAsset: Map<string, number[]> } {
+  const monthSet = new Set<string>();
+  const raw = new Map<string, Map<string, number>>(); // month → assetId → value
+
+  for (const e of fuelEntries) {
+    const month = e.date.slice(0, 7);
+    monthSet.add(month);
+    if (!raw.has(month)) raw.set(month, new Map());
+    const bucket = raw.get(month)!;
+    bucket.set(e.assetId, (bucket.get(e.assetId) ?? 0) + e.liters);
+  }
+
+  const months = [...monthSet].sort();
+  const labels = months.map(fmtMonth);
+
+  const seriesByAsset = new Map<string, number[]>();
+  for (const a of activeAssets) {
+    seriesByAsset.set(
+      a.id,
+      months.map((m) => raw.get(m)?.get(a.id) ?? 0)
+    );
+  }
+
+  return { months, labels, seriesByAsset };
+}
+
+function buildCostBuckets(
+  fuelEntries: ApiFuelEntry[],
+  activeAssets: AssetMeta[]
+): { months: string[]; labels: string[]; seriesByAsset: Map<string, number[]> } {
+  const monthSet = new Set<string>();
+  const raw = new Map<string, Map<string, number>>();
+
+  for (const e of fuelEntries) {
+    const month = e.date.slice(0, 7);
+    monthSet.add(month);
+    if (!raw.has(month)) raw.set(month, new Map());
+    const bucket = raw.get(month)!;
+    bucket.set(e.assetId, (bucket.get(e.assetId) ?? 0) + e.cost);
+  }
+
+  const months = [...monthSet].sort();
+  const labels = months.map(fmtMonth);
+
+  const seriesByAsset = new Map<string, number[]>();
+  for (const a of activeAssets) {
+    seriesByAsset.set(
+      a.id,
+      months.map((m) => raw.get(m)?.get(a.id) ?? 0)
+    );
+  }
+
+  return { months, labels, seriesByAsset };
+}
+
+// ─── ApexCharts option builders ────────────────────────────────────────────
+
+const GRID_BORDER = "rgba(156,163,175,0.10)";
+const BASE_AXIS_STYLE = { fontSize: "11px", colors: "#6B7280" as string | string[] };
+
+function makeLineOptions(
+  categories: string[],
+  colors: string[],
+  theme: "dark" | "light",
+  yFormatter: (v: number) => string
+): ApexOptions {
+  return {
+    chart: {
+      fontFamily: "Outfit, sans-serif",
+      type: "line",
+      height: 260,
+      toolbar: { show: false },
+      background: "transparent",
+      zoom: { enabled: false },
+      animations: { enabled: true, speed: 400 },
+    },
+    colors,
+    stroke: {
+      curve: "smooth",
+      width: 2.5,
+    },
+    markers: {
+      size: 0,
+      hover: { size: 5, sizeOffset: 2 },
+    },
+    fill: {
+      type: "gradient",
+      gradient: {
+        shadeIntensity: 1,
+        opacityFrom: 0.18,
+        opacityTo: 0,
+        stops: [0, 100],
+      },
+    },
+    grid: {
+      borderColor: GRID_BORDER,
+      xaxis: { lines: { show: false } },
+      yaxis: { lines: { show: true } },
+      padding: { top: 0, right: 8, bottom: 0, left: 0 },
+    },
+    dataLabels: { enabled: false },
+    xaxis: {
+      type: "category",
+      categories,
+      axisBorder: { show: false },
+      axisTicks: { show: false },
+      labels: { style: BASE_AXIS_STYLE },
+    },
+    yaxis: {
+      labels: {
+        style: { fontSize: "11px", colors: ["#6B7280"] },
+        formatter: yFormatter,
+      },
+    },
+    legend: {
+      show: true,
+      position: "top",
+      horizontalAlign: "left",
+      fontSize: "11px",
+      labels: { colors: theme === "dark" ? "#9CA3AF" : "#6B7280" },
+      markers: { size: 6 },
+      itemMargin: { horizontal: 10 },
+    },
+    tooltip: {
+      theme,
+      shared: true,
+      intersect: false,
+      y: { formatter: yFormatter },
+    },
+  };
+}
+
+function makeBarOptions(
+  categories: string[],
+  colors: string[],
+  theme: "dark" | "light",
+  yFormatter: (v: number) => string
+): ApexOptions {
+  return {
+    chart: {
+      fontFamily: "Outfit, sans-serif",
+      type: "bar",
+      height: 260,
+      toolbar: { show: false },
+      background: "transparent",
+      animations: { enabled: true, speed: 400 },
+    },
+    colors,
+    plotOptions: {
+      bar: {
+        horizontal: false,
+        columnWidth: "55%",
+        borderRadius: 4,
+        borderRadiusApplication: "end",
+      },
+    },
+    dataLabels: { enabled: false },
+    stroke: { show: true, width: 2, colors: ["transparent"] },
+    grid: {
+      borderColor: GRID_BORDER,
+      xaxis: { lines: { show: false } },
+      yaxis: { lines: { show: true } },
+      padding: { top: 0, right: 8, bottom: 0, left: 0 },
+    },
+    xaxis: {
+      categories,
+      axisBorder: { show: false },
+      axisTicks: { show: false },
+      labels: { style: BASE_AXIS_STYLE },
+    },
+    yaxis: {
+      labels: {
+        style: { fontSize: "11px", colors: ["#6B7280"] },
+        formatter: yFormatter,
+      },
+    },
+    legend: {
+      show: true,
+      position: "top",
+      horizontalAlign: "left",
+      fontSize: "11px",
+      labels: { colors: theme === "dark" ? "#9CA3AF" : "#6B7280" },
+      markers: { size: 6 },
+      itemMargin: { horizontal: 10 },
+    },
+    tooltip: {
+      theme,
+      shared: true,
+      intersect: false,
+      y: { formatter: yFormatter },
+    },
+    fill: {
+      type: "gradient",
+      gradient: { opacityFrom: 0.9, opacityTo: 0.6 },
+    },
+  };
+}
+
+// ─── FuelCharts component ─────────────────────────────────────────────────
+
+type FuelChartsProps = {
+  fuelEntries: ApiFuelEntry[];
+  assets: Array<{ id: number; plate: string; brand: string | null; model: string | null }>;
+};
+
+function FuelCharts({ fuelEntries, assets }: FuelChartsProps) {
+  const [isDark, setIsDark] = useState(
+    () => document.documentElement.classList.contains("dark")
+  );
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setIsDark(document.documentElement.classList.contains("dark"));
+    });
+    observer.observe(document.documentElement, { attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+  const theme = isDark ? "dark" : "light";
+
+  // Assets activos (que tienen al menos una entry)
+  const activeAssets = useMemo<AssetMeta[]>(() => {
+    const ids = new Set<string>(fuelEntries.map((e) => e.assetId));
+    return assets
+      .filter((a) => ids.has(String(a.id)))
+      .map((a) => ({
+        id: String(a.id),
+        plate: a.plate ?? String(a.id),
+      }))
+      .sort((a, b) => a.plate.localeCompare(b.plate));
+  }, [fuelEntries, assets]);
+
+  const litersBuckets = useMemo(
+    () => buildMonthBuckets(fuelEntries, activeAssets),
+    [fuelEntries, activeAssets]
+  );
+
+  const costBuckets = useMemo(
+    () => buildCostBuckets(fuelEntries, activeAssets),
+    [fuelEntries, activeAssets]
+  );
+
+  const litersSeries = useMemo(() =>
+    activeAssets.map((a, i) => ({
+      name: a.plate,
+      data: litersBuckets.seriesByAsset.get(a.id) ?? [],
+    })),
+    [activeAssets, litersBuckets]
+  );
+
+  const costSeries = useMemo(() =>
+    activeAssets.map((a) => ({
+      name: a.plate,
+      data: costBuckets.seriesByAsset.get(a.id) ?? [],
+    })),
+    [activeAssets, costBuckets]
+  );
+
+  const colors = useMemo(
+    () => activeAssets.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
+    [activeAssets]
+  );
+
+  const lineOpts = useMemo(
+    () => makeLineOptions(
+      litersBuckets.labels,
+      colors,
+      theme,
+      (v) => `${fmt(v, 0)} L`
+    ),
+    [litersBuckets.labels, colors, theme]
+  );
+
+  const barOpts = useMemo(
+    () => makeBarOptions(
+      costBuckets.labels,
+      colors,
+      theme,
+      (v) => `$${fmt(v)}`
+    ),
+    [costBuckets.labels, colors, theme]
+  );
+
+  if (fuelEntries.length === 0 || activeAssets.length === 0) {
+    return (
+      <div className="flex h-48 items-center justify-center rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
+        <div className="flex flex-col items-center gap-2">
+          <BarChart3 size={20} className="text-gray-300 dark:text-gray-600" />
+          <p className="text-xs text-gray-400 dark:text-gray-500">Sin datos suficientes para generar gráficas</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+
+      {/* Gráfica 1 — Línea suavizada: litros por vehículo */}
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-[#0F172A]">
+        <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-brand-50 dark:bg-brand-500/[0.12]">
+              <TrendingUp size={14} className="text-brand-600 dark:text-brand-400" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800 dark:text-white">
+                Litros por vehículo
+              </h3>
+              <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                Consumo mensual · una línea por unidad
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="p-4">
+          <div className="max-w-full overflow-x-hidden">
+            <div className="min-w-[400px] xl:min-w-full">
+              <Suspense fallback={<Sk className="h-[260px]" />}>
+                <ReactApexChart
+                  options={lineOpts}
+                  series={litersSeries}
+                  type="line"
+                  height={260}
+                />
+              </Suspense>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Gráfica 2 — Barras verticales: costo por vehículo */}
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-[#0F172A]">
+        <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-success-50 dark:bg-success-500/[0.12]">
+              <DollarSign size={14} className="text-success-600 dark:text-success-400" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800 dark:text-white">
+                Gasto por vehículo
+              </h3>
+              <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                Costo mensual en USD · comparativa entre unidades
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="p-4">
+          <div className="max-w-full overflow-x-hidden">
+            <div className="min-w-[400px] xl:min-w-full">
+              <Suspense fallback={<Sk className="h-[260px]" />}>
+                <ReactApexChart
+                  options={barOpts}
+                  series={costSeries}
+                  type="bar"
+                  height={260}
+                />
+              </Suspense>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  );
 }
 
 // ─── KPI card ─────────────────────────────────────────────────────────────────
@@ -427,6 +821,9 @@ export function FuelPage() {
   const canEdit   = can("combustible", "combustible", "editar");
   const canDelete = can("combustible", "combustible", "eliminar");
 
+  const isAdminOrOwner =
+    session?.role === "admin_empresa" || session?.role === "owner_empresa";
+
   const loading = fuelLoading;
 
   const [search,       setSearch]       = useState("");
@@ -435,7 +832,6 @@ export function FuelPage() {
   const [page,         setPage]         = useState(1);
   const [detail,       setDetail]       = useState<ApiFuelEntry | null>(null);
 
-  // Modal states
   const [formOpen,     setFormOpen]     = useState(false);
   const [editEntry,    setEditEntry]    = useState<ApiFuelEntry | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ApiFuelEntry | null>(null);
@@ -453,11 +849,12 @@ export function FuelPage() {
     const q = search.trim().toLowerCase();
     return fuelEntries
       .map((e) => {
-        const asset = assets.find((a) => a.id === e.assetId);
+        // BUG FIX: comparar como strings para evitar number vs string mismatch
+        const asset = assets.find((a) => String(a.id) === String(e.assetId));
         return {
           id:       e.id,
           plate:    asset?.plate?.trim() || "—",
-          unit:     asset ? `${asset.brand} ${asset.model}`.trim() || "—" : "—",
+          unit:     asset ? `${asset.brand ?? ""} ${asset.model ?? ""}`.trim() || "—" : "—",
           date:     e.date,
           liters:   `${fmt(e.liters, 0)} L`,
           cost:     `${fmt(e.cost)} USD`,
@@ -486,11 +883,12 @@ export function FuelPage() {
 
   const allExportRows: ExportRow[] = useMemo(() => fuelEntries
     .map((e) => {
-      const asset = assets.find((a) => a.id === e.assetId);
+      // BUG FIX: mismo fix de comparación
+      const asset = assets.find((a) => String(a.id) === String(e.assetId));
       return {
         id:       e.id,
         plate:    asset?.plate?.trim() || "—",
-        unit:     asset ? `${asset.brand} ${asset.model}`.trim() || "—" : "—",
+        unit:     asset ? `${asset.brand ?? ""} ${asset.model ?? ""}`.trim() || "—" : "—",
         date:     e.date,
         liters:   `${fmt(e.liters, 0)} L`,
         cost:     `${fmt(e.cost)} USD`,
@@ -584,6 +982,26 @@ export function FuelPage() {
         <KpiCard icon={<Droplets  size={16} />}   label="Litros"      value={`${fmt(totalLiters, 0)} L`}    sub="Consumo acumulado"   accent="bg-warning-500" />
         <KpiCard icon={<DollarSign size={16} />}  label="Costo total" value={`${fmt(totalCost)} USD`}       sub={`Promedio ${fmt(avgCostPerL)} USD/L`} accent="bg-success-500" />
       </div>
+
+      {/* ── Dashboard de gráficas (solo admin/owner) ───────────────────────── */}
+      {isAdminOrOwner && (
+        <div className="space-y-3">
+          <div className="flex items-end justify-between px-0.5">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-800 dark:text-white">
+                Análisis de consumo
+              </h2>
+              <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                Evolución y comparativa mensual por vehículo
+              </p>
+            </div>
+          </div>
+          <FuelCharts fuelEntries={fuelEntries} assets={assets} />
+
+          {/* Insights automáticos — usa el mismo rango de fechas del historial */}
+          <FuelInsights from={dateFrom} to={dateTo} />
+        </div>
+      )}
 
       {/* ── Historial ─────────────────────────────────────────────────────── */}
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
@@ -707,7 +1125,6 @@ export function FuelPage() {
 
       {/* ── Modals ─────────────────────────────────────────────────────────── */}
 
-      {/* FuelFormModal: siempre montado, controlado por open para recibir assets reactivamente */}
       <FuelFormModal
         open={formOpen}
         entry={editEntry}

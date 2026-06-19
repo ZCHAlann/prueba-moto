@@ -59,10 +59,45 @@ function getDefaultPermissionsForRole(
   // 2) Roles custom del catálogo (BD) — buscar por key
   const fromCatalog = companyRoles.find((r) => r.key === roleKey);
   if (fromCatalog) {
-    return fromCatalog.permissions ?? {};
+    return normalizeModulePermissions(fromCatalog.permissions ?? {});
   }
   // 3) Roles hardcodeados (supervisor, operador, conductor)
   return ROLE_DEFAULT_PERMISSIONS[roleKey] ?? {};
+}
+
+/**
+ * Normaliza `modulePermissions` al shape esperado: `{ [modKey]: { [subKey]: ActionKey[] } }`.
+ *
+ * Caso histórico de datos mal guardados (pre-migración 0013): los submódulos
+ * de mantenimiento ("agenda", "execution", "records", "notifications") aparecen
+ * al top-level del jsonb en vez de anidados bajo "mantenimiento". Si el
+ * editor los recibe así, no puede renderizar nada bajo el módulo correcto.
+ *
+ * Esta función envuelve los keys sueltos bajo "mantenimiento" sin pisar lo
+ * que ya esté bien.
+ */
+const MANTENIMIENTO_SUBMODULES = new Set(["agenda", "execution", "records", "notifications"]);
+
+function normalizeModulePermissions(perms: PermissionMap | null | undefined): PermissionMap {
+  if (!perms || typeof perms !== "object") return {};
+  const result: PermissionMap = JSON.parse(JSON.stringify(perms));
+  const loose: Record<string, unknown> = {};
+  let hasLoose = false;
+  for (const k of Object.keys(result)) {
+    if (MANTENIMIENTO_SUBMODULES.has(k)) {
+      loose[k] = result[k];
+      delete result[k];
+      hasLoose = true;
+    }
+  }
+  if (!hasLoose) return result;
+
+  // Merge con el "mantenimiento" existente (si lo hay)
+  const existing = (result.mantenimiento && typeof result.mantenimiento === "object")
+    ? { ...(result.mantenimiento as Record<string, unknown>) }
+    : {};
+  result.mantenimiento = { ...existing, ...loose };
+  return result;
 }
 
 const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionMap> = {
@@ -273,7 +308,7 @@ function userToForm(user: CompanyUser): UserFormState {
     role:           user.role,
     status:         user.status,
     permissions:    Object.keys(user.modulePermissions).length > 0
-                      ? user.modulePermissions
+                      ? normalizeModulePermissions(user.modulePermissions)
                       : ROLE_DEFAULT_PERMISSIONS[user.role] ?? {},
     fullName:       String(
                       p.fullName ??
@@ -885,7 +920,7 @@ export function UsersPage() {
   const openCreate = () => { setEditingUser(null); setOriginalPermissionsSnapshot(undefined); setModalOpen(true); };
   const openEdit   = (u: CompanyUser) => {
     setEditingUser(u);
-    setOriginalPermissionsSnapshot(JSON.parse(JSON.stringify(u.modulePermissions ?? {})));
+    setOriginalPermissionsSnapshot(normalizeModulePermissions(u.modulePermissions));
     setModalOpen(true);
   };
 

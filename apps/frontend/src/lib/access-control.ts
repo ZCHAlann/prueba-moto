@@ -73,7 +73,27 @@ function canAccessItem(
 
   const ms = resolveModuleSub(href);
   if (!ms) return true; // ruta sin módulo asociado (ej. /perfil) — pasa
+
+  // /mantenimiento es también un módulo "agregado": el operador debe
+  // poder ver la entrada del sidebar con que tenga permiso de ver en
+  // AL MENOS UN submódulo (agenda / execution / records). El mapeo
+  // del href solo conoce "agenda" — no queremos que el sidebar
+  // desaparezca porque el operador solo tiene "execution.ver".
+  if (ms[0] === "mantenimiento") {
+    return hasAnyMantenimientoSubmoduleVer(modulePermissions);
+  }
+
   return hasVer(modulePermissions, ms[0], ms[1]);
+}
+
+/** True si el user tiene AL MENOS UN submódulo de mantenimiento con "ver". */
+function hasAnyMantenimientoSubmoduleVer(
+  modulePermissions: Record<string, Record<string, string[]>>,
+): boolean {
+  const mantPerms = modulePermissions?.mantenimiento ?? {};
+  return Object.values(mantPerms).some(
+    (acts) => Array.isArray(acts) && acts.includes("ver"),
+  );
 }
 
 /** True si el user tiene AL MENOS UN submódulo real del dashboard con "ver". */

@@ -11,6 +11,7 @@ import { NotFoundError } from '../../lib/errors';
 import { toId, parseId, parseIdFlexible } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
+import { requireAdmin } from '../../middlewares/requireAdmin';
 
 const router = Router({ mergeParams: true });
 
@@ -27,6 +28,7 @@ const createFuelSchema = z.object({
   fuelType: z.enum(['Diesel', 'Gasolina', 'Electrico', 'Hibrido']).optional().nullable(),
   notes: validators.longTextOptional,
   photoUrl: z.string().min(1).max(2_000_000).nullable().optional(),
+  odometerPhotoUrl: z.string().min(1).max(2_000_000).nullable().optional(),
 });
 
 const updateFuelSchema = createFuelSchema.partial();
@@ -290,6 +292,7 @@ function serializeFuel(
     fuelType: f.fuelType,
     notes: f.notes,
     photoUrl: f.photoUrl,
+    odometerPhotoUrl: f.odometerPhotoUrl ?? null,
     // ── Enrichment: datos del activo para display sin hooks externos ─────────
     assetPlate: assetInfo?.plate ?? null,
     assetBrand: assetInfo?.brand ?? null,
@@ -298,5 +301,263 @@ function serializeFuel(
     updatedAt: f.updatedAt,
   };
 }
+
+// ─── GET /company/:id/fuel/analytics/insights ─────────────────────────────────
+//
+// Análisis automático de combustible (solo admin/owner).
+// Detecta:
+//   - Picos de consumo por vehículo (z-score > 2 sobre su media histórica).
+//   - Top 5 / Bottom 5 vehículos por litros totales en el rango.
+//   - Mejor / peor rendimiento (km/L) por vehículo.
+//   - Tendencia (sube / baja / estable) comparando 1ra vs 2da mitad del rango.
+//   - Mes más caro y más barato por vehículo (picos positivos y negativos).
+//
+// Query: ?from=YYYY-MM-DD&to=YYYY-MM-DD&assetId=asset-42 (opcional)
+
+router.get('/analytics/insights', requireModule('combustible'), requireAdmin, async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const { from, to, assetId } = req.query as { from?: string; to?: string; assetId?: string };
+
+    const conditions: any[] = [eq(companyFuelEntries.companyId, companyId)];
+    if (from) conditions.push(gte(companyFuelEntries.date, from));
+    if (to)   conditions.push(lte(companyFuelEntries.date, to));
+    if (assetId) conditions.push(eq(companyFuelEntries.assetId, parseIdFlexible('asset', assetId)));
+
+    const rows = await db
+      .select({
+        id:        companyFuelEntries.id,
+        date:      companyFuelEntries.date,
+        liters:    companyFuelEntries.liters,
+        cost:      companyFuelEntries.cost,
+        odometer:  companyFuelEntries.odometer,
+        assetId:   companyFuelEntries.assetId,
+        assetName: companyAssets.name,
+        assetPlate: companyAssets.plate,
+      })
+      .from(companyFuelEntries)
+      .leftJoin(companyAssets, eq(companyAssets.id, companyFuelEntries.assetId))
+      .where(and(...conditions))
+      .orderBy(companyFuelEntries.date);
+
+    if (rows.length === 0) {
+      return res.json({
+        range: { from: from ?? null, to: to ?? null, totalRecords: 0 },
+        topConsumers: [],
+        bottomConsumers: [],
+        bestEfficiency: [],
+        worstEfficiency: [],
+        peaks: [],
+        trends: [],
+        insights: [],
+      });
+    }
+
+    // 1) Agrupar por vehículo
+    type Row = typeof rows[number];
+    const byAsset = new Map<number, Row[]>();
+    for (const r of rows) {
+      if (!byAsset.has(r.assetId)) byAsset.set(r.assetId, []);
+      byAsset.get(r.assetId)!.push(r);
+    }
+
+    // 2) Stats por vehículo
+    type AssetStats = {
+      assetId: number;
+      plate: string | null;
+      name: string | null;
+      totalLiters: number;
+      totalCost: number;
+      records: number;
+      meanLiters: number;
+      stdLiters: number;
+      // Para eficiencia (km/L): requiere al menos 2 registros con odómetro
+      efficiency: number | null;
+      firstHalf: number;
+      secondHalf: number;
+      trend: 'up' | 'down' | 'stable';
+      peakRow: Row | null;
+    };
+
+    const assetStats: AssetStats[] = [];
+
+    for (const [assetId, assetRows] of byAsset) {
+      const totalLiters = assetRows.reduce((s, r) => s + Number(r.liters), 0);
+      const totalCost   = assetRows.reduce((s, r) => s + Number(r.cost ?? 0), 0);
+      const n = assetRows.length;
+      const mean = totalLiters / n;
+      const variance = assetRows.reduce((s, r) => s + Math.pow(Number(r.liters) - mean, 2), 0) / n;
+      const std = Math.sqrt(variance);
+
+      // Eficiencia: el último odómetro - el primero, sobre los litros entre medio
+      let efficiency: number | null = null;
+      const odoRows = assetRows.filter((r) => r.odometer != null).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      if (odoRows.length >= 2) {
+        const odoStart = Number(odoRows[0].odometer);
+        const odoEnd   = Number(odoRows[odoRows.length - 1].odometer);
+        const km = odoEnd - odoStart;
+        if (km > 0 && totalLiters > 0) efficiency = km / totalLiters;
+      }
+
+      // Tendencia: comparar 1ra mitad vs 2da mitad
+      const half = Math.floor(n / 2);
+      const firstHalf  = half > 0 ? assetRows.slice(0, half).reduce((s, r) => s + Number(r.liters), 0) / half : 0;
+      const secondHalf = n - half > 0 ? assetRows.slice(half).reduce((s, r) => s + Number(r.liters), 0) / (n - half) : 0;
+      let trend: 'up' | 'down' | 'stable' = 'stable';
+      if (firstHalf > 0) {
+        const ratio = (secondHalf - firstHalf) / firstHalf;
+        if (ratio > 0.15) trend = 'up';
+        else if (ratio < -0.15) trend = 'down';
+      }
+
+      // Pico: el registro con z-score más alto
+      let peakRow: Row | null = null;
+      let peakZ = 0;
+      if (std > 0) {
+        for (const r of assetRows) {
+          const z = Math.abs((Number(r.liters) - mean) / std);
+          if (z > 2 && z > peakZ) {
+            peakZ = z;
+            peakRow = r;
+          }
+        }
+      }
+
+      assetStats.push({
+        assetId,
+        plate:  assetRows[0]?.assetPlate ?? null,
+        name:   assetRows[0]?.assetName ?? null,
+        totalLiters,
+        totalCost,
+        records: n,
+        meanLiters: mean,
+        stdLiters: std,
+        efficiency,
+        firstHalf,
+        secondHalf,
+        trend,
+        peakRow,
+      });
+    }
+
+    // 3) Top 5 / Bottom 5 por litros
+    const sorted = [...assetStats].sort((a, b) => b.totalLiters - a.totalLiters);
+    const topConsumers    = sorted.slice(0, 5).map((s) => ({
+      assetId: toId('asset', s.assetId),
+      plate: s.plate, name: s.name,
+      totalLiters: Math.round(s.totalLiters),
+      totalCost: Math.round(s.totalCost),
+      records: s.records,
+    }));
+    const bottomConsumers = sorted.slice(-5).reverse().filter((s) => s.records >= 2).map((s) => ({
+      assetId: toId('asset', s.assetId),
+      plate: s.plate, name: s.name,
+      totalLiters: Math.round(s.totalLiters),
+      totalCost: Math.round(s.totalCost),
+      records: s.records,
+    }));
+
+    // 4) Mejor / peor eficiencia
+    const withEff = assetStats.filter((s) => s.efficiency != null);
+    const bestEff = [...withEff].sort((a, b) => (b.efficiency ?? 0) - (a.efficiency ?? 0)).slice(0, 3).map((s) => ({
+      assetId: toId('asset', s.assetId),
+      plate: s.plate, name: s.name,
+      efficiency: Math.round((s.efficiency ?? 0) * 100) / 100,
+    }));
+    const worstEff = [...withEff].sort((a, b) => (a.efficiency ?? 0) - (b.efficiency ?? 0)).slice(0, 3).map((s) => ({
+      assetId: toId('asset', s.assetId),
+      plate: s.plate, name: s.name,
+      efficiency: Math.round((s.efficiency ?? 0) * 100) / 100,
+    }));
+
+    // 5) Picos (z-score > 2)
+    const peaks = assetStats
+      .filter((s) => s.peakRow != null)
+      .map((s) => {
+        const r = s.peakRow!;
+        const z = (Number(r.liters) - s.meanLiters) / s.stdLiters;
+        return {
+          assetId: toId('asset', s.assetId),
+          plate: s.plate, name: s.name,
+          date: r.date,
+          liters: Math.round(Number(r.liters)),
+          cost: r.cost != null ? Math.round(Number(r.cost)) : null,
+          avgLiters: Math.round(s.meanLiters),
+          zScore: Math.round(z * 100) / 100,
+          severity: z > 3 ? 'extreme' : 'high',
+        };
+      })
+      .sort((a, b) => b.zScore - a.zScore)
+      .slice(0, 10);
+
+    // 6) Tendencias (sube / baja / estable)
+    const trends = assetStats.filter((s) => s.records >= 3).map((s) => ({
+      assetId: toId('asset', s.assetId),
+      plate: s.plate, name: s.name,
+      trend: s.trend,
+      firstHalfAvg: Math.round(s.firstHalf * 10) / 10,
+      secondHalfAvg: Math.round(s.secondHalf * 10) / 10,
+      changePct: s.firstHalf > 0 ? Math.round(((s.secondHalf - s.firstHalf) / s.firstHalf) * 100) : 0,
+    }));
+
+    // 7) Insights generados (texto corto con color)
+    const insights: Array<{ kind: 'positive' | 'negative' | 'warning' | 'info'; text: string; assetId?: string }> = [];
+
+    if (topConsumers.length > 0) {
+      const t = topConsumers[0];
+      insights.push({
+        kind: 'warning',
+        text: `${t.plate ?? t.name ?? 'Un vehículo'} es el mayor consumidor: ${t.totalLiters} L en el período.`,
+        assetId: t.assetId,
+      });
+    }
+    for (const p of peaks) {
+      const ratio = p.zScore;
+      insights.push({
+        kind: ratio > 3 ? 'negative' : 'warning',
+        text: `Pico en ${p.plate ?? p.name} el ${p.date}: ${p.liters} L (${ratio}× su media de ${p.avgLiters} L). Posible causa: ruta larga, carga extra o error de odómetro.`,
+        assetId: p.assetId,
+      });
+    }
+    for (const t of trends.filter((x) => x.trend !== 'stable')) {
+      const dir = t.trend === 'up' ? 'subió' : 'bajó';
+      const kind = t.trend === 'up' ? 'negative' : 'positive';
+      insights.push({
+        kind: kind as 'positive' | 'negative',
+        text: `Consumo de ${t.plate ?? t.name} ${dir} ${Math.abs(t.changePct)}% en la 2da mitad del período.`,
+        assetId: t.assetId,
+      });
+    }
+    if (bestEff.length > 0) {
+      const b = bestEff[0];
+      insights.push({
+        kind: 'positive',
+        text: `${b.plate ?? b.name} tiene el mejor rendimiento: ${b.efficiency} km/L.`,
+        assetId: b.assetId,
+      });
+    }
+    if (worstEff.length > 0) {
+      const w = worstEff[0];
+      insights.push({
+        kind: 'warning',
+        text: `${w.plate ?? w.name} tiene el peor rendimiento: ${w.efficiency} km/L. Revisar presión de llantas, alineación o carga.`,
+        assetId: w.assetId,
+      });
+    }
+
+    res.json({
+      range: { from: from ?? null, to: to ?? null, totalRecords: rows.length },
+      topConsumers,
+      bottomConsumers,
+      bestEfficiency: bestEff,
+      worstEfficiency: worstEff,
+      peaks,
+      trends,
+      insights,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default router;

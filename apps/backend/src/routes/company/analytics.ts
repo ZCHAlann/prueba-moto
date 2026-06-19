@@ -3,6 +3,7 @@ import { eq, and, gte, lte, desc, inArray } from 'drizzle-orm';
 import { db } from '../../db/client';
 import {
   companyAssets,
+  companyWorkshops,
   companyMaintenanceRecords,
   companyFuelEntries,
   companyAlerts,
@@ -989,6 +990,188 @@ router.get('/dashboard-extended/actividad-por-entidad', requireModule('dashboard
       .map(x => ({ entity: x.entity, action: x.action, count: x.count }));
 
     res.json({ data: items, total: rows.length });
+  } catch (err) { next(err); }
+});
+
+// ─── GET /company/:id/analytics/maintenance-costs-by-workshop ──────────────────
+// Gasto en mano de obra agrupado por taller. Solo suma el `labor_cost`
+// (NO incluye repuestos — esos van en `maintenance-costs`).
+router.get('/maintenance-costs-by-workshop', requireModule('mantenimiento'), async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const { from, to, workshopId } = req.query as Record<string, string | undefined>;
+
+    const whereParts: any[] = [eq(companyMaintenanceRecords.companyId, companyId)];
+    if (from)   whereParts.push(gte(companyMaintenanceRecords.scheduledFor, new Date(from)));
+    if (to)     whereParts.push(lte(companyMaintenanceRecords.scheduledFor, new Date(to)));
+    if (workshopId) whereParts.push(eq(companyMaintenanceRecords.workshopId, parseInt(workshopId, 10)));
+
+    const rows = await db
+      .select({
+        workshopId: companyMaintenanceRecords.workshopId,
+        workshopName: companyWorkshops.name,
+        laborCost: companyMaintenanceRecords.laborCost,
+        type: companyMaintenanceRecords.type,
+        totalCost: companyMaintenanceRecords.totalCost,
+      })
+      .from(companyMaintenanceRecords)
+      .leftJoin(companyWorkshops, eq(companyWorkshops.id, companyMaintenanceRecords.workshopId))
+      .where(and(...whereParts));
+
+    const byWorkshop: Record<string, { workshopId: number | null; name: string; laborTotal: number; partsTotal: number; count: number }> = {};
+    let grandLabor = 0;
+    let grandParts = 0;
+    for (const r of rows) {
+      const key = r.workshopId ? String(r.workshopId) : 'sin-taller';
+      if (!byWorkshop[key]) {
+        byWorkshop[key] = {
+          workshopId: r.workshopId,
+          name: r.workshopName ?? 'Sin taller',
+          laborTotal: 0,
+          partsTotal: 0,
+          count: 0,
+        };
+      }
+      const labor = Number(r.laborCost ?? 0);
+      const parts = Number(r.totalCost ?? 0) - labor; // total = labor + parts (en mantenimientos)
+      byWorkshop[key].laborTotal += labor;
+      byWorkshop[key].partsTotal += parts;
+      byWorkshop[key].count += 1;
+      grandLabor += labor;
+      grandParts += parts;
+    }
+
+    res.json({
+      grandTotal: Math.round((grandLabor + grandParts) * 100) / 100,
+      grandLabor: Math.round(grandLabor * 100) / 100,
+      grandParts:  Math.round(grandParts  * 100) / 100,
+      workshops: Object.values(byWorkshop).map((w) => ({
+        workshopId: w.workshopId,
+        name: w.name,
+        laborCost: Math.round(w.laborTotal * 100) / 100,
+        partsCost: Math.round(w.partsTotal * 100) / 100,
+        totalCost: Math.round((w.laborTotal + w.partsTotal) * 100) / 100,
+        count: w.count,
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+// ─── GET /company/:id/analytics/carwash-costs ─────────────────────────────────
+// Gasto en lavadas agrupado por vehículo y por mes.
+// Suma el `totalCost` de los mantenimientos type='Lavada'.
+router.get('/carwash-costs', requireModule('mantenimiento'), async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const { from, to, assetId } = req.query as Record<string, string | undefined>;
+
+    const whereParts: any[] = [
+      eq(companyMaintenanceRecords.companyId, companyId),
+      eq(companyMaintenanceRecords.type, 'Lavada'),
+    ];
+    if (from)   whereParts.push(gte(companyMaintenanceRecords.scheduledFor, new Date(from)));
+    if (to)     whereParts.push(lte(companyMaintenanceRecords.scheduledFor, new Date(to)));
+    if (assetId) whereParts.push(eq(companyMaintenanceRecords.assetId, parseInt(assetId, 10)));
+
+    const rows = await db
+      .select({
+        assetId:    companyMaintenanceRecords.assetId,
+        assetName:  companyAssets.name,
+        assetPlate: companyAssets.plate,
+        totalCost:  companyMaintenanceRecords.totalCost,
+        scheduledFor: companyMaintenanceRecords.scheduledFor,
+      })
+      .from(companyMaintenanceRecords)
+      .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
+      .where(and(...whereParts));
+
+    const byAsset: Record<string, { assetId: number | null; name: string; plate: string | null; total: number; count: number }> = {};
+    const byMonth: Record<string, number> = {};
+    let grand = 0;
+    for (const r of rows) {
+      const key = r.assetId ? String(r.assetId) : 'sin-vehiculo';
+      if (!byAsset[key]) {
+        byAsset[key] = { assetId: r.assetId, name: r.assetName ?? 'Sin vehículo', plate: r.assetPlate, total: 0, count: 0 };
+      }
+      byAsset[key].total += Number(r.totalCost ?? 0);
+      byAsset[key].count += 1;
+      grand += Number(r.totalCost ?? 0);
+
+      if (r.scheduledFor) {
+        const d = new Date(r.scheduledFor);
+        const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        byMonth[ym] = (byMonth[ym] ?? 0) + Number(r.totalCost ?? 0);
+      }
+    }
+
+    res.json({
+      grandTotal: Math.round(grand * 100) / 100,
+      byVehicle: Object.values(byAsset).map((v) => ({
+        assetId: v.assetId,
+        name: v.name,
+        plate: v.plate,
+        total: Math.round(v.total * 100) / 100,
+        count: v.count,
+      })),
+      byMonth: Object.entries(byMonth)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, total]) => ({ month, total: Math.round(total * 100) / 100 })),
+    });
+  } catch (err) { next(err); }
+});
+
+// ─── GET /company/:id/analytics/maintenance-costs-by-type ────────────────────
+// Gasto total (mano de obra + repuestos) agrupado por tipo de mantenimiento
+// (Programado, Correctivo, Lavada) y por mes. Filtros: from, to.
+router.get('/maintenance-costs-by-type', requireModule('mantenimiento'), async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const { from, to } = req.query as Record<string, string | undefined>;
+
+    const whereParts: any[] = [eq(companyMaintenanceRecords.companyId, companyId)];
+    if (from) whereParts.push(gte(companyMaintenanceRecords.scheduledFor, new Date(from)));
+    if (to)   whereParts.push(lte(companyMaintenanceRecords.scheduledFor, new Date(to)));
+
+    const rows = await db
+      .select({
+        type:        companyMaintenanceRecords.type,
+        totalCost:   companyMaintenanceRecords.totalCost,
+        laborCost:   companyMaintenanceRecords.laborCost,
+        scheduledFor: companyMaintenanceRecords.scheduledFor,
+      })
+      .from(companyMaintenanceRecords)
+      .where(and(...whereParts));
+
+    const byType: Record<string, { total: number; count: number }> = {};
+    const byMonth: Record<string, Record<string, number>> = {};
+    for (const r of rows) {
+      const t = r.type ?? 'Programado';
+      if (!byType[t]) byType[t] = { total: 0, count: 0 };
+      byType[t].total += Number(r.totalCost ?? 0);
+      byType[t].count += 1;
+      if (r.scheduledFor) {
+        const d = new Date(r.scheduledFor);
+        const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        if (!byMonth[ym]) byMonth[ym] = {};
+        byMonth[ym][t] = (byMonth[ym][t] ?? 0) + Number(r.totalCost ?? 0);
+      }
+    }
+
+    res.json({
+      byType: Object.entries(byType).map(([type, v]) => ({
+        type,
+        total: Math.round(v.total * 100) / 100,
+        count: v.count,
+      })),
+      byMonth: Object.entries(byMonth)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, byType]) => ({
+          month,
+          byType: Object.fromEntries(
+            Object.entries(byType).map(([k, v]) => [k, Math.round(v * 100) / 100])
+          ),
+        })),
+    });
   } catch (err) { next(err); }
 });
 

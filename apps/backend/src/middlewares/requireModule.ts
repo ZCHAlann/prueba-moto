@@ -53,3 +53,57 @@ export const requireModule = (module: string, submodule?: string) => {
     next();
   };
 };
+
+/**
+ * Variante de `requireModule` que acepta uno de varios módulos como válido.
+ * Útil cuando un endpoint sirve a varios módulos (ej: el listado de activos
+ * lo usan tanto `gestion.flotas` como `mantenimiento.execution` para
+ * elegir vehículo en el form de mantenimiento).
+ *
+ * Si el usuario es admin_empresa/owner_empresa/superadmin, pasa siempre.
+ * Si no, requiere que tenga al menos un módulo con submódulo "ver" en
+ * CUALQUIERA de los `modules` especificados.
+ *
+ * Uso:
+ *   requireModuleAny(['gestion:flotas', 'mantenimiento:execution'])
+ *   // → pasa si el user tiene ver en gestion.flotas O en mantenimiento.execution
+ */
+export const requireModuleAny = (
+  entries: Array<{ module: string; submodule?: string }>,
+) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = req.user;
+    if (!user) {
+      throw new ForbiddenError('No autenticado');
+    }
+
+    if (user.role === 'superadmin') return next();
+
+    const adminRoles = ['owner_empresa', 'admin_empresa'];
+    if (adminRoles.includes(user.role)) return next();
+
+    const perms = user.modulePermissions as Record<string, Record<string, string[]>> | undefined;
+    if (!perms || typeof perms !== 'object' || Array.isArray(perms)) {
+      throw new ForbiddenError('Tu perfil no tiene acceso a este recurso.');
+    }
+
+    for (const { module, submodule } of entries) {
+      if (!user.companyModules.includes(module)) continue;
+
+      const modulePerms = perms[module];
+      if (!modulePerms || typeof modulePerms !== 'object') continue;
+
+      if (submodule) {
+        const subPerms: string[] = (modulePerms as Record<string, string[]>)[submodule] ?? [];
+        if (subPerms.includes('ver')) return next();
+      } else {
+        const hasAny = Object.values(modulePerms).some(
+          (actions) => Array.isArray(actions) && actions.length > 0,
+        );
+        if (hasAny) return next();
+      }
+    }
+
+    throw new ForbiddenError('Tu perfil no tiene acceso a este recurso.');
+  };
+};

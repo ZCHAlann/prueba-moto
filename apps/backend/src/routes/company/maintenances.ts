@@ -8,6 +8,12 @@
 //  - El operador ve solo lo suyo (asignado, creado, tomado).
 //  - Línea de tiempo completa: cada acción se registra en company_maintenance_events.
 //  - Cancelar + reprogramar: vuelve a Programado, mantiene timeline, borra items y fotos.
+//
+// v3.2: se agrega recalcMaintenanceTotal() en POST / (creación con items
+// precargados) y en PUT /:id (edición de items y/o laborCost). Antes solo
+// se llamaba desde POST /:id/items, lo que dejaba totalCost desactualizado
+// cuando los repuestos se agregaban/editaban desde el modal de edición en
+// vez del quick-add del drawer.
 
 import { Router } from 'express';
 import { z } from 'zod';
@@ -19,6 +25,8 @@ import {
   companyMaintenanceItems,
   companyMaintenanceEvents,
   companyMaintenanceCategories,
+  companyMaintenanceCarwashExtras,
+  companyMaintenanceCarwashPhotos,
   companyWorkshops,
   companySuppliers,
   companyAssets,
@@ -56,22 +64,41 @@ const itemSchema = z.object({
 });
 
 // ─── Maintenance schemas ──────────────────────────────────────────────────────
+const MAINT_TYPES = ['Correctivo', 'Programado', 'Lavada'] as const;
+
+// Schema individual para un adjunto. La URL la emite el endpoint de
+// upload genérico; el frontend la manda de vuelta para guardarla.
+const attachmentSchema = z.object({
+  url:        z.string().min(1).max(2_000_000),
+  label:      z.string().min(1).max(60).default('Adjunto'),
+  uploadedAt: z.string().datetime().optional(),
+});
+
 const createMaintenanceSchema = z.object({
   assetId:        z.string().min(1, 'El vehículo es requerido'),
   workshopId:     z.string().optional().nullable(),
-  type:           z.enum(['Correctivo', 'Programado']).default('Programado'),
+  type:           z.enum(MAINT_TYPES).default('Programado'),
   status:         z.enum(MAINT_STATUSES).default('Programado'),
   category:       z.string().min(1).default('Otro'),  // acepta customs
   categoryCustomId: z.string().optional().nullable(),
   title:          safeString({ min: 3, max: 200, fieldLabel: 'Título', allowEmpty: false }),
   description:    validators.longTextOptional,
   odometerKm:     z.number().int().nonnegative().max(10_000_000).optional().nullable(),
+  // v3.1: mano de obra (separada de los items)
+  laborCost:      z.number().nonnegative().max(1_000_000_000).default(0),
   cadenceKind:    z.enum(CADENCE_KINDS).default('none'),
   cadenceValue:   z.number().int().positive().max(1_000_000).optional().nullable(),
   nextTriggerKm:  z.number().int().nonnegative().max(10_000_000).optional().nullable(),
   scheduledFor:   z.string().min(1, 'Fecha programada requerida'),
   notes:          validators.longTextOptional,
   items:          z.array(itemSchema).max(50).default([]),
+  // v3.1: campos de lavada (se usan solo cuando type='Lavada')
+  carwashLocation: z.string().max(200).optional().nullable(),
+  carwashProvider: z.string().max(200).optional().nullable(),
+  carwashNotes:    validators.longTextOptional,
+  // Adjuntos (facturas, fotos de evidencia) — máximo 30 para evitar
+  // payloads enormes.
+  attachments:     z.array(attachmentSchema).max(30).optional(),
   // El operador que crea puede auto-asignarse o dejarlo libre. Solo un
   // supervisor/admin/owner puede asignar a otro operador.
   assignedUserId: z.string().optional().nullable(),
@@ -79,13 +106,15 @@ const createMaintenanceSchema = z.object({
 
 const updateMaintenanceSchema = z.object({
   workshopId:     z.string().optional().nullable(),
-  type:           z.enum(['Correctivo', 'Programado']).optional(),
+  type:           z.enum(MAINT_TYPES).optional(),
   status:         z.enum(MAINT_STATUSES).optional(),
   category:       z.string().min(1).optional(),
   categoryCustomId: z.string().optional().nullable(),
   title:          safeString({ min: 3, max: 200, fieldLabel: 'Título', allowEmpty: false }).optional(),
   description:    validators.longTextOptional,
   odometerKm:     z.number().int().nonnegative().max(10_000_000).optional().nullable(),
+  // v3.1: mano de obra
+  laborCost:      z.number().nonnegative().max(1_000_000_000).optional(),
   cadenceKind:    z.enum(CADENCE_KINDS).optional(),
   cadenceValue:   z.number().int().positive().max(1_000_000).optional().nullable(),
   nextTriggerKm:  z.number().int().nonnegative().max(10_000_000).optional().nullable(),
@@ -93,6 +122,12 @@ const updateMaintenanceSchema = z.object({
   executedAt:     z.string().optional().nullable(),
   notes:          validators.longTextOptional,
   items:          z.array(itemSchema).max(50).optional(),
+  // v3.1: campos de lavada
+  carwashLocation: z.string().max(200).optional().nullable(),
+  carwashProvider: z.string().max(200).optional().nullable(),
+  carwashNotes:    validators.longTextOptional,
+  // Adjuntos (facturas, fotos de evidencia)
+  attachments:     z.array(attachmentSchema).max(30).optional(),
   assignedUserId: z.string().optional().nullable(),
 });
 
@@ -107,6 +142,18 @@ const noteSchema = z.object({
 
 const assignSchema = z.object({
   userId: z.string().min(1, 'Operador requerido'),
+});
+
+const carwashExtraSchema = z.object({
+  name:     safeString({ min: 1, max: 180, fieldLabel: 'Nombre', allowEmpty: false }),
+  quantity: z.number().positive().max(1_000_000).default(1),
+  unitCost: z.number().nonnegative().max(1_000_000_000).default(0),
+  photoUrl: z.string().min(1).optional().nullable(),
+});
+
+const carwashPhotoSchema = z.object({
+  photoUrl: z.string().min(1, 'URL de foto requerida'),
+  caption:   z.string().max(200).optional().nullable(),
 });
 
 const idSchema = z.object({
@@ -130,6 +177,53 @@ function getUserIdFromSub(sub: string | undefined): number | null {
   if (!sub) return null;
   const m = String(sub).match(/(\d+)$/);
   return m ? Number(m[1]) : null;
+}
+
+/**
+ * Recalcula el `totalCost` de un mantenimiento a partir de:
+ *   - laborCost (mano de obra) del registro principal
+ *   - suma de (quantity * unitCost) de cada item (repuesto)
+ *   - suma de (quantity * unitCost) de cada carwash_extra
+ *
+ * Persiste el resultado en `company_maintenance_records.totalCost` para
+ * que la lista de la tabla lo muestre sin tener que hacer un JOIN extra.
+ * No tira error si el mantenimiento no existe — retorna silenciosamente.
+ *
+ * IMPORTANTE: se debe llamar SIEMPRE que cambien items, carwash extras,
+ * o laborCost — no solo desde POST /:id/items. Antes solo se llamaba ahí,
+ * lo que dejaba totalCost desactualizado al crear un mantenimiento con
+ * items precargados (POST /) o al editar items/laborCost desde el modal
+ * de edición (PUT /:id).
+ */
+async function recalcMaintenanceTotal(maintenanceId: number): Promise<number> {
+  const [m] = await db
+    .select({ id: companyMaintenanceRecords.id, laborCost: companyMaintenanceRecords.laborCost })
+    .from(companyMaintenanceRecords)
+    .where(eq(companyMaintenanceRecords.id, maintenanceId))
+    .limit(1);
+  if (!m) return 0;
+
+  const [itemsSum] = await db
+    .select({ s: sql<number>`COALESCE(SUM(${companyMaintenanceItems.quantity} * ${companyMaintenanceItems.unitCost}), 0)` })
+    .from(companyMaintenanceItems)
+    .where(eq(companyMaintenanceItems.maintenanceId, maintenanceId));
+
+  const [extrasSum] = await db
+    .select({ s: sql<number>`COALESCE(SUM(${companyMaintenanceCarwashExtras.quantity} * ${companyMaintenanceCarwashExtras.unitCost}), 0)` })
+    .from(companyMaintenanceCarwashExtras)
+    .where(eq(companyMaintenanceCarwashExtras.maintenanceId, maintenanceId));
+
+  const labor = m.laborCost != null ? Number(m.laborCost) : 0;
+  const items = Number(itemsSum?.s ?? 0);
+  const extras = Number(extrasSum?.s ?? 0);
+  const total = labor + items + extras;
+
+  await db
+    .update(companyMaintenanceRecords)
+    .set({ totalCost: String(total) })
+    .where(eq(companyMaintenanceRecords.id, maintenanceId));
+
+  return total;
 }
 
 async function loadItemsMap(maintenanceIds: number[]): Promise<Map<number, any[]>> {
@@ -232,6 +326,8 @@ function serializeMaintenance(m: any, items: any[], events: any[] = []) {
     title:         m.title,
     description:   m.description,
     odometerKm:    m.odometerKm,
+    // v3.1: mano de obra
+    laborCost:     m.laborCost != null ? Number(m.laborCost) : 0,
     cadenceKind:   m.cadenceKind,
     cadenceValue:  m.cadenceValue,
     nextTriggerKm: m.nextTriggerKm,
@@ -240,6 +336,13 @@ function serializeMaintenance(m: any, items: any[], events: any[] = []) {
     completedAt:   m.completedAt,
     notes:         m.notes,
     totalCost:     Number(m.totalCost),
+    // v3.1: campos de lavada
+    carwashLocation: m.carwashLocation ?? null,
+    carwashProvider: m.carwashProvider ?? null,
+    carwashNotes:    m.carwashNotes ?? null,
+    // Adjuntos subidos durante la ejecución. El default del schema
+    // garantiza que siempre sea un array.
+    attachments:     (m as any).attachments ?? [],
     parentId:      m.parentId ? toId('maintenance', m.parentId) : null,
     createdBy:     m.createdBy ? toId('company-user', m.createdBy) : null,
     completedBy:   m.completedBy ? toId('company-user', m.completedBy) : null,
@@ -279,8 +382,8 @@ async function recordEvent(
 
 router.get(
   '/',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'records', 'ver'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'ver'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -363,7 +466,13 @@ router.get(
       const [itemsMap, eventsMap] = await Promise.all([loadItemsMap(ids), loadEventsMap(ids)]);
 
       res.json({
-        data: rows.map((r) => serializeMaintenance(r.m, itemsMap.get((r.m as any).id) ?? [], eventsMap.get((r.m as any).id) ?? [])),
+        data: rows.map((r) => {
+          // Merge de la fila + los joins (assetPlate, assetName, workshopName,
+          // assignedUserName) para que `serializeMaintenance` los encuentre
+          // en `m.xxx` como espera.
+          const merged = { ...r.m, ...r };
+          return serializeMaintenance(merged, itemsMap.get((r.m as any).id) ?? [], eventsMap.get((r.m as any).id) ?? []);
+        }),
         total: rows.length,
         assets: (await db
           .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate, brand: companyAssets.brand, model: companyAssets.model })
@@ -387,8 +496,8 @@ router.get(
 // ─── GET /agenda ──────────────────────────────────────────────────────────────
 router.get(
   '/agenda',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'agenda', 'ver'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'agenda', 'ver'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -428,7 +537,7 @@ router.get(
       const ids = rows.map((r) => (r.m as any).id);
       const [itemsMap, eventsMap] = await Promise.all([loadItemsMap(ids), loadEventsMap(ids)]);
       res.json({
-        data: rows.map((r) => serializeMaintenance(r.m, itemsMap.get((r.m as any).id) ?? [], eventsMap.get((r.m as any).id) ?? [])),
+        data: rows.map((r) => serializeMaintenance({ ...r.m, ...r }, itemsMap.get((r.m as any).id) ?? [], eventsMap.get((r.m as any).id) ?? [])),
         total: rows.length,
       });
     } catch (err) {
@@ -440,7 +549,7 @@ router.get(
 // ─── GET /categories ─────────────────────────────────────────────────────────
 router.get(
   '/categories',
-  requireModule('maintenance'),
+  requireModule('mantenimiento'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -470,8 +579,8 @@ router.get(
 // ─── GET /:id ──────────────────────────────────────────────────────────────────
 router.get(
   '/:id',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'records', 'ver'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'ver'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -505,7 +614,7 @@ router.get(
         .limit(1);
       if (!row) throw new NotFoundError('Mantenimiento', req.params.id);
 
-      const m = row.m as any;
+      const m = { ...(row.m as any), ...row } as any;
       // Control de visibilidad: si no es full access y no es suyo → 404
       if (!isFull) {
         if (meId == null || (m.assignedUserId !== meId && m.createdBy !== meId)) {
@@ -531,8 +640,8 @@ router.get(
 // ─── POST / ───────────────────────────────────────────────────────────────────
 router.post(
   '/',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'execution', 'crear'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'crear'),
   validate(createMaintenanceSchema),
   async (req, res, next) => {
     try {
@@ -545,9 +654,22 @@ router.post(
       const assetId = parseId('asset', body.assetId);
       const workshopId = body.workshopId ? parseId('workshop', body.workshopId) : null;
 
-      // Asignación: operador solo puede auto-asignarse o dejarlo libre.
-      // admin/owner/supervisor pueden asignar a cualquiera — pero el user
-      // target DEBE pertenecer a la misma empresa.
+      // Asignación y status: las reglas del módulo.
+      //
+      //   * Correctivo y Lavada NO son programados — siempre arrancan
+      //     en 'En proceso' (urgencia: el operador ya está trabajando).
+      //   * Programado arranca en 'Programado'.
+      //   * Si el que crea NO tiene full access (operador):
+      //       - Si manda assignedUserId y es a sí mismo → ok.
+      //       - Si manda assignedUserId a otro → 403.
+      //       - Si no manda nada y crea Correctivo o Lavada → se
+      //         auto-asigna a sí mismo (es lo lógico, está haciéndolo
+      //         él mismo).
+      //       - Si no manda nada y crea Programado → queda libre
+      //         (null), el supervisor lo asigna después.
+      //   * Si tiene full access (admin/owner/supervisor):
+      //       - Puede asignar a cualquiera (validando que pertenezca a
+      //         la empresa) o dejarlo libre.
       let assignedUserId: number | null = null;
       if (body.assignedUserId) {
         const targetId = parseId('company-user', body.assignedUserId);
@@ -565,11 +687,23 @@ router.post(
         }
         assignedUserId = targetId;
       } else {
-        // default: si el operador crea, se auto-asigna.
-        if (meRole === 'operador' && meId != null) {
+        // Auto-asignación por defecto.
+        // Operador que crea Correctivo o Lavada se auto-asigna
+        // (es lo lógico: lo está haciendo él).
+        const isUrgente = body.type === 'Correctivo' || body.type === 'Lavada';
+        if (!isFull && isUrgente && meId != null) {
           assignedUserId = meId;
         }
+        // Programado por defecto: queda libre (null).
       }
+
+      // Status automático: Correctivo y Lavada → 'En proceso'.
+      // Si el cliente mandó status explícito y NO es urgente, lo
+      // respetamos (e.g. crear un Programado como Completado directo).
+      const isUrgente = body.type === 'Correctivo' || body.type === 'Lavada';
+      const finalStatus = isUrgente
+        ? 'En proceso'
+        : normalizeStatus(body.status ?? 'Programado');
 
       const [created] = await db
         .insert(companyMaintenanceRecords)
@@ -578,32 +712,47 @@ router.post(
           assetId,
           workshopId,
           type:           body.type,
-          status:         normalizeStatus(body.status ?? 'Programado'),
+          status:         finalStatus,
           category:       body.category ?? 'Otro',
           title:          body.title,
           description:    body.description ?? null,
           odometerKm:     body.odometerKm ?? null,
+          // v3.1: mano de obra
+          laborCost:      String(body.laborCost ?? 0),
           cadenceKind:    body.cadenceKind,
           cadenceValue:   body.cadenceValue ?? null,
           nextTriggerKm:  body.nextTriggerKm ?? null,
           scheduledFor:   new Date(body.scheduledFor),
           notes:          body.notes ?? null,
           totalCost:      '0',
+          // v3.1: campos de lavada
+          carwashLocation: body.type === 'Lavada' ? (body.carwashLocation ?? null) : null,
+          carwashProvider: body.type === 'Lavada' ? (body.carwashProvider ?? null) : null,
+          carwashNotes:    body.type === 'Lavada' ? (body.carwashNotes ?? null) : null,
+          // Adjuntos — default [] (la columna ya tiene default '[]'::jsonb,
+          // pero si el body no los manda, mandamos [] explícito).
+          attachments:     body.attachments ?? [],
           createdBy:      meId,
           assignedUserId,
         })
         .returning();
 
-      // Insertar items si vinieron
-      if (body.items?.length) {
+      // Insertar items si vinieron (solo aplican a Programado/Correctivo,
+      // no a Lavada).
+      if (body.type !== 'Lavada' && body.items?.length) {
         await db.insert(companyMaintenanceItems).values(buildItemValues(created.id, body.items));
       }
+      // Recalcular totalCost ahora que ya están insertados los items
+      // (y laborCost, que ya viene seteado en el insert de arriba).
+      // Sin esto, un mantenimiento creado con items precargados quedaba
+      // con totalCost = '0' hasta que alguien tocara /items manualmente.
+      await recalcMaintenanceTotal(created.id);
 
       // Línea de tiempo: created
       await recordEvent(companyId, created.id, 'created', {
         userId: meId,
         name:   req.user!.name ?? null,
-      }, { title: body.title });
+      }, { title: body.title, type: body.type, status: finalStatus });
       if (assignedUserId) {
         await recordEvent(companyId, created.id, 'assigned', {
           userId: meId,
@@ -629,7 +778,7 @@ router.post(
       const itemsMap  = await loadItemsMap([created.id]);
       const eventsMap = await loadEventsMap([created.id]);
 
-      res.status(201).json(serializeMaintenance(full!.m, itemsMap.get(created.id) ?? [], eventsMap.get(created.id) ?? []));
+      res.status(201).json(serializeMaintenance({ ...full!.m, ...full! }, itemsMap.get(created.id) ?? [], eventsMap.get(created.id) ?? []));
     } catch (err) {
       next(err);
     }
@@ -639,8 +788,8 @@ router.post(
 // ─── PUT /:id ──────────────────────────────────────────────────────────────────
 router.put(
   '/:id',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'execution', 'editar'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'editar'),
   validate(updateMaintenanceSchema),
   async (req, res, next) => {
     try {
@@ -673,12 +822,22 @@ router.put(
       if (body.title !== undefined) updateData.title = body.title;
       if (body.description !== undefined) updateData.description = body.description;
       if (body.odometerKm !== undefined) updateData.odometerKm = body.odometerKm;
+      // v3.1: mano de obra
+      if (body.laborCost !== undefined) updateData.laborCost = String(body.laborCost);
       if (body.cadenceKind !== undefined) updateData.cadenceKind = body.cadenceKind;
       if (body.cadenceValue !== undefined) updateData.cadenceValue = body.cadenceValue;
       if (body.nextTriggerKm !== undefined) updateData.nextTriggerKm = body.nextTriggerKm;
       if (body.scheduledFor !== undefined) updateData.scheduledFor = new Date(body.scheduledFor);
       if (body.executedAt !== undefined) updateData.executedAt = body.executedAt ? new Date(body.executedAt) : null;
       if (body.notes !== undefined) updateData.notes = body.notes;
+      // v3.1: campos de lavada (solo aplican si type === 'Lavada')
+      if (body.carwashLocation !== undefined) updateData.carwashLocation = body.carwashLocation ?? null;
+      if (body.carwashProvider !== undefined) updateData.carwashProvider = body.carwashProvider ?? null;
+      if (body.carwashNotes !== undefined) updateData.carwashNotes = body.carwashNotes ?? null;
+      // Adjuntos: si vienen en el body, los reemplazo completamente. El
+      // frontend los maneja como array — agregar/eliminar = mutar el
+      // array local y reenviarlo entero en el PUT.
+      if (body.attachments !== undefined) updateData.attachments = body.attachments;
       if (body.assignedUserId !== undefined) {
         const newAssigned = body.assignedUserId ? parseId('company-user', body.assignedUserId) : null;
         if (!isFull && newAssigned !== meId) {
@@ -729,6 +888,14 @@ router.put(
         }
       }
 
+      // Recalcular totalCost: cubre tanto el reemplazo de items como un
+      // cambio de laborCost (laborCost ya se persistió arriba en el
+      // update de updateData). Antes este endpoint nunca tocaba
+      // totalCost, así que editar repuestos desde el modal dejaba el
+      // total desactualizado hasta que alguien usara el quick-add del
+      // drawer (que sí lo recalculaba).
+      await recalcMaintenanceTotal(id);
+
       const [full] = await db
         .select({
           m: companyMaintenanceRecords,
@@ -745,7 +912,7 @@ router.put(
         .limit(1);
       const itemsMap  = await loadItemsMap([id]);
       const eventsMap = await loadEventsMap([id]);
-      res.json(serializeMaintenance(full!.m, itemsMap.get(id) ?? [], eventsMap.get(id) ?? []));
+      res.json(serializeMaintenance({ ...full!.m, ...full! }, itemsMap.get(id) ?? [], eventsMap.get(id) ?? []));
     } catch (err) {
       next(err);
     }
@@ -756,7 +923,7 @@ router.put(
 // Solo admin/owner pueden crear.
 router.post(
   '/categories',
-  requireModule('maintenance'),
+  requireModule('mantenimiento'),
   requireAdmin,
   validate(z.object({
     key:        z.string().min(2).max(60).regex(/^[A-Za-z0-9_\-:]+$/, 'Solo letras, números, guion, guion bajo y dos puntos'),
@@ -809,8 +976,8 @@ router.post(
 // asignado a otro, devuelve 409. El user debe tener execution.crear.
 router.post(
   '/:id/take',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'execution', 'crear'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'crear'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -891,8 +1058,8 @@ router.post(
 // ─── POST /:id/finalize ───────────────────────────────────────────────────────
 router.post(
   '/:id/finalize',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'execution', 'editar'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'editar'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -942,8 +1109,8 @@ router.post(
 // Borra items y fotos. Mantiene la línea de tiempo.
 router.post(
   '/:id/cancel-reschedule',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'execution', 'editar'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'editar'),
   validate(cancelRescheduleSchema),
   async (req, res, next) => {
     try {
@@ -990,7 +1157,11 @@ router.post(
         .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
         .returning();
 
-      // 3) Registrar evento en línea de tiempo (con la foto del antes/después)
+      // 3) Recalcular totalCost: como se borraron los items, el total
+      // debe volver a ser solo laborCost (+ extras de lavada si los hubiera).
+      await recalcMaintenanceTotal(id);
+
+      // 4) Registrar evento en línea de tiempo (con la foto del antes/después)
       await recordEvent(companyId, id, 'cancelled', {
         userId: meId,
         name:   req.user!.name ?? null,
@@ -1016,8 +1187,8 @@ router.post(
 // ─── POST /:id/notes ──────────────────────────────────────────────────────────
 router.post(
   '/:id/notes',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'execution', 'editar'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'editar'),
   validate(noteSchema),
   async (req, res, next) => {
     try {
@@ -1036,8 +1207,8 @@ router.post(
 // ─── POST /:id/items ──────────────────────────────────────────────────────────
 router.post(
   '/:id/items',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'execution', 'editar'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'editar'),
   validate(z.object({ items: z.array(itemSchema).max(50) })),
   async (req, res, next) => {
     try {
@@ -1047,18 +1218,218 @@ router.post(
       const body = req.body as { items: z.infer<typeof itemSchema>[] };
 
       await db.insert(companyMaintenanceItems).values(buildItemValues(id, body.items));
-      const total = body.items.reduce((acc, i) => acc + i.quantity * i.unitCost, 0);
-      await db
-        .update(companyMaintenanceRecords)
-        .set({ totalCost: total.toFixed(2), updatedAt: new Date() })
-        .where(eq(companyMaintenanceRecords.id, id));
+      // Recalcular totalCost = laborCost + items + extras. Esto deja
+      // la tabla de mantenimientos con el monto actualizado al instante
+      // (sin tener que re-cargar la lista manualmente).
+      const total = await recalcMaintenanceTotal(id);
 
       await recordEvent(companyId, id, 'item_added', {
         userId: meId,
         name:   req.user!.name ?? null,
       }, { count: body.items.length, totalAdded: total });
 
-      res.json({ ok: true });
+      res.json({ ok: true, totalCost: total });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── POST /:id/carwash-extras ─────────────────────────────────────────────────
+// Solo aplica a mantenimientos type='Lavada'. Inserta adicionales y suma
+// al totalCost.
+router.post(
+  '/:id/carwash-extras',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'editar'),
+  validate(z.object({ extras: z.array(carwashExtraSchema).max(50) })),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+      const meId = getUserIdFromSub(req.user!.sub);
+      const body = req.body as { extras: z.infer<typeof carwashExtraSchema>[] };
+
+      // Validar que el mantenimiento existe y es de esta empresa
+      const [m] = await db
+        .select({ id: companyMaintenanceRecords.id, type: companyMaintenanceRecords.type })
+        .from(companyMaintenanceRecords)
+        .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
+        .limit(1);
+      if (!m) throw new NotFoundError('Mantenimiento', req.params.id);
+      if (m.type !== 'Lavada') {
+        throw new ForbiddenError('Los adicionales de lavada solo aplican a mantenimientos de tipo Lavada.');
+      }
+
+      const inserted = await db.insert(companyMaintenanceCarwashExtras).values(
+        body.extras.map((e) => ({
+          maintenanceId: id,
+          name:     e.name,
+          quantity: String(e.quantity),
+          unitCost: String(e.unitCost),
+          subtotal: (e.quantity * e.unitCost).toFixed(2),
+          photoUrl: e.photoUrl ?? null,
+        }))
+      ).returning();
+
+      // Recalcular totalCost desde cero (labor + items + extras), en vez
+      // de incrementar el valor existente con SQL. Esto es más robusto:
+      // si el totalCost ya estaba desactualizado por algún motivo, este
+      // recálculo lo corrige en el mismo paso en vez de sumarle al
+      // número viejo y perpetuar el error.
+      const newTotal = await recalcMaintenanceTotal(id);
+      const addedTotal = body.extras.reduce((acc, i) => acc + i.quantity * i.unitCost, 0);
+
+      await recordEvent(companyId, id, 'item_added', {
+        userId: meId,
+        name:   req.user!.name ?? null,
+      }, { count: body.extras.length, totalAdded: addedTotal, kind: 'carwash_extra' });
+
+      res.status(201).json({
+        data: inserted.map((e) => ({
+          id: e.id,
+          maintenanceId: toId('maintenance', e.maintenanceId),
+          name: e.name,
+          quantity: Number(e.quantity),
+          unitCost: Number(e.unitCost),
+          subtotal: Number(e.subtotal),
+          photoUrl: e.photoUrl,
+          createdAt: e.createdAt,
+        })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── GET /:id/carwash-extras ──────────────────────────────────────────────────
+router.get(
+  '/:id/carwash-extras',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+      const rows = await db
+        .select()
+        .from(companyMaintenanceCarwashExtras)
+        .where(eq(companyMaintenanceCarwashExtras.maintenanceId, id))
+        .orderBy(companyMaintenanceCarwashExtras.createdAt);
+      // Validar que el mantenimiento pertenece a la empresa
+      const [m] = await db
+        .select({ companyId: companyMaintenanceRecords.companyId })
+        .from(companyMaintenanceRecords)
+        .where(eq(companyMaintenanceRecords.id, id))
+        .limit(1);
+      if (!m || m.companyId !== companyId) {
+        throw new NotFoundError('Mantenimiento', req.params.id);
+      }
+      res.json({
+        data: rows.map((e) => ({
+          id: e.id,
+          maintenanceId: toId('maintenance', e.maintenanceId),
+          name: e.name,
+          quantity: Number(e.quantity),
+          unitCost: Number(e.unitCost),
+          subtotal: Number(e.subtotal),
+          photoUrl: e.photoUrl,
+          createdAt: e.createdAt,
+        })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── POST /:id/carwash-photos ─────────────────────────────────────────────────
+router.post(
+  '/:id/carwash-photos',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'editar'),
+  validate(z.object({ photos: z.array(carwashPhotoSchema).max(20) })),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+      const meId = getUserIdFromSub(req.user!.sub);
+      const body = req.body as { photos: z.infer<typeof carwashPhotoSchema>[] };
+
+      const [m] = await db
+        .select({ id: companyMaintenanceRecords.id, type: companyMaintenanceRecords.type, companyId: companyMaintenanceRecords.companyId })
+        .from(companyMaintenanceRecords)
+        .where(eq(companyMaintenanceRecords.id, id))
+        .limit(1);
+      if (!m || m.companyId !== companyId) throw new NotFoundError('Mantenimiento', req.params.id);
+      if (m.type !== 'Lavada') {
+        throw new ForbiddenError('Las fotos de lavada solo aplican a mantenimientos de tipo Lavada.');
+      }
+
+      const inserted = await db.insert(companyMaintenanceCarwashPhotos).values(
+        body.photos.map((p) => ({
+          maintenanceId:  id,
+          photoUrl:       p.photoUrl,
+          caption:        p.caption ?? null,
+          uploadedBy:     meId,
+          uploadedByName: req.user!.name ?? null,
+        }))
+      ).returning();
+
+      await recordEvent(companyId, id, 'photo_uploaded', {
+        userId: meId,
+        name:   req.user!.name ?? null,
+      }, { count: body.photos.length, kind: 'carwash_photo' });
+
+      res.status(201).json({
+        data: inserted.map((p) => ({
+          id: p.id,
+          maintenanceId: toId('maintenance', p.maintenanceId),
+          photoUrl: p.photoUrl,
+          caption: p.caption,
+          uploadedBy: p.uploadedBy ? toId('company-user', p.uploadedBy) : null,
+          uploadedByName: p.uploadedByName,
+          createdAt: p.createdAt,
+        })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── GET /:id/carwash-photos ──────────────────────────────────────────────────
+router.get(
+  '/:id/carwash-photos',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+      const [m] = await db
+        .select({ companyId: companyMaintenanceRecords.companyId })
+        .from(companyMaintenanceRecords)
+        .where(eq(companyMaintenanceRecords.id, id))
+        .limit(1);
+      if (!m || m.companyId !== companyId) throw new NotFoundError('Mantenimiento', req.params.id);
+      const rows = await db
+        .select()
+        .from(companyMaintenanceCarwashPhotos)
+        .where(eq(companyMaintenanceCarwashPhotos.maintenanceId, id))
+        .orderBy(companyMaintenanceCarwashPhotos.createdAt);
+      res.json({
+        data: rows.map((p) => ({
+          id: p.id,
+          maintenanceId: toId('maintenance', p.maintenanceId),
+          photoUrl: p.photoUrl,
+          caption: p.caption,
+          uploadedBy: p.uploadedBy ? toId('company-user', p.uploadedBy) : null,
+          uploadedByName: p.uploadedByName,
+          createdAt: p.createdAt,
+        })),
+      });
     } catch (err) {
       next(err);
     }
@@ -1068,7 +1439,7 @@ router.post(
 // ─── DELETE /categories/:catId ───────────────────────────────────────────────
 router.delete(
   '/categories/:catId',
-  requireModule('maintenance'),
+  requireModule('mantenimiento'),
   requireAdmin,
   async (req, res, next) => {
     try {
@@ -1094,8 +1465,8 @@ router.delete(
 // ─── /complete (legacy compat) ───────────────────────────────────────────────
 router.post(
   '/:id/complete',
-  requireModule('maintenance'),
-  requirePermission('maintenance', 'execution', 'editar'),
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'editar'),
   async (req, res, next) => {
     req.url = req.url.replace('/complete', '/finalize');
     return router.handle(req, res, next);

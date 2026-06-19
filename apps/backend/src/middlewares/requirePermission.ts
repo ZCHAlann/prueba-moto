@@ -38,3 +38,38 @@ export const requirePermission = (
 
   next();
 };
+
+/**
+ * Variante "any" de requirePermission: pasa si el usuario tiene la acción
+ * solicitada en CUALQUIERA de los pares módulo/submódulo provistos.
+ *
+ * Uso:
+ *   requirePermissionAny([
+ *     { module: 'gestion',     submodule: 'workshops' },
+ *     { module: 'mantenimiento', submodule: 'execution' },
+ *   ], 'ver')
+ */
+export const requirePermissionAny = (
+  entries: Array<{ module: string; submodule: string }>,
+  action: "ver" | "crear" | "editar" | "eliminar",
+) => (req: Request, _res: Response, next: NextFunction): void => {
+  const user = req.user;
+
+  if (!user) {
+    throw new ForbiddenError('No autenticado');
+  }
+
+  if ((BYPASS_ROLES as readonly string[]).includes(user.role)) {
+    return next();
+  }
+
+  const perms = (user.modulePermissions as unknown as Record<string, Record<string, string[]>>) ?? {};
+  for (const { module, submodule } of entries) {
+    const actions = perms[module]?.[submodule] ?? [];
+    if (actions.includes(action)) return next();
+  }
+
+  throw new ForbiddenError(
+    `Sin permiso para '${action}' en los módulos requeridos.`,
+  );
+};

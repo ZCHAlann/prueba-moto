@@ -5,8 +5,17 @@ import { extname, join } from 'path';
 import { AppError } from '../lib/errors';
 import ffmpeg from 'fluent-ffmpeg';
 import { promises as fs } from 'fs';
+import { authenticate } from '../middlewares/authenticate';
+import {
+  validateImageFile,
+  validateUploadCompanyId,
+} from '../lib/upload-security';
 
 const router = Router();
+
+// Todas las rutas de upload requieren autenticación. Sin esto, cualquier
+// persona con la URL podría subir archivos al bucket de cualquier empresa.
+router.use(authenticate);
 
 const UPLOAD_BASE = process.env.UPLOAD_DIR ?? join(process.cwd(), '..', '..', 'uploads');
 const MAX_FILE_SIZE = 8 * 1024 * 1024;        // 8 MB  (fotos)
@@ -419,8 +428,20 @@ function reencodeVideo(_inputPath: string, _outputPath: string): Promise<void> {
 // ─── Fotos de repuestos / insumos ─────────────────────────────────────────────
 
 router.post('/part-photos', (req: Request, res: Response, next: NextFunction) => {
-  const companyId = req.query.companyId as string | undefined;
-  const folder = companyId ? `parts/${companyId}` : 'parts';
+  // El router /upload no es company-scoped (no pasa por `requireCompany`).
+  // Por eso leemos `req.user.companyId` directamente del JWT para validar
+  // que el companyId del query coincida con el del usuario autenticado.
+  let companyId: number;
+  try {
+    companyId = validateUploadCompanyId(
+      req.query.companyId as string | undefined,
+      req.user?.companyId ?? undefined,
+    );
+  } catch (e) {
+    return next(new AppError(403, (e as Error).message));
+  }
+
+  const folder = `parts/${companyId}`;
 
   const upload = multer({
     storage: buildStorage(folder),
@@ -432,6 +453,12 @@ router.post('/part-photos', (req: Request, res: Response, next: NextFunction) =>
     if (err) return next(err);
     const file = req.file as Express.Multer.File | undefined;
     if (!file) return next(new AppError(400, 'No se recibió la foto.'));
+    // Defense in depth: revalidar mimetype + extensión después de multer.
+    try {
+      validateImageFile(file);
+    } catch (e) {
+      return next(new AppError(400, (e as Error).message));
+    }
     res.json({
       url:  `/uploads/${folder}/${file.filename}`,
       type: file.mimetype,
@@ -442,10 +469,26 @@ router.post('/part-photos', (req: Request, res: Response, next: NextFunction) =>
 });
 
 // ─── Fuel ─────────────────────────────────────────────────────────────────────
+// SEGURIDAD: este endpoint valida que el `companyId` del query coincida con
+// el del usuario autenticado, y revalida mimetype + extensión de cada archivo
+// (defense in depth — el `fileFilter` ya filtra, pero un futuro cambio del
+// filter no debería abrir este endpoint). Usado para foto del recibo Y foto
+// del odómetro.
 
 router.post('/fuel-photos', (req: Request, res: Response, next: NextFunction) => {
-  const companyId = req.query.companyId as string | undefined;
-  const folder = companyId ? `fuel/${companyId}` : 'fuel';
+  let companyId: number;
+  try {
+    companyId = validateUploadCompanyId(
+      req.query.companyId as string | undefined,
+      // El router /upload NO pasa por `requireCompany` (no es company-scoped).
+      // Tomamos el companyId del JWT directamente.
+      req.user?.companyId ?? undefined,
+    );
+  } catch (e) {
+    return next(new AppError(403, (e as Error).message));
+  }
+
+  const folder = `fuel/${companyId}`;
 
   const upload = multer({
     storage: buildStorage(folder),
@@ -457,6 +500,14 @@ router.post('/fuel-photos', (req: Request, res: Response, next: NextFunction) =>
     if (err) return next(err);
     const files = req.files as Express.Multer.File[];
     if (!files?.length) return next(new AppError(400, 'No se recibió el archivo.'));
+
+    // Defense in depth: revalidar cada archivo después de multer
+    try {
+      for (const f of files) validateImageFile(f);
+    } catch (e) {
+      return next(new AppError(400, (e as Error).message));
+    }
+
     res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
   });
 });
@@ -597,6 +648,19 @@ router.post('/photos', (req: Request, res: Response, next: NextFunction) => {
     ? (category as UploadCategory)
     : 'general';
 
+  let companyId: number | undefined;
+  if (req.query.companyId) {
+    try {
+      companyId = validateUploadCompanyId(
+        req.query.companyId as string | undefined,
+        // Ver nota en /fuel-photos: el router /upload no es company-scoped.
+        req.user?.companyId ?? undefined,
+      );
+    } catch (e) {
+      return next(new AppError(403, (e as Error).message));
+    }
+  }
+
   const upload = buildUpload(safeCategory);
   upload(req, res, (err) => {
     if (err) return next(err);
@@ -604,8 +668,12 @@ router.post('/photos', (req: Request, res: Response, next: NextFunction) => {
     if (!files || files.length === 0) {
       return next(new AppError(400, 'No se recibieron archivos.'));
     }
-    const companyId = req.query.companyId as string | undefined;
-    res.json({ urls: resolveUrls(files, safeCategory, companyId) });
+    try {
+      for (const f of files) validateImageFile(f);
+    } catch (e) {
+      return next(new AppError(400, (e as Error).message));
+    }
+    res.json({ urls: resolveUrls(files, safeCategory, companyId?.toString()) });
   });
 });
 

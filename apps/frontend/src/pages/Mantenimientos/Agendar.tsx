@@ -350,8 +350,8 @@ function MaintenanceDetailModal({ maintenance, onClose, onEdit, canEdit }: {
 export function MantenimientosAgendar() {
   const { companyId } = useAuth();
   const { can } = usePermissions();
-  const canCreate = can("maintenance", "execution", "crear");
-  const canEdit   = can("maintenance", "execution", "editar");
+  const canCreate = can("mantenimiento", "execution", "crear");
+  const canEdit   = can("mantenimiento", "execution", "editar");
 
   const calendarRef  = useRef<FullCalendar | null>(null);
   const calendarWrap = useRef<HTMLDivElement>(null);

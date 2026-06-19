@@ -22,7 +22,7 @@ import { DeleteConfirm } from "./components/DeleteConfirm";
 const PAGE_SIZE = 8;
 
 function fmtMoney(n: number) {
-  return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
+  return new Intl.NumberFormat("es-EC", { style: "currency", currency: "USD" }).format(n);
 }
 
 function fmtDate(ymd: string) {

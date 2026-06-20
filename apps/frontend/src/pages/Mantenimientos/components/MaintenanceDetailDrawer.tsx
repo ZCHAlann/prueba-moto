@@ -281,8 +281,9 @@ export function MaintenanceDetailDrawer({
   const [newExtra, setNewExtra] = useState<{ name: string; quantity: number; unitCost: number; photoUrl: string }>({
     name: "", quantity: 1, unitCost: 0, photoUrl: "",
   });
-  const [newPhoto, setNewPhoto] = useState<string>("");
   const [newPhotoCaption, setNewPhotoCaption] = useState<string>("");
+  // Ref al input file de lavada (usado para resetear el control tras subir).
+  const carwashPhotoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Mano de obra (edición en línea, solo Programado/Correctivo en proceso)
   const [laborCostDraft, setLaborCostDraft] = useState<number>(0);
@@ -303,7 +304,6 @@ export function MaintenanceDetailDrawer({
     setNewNote("");
     setNewItem({ name: "", quantity: 1, unitCost: 0, photoUrl: null, uploading: false });
     setNewExtra({ name: "", quantity: 1, unitCost: 0, photoUrl: "" });
-    setNewPhoto("");
     setNewPhotoCaption("");
     setAssignTo("");
     setLaborCostDraft(0);
@@ -364,6 +364,13 @@ export function MaintenanceDetailDrawer({
 
   const currentAssignedId = item?.assignedUserId ?? "";
   const partsCost = (item?.totalCost ?? 0) - (item?.laborCost ?? 0);
+  // Para lavada: el "Total" del servicio = carwashTotal. Los "Repuestos /
+  // Extras" no aplican como tal — lo que sí hay son los adicionales que el
+  // operador agregó al servicio (carwashExtras).
+  const carwashExtrasCost = carwashExtras.reduce(
+    (acc, e) => acc + Number(e.quantity ?? 0) * Number(e.unitCost ?? 0),
+    0,
+  );
 
   // Mano de obra: editable en línea mientras está "En proceso" y el
   // usuario puede operar sobre el mantenimiento (dueño o full access).
@@ -582,7 +589,19 @@ export function MaintenanceDetailDrawer({
                           <Kpi label="Mano de obra" value={fmtMoney(item.laborCost)} accent="violet" />
                         )
                       )}
-                      <Kpi label="Repuestos / Extras" value={fmtMoney(partsCost)} accent={isLavada ? "sky" : "sky"} />
+                      {/* En lavada no hay "Repuestos / Extras" como tal — los
+                          adicionales del servicio (carwashExtras) son lo que
+                          más se le parece. Mostramos ese monto y el total
+                          reflejando el costo del servicio. */}
+                      {isLavada ? (
+                        <Kpi
+                          label="Adicionales del servicio"
+                          value={fmtMoney(carwashExtrasCost)}
+                          accent="sky"
+                        />
+                      ) : (
+                        <Kpi label="Repuestos / Extras" value={fmtMoney(partsCost)} accent="sky" />
+                      )}
                       <Kpi label="Total" value={fmtMoney(item.totalCost)} accent="emerald" />
                     </div>
                   </Section>
@@ -592,6 +611,7 @@ export function MaintenanceDetailDrawer({
                     <Section icon={<MapPin size={11} />} title="Lavada">
                       <Row icon={<Store size={11} />}    label="Lugar / Proveedor" value={item.carwashLocation ?? "—"} />
                       <Row icon={<UserIcon size={11} />} label="Encargado"         value={item.carwashProvider ?? "—"} />
+                      <Row icon={<DollarSign size={11} />} label="Costo del servicio" value={(item.carwashTotal ?? 0) > 0 ? fmtMoney(item.carwashTotal!) : "—"} />
                       {item.carwashNotes && (
                         <div className="px-3 py-2 text-xs">
                           <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">Notas</p>
@@ -927,35 +947,32 @@ export function MaintenanceDetailDrawer({
                         </summary>
                         <div className="mt-2 space-y-2 text-xs">
                           <input
-                            placeholder="URL de la foto (https://...)"
-                            value={newPhoto}
-                            onChange={(e) => setNewPhoto(e.target.value)}
-                            className="w-full rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            ref={carwashPhotoInputRef}
+                            onChange={async (e) => {
+                              const files = Array.from(e.target.files ?? []);
+                              if (!files.length) return;
+                              try {
+                                await addCarwashPhotoMut.mutateAsync({
+                                  id: item.id,
+                                  photos: files.map((f) => ({ file: f, caption: newPhotoCaption.trim() || null })),
+                                });
+                                setNewPhotoCaption("");
+                                if (carwashPhotoInputRef.current) carwashPhotoInputRef.current.value = "";
+                                toast.success(files.length === 1 ? "Foto subida" : `${files.length} fotos subidas`);
+                                refetch();
+                              } catch (err) { toast.error((err as Error).message); }
+                            }}
+                            className="w-full text-xs file:mr-2 file:rounded-md file:border-0 file:bg-sky-600 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-sky-700"
                           />
                           <input
-                            placeholder="Caption (opcional)"
+                            placeholder="Caption (opcional, aplica a todas)"
                             value={newPhotoCaption}
                             onChange={(e) => setNewPhotoCaption(e.target.value)}
                             className="w-full rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
                           />
-                          <button
-                            onClick={async () => {
-                              if (!newPhoto.trim()) { toast.error("URL requerida"); return; }
-                              try {
-                                await addCarwashPhotoMut.mutateAsync({
-                                  id: item.id,
-                                  photos: [{ photoUrl: newPhoto.trim(), caption: newPhotoCaption.trim() || null }],
-                                });
-                                setNewPhoto("");
-                                setNewPhotoCaption("");
-                                toast.success("Foto subida");
-                                refetch();
-                              } catch (e) { toast.error((e as Error).message); }
-                            }}
-                            className="rounded-md bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-medium text-white transition"
-                          >
-                            Subir foto
-                          </button>
                         </div>
                       </details>
                     </Section>

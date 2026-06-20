@@ -335,6 +335,9 @@ export const companyMaintenanceRecords = pgTable('company_maintenance_records', 
   carwashLocation: varchar('carwash_location', { length: 200 }),
   carwashProvider: varchar('carwash_provider', { length: 200 }),
   carwashNotes:    text('carwash_notes'),
+  // Costo explícito del servicio de lavada. El admin lo digita en el modal
+  // y se persiste acá (separado de totalCost que también queda reflejado).
+  carwashTotal:    numeric('carwash_total', { precision: 12, scale: 2 }).notNull().default('0'),
   // Adjuntos (facturas, fotos de evidencia, etc.) subidos durante
   // la ejecución del mantenimiento. Array jsonb:
   //   [{ url: string, label: string, uploadedAt: string }]

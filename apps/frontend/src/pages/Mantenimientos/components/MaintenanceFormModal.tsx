@@ -354,6 +354,8 @@ export function MaintenanceFormModal({
       carwashLocation: isLavada ? (carwashLocation.trim() || null) : null,
       carwashProvider: isLavada ? (carwashProvider.trim() || null) : null,
       carwashNotes:    isLavada ? (carwashNotes.trim() || null) : null,
+      // Costo explícito que digitó el admin en el modal de lavada.
+      carwashTotal:    isLavada ? (carwashTotal ?? 0)             : 0,
       // Adjuntos: solo aplicables en Programado→En proceso o Completado.
       // En creación el array está vacío (no se pueden subir fotos antes de
       // que exista el ID). En edición se mandan los actuales.

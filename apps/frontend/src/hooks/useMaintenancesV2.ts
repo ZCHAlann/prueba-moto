@@ -93,6 +93,8 @@ export interface Maintenance {
   carwashLocation: string | null;
   carwashProvider: string | null;
   carwashNotes:    string | null;
+  /** Costo explícito del servicio de lavada (lo que digitó el admin al crear). */
+  carwashTotal:    number;
   /** Adjuntos: facturas, fotos de evidencia, etc. (subidos mientras
    *  el mantenimiento está "En proceso" o "Completado"). */
   attachments:     MaintenanceAttachment[];
@@ -144,7 +146,13 @@ export interface CarwashPhoto {
 }
 
 export interface CarwashPhotoInput {
-  photoUrl: string;
+  /**
+   * Archivo a subir. El hook se encarga de hacer POST al endpoint
+   * `/upload/photos?category=maintenance&companyId=N` (separado por
+   * empresa en el filesystem) y luego persistir la URL resultante
+   * con `POST /company/:id/maintenances/:mid/carwash-photos`.
+   */
+  file: File;
   caption?: string | null;
 }
 
@@ -180,6 +188,7 @@ export interface MaintenanceInput {
   carwashLocation?: string | null;
   carwashProvider?: string | null;
   carwashNotes?:    string | null;
+  carwashTotal?:    number;
   assignedUserId?: string | null;
 }
 
@@ -530,9 +539,29 @@ export function useAddCarwashPhotos() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, photos }: { id: string; photos: CarwashPhotoInput[] }) => {
+      // 1) Subir cada File al endpoint genérico de uploads. La URL final
+      //    queda separada por empresa: /uploads/maintenance/<companyId>/<file>.
+      const uploaded: { url: string; caption: string | null }[] = [];
+      for (const p of photos) {
+        const fd = new FormData();
+        fd.append('photos', p.file);
+        const upRes = await fetch(
+          `/api/upload/photos?category=maintenance&companyId=${encodeURIComponent(String(companyId))}`,
+          { method: 'POST', body: fd, credentials: 'include' },
+        );
+        if (!upRes.ok) {
+          const body = await upRes.json().catch(() => ({}));
+          throw new Error((body as { error?: string }).error ?? `Error subiendo foto (${upRes.status})`);
+        }
+        const upData = await upRes.json() as { urls?: string[] };
+        const url = upData.urls?.[0];
+        if (!url) throw new Error('El servidor no devolvió la URL de la foto.');
+        uploaded.push({ url, caption: p.caption ?? null });
+      }
+      // 2) Persistir cada URL en la tabla de carwash-photos de la lavada.
       return jsonFetch<{ data: CarwashPhoto[] }>(
         `/api/company/${companyId}/maintenances/${id}/carwash-photos`,
-        { method: 'POST', body: JSON.stringify({ photos }) },
+        { method: 'POST', body: JSON.stringify({ photos: uploaded }) },
       );
     },
     onSuccess: () => {

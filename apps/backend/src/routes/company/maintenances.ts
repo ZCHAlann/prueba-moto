@@ -96,6 +96,8 @@ const createMaintenanceSchema = z.object({
   carwashLocation: z.string().max(200).optional().nullable(),
   carwashProvider: z.string().max(200).optional().nullable(),
   carwashNotes:    validators.longTextOptional,
+  // Costo explícito del servicio (lo que pagó el admin en el modal).
+  carwashTotal:    z.number().nonnegative().max(1_000_000_000).optional().nullable(),
   // Adjuntos (facturas, fotos de evidencia) — máximo 30 para evitar
   // payloads enormes.
   attachments:     z.array(attachmentSchema).max(30).optional(),
@@ -126,6 +128,8 @@ const updateMaintenanceSchema = z.object({
   carwashLocation: z.string().max(200).optional().nullable(),
   carwashProvider: z.string().max(200).optional().nullable(),
   carwashNotes:    validators.longTextOptional,
+  // Costo explícito del servicio.
+  carwashTotal:    z.number().nonnegative().max(1_000_000_000).optional().nullable(),
   // Adjuntos (facturas, fotos de evidencia)
   attachments:     z.array(attachmentSchema).max(30).optional(),
   assignedUserId: z.string().optional().nullable(),
@@ -202,26 +206,38 @@ function getUserIdFromSub(sub: string | undefined): number | null {
  */
 async function recalcMaintenanceTotal(maintenanceId: number): Promise<number> {
   const [m] = await db
-    .select({ id: companyMaintenanceRecords.id, laborCost: companyMaintenanceRecords.laborCost })
+    .select({
+      id: companyMaintenanceRecords.id,
+      type: companyMaintenanceRecords.type,
+      laborCost: companyMaintenanceRecords.laborCost,
+      carwashTotal: companyMaintenanceRecords.carwashTotal,
+    })
     .from(companyMaintenanceRecords)
     .where(eq(companyMaintenanceRecords.id, maintenanceId))
     .limit(1);
   if (!m) return 0;
-
-  const [itemsSum] = await db
-    .select({ s: sql<number>`COALESCE(SUM(${companyMaintenanceItems.quantity} * ${companyMaintenanceItems.unitCost}), 0)` })
-    .from(companyMaintenanceItems)
-    .where(eq(companyMaintenanceItems.maintenanceId, maintenanceId));
 
   const [extrasSum] = await db
     .select({ s: sql<number>`COALESCE(SUM(${companyMaintenanceCarwashExtras.quantity} * ${companyMaintenanceCarwashExtras.unitCost}), 0)` })
     .from(companyMaintenanceCarwashExtras)
     .where(eq(companyMaintenanceCarwashExtras.maintenanceId, maintenanceId));
 
-  const labor = m.laborCost != null ? Number(m.laborCost) : 0;
-  const items = Number(itemsSum?.s ?? 0);
   const extras = Number(extrasSum?.s ?? 0);
-  const total = labor + items + extras;
+
+  let total: number;
+  if (m.type === 'Lavada') {
+    // En lavada el Total = costo del servicio (carwashTotal) + adicionales.
+    // No hay laborCost ni items en este tipo.
+    total = Number(m.carwashTotal ?? 0) + extras;
+  } else {
+    const [itemsSum] = await db
+      .select({ s: sql<number>`COALESCE(SUM(${companyMaintenanceItems.quantity} * ${companyMaintenanceItems.unitCost}), 0)` })
+      .from(companyMaintenanceItems)
+      .where(eq(companyMaintenanceItems.maintenanceId, maintenanceId));
+    const labor = m.laborCost != null ? Number(m.laborCost) : 0;
+    const items = Number(itemsSum?.s ?? 0);
+    total = labor + items;
+  }
 
   await db
     .update(companyMaintenanceRecords)
@@ -345,6 +361,7 @@ function serializeMaintenance(m: any, items: any[], events: any[] = []) {
     carwashLocation: m.carwashLocation ?? null,
     carwashProvider: m.carwashProvider ?? null,
     carwashNotes:    m.carwashNotes ?? null,
+    carwashTotal:    Number(m.carwashTotal ?? 0),
     // Adjuntos subidos durante la ejecución. El default del schema
     // garantiza que siempre sea un array.
     attachments:     (m as any).attachments ?? [],
@@ -751,11 +768,14 @@ router.post(
           scheduledFor:   new Date(body.scheduledFor),
           executedAt:     isUrgente ? new Date() : null,
           notes:          body.notes ?? null,
-          totalCost:      '0',
+          // Total: para lavada, lo que costó el servicio. Para Programado/Correctivo
+          // se calcula luego con la suma de mano de obra + repuestos.
+          totalCost:      body.type === 'Lavada' ? String(body.carwashTotal ?? 0) : '0',
           // v3.1: campos de lavada
           carwashLocation: body.type === 'Lavada' ? (body.carwashLocation ?? null) : null,
           carwashProvider: body.type === 'Lavada' ? (body.carwashProvider ?? null) : null,
           carwashNotes:    body.type === 'Lavada' ? (body.carwashNotes ?? null) : null,
+          carwashTotal:    body.type === 'Lavada' ? (body.carwashTotal ?? 0)         : 0,
           // Adjuntos — default [] (la columna ya tiene default '[]'::jsonb,
           // pero si el body no los manda, mandamos [] explícito).
           attachments:     body.attachments ?? [],
@@ -861,6 +881,9 @@ router.put(
       if (body.carwashLocation !== undefined) updateData.carwashLocation = body.carwashLocation ?? null;
       if (body.carwashProvider !== undefined) updateData.carwashProvider = body.carwashProvider ?? null;
       if (body.carwashNotes !== undefined) updateData.carwashNotes = body.carwashNotes ?? null;
+      if (body.carwashTotal !== undefined) {
+        updateData.carwashTotal = body.carwashTotal ?? 0;
+      }
       // Adjuntos: si vienen en el body, los reemplazo completamente. El
       // frontend los maneja como array — agregar/eliminar = mutar el
       // array local y reenviarlo entero en el PUT.

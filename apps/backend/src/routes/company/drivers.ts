@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { db } from '../../db/client';
-import { companyDrivers, companySites } from '../../db/schema/operational';
+import { companyDrivers, companySites, companyAssignments, companyAssets } from '../../db/schema/operational';
 import { companyUsers } from '../../db/schema/platform';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
@@ -11,7 +11,6 @@ import { NotFoundError, AppError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { companyDriverReports } from '../../db/schema/operational';
-import { desc } from 'drizzle-orm';
 import { validators, safeString } from '../../lib/validators';
 
 const router = Router({ mergeParams: true });
@@ -44,30 +43,61 @@ router.get('/', requireModule('gestion', 'conductores'), async (req, res, next) 
     const companyId = req.companyId!;
     const { status, siteId, search } = req.query;
 
+    // LEFT JOIN con companyUsers para enriquecer con profileData (datos
+    // personales: firstName, lastName, phone, documentNumber, siteId).
+    // La fila de drivers puede tener datos viejos si el admin editó al
+    // user desde Accesos, así que el profileData es la fuente de verdad
+    // para los datos personales.
     let rows = await db
-      .select()
+      .select({
+        driver: companyDrivers,
+        user:   {
+          id:          companyUsers.id,
+          email:       companyUsers.email,
+          photoUrl:    companyUsers.photoUrl,
+          status:      companyUsers.status,
+          profileData: companyUsers.profileData,
+        },
+      })
       .from(companyDrivers)
+      .leftJoin(
+        companyUsers,
+        and(
+          eq(companyUsers.id, companyDrivers.userId),
+          eq(companyUsers.companyId, companyId),
+        ),
+      )
       .where(eq(companyDrivers.companyId, companyId))
       .orderBy(companyDrivers.lastName);
 
     if (status && typeof status === 'string') {
-      rows = rows.filter((d) => d.status === status);
+      rows = rows.filter((r) => r.driver.status === status);
     }
 
     if (siteId && typeof siteId === 'string') {
       const parsedSiteId = parseId('site', siteId);
-      rows = rows.filter((d) => d.siteId === parsedSiteId);
+      rows = rows.filter((r) => r.driver.siteId === parsedSiteId);
     }
 
     if (search && typeof search === 'string') {
       const q = search.toLowerCase();
-      rows = rows.filter(
-        (d) =>
+      rows = rows.filter((r) => {
+        const d = r.driver;
+        if (
           d.firstName.toLowerCase().includes(q) ||
           d.lastName.toLowerCase().includes(q) ||
           d.code.toLowerCase().includes(q) ||
           d.licenseNumber?.toLowerCase().includes(q)
-      );
+        ) {
+          return true;
+        }
+        // Buscar también en los datos del profile del user asociado
+        const p = (r.user?.profileData as Record<string, unknown> | null) ?? {};
+        const pFirst = String(p.firstName ?? "").toLowerCase();
+        const pLast  = String(p.lastName  ?? "").toLowerCase();
+        const pDoc   = String(p.documentNumber ?? "").toLowerCase();
+        return pFirst.includes(q) || pLast.includes(q) || pDoc.includes(q);
+      });
     }
 
     // ── Enrichment: cargar nombres de sedes ────────────────────────────────────
@@ -79,7 +109,7 @@ router.get('/', requireModule('gestion', 'conductores'), async (req, res, next) 
     const siteMap = new Map(sitesRows.map(s => [s.id, s.name]));
 
     res.json({
-      data: rows.map(d => serializeDriver(d, siteMap.get(d.siteId) ?? null)),
+      data: rows.map(r => serializeDriver(r.driver, siteMap.get(r.driver.siteId) ?? null, r.user)),
       total: rows.length,
       sites: sitesRows,
     });
@@ -96,25 +126,94 @@ router.get('/:driverId', requireModule('gestion', 'conductores'), async (req, re
     const driverId = parseId('driver', req.params.driverId);
 
     const rows = await db
-      .select()
+      .select({
+        driver: companyDrivers,
+        user:   {
+          id:          companyUsers.id,
+          email:       companyUsers.email,
+          photoUrl:    companyUsers.photoUrl,
+          status:      companyUsers.status,
+          profileData: companyUsers.profileData,
+        },
+      })
       .from(companyDrivers)
+      .leftJoin(
+        companyUsers,
+        and(
+          eq(companyUsers.id, companyDrivers.userId),
+          eq(companyUsers.companyId, companyId),
+        ),
+      )
       .where(and(eq(companyDrivers.id, driverId), eq(companyDrivers.companyId, companyId)))
       .limit(1);
 
     if (!rows.length) throw new NotFoundError('Conductor', req.params.driverId);
 
+    const { driver, user } = rows[0];
+
     // ── Enrichment: cargar nombre de sede ──────────────────────────────────────
     let siteName: string | null = null;
-    if (rows[0].siteId) {
+    if (driver.siteId) {
       const [site] = await db
         .select({ name: companySites.name })
         .from(companySites)
-        .where(and(eq(companySites.id, rows[0].siteId!), eq(companySites.companyId, companyId)))
+        .where(and(eq(companySites.id, driver.siteId!), eq(companySites.companyId, companyId)))
         .limit(1);
       siteName = site?.name ?? null;
     }
 
-    res.json(serializeDriver(rows[0], siteName));
+    // ── Enrichment: acta de asignación activa del conductor ────────────────────
+    // Buscamos primero la activa; si no hay, la última cerrada, para que el
+    // drawer siempre tenga qué mostrar (cuando el conductor está libre, ve
+    // el historial reciente).
+    const [activeAsg] = await db
+      .select({
+        assignment: companyAssignments,
+        assetName:  companyAssets.name,
+        assetPlate: companyAssets.plate,
+      })
+      .from(companyAssignments)
+      .leftJoin(companyAssets, eq(companyAssets.id, companyAssignments.assetId))
+      .where(and(
+        eq(companyAssignments.driverId, driverId),
+        eq(companyAssignments.companyId, companyId),
+        eq(companyAssignments.status, 'Activa'),
+      ))
+      .orderBy(desc(companyAssignments.createdAt))
+      .limit(1);
+
+    let assignmentForActa = activeAsg;
+    if (!assignmentForActa) {
+      const [lastAsg] = await db
+        .select({
+          assignment: companyAssignments,
+          assetName:  companyAssets.name,
+          assetPlate: companyAssets.plate,
+        })
+        .from(companyAssignments)
+        .leftJoin(companyAssets, eq(companyAssets.id, companyAssignments.assetId))
+        .where(and(
+          eq(companyAssignments.driverId, driverId),
+          eq(companyAssignments.companyId, companyId),
+        ))
+        .orderBy(desc(companyAssignments.createdAt))
+        .limit(1);
+      assignmentForActa = lastAsg;
+    }
+
+    const currentAssignment = assignmentForActa?.assignment
+      ? serializeAssignment(assignmentForActa.assignment, {
+          firstName: driver.firstName,
+          lastName:  driver.lastName,
+          phone:     driver.phone,
+        }, {
+          id:    assignmentForActa.assetName ? toId('asset', assignmentForActa.assignment.assetId) : null,
+          name:  assignmentForActa.assetName  ?? null,
+          plate: assignmentForActa.assetPlate ?? null,
+        })
+      : null;
+
+    res.json(serializeDriver(driver, siteName, user, currentAssignment));
   } catch (err) {
     next(err);
   }
@@ -294,28 +393,119 @@ router.delete(
 
 // ─── Serializer ───────────────────────────────────────────────────────────────
 
-function serializeDriver(d: typeof companyDrivers.$inferSelect, siteName?: string | null) {
+type UserEnrichment = {
+  id: number;
+  email: string | null;
+  photoUrl: string | null;
+  status: string | null;
+  profileData: unknown;
+} | null;
+
+function serializeDriver(
+  d: typeof companyDrivers.$inferSelect,
+  siteNameParam?: string | null,
+  user: UserEnrichment = null,
+  currentAssignment?: ReturnType<typeof serializeAssignment> | null,
+) {
+  // Si el driver está vinculado a un company_user, los datos personales
+  // (firstName/lastName/phone/email/photo) se leen del profileData (fuente
+  // de verdad editada desde Accesos). Si no hay user asociado, usamos lo
+  // que tenga la fila del driver.
+  const profile = (user?.profileData as Record<string, unknown> | null) ?? {};
+  let pFirst = typeof profile.firstName === "string" ? profile.firstName.trim() : "";
+  let pLast  = typeof profile.lastName  === "string" ? profile.lastName.trim()  : "";
+  const pPhone = typeof profile.phone     === "string" ? profile.phone.trim()     : "";
+  // Si el form guardó `fullName` y no `firstName`/`lastName`, partimos acá
+  // también (defensa en profundidad por si el profileData no fue normalizado).
+  if (!pFirst && !pLast && typeof profile.fullName === "string") {
+    const tokens = profile.fullName.trim().split(/\s+/).filter(Boolean);
+    pFirst = tokens[0] ?? "";
+    pLast  = tokens.slice(1).join(" ");
+  }
+
+  const firstName = pFirst || d.firstName;
+  const lastName  = pLast  || d.lastName;
+  const phone     = pPhone || d.phone;
+  const email     = user?.email ?? d.email;
+  const photoUrl  = user?.photoUrl ?? d.photoUrl;
+
   return {
     id: toId('driver', d.id),
     companyId: toId('company', d.companyId),
     siteId: d.siteId ? toId('site', d.siteId) : null,
     userId: d.userId ? toId('company-user', d.userId) : null,
+    userStatus: user?.status ?? null,
     code: d.code,
-    firstName: d.firstName,
-    lastName: d.lastName,
-    fullName: `${d.firstName} ${d.lastName}`,
-    email: d.email,
-    phone: d.phone,
+    firstName,
+    lastName,
+    fullName: `${firstName} ${lastName}`.trim(),
+    email,
+    phone,
+    documentNumber: typeof profile.documentNumber === "string" ? profile.documentNumber : null,
     licenseNumber: d.licenseNumber,
     licenseType: d.licenseType,
     licenseExpiry: d.licenseExpiry,
     licensePoints: d.licensePoints,
     status: d.status,
-    site: siteName ?? d.site ?? null,
+    siteName: siteNameParam ?? null,
     notes: d.notes,
-    photoUrl: d.photoUrl,
+    photoUrl,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
+    // ── Enrichment: acta de asignación (null si el conductor no tiene
+    //    asignación activa y nunca tuvo una cerrada).
+    currentAssignment: currentAssignment ?? null,
+  };
+}
+
+/**
+ * Serializa el "acta" de una asignación. El frontend usa esto en el drawer
+ * de detalle (Flotas y Conductores) sin tener que pegarle a otro endpoint.
+ * Si `vehicle` viene, expone también el vehículo asignado en el mismo shape.
+ */
+function serializeAssignment(
+  asg: typeof companyAssignments.$inferSelect,
+  driver?: { firstName: string | null; lastName: string | null; phone: string | null } | null,
+  vehicle?: { id: string | null; name: string | null; plate: string | null } | null,
+) {
+  return {
+    id:               toId('assignment', asg.id),
+    status:           asg.status,
+    startDate:        asg.startDate,
+    endDate:          asg.endDate,
+    notes:            asg.notes,
+    // Datos del acta
+    actaNumber:       asg.actaNumber,
+    actaDate:         asg.actaDate,
+    actaTime:         asg.actaTime,
+    actaPlace:        asg.actaPlace,
+    actaArea:         asg.actaArea,
+    handoverUrl:      asg.handoverUrl,
+    // Datos del vehículo al momento de la entrega
+    vehicleOdometer:  asg.vehicleOdometer,
+    vehicleFuelLevel: asg.vehicleFuelLevel,
+    vehicleCondition: asg.vehicleCondition,
+    vehiclePhotoUrls: asg.vehiclePhotoUrls ?? [],
+    // Firmas digitalizadas (URLs)
+    signatureLogUrl:  asg.signatureLogUrl,
+    signatureRespUrl: asg.signatureRespUrl,
+    // Datos del conductor congelados al momento de la entrega
+    driverDni:        asg.driverDni,
+    driverPhone:      asg.driverPhone,
+    driverRole:       asg.driverRole,
+    driverSnapshot:   driver ? {
+      firstName: driver.firstName ?? null,
+      lastName:  driver.lastName  ?? null,
+      phone:     driver.phone     ?? null,
+    } : null,
+    // Snapshot del vehículo (null si ya no existe)
+    vehicleSnapshot:  vehicle ?? null,
+    // Novedades / accesorios
+    novedades:        asg.novedades       ?? {},
+    accesorios:       asg.accesorios      ?? {},
+    novedadesText:    asg.novedadesText,
+    createdAt:        asg.createdAt,
+    updatedAt:        asg.updatedAt,
   };
 }
 

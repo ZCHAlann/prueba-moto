@@ -7,8 +7,35 @@ import type { OperationalSite, SiteStatus } from "../types/fleet";
 type CreateSiteInput = Omit<OperationalSite, "id" | "tenantId">;
 type UpdateSiteInput = Omit<OperationalSite, "id" | "tenantId">;
 
+// ── Enrichment: vehículos y conductores vinculados a la sede ───────────────
+// El backend resuelve esto en GET /sites (ver routes/company/sites.ts), así
+// que esta página no necesita combinar con useAssets()/useDrivers() aparte.
+export interface SiteLinkedAsset {
+  id: string;
+  name: string;
+  plate: string | null;
+  status: string | null;
+  brand: string | null;
+  model: string | null;
+}
+
+export interface SiteLinkedDriver {
+  id: string;
+  firstName: string;
+  lastName: string;
+  status: string | null;
+  licenseType: string | null;
+}
+
+export type EnrichedOperationalSite = OperationalSite & {
+  assetCount: number;
+  driverCount: number;
+  assets: SiteLinkedAsset[];
+  drivers: SiteLinkedDriver[];
+};
+
 type UseSitesReturn = {
-  sites: OperationalSite[];
+  sites: EnrichedOperationalSite[];
   loading: boolean;
   error: string | null;
   refresh: () => void;
@@ -16,7 +43,7 @@ type UseSitesReturn = {
   updateSite: (id: string, input: UpdateSiteInput) => Promise<boolean>;
 };
 
-function mapApiToSite(data: Record<string, unknown>, companyId: string): OperationalSite {
+function mapApiToSite(data: Record<string, unknown>, companyId: string): EnrichedOperationalSite {
   return {
     id: String(data.id ?? ""),
     tenantId: `tenant-company-${companyId}`,
@@ -27,6 +54,11 @@ function mapApiToSite(data: Record<string, unknown>, companyId: string): Operati
     contact: String(data.contact ?? ""),
     status: (data.status as SiteStatus) ?? "Activa",
     notes: String(data.notes ?? ""),
+    // ── Enrichment del backend ──────────────────────────────────────────────
+    assetCount: Number(data.assetCount ?? 0),
+    driverCount: Number(data.driverCount ?? 0),
+    assets: Array.isArray(data.assets) ? (data.assets as SiteLinkedAsset[]) : [],
+    drivers: Array.isArray(data.drivers) ? (data.drivers as SiteLinkedDriver[]) : [],
   };
 }
 
@@ -46,7 +78,7 @@ export function useSites(): UseSitesReturn {
   const { session } = useAuth();
   const companyId = session?.companyId ? String(session.companyId) : null;
 
-  const [sites, setSites] = useState<OperationalSite[]>([]);
+  const [sites, setSites] = useState<EnrichedOperationalSite[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -122,7 +154,15 @@ export function useSites(): UseSitesReturn {
 
         const data = await res.json() as Record<string, unknown>;
         const updated = mapApiToSite(data, companyId);
-        setSites((current) => current.map((site) => (site.id === id ? updated : site)));
+        // El PUT no recalcula assets/drivers vinculados (no cambian al editar
+        // los datos de la sede) — conservamos los que ya teníamos en memoria.
+        setSites((current) =>
+          current.map((site) =>
+            site.id === id
+              ? { ...updated, assetCount: site.assetCount, driverCount: site.driverCount, assets: site.assets, drivers: site.drivers }
+              : site
+          )
+        );
         return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error actualizando sede");

@@ -49,6 +49,7 @@ function mapApiToAsset(data: Record<string, unknown>, companyId: string): Asset 
     photoUrls: Array.isArray(data.photoUrls ?? data.photo_urls) ? (data.photoUrls ?? data.photo_urls) as string[] : [],
     // ── Backend enrichment ──────────────────────────────────────────────────────
     currentDriver: (data.currentDriver as { name: string; code: string; phone: string; photoUrl: string | null } | null) ?? null,
+    currentAssignment: (data.currentAssignment as Asset["currentAssignment"]) ?? null,
   };
 }
 

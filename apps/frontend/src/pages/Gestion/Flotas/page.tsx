@@ -6,6 +6,7 @@ import { useMaintenances } from "../../../hooks/useMaintenances";
 import { useGarages } from "../../../hooks/useGarages";
 import { createPortal } from "react-dom";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
+import { useAuth } from "../../../context/AuthContext";
 import type {
   CreateMaintenancePayload,
   MaintenanceKind,
@@ -14,11 +15,11 @@ import type {
 } from "../../../hooks/useMaintenances";
 import { usePermissions } from "../../../hooks/usePermissions";
 import { ModulePageHeader } from "../../../components/features/modules/ModulePageHeader";
-import type { Asset, AssetCategory, AssetFuelType, AssetStatus, AssetType } from "../../../types/activo";
+import type { Asset, AssetCategory, AssetFuelType, AssetStatus, AssetType, AssignmentActa } from "../../../types/activo";
 import {
   Plus, Search, Car, Wrench, Trash2, Pencil, X, Loader2,
   ChevronDown, Filter, MoreHorizontal, MapPin, User, Fuel,
-  Droplets, Calendar, Hash, AlertTriangle,
+  Droplets, Calendar, Hash, AlertTriangle, FileText,
   ChevronLeft, ChevronRight, Eye, Warehouse,
 } from "lucide-react";
 import { useDrivers } from "@/hooks/useDrivers";
@@ -592,12 +593,17 @@ function EditVehicleModal({ vehicle, onClose, onUpdated }: {
 function KpiRow({ vehicles }: { vehicles: Asset[] }) {
   const operativos    = vehicles.filter(v => v.status === "Operativo").length;
   const mantenimiento = vehicles.filter(v => v.status === "En mantenimiento").length;
-  const fuera         = vehicles.filter(v => v.status === "Fuera de servicio").length;
+  // Aptos para salir pero sin chofer asignado: operativos + sin asignación
+  // activa. El campo `currentDriver` viene del endpoint de lista (no
+  // depende de hooks extra en el frontend).
+  const disponiblesSinAsignacion = vehicles.filter(
+    (v) => v.status === "Operativo" && !v.currentDriver
+  ).length;
   const cards = [
-    { label: "Total flota",       value: vehicles.length, sub: "unidades registradas",    cls: "border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]",                valCls: "text-gray-800 dark:text-white"          },
-    { label: "Operativos",        value: operativos,      sub: "listos para despacho",    cls: "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/5", valCls: "text-emerald-700 dark:text-emerald-300" },
-    { label: "En mantenimiento",  value: mantenimiento,   sub: "con restricción técnica", cls: "border-amber-200 bg-amber-50/60 dark:border-amber-500/20 dark:bg-amber-500/5",         valCls: "text-amber-700 dark:text-amber-300"     },
-    { label: "Fuera de servicio", value: fuera,           sub: "detenidos por novedad",   cls: "border-rose-200 bg-rose-50/60 dark:border-rose-500/20 dark:bg-rose-500/5",             valCls: "text-rose-700 dark:text-rose-300"       },
+    { label: "Total flota",       value: vehicles.length,            sub: "unidades registradas",    cls: "border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]",                valCls: "text-gray-800 dark:text-white"          },
+    { label: "Operativos",        value: operativos,                 sub: "listos para despacho",    cls: "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/5", valCls: "text-emerald-700 dark:text-emerald-300" },
+    { label: "En mantenimiento",  value: mantenimiento,              sub: "con restricción técnica", cls: "border-amber-200 bg-amber-50/60 dark:border-amber-500/20 dark:bg-amber-500/5",         valCls: "text-amber-700 dark:text-amber-300"     },
+    { label: "Listo para asignar", value: disponiblesSinAsignacion, sub: "operativos sin chofer",   cls: "border-sky-200 bg-sky-50/60 dark:border-sky-500/20 dark:bg-sky-500/5",                valCls: "text-sky-700 dark:text-sky-300"          },
   ];
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -632,10 +638,139 @@ function RowMenu({ onView, onEdit, onMaintenance, onDelete, canEdit, canDelete, 
 
 // ─── Detail Drawer ────────────────────────────────────────────────────────────
 
+/**
+ * Bloque reutilizable que pinta los campos de un acta de asignación.
+ * Mismo componente se usa en el drawer de Flotas y en el de Conductores,
+ * así no se duplica markup. Lee solo de los campos del shape
+ * `AssignmentActa` que ya viene del endpoint.
+ */
+function ActaAsignacion({ acta }: { acta: AssignmentActa }) {
+  const items: Array<{ label: string; value: string | null | undefined }> = [
+    { label: "Fecha del acta",   value: fmtDate(acta.actaDate) },
+    { label: "Hora",             value: acta.actaTime || "—" },
+    { label: "Lugar",            value: acta.actaPlace || "—" },
+    { label: "Área",             value: acta.actaArea || "—" },
+    { label: "Inicio asignación",value: fmtDate(acta.startDate) },
+    { label: "Fin asignación",   value: fmtDate(acta.endDate) },
+    { label: "Odómetro",         value: acta.vehicleOdometer || "—" },
+    { label: "Combustible",      value: acta.vehicleFuelLevel || "—" },
+    { label: "Condición",        value: acta.vehicleCondition || "—" },
+    { label: "Notas",            value: acta.notes || null },
+  ];
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-2">
+        {items.map((it) => (
+          <div key={it.label} className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">{it.label}</p>
+            <p className="mt-0.5 truncate text-xs font-semibold text-gray-700 dark:text-gray-200">
+              {it.value ?? "—"}
+            </p>
+          </div>
+        ))}
+      </div>
+      {/* Firmas y handover */}
+      {(acta.signatureLogUrl || acta.signatureRespUrl || acta.handoverUrl) && (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          {acta.handoverUrl && (
+            <a
+              href={acta.handoverUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-300"
+            >
+              <FileText size={11} /> Acta
+            </a>
+          )}
+          {acta.signatureLogUrl && (
+            <a
+              href={acta.signatureLogUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-[10px] font-bold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
+            >
+              <Pencil size={11} /> Firma logística
+            </a>
+          )}
+          {acta.signatureRespUrl && (
+            <a
+              href={acta.signatureRespUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-[10px] font-bold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
+            >
+              <Pencil size={11} /> Firma responsable
+            </a>
+          )}
+        </div>
+      )}
+      {/* Fotos del vehículo al momento de la entrega */}
+      {Array.isArray(acta.vehiclePhotoUrls) && acta.vehiclePhotoUrls.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {acta.vehiclePhotoUrls.map((url, i) => (
+            <a
+              key={i}
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="block h-12 w-12 overflow-hidden rounded-md border border-gray-200 dark:border-white/[0.08]"
+              title="Ver foto del vehículo"
+            >
+              <img src={url} alt={`Foto ${i + 1}`} className="h-full w-full object-cover" />
+            </a>
+          ))}
+        </div>
+      )}
+      {/* Novedades en texto (si las hay) */}
+      {acta.novedadesText && (
+        <div className="pt-1">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Novedades</p>
+          <p className="mt-0.5 whitespace-pre-wrap text-xs text-gray-700 dark:text-gray-200">
+            {acta.novedadesText}
+          </p>
+        </div>
+      )}
+    </>
+  );
+}
+
 function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance, canEdit, canDelete, canMaintenance }: {
   vehicle: Asset; onClose: () => void; onEdit: () => void; onDelete: () => void; onMaintenance: () => void;
   canEdit: boolean; canDelete: boolean; canMaintenance: boolean;
 }) {
+  const { session } = useAuth();
+  // El `vehicle` que llega del listado (`GET /assets`) NO trae el acta —
+  // esa info solo la entrega el endpoint de detalle (`GET /assets/:id`).
+  // Como el endpoint es la fuente de verdad (no dependemos de hooks
+  // externos para pintar el drawer), al montar el drawer hacemos un fetch
+  // del detalle y mantenemos una versión enriquecida.
+  const [enriched, setEnriched] = useState<Asset>(vehicle);
+  useEffect(() => {
+    let cancelled = false;
+    const companyId = session?.companyId;
+    const assetNumericId = String(vehicle.id).replace(/^asset-/, "");
+    if (!companyId || !assetNumericId) return;
+    setEnriched(vehicle); // reset
+    fetch(`/api/company/${companyId}/assets/${vehicle.id}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        // Mergeamos con el `vehicle` original para no perder campos que
+        // el listado sí trae y el detalle no (ej. utilization/nextMaintenance).
+        setEnriched((prev) => ({
+          ...prev,
+          ...data,
+          currentAssignment: data.currentAssignment ?? prev.currentAssignment ?? null,
+        }));
+      })
+      .catch(() => { /* mantener `vehicle` tal cual si falla */ });
+    return () => { cancelled = true; };
+    // Re-corre cuando cambia el vehículo abierto.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vehicle.id, session?.companyId]);
+
+  // A partir de aquí usamos `enriched` (que ya tiene el acta si existe)
+  // en vez de `vehicle` directo.
   const { assignments } = useAssignments();
   const { maintenances } = useMaintenances();
   const { garages } = useGarages();
@@ -755,7 +890,7 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance, canEd
                 </div>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold text-sky-700 dark:text-sky-300">
-                    {vehicle.currentDriver?.name ?? activeAssignment.driverId}
+                    {enriched.currentDriver?.name ?? activeAssignment.driverId}
                   </p>
                   <p className="text-xs text-sky-500">Asignado desde {fmtDate(activeAssignment.startDate)}</p>
                 </div>
@@ -767,6 +902,23 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance, canEd
               </div>
             )}
           </section>
+
+          {/* Acta de asignación (viene del endpoint, no depende de hooks) */}
+          {enriched.currentAssignment && (
+            <section>
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Acta de asignación</p>
+                {enriched.currentAssignment.actaNumber && (
+                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
+                    #{enriched.currentAssignment.actaNumber}
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2 rounded-xl border border-gray-100 bg-gray-50/60 p-3 text-xs dark:border-white/[0.05] dark:bg-white/[0.03]">
+                <ActaAsignacion acta={enriched.currentAssignment} />
+              </div>
+            </section>
+          )}
 
           {/* Mantenimiento */}
           <section>

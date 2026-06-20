@@ -9,7 +9,7 @@
 // en `lib/stats-anomalies-persist.ts` se encarga del upsert.
 // ─────────────────────────────────────────────────────────────────────
 
-import { eq, and, gte, lte, sql } from "drizzle-orm";
+import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
 import { db } from "../db/client";
 import {
   companyMaintenanceRecords,
@@ -472,7 +472,7 @@ async function loadAssets(companyId: number, ids: number[]): Promise<Map<number,
   const rows = await db
     .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate })
     .from(companyAssets)
-    .where(and(eq(companyAssets.companyId, companyId), sql`${companyAssets.id} = ANY(${ids})`));
+    .where(and(eq(companyAssets.companyId, companyId), inArray(companyAssets.id, ids)));
   return new Map(rows.map((r) => [r.id, { name: r.name, plate: r.plate }]));
 }
 

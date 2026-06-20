@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
-import { useSites } from "@/hooks/useSites";
-import { useAssets } from "@/hooks/useAssets";
-import { useDrivers } from "@/hooks/useDrivers";
+import { useSites, type EnrichedOperationalSite, type SiteLinkedAsset, type SiteLinkedDriver } from "@/hooks/useSites";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LocationPickerModal } from "@/components/ui/map/LocationPicker";
 import { RowActionMenu } from "@/components/ui/table/RowActionMenu";
@@ -13,7 +11,6 @@ import type { OperationalSite, SiteStatus } from "@/types/fleet";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-// Extended to carry coordinates alongside the address string
 type SiteFormState = Omit<OperationalSite, "id" | "tenantId"> & {
   latitude?: number;
   longitude?: number;
@@ -21,9 +18,8 @@ type SiteFormState = Omit<OperationalSite, "id" | "tenantId"> & {
 
 type SiteFormErrors = Partial<Record<keyof Omit<SiteFormState, "latitude" | "longitude">, string>>;
 
-type EnrichedSite = OperationalSite & {
-  assetCount: number;
-  driverCount: number;
+// EnrichedSite ahora usa directamente los datos que vienen del backend
+type EnrichedSite = EnrichedOperationalSite & {
   references: number;
 };
 
@@ -146,9 +142,9 @@ function RowMenu({
     <RowActionMenu
       ariaLabel="Acciones de la sede"
       items={[
-        { label: "Ver detalle",                      onClick: onDetail, tone: "default" },
-        { label: "Editar",                           onClick: onEdit,   tone: "default", disabled: !hasPermission },
-        { label: isActive ? "Inactivar" : "Reactivar", onClick: onToggle, tone: isActive ? "warning" : "success", disabled: !hasPermission },
+        { label: "Ver detalle",                         onClick: onDetail, tone: "default" },
+        { label: "Editar",                              onClick: onEdit,   tone: "default", disabled: !hasPermission },
+        { label: isActive ? "Inactivar" : "Reactivar",  onClick: onToggle, tone: isActive ? "warning" : "success", disabled: !hasPermission },
       ]}
     />
   );
@@ -252,7 +248,6 @@ function SiteFormModal({
     <AnimatePresence>
       {open && (
         <>
-          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -261,8 +256,6 @@ function SiteFormModal({
             className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
             onClick={onClose}
           />
-
-          {/* Modal */}
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -271,7 +264,6 @@ function SiteFormModal({
             className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2"
           >
             <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
-              {/* Header */}
               <div className="flex items-center justify-between px-4 py-5 sm:px-6 border-b border-gray-200 dark:border-white/[0.06]">
                 <div>
                   <h2 className="text-base font-semibold text-gray-800 dark:text-white">
@@ -291,7 +283,6 @@ function SiteFormModal({
                 </button>
               </div>
 
-              {/* Body */}
               <form onSubmit={handleSubmit} className="px-4 py-5 sm:px-6 space-y-4">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <FormField label="Código" error={errors.code}>
@@ -331,7 +322,6 @@ function SiteFormModal({
                   />
                 </FormField>
 
-                {/* ── Dirección con selector de mapa ── */}
                 <FormField label="Dirección" error={errors.address}>
                   <LocationPickerModal
                     value={form.address}
@@ -368,7 +358,6 @@ function SiteFormModal({
                   />
                 </FormField>
 
-                {/* Footer */}
                 <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
                   <button
                     type="button"
@@ -395,19 +384,17 @@ function SiteFormModal({
 }
 
 // ─── Site Detail Drawer ───────────────────────────────────────────────────────
+// FIX: ahora recibe el EnrichedSite directamente y usa site.assets / site.drivers
+// que el backend ya resolvió — no filtra desde hooks globales.
 
 function SiteDetailDrawer({
   site,
-  assets,
-  drivers,
   hasPermission,
   onClose,
   onEdit,
   onToggleStatus,
 }: {
   site: EnrichedSite | null;
-  assets: { id: string; name: string; plate?: string; siteId: string | null; status: string; brand?: string; model?: string }[];
-  drivers: { id: string; firstName: string; lastName: string; siteId: string | null; status: string; licenseType?: string }[];
   hasPermission: boolean;
   onClose: () => void;
   onEdit: (site: EnrichedSite) => void;
@@ -416,8 +403,9 @@ function SiteDetailDrawer({
   const [hoveredAsset,  setHoveredAsset]  = useState<string | null>(null);
   const [hoveredDriver, setHoveredDriver] = useState<string | null>(null);
 
-  const linkedAssets  = site ? assets.filter(a => a.siteId === site.id)  : [];
-  const linkedDrivers = site ? drivers.filter(d => d.siteId === site.id) : [];
+  // ✅ FIX: usar los arrays que ya vienen resueltos desde el backend
+  const linkedAssets  = site?.assets  ?? [];
+  const linkedDrivers = site?.drivers ?? [];
 
   return (
     <AnimatePresence>
@@ -458,7 +446,9 @@ function SiteDetailDrawer({
               {/* Status */}
               <div className="flex items-center justify-between">
                 <StatusBadge status={site.status} />
-                <span className="text-xs text-gray-400 dark:text-gray-500">{linkedAssets.length + linkedDrivers.length} referencias</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500">
+                  {linkedAssets.length + linkedDrivers.length} referencias
+                </span>
               </div>
 
               {/* Info */}
@@ -481,7 +471,7 @@ function SiteDetailDrawer({
                 )}
               </div>
 
-              {/* ── Mapa conceptual ── */}
+              {/* Mapa de recursos */}
               <div>
                 <p className="mb-4 text-[10px] font-bold uppercase tracking-widest text-gray-400">Mapa de recursos</p>
 
@@ -501,24 +491,18 @@ function SiteDetailDrawer({
                       </div>
                     </div>
 
-                    {/* Línea vertical desde sede */}
                     <div className="absolute left-1/2 top-[52px] -translate-x-px w-px bg-gray-200 dark:bg-white/[0.08]" style={{ height: "28px" }} />
 
-                    {/* Línea horizontal que conecta las dos ramas */}
                     {linkedAssets.length > 0 && linkedDrivers.length > 0 && (
                       <div className="absolute top-[80px] left-1/4 right-1/4 h-px bg-gray-200 dark:bg-white/[0.08]" />
                     )}
 
-                    {/* Dos columnas: vehículos | conductores */}
                     <div className={`grid gap-6 mt-10 ${linkedAssets.length > 0 && linkedDrivers.length > 0 ? "grid-cols-2" : "grid-cols-1"}`}>
 
-                      {/* ── Columna vehículos ── */}
+                      {/* Columna vehículos */}
                       {linkedAssets.length > 0 && (
                         <div className="flex flex-col items-center gap-2">
-                          {/* Línea vertical desde rama hasta header */}
                           <div className="w-px h-5 bg-gray-200 dark:bg-white/[0.08]" />
-
-                          {/* Header rama */}
                           <div className="flex items-center gap-1.5 rounded-lg border border-sky-200 dark:border-sky-500/20 bg-sky-50 dark:bg-sky-500/10 px-3 py-1.5 mb-1">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-sky-600 dark:text-sky-400">
                               <rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
@@ -526,9 +510,8 @@ function SiteDetailDrawer({
                             <span className="text-[11px] font-bold text-sky-700 dark:text-sky-300 uppercase tracking-wide">Vehículos ({linkedAssets.length})</span>
                           </div>
 
-                          {/* Nodos vehículos */}
                           <div className="flex flex-col items-center gap-1.5 w-full">
-                            {linkedAssets.map((asset, i) => (
+                            {linkedAssets.map((asset) => (
                               <div key={asset.id} className="flex flex-col items-center w-full">
                                 <div className="w-px h-3 bg-gray-200 dark:bg-white/[0.08]" />
                                 <div
@@ -545,7 +528,6 @@ function SiteDetailDrawer({
                                     <p className="text-[10px] text-gray-400 truncate">{asset.brand} {asset.model}</p>
                                   </div>
 
-                                  {/* Tooltip hover */}
                                   {hoveredAsset === asset.id && (
                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-10 w-44 rounded-xl border border-sky-200 dark:border-sky-500/20 bg-white dark:bg-gray-900 shadow-lg px-3 py-2.5">
                                       <p className="text-[10px] font-bold uppercase tracking-widest text-sky-500 mb-1">Vehículo</p>
@@ -570,11 +552,10 @@ function SiteDetailDrawer({
                         </div>
                       )}
 
-                      {/* ── Columna conductores ── */}
+                      {/* Columna conductores */}
                       {linkedDrivers.length > 0 && (
                         <div className="flex flex-col items-center gap-2">
                           <div className="w-px h-5 bg-gray-200 dark:bg-white/[0.08]" />
-
                           <div className="flex items-center gap-1.5 rounded-lg border border-violet-200 dark:border-violet-500/20 bg-violet-50 dark:bg-violet-500/10 px-3 py-1.5 mb-1">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-violet-600 dark:text-violet-400">
                               <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
@@ -600,7 +581,6 @@ function SiteDetailDrawer({
                                     <p className="text-[10px] text-gray-400">Lic. {driver.licenseType || "—"}</p>
                                   </div>
 
-                                  {/* Tooltip hover */}
                                   {hoveredDriver === driver.id && (
                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-10 w-44 rounded-xl border border-violet-200 dark:border-violet-500/20 bg-white dark:bg-gray-900 shadow-lg px-3 py-2.5">
                                       <p className="text-[10px] font-bold uppercase tracking-widest text-violet-500 mb-1">Conductor</p>
@@ -655,26 +635,24 @@ function SiteDetailDrawer({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function SitesManagementPage() {
+  // ✅ FIX: eliminados useAssets() y useDrivers() — toda la info viene de useSites()
   const { sites, loading, createSite, updateSite } = useSites();
-  const { assets }   = useAssets();
-  const { drivers }  = useDrivers();
-  const { can }      = usePermissions();
+  const { can } = usePermissions();
 
   const [query,       setQuery]       = useState("");
   const [modalOpen,   setModalOpen]   = useState(false);
   const [editingSite, setEditingSite] = useState<OperationalSite | null>(null);
   const [detailSite,  setDetailSite]  = useState<EnrichedSite | null>(null);
 
-  // Enrich sites with reference counts
+  // ✅ FIX: usamos assetCount/driverCount que ya vienen del backend en cada site
   const rows = useMemo<EnrichedSite[]>(() => {
     return sites
-      .map((site) => {
-        const assetCount  = assets.filter(a => a.siteId === site.id).length;
-        const driverCount = drivers.filter(d => d.siteId === site.id).length;
-        return { ...site, assetCount, driverCount, references: assetCount + driverCount };
-      })
+      .map((site) => ({
+        ...site,
+        references: site.assetCount + site.driverCount,
+      }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [sites, assets, drivers]);
+  }, [sites]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -726,7 +704,7 @@ export function SitesManagementPage() {
   return (
     <>
       <div className="space-y-5">
-        {/* ── Page header ── */}
+        {/* Page header */}
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-blue-200 dark:border-blue-500/20 bg-blue-50 dark:bg-blue-500/10 px-2.5 py-1">
@@ -751,15 +729,15 @@ export function SitesManagementPage() {
           )}
         </div>
 
-        {/* ── KPI row ── */}
+        {/* KPI row */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiCard label="Total sedes"  value={String(sites.length)}   detail="Catálogo actual"                   accent="blue"   />
-          <KpiCard label="Activas"      value={String(totalActive)}    detail="Disponibles en formularios"        accent="green"  />
-          <KpiCard label="Inactivas"    value={String(totalInactive)}  detail="Fuera de alta nueva"               accent="yellow" />
-          <KpiCard label="Referencias"  value={String(totalRefs)}      detail="Flota y conductores vinculados"    accent="gray"   />
+          <KpiCard label="Total sedes"  value={String(sites.length)}   detail="Catálogo actual"                accent="blue"   />
+          <KpiCard label="Activas"      value={String(totalActive)}    detail="Disponibles en formularios"    accent="green"  />
+          <KpiCard label="Inactivas"    value={String(totalInactive)}  detail="Fuera de alta nueva"           accent="yellow" />
+          <KpiCard label="Referencias"  value={String(totalRefs)}      detail="Flota y conductores vinculados" accent="gray"  />
         </div>
 
-        {/* ── Table card ── */}
+        {/* Table card */}
         <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] overflow-hidden">
           {/* Toolbar */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-5 py-4 border-b border-gray-200 dark:border-white/[0.06]">
@@ -804,11 +782,8 @@ export function SitesManagementPage() {
               <table className="w-full min-w-[760px]">
                 <thead>
                   <tr className="border-b border-gray-200 dark:border-white/[0.06]">
-                    {["Código", "Sede", "Contacto", "Estado", "Referencias", ""].map((h, i, arr) => (
-                      <th
-                        key={h}
-                        className={`px-5 py-3 text-left text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide ${i === arr.length - 1 ? "" : ""}`}
-                      >
+                    {["Código", "Sede", "Contacto", "Estado", "Referencias", ""].map((h) => (
+                      <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">
                         {h}
                       </th>
                     ))}
@@ -841,7 +816,7 @@ export function SitesManagementPage() {
                           {site.assetCount} flota · {site.driverCount} conductores
                         </p>
                       </td>
-                      <td className=" group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
+                      <td className="group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
                         <RowMenu
                           site={site}
                           hasPermission={can("gestion", "sedes", "editar")}
@@ -865,7 +840,7 @@ export function SitesManagementPage() {
         )}
       </div>
 
-      {/* ── Modals & Drawers ── */}
+      {/* Modals & Drawers */}
       <SiteFormModal
         open={modalOpen}
         site={editingSite}
@@ -874,25 +849,9 @@ export function SitesManagementPage() {
         onUpdate={async (id, form) => { await updateSite(id, form); }}
       />
 
+      {/* ✅ FIX: SiteDetailDrawer ya no recibe assets/drivers externos */}
       <SiteDetailDrawer
         site={detailSite}
-        assets={assets.map(a => ({
-          id: a.id,
-          name: a.name,
-          plate: a.plate,
-          siteId: a.siteId,
-          status: a.status,
-          brand: a.brand,
-          model: a.model,
-        }))}
-        drivers={drivers.map(d => ({
-          id: d.id,
-          firstName: d.firstName,
-          lastName: d.lastName,
-          siteId: d.siteId,
-          status: d.status,
-          licenseType: d.licenseType,
-        }))}
         hasPermission={can("gestion", "sedes", "editar")}
         onClose={() => setDetailSite(null)}
         onEdit={(s) => openEdit(s)}

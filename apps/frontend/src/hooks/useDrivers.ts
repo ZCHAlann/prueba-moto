@@ -3,6 +3,41 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
+/**
+ * Subset del "acta de asignación" que llega del endpoint de detalle
+ * (`GET /company/:id/drivers/:driverId` → `currentAssignment`).
+ * Coincide con el shape que devuelve `serializeAssignment` en el backend.
+ */
+export type AssignmentActa = {
+  id: string;
+  status: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  notes: string | null;
+  actaNumber: string | null;
+  actaDate: string | null;
+  actaTime: string | null;
+  actaPlace: string | null;
+  actaArea: string | null;
+  handoverUrl: string | null;
+  vehicleOdometer: string | null;
+  vehicleFuelLevel: string | null;
+  vehicleCondition: string | null;
+  vehiclePhotoUrls: string[];
+  signatureLogUrl: string | null;
+  signatureRespUrl: string | null;
+  driverDni: string | null;
+  driverPhone: string | null;
+  driverRole: string | null;
+  driverSnapshot: { firstName: string | null; lastName: string | null; phone: string | null } | null;
+  vehicleSnapshot: { id: string | null; name: string | null; plate: string | null } | null;
+  novedades: unknown;
+  accesorios: unknown;
+  novedadesText: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
 export type ApiDriver = {
   id: string;
   companyId: number;
@@ -26,6 +61,12 @@ export type ApiDriver = {
   // ── Backend enrichment (display-only) ──────────────────────────────────────
   /** Site name — avoids separate useSites() call */
   siteName: string | null;
+  /**
+   * Acta de asignación del conductor (la activa, o la última cerrada si no
+   * tiene activa). Viene del endpoint de detalle. `null` si nunca tuvo
+   * asignaciones. El drawer la pinta sin depender de hooks externos.
+   */
+  currentAssignment: AssignmentActa | null;
 };
 
 type CreateDriverPayload = {
@@ -72,6 +113,7 @@ function mapApi(raw: Record<string, unknown>): ApiDriver {
     updatedAt: (raw.updatedAt as string) ?? "",
     // ── Backend enrichment ──────────────────────────────────────────────────────
     siteName: (raw.siteName as string | null) ?? null,
+    currentAssignment: (raw.currentAssignment as AssignmentActa | null) ?? null,
   };
 }
 

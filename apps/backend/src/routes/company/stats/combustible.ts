@@ -13,7 +13,7 @@
 // Anomalías: bucket histórico con z-score > 1; asset con costo > 2σ.
 // ─────────────────────────────────────────────────────────────────────
 
-import { eq, and, gte, lte, sql, desc } from "drizzle-orm";
+import { eq, and, gte, lte, sql, desc, inArray } from "drizzle-orm";
 import { db } from "../../../db/client";
 import {
   companyFuelEntries,
@@ -40,11 +40,19 @@ export async function calculateCombustible(input: StatInput): Promise<StatResult
   if (assetId)  where.push(eq(companyFuelEntries.assetId, assetId));
   if (driverId) where.push(eq(companyFuelEntries.driverId, driverId));
 
-  const rows = await db
+  const rowsRaw = await db
     .select()
     .from(companyFuelEntries)
     .where(and(...where))
     .orderBy(desc(companyFuelEntries.date));
+
+  // Drizzle/postgres-js devuelve columnas `date` como string "YYYY-MM-DD"
+  // y `timestamp` como Date. Normalizamos a Date para que el resto del
+  // código (comparaciones, bucketByPeriod, etc.) no tenga que adivinar.
+  const rows = rowsRaw.map((r) => ({
+    ...r,
+    date: toDate(r.date as any),
+  }));
 
   // Assets
   const assetIds = Array.from(new Set(rows.map((r) => r.assetId)));
@@ -53,14 +61,14 @@ export async function calculateCombustible(input: StatInput): Promise<StatResult
     const assets = await db
       .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate, fuelType: companyAssets.fuelType })
       .from(companyAssets)
-      .where(and(eq(companyAssets.companyId, companyId), sql`${companyAssets.id} = ANY(${assetIds})`));
+      .where(and(eq(companyAssets.companyId, companyId), inArray(companyAssets.id, assetIds)));
     for (const a of assets) assetMap.set(a.id, { name: a.name, plate: a.plate, fuelType: a.fuelType });
   }
 
   // Odometer readings (último año) para calcular eficiencia
   const odoStart = new Date(from);
   odoStart.setMonth(odoStart.getMonth() - 1); // 1 mes extra antes para tener baseline
-  const odoReadings = assetIds.length
+  const odoReadingsRaw = assetIds.length
     ? await db
         .select({
           assetId: companyOdometerReadings.assetId,
@@ -73,11 +81,15 @@ export async function calculateCombustible(input: StatInput): Promise<StatResult
             eq(companyOdometerReadings.companyId, companyId),
             gte(companyOdometerReadings.takenAt, odoStart),
             lte(companyOdometerReadings.takenAt, end),
-            sql`${companyOdometerReadings.assetId} = ANY(${assetIds})`,
+            inArray(companyOdometerReadings.assetId, assetIds),
           ),
         )
         .orderBy(desc(companyOdometerReadings.takenAt))
     : [];
+
+  // Normalizar takenAt a Date (postgres-js suele devolver Date en timestamp,
+  // pero por las dudas).
+  const odoReadings = odoReadingsRaw.map((r) => ({ ...r, takenAt: toDate(r.takenAt as any) }));
 
   // ─── Buckets ────────────────────────────────────────────────────
   const currentStart  = startOfBucket(end, periodo);
@@ -224,6 +236,16 @@ export async function calculateCombustible(input: StatInput): Promise<StatResult
 // ─── Helpers ──────────────────────────────────────────────────────
 
 const kmRecorridosPorAsset: Map<number, number> = new Map();
+
+/**
+ * Coerce seguro: columnas `date` llegan como "YYYY-MM-DD" (postgres-js),
+ * columnas `timestamp` llegan como Date. Aceptamos ambos.
+ */
+function toDate(v: any): Date {
+  if (v instanceof Date) return v;
+  if (typeof v === "string") return new Date(`${v}T00:00:00Z`);
+  return new Date(NaN);
+}
 
 function num(n: any): number {
   if (n == null) return 0;

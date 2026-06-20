@@ -12,7 +12,7 @@
 // Devuelve por vehículo: { total, componentes, costoPorKm, costoPorMes, kmRecorridos }
 // ─────────────────────────────────────────────────────────────────────
 
-import { eq, and, gte, lte, sql } from "drizzle-orm";
+import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
 import { db } from "../db/client";
 import {
   companyAssets,
@@ -121,7 +121,7 @@ export async function calculateTCO(opts: TCOCalcOpts): Promise<VehicleTCO[]> {
         eq(companyOdometerReadings.companyId, opts.companyId),
         gte(companyOdometerReadings.takenAt, desde),
         lte(companyOdometerReadings.takenAt, hasta),
-        sql`${companyOdometerReadings.assetId} = ANY(${assetIds})`,
+        inArray(companyOdometerReadings.assetId, assetIds),
       )),
   ]);
 

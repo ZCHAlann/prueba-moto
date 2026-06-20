@@ -1777,7 +1777,7 @@ router.get(
               .from(companyAssets)
               .where(and(
                 eq(companyAssets.companyId, companyId),
-                sql`${companyAssets.id} = ANY(${mantenances.map((m) => m.assetId)})`,
+                inArray(companyAssets.id, mantenances.map((m) => m.assetId).filter((id): id is number => id != null)),
               ))
           : Promise.resolve([] as Array<{ id: number; name: string; plate: string | null }>),
       ]);

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { useDrivers, type ApiDriver } from "../../../hooks/useDrivers";
+import { useDrivers, type ApiDriver, type AssignmentActa } from "../../../hooks/useDrivers";
 import { useAssignments } from "../../../hooks/useAssignments";
 import { useAssets } from "../../../hooks/useAssets";
 import { useSites } from "../../../hooks/useSites";
@@ -12,7 +12,7 @@ import {
   AlertTriangle, Car, ChevronDown, ChevronLeft, ChevronRight,
   Eye, Filter, Loader2, Mail, MapPin, Pencil,
   Phone, Plus, Search, Trash2, User, X,
-  Fuel, Droplets, ClipboardList,
+  Fuel, Droplets, ClipboardList, FileText,
 } from "lucide-react";
 import { RowActionMenu } from "../../../components/ui/table/RowActionMenu";
 import { HandoverWizard } from "../../Gestion/Asignaciones/components/HandoerWizard";
@@ -497,6 +497,80 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
 
 // ─── Detail Drawer ────────────────────────────────────────────────────────────
 
+/**
+ * Versión "driver" del acta. Muestra los campos más relevantes desde el
+ * punto de vista del conductor: cuándo se firmó, dónde, vehículo, y enlaces
+ * a las firmas / acta. La información completa ya está en la fila de
+ * detalle del vehículo (no se duplica).
+ */
+function DriverActa({ acta }: { acta: AssignmentActa }) {
+  const veh = acta.vehicleSnapshot;
+  const items: Array<{ label: string; value: string | null | undefined }> = [
+    { label: "Fecha del acta", value: fmtDate(acta.actaDate) },
+    { label: "Hora",           value: acta.actaTime || "—" },
+    { label: "Lugar",          value: acta.actaPlace || "—" },
+    { label: "Área",           value: acta.actaArea || "—" },
+    { label: "Inicio",         value: fmtDate(acta.startDate) },
+    { label: "Fin",            value: fmtDate(acta.endDate) },
+  ];
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-2">
+        {items.map((it) => (
+          <div key={it.label} className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">{it.label}</p>
+            <p className="mt-0.5 truncate text-xs font-semibold text-gray-700 dark:text-gray-200">
+              {it.value ?? "—"}
+            </p>
+          </div>
+        ))}
+        {veh && (veh.plate || veh.name) && (
+          <div className="col-span-2 min-w-0 rounded-lg border border-gray-100 bg-white px-2.5 py-1.5 dark:border-white/[0.05] dark:bg-white/[0.02]">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Vehículo</p>
+            <p className="mt-0.5 truncate text-xs font-semibold text-gray-700 dark:text-gray-200">
+              {veh.plate || "—"}{veh.name ? ` · ${veh.name}` : ""}
+            </p>
+          </div>
+        )}
+      </div>
+      {(acta.handoverUrl || acta.signatureLogUrl || acta.signatureRespUrl) && (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          {acta.handoverUrl && (
+            <a
+              href={acta.handoverUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-300"
+            >
+              <FileText size={11} /> Acta
+            </a>
+          )}
+          {acta.signatureLogUrl && (
+            <a
+              href={acta.signatureLogUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-[10px] font-bold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
+            >
+              <Pencil size={11} /> Firma logística
+            </a>
+          )}
+          {acta.signatureRespUrl && (
+            <a
+              href={acta.signatureRespUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-[10px] font-bold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
+            >
+              <Pencil size={11} /> Firma responsable
+            </a>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, onAssign, onDelete }: {
   driver: ApiDriver;
   canEdit: boolean;
@@ -507,6 +581,33 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
   onAssign: () => void;
   onDelete: () => void;
 }) {
+  const { session } = useAuth();
+  // El `driver` que llega del listado (`GET /drivers`) NO trae el acta.
+  // El endpoint de detalle (`GET /drivers/:id`) es la fuente de verdad, y
+  // como el usuario pidió que el drawer no dependa de hooks externos,
+  // al abrirlo hacemos un fetch del detalle y mantenemos una versión
+  // enriquecida.
+  const [enriched, setEnriched] = useState<ApiDriver>(driver);
+  useEffect(() => {
+    let cancelled = false;
+    const companyId = session?.companyId;
+    if (!companyId) return;
+    setEnriched(driver); // reset
+    fetch(`/api/company/${companyId}/drivers/${driver.id}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        setEnriched((prev) => ({
+          ...prev,
+          ...data,
+          currentAssignment: data.currentAssignment ?? prev.currentAssignment ?? null,
+        }));
+      })
+      .catch(() => { /* mantener `driver` tal cual si falla */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [driver.id, session?.companyId]);
+
   const { assignments } = useAssignments();
   const { assets }      = useAssets();
 
@@ -629,6 +730,23 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
               </div>
             )}
           </section>
+
+          {/* Acta de asignación (viene del endpoint, no depende de hooks) */}
+          {enriched.currentAssignment && (
+            <section>
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Acta de asignación</p>
+                {enriched.currentAssignment.actaNumber && (
+                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
+                    #{enriched.currentAssignment.actaNumber}
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2 rounded-xl border border-gray-100 bg-gray-50/60 p-3 text-xs dark:border-white/[0.05] dark:bg-white/[0.03]">
+                <DriverActa acta={enriched.currentAssignment} />
+              </div>
+            </section>
+          )}
 
           {driver.notes && (
             <section>

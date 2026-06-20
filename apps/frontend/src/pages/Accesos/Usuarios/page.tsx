@@ -167,18 +167,26 @@ type UserFormState = {
   fullName: string;
   lastName: string;
   phone: string;
+  /** ID de la sede (formato "site-N") cuando el admin elige una. */
+  siteId: string;
+  /** Nombre legible de la sede (para mostrar en selects simples). */
   site: string;
   area: string;
   documentNumber: string;
   notes: string;
   photoUrl: string | null;
+  // ── Datos del conductor (solo se usan cuando role === "conductor") ──
+  licenseNumber: string;
+  licenseType: string;
+  licenseExpiry: string;
+  licensePoints: number;
 };
 
 type UserFormErrors = Partial<Record<keyof UserFormState, string>>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function createEmptyForm(defaultSite: string): UserFormState {
+function createEmptyForm(defaultSiteName: string, defaultSiteId: string = ""): UserFormState {
   return {
     email: "",
     username: "",
@@ -189,11 +197,16 @@ function createEmptyForm(defaultSite: string): UserFormState {
     fullName: "",
     lastName: "",
     phone: "",
-    site: defaultSite,
+    siteId: defaultSiteId,
+    site: defaultSiteName,
     area: "",
     documentNumber: "",
     notes: "",
     photoUrl: null,
+    licenseNumber: "",
+    licenseType: "",
+    licenseExpiry: "",
+    licensePoints: 0,
   };
 }
 
@@ -208,14 +221,19 @@ function validateForm(form: UserFormState): UserFormErrors {
   if (!form.password.trim()) errors.password = "La contraseña es obligatoria.";
   else if (form.password.length < 8) errors.password = "Mínimo 8 caracteres.";
   else if (form.password.length > 128) errors.password = "Máximo 128 caracteres.";
+  // El nombre y apellido son obligatorios siempre, y no pueden contener
+  // números (regla tomada del módulo Conductores). Para conductores, además
+  // los enviamos al backend como firstName/lastName por separado para que
+  // la fila de `company_drivers` se cree con el nombre real de la persona
+  // (no con el username).
   if (!form.fullName.trim()) errors.fullName = "El nombre es obligatorio.";
   else if (form.fullName.trim().length < 2) errors.fullName = "Mínimo 2 caracteres.";
   else if (form.fullName.trim().length > 80) errors.fullName = "Máximo 80 caracteres.";
   else if (/\d/.test(form.fullName)) errors.fullName = "El nombre no puede contener números.";
-  if (form.lastName && form.lastName.trim()) {
-    if (form.lastName.trim().length > 80) errors.lastName = "Máximo 80 caracteres.";
-    else if (/\d/.test(form.lastName)) errors.lastName = "El apellido no puede contener números.";
-  }
+  if (!form.lastName.trim()) errors.lastName = "El apellido es obligatorio.";
+  else if (form.lastName.trim().length < 2) errors.lastName = "Mínimo 2 caracteres.";
+  else if (form.lastName.trim().length > 80) errors.lastName = "Máximo 80 caracteres.";
+  else if (/\d/.test(form.lastName)) errors.lastName = "El apellido no puede contener números.";
   if (form.documentNumber && form.documentNumber.trim()) {
     if (!/^\d{10}$/.test(form.documentNumber)) errors.documentNumber = "La cédula debe tener exactamente 10 dígitos.";
   }
@@ -223,6 +241,24 @@ function validateForm(form: UserFormState): UserFormErrors {
     if (!/^\d{10}$/.test(form.phone)) errors.phone = "El teléfono debe tener exactamente 10 dígitos.";
   }
   if (!form.role) errors.role = "El rol es obligatorio.";
+
+  // Datos del conductor: solo se validan si el rol es conductor.
+  if (form.role === "conductor") {
+    if (form.licenseNumber && form.licenseNumber.trim()) {
+      if (!/^\d{10}$/.test(form.licenseNumber)) {
+        errors.licenseNumber = "El número de licencia debe tener exactamente 10 dígitos.";
+      }
+    }
+    if (form.licenseType && !["A", "B", "C", "D", "E", "F"].includes(form.licenseType)) {
+      errors.licenseType = "Tipo de licencia inválido.";
+    }
+    if (form.licenseExpiry && !/^\d{4}-\d{2}-\d{2}$/.test(form.licenseExpiry)) {
+      errors.licenseExpiry = "Fecha de vencimiento inválida (YYYY-MM-DD).";
+    }
+    if (form.licensePoints < 0 || form.licensePoints > 30) {
+      errors.licensePoints = "Los puntos deben estar entre 0 y 30.";
+    }
+  }
   return errors;
 }
 
@@ -242,10 +278,10 @@ function validateEditForm(form: UserFormState): UserFormErrors {
   else if (form.fullName.trim().length < 2) errors.fullName = "Mínimo 2 caracteres.";
   else if (form.fullName.trim().length > 80) errors.fullName = "Máximo 80 caracteres.";
   else if (/\d/.test(form.fullName)) errors.fullName = "El nombre no puede contener números.";
-  if (form.lastName && form.lastName.trim()) {
-    if (form.lastName.trim().length > 80) errors.lastName = "Máximo 80 caracteres.";
-    else if (/\d/.test(form.lastName)) errors.lastName = "El apellido no puede contener números.";
-  }
+  if (!form.lastName.trim()) errors.lastName = "El apellido es obligatorio.";
+  else if (form.lastName.trim().length < 2) errors.lastName = "Mínimo 2 caracteres.";
+  else if (form.lastName.trim().length > 80) errors.lastName = "Máximo 80 caracteres.";
+  else if (/\d/.test(form.lastName)) errors.lastName = "El apellido no puede contener números.";
   if (form.documentNumber && form.documentNumber.trim()) {
     if (!/^\d{10}$/.test(form.documentNumber)) errors.documentNumber = "La cédula debe tener exactamente 10 dígitos.";
   }
@@ -253,6 +289,23 @@ function validateEditForm(form: UserFormState): UserFormErrors {
     if (!/^\d{10}$/.test(form.phone)) errors.phone = "El teléfono debe tener exactamente 10 dígitos.";
   }
   if (!form.role) errors.role = "El rol es obligatorio.";
+
+  if (form.role === "conductor") {
+    if (form.licenseNumber && form.licenseNumber.trim()) {
+      if (!/^\d{10}$/.test(form.licenseNumber)) {
+        errors.licenseNumber = "El número de licencia debe tener exactamente 10 dígitos.";
+      }
+    }
+    if (form.licenseType && !["A", "B", "C", "D", "E", "F"].includes(form.licenseType)) {
+      errors.licenseType = "Tipo de licencia inválido.";
+    }
+    if (form.licenseExpiry && !/^\d{4}-\d{2}-\d{2}$/.test(form.licenseExpiry)) {
+      errors.licenseExpiry = "Fecha de vencimiento inválida (YYYY-MM-DD).";
+    }
+    if (form.licensePoints < 0 || form.licensePoints > 30) {
+      errors.licensePoints = "Los puntos deben estar entre 0 y 30.";
+    }
+  }
   return errors;
 }
 
@@ -279,6 +332,7 @@ function pruneEmptyPermissions(perms: PermissionMap): PermissionMap {
 }
 
 function formToCreateInput(form: UserFormState): CreateCompanyUserInput {
+  const isConductor = form.role === "conductor";
   return {
     email:    form.email.trim().toLowerCase(),
     username: form.username.trim().toLowerCase(),
@@ -287,19 +341,32 @@ function formToCreateInput(form: UserFormState): CreateCompanyUserInput {
     status:   form.status,
     modulePermissions: pruneEmptyPermissions(form.permissions),
     profileData: {
-      fullName:       form.fullName.trim(),
+      // fullName se conserva por compatibilidad (algunos lugares lo muestran
+      // directo), pero ahora también mandamos firstName / lastName por
+      // separado para que el driver y los serializers usen el nombre real.
+      fullName:       `${form.fullName.trim()} ${form.lastName.trim()}`.trim(),
+      firstName:      form.fullName.trim(),
       lastName:       form.lastName.trim(),
       phone:          form.phone.trim(),
       site:           form.site.trim(),
+      siteId:         form.siteId || undefined,
       area:           form.area.trim(),
       documentNumber: form.documentNumber.trim(),
       notes:          form.notes.trim(),
+      // Datos del conductor: solo se incluyen si el rol es "conductor".
+      ...(isConductor ? {
+        licenseNumber: form.licenseNumber.trim() || undefined,
+        licenseType:   form.licenseType || undefined,
+        licenseExpiry: form.licenseExpiry || undefined,
+        licensePoints: Number.isFinite(form.licensePoints) ? form.licensePoints : 0,
+      } : {}),
     },
     photoUrl: form.photoUrl ?? null,
   };
 }
 
 function formToUpdateInput(form: UserFormState): UpdateCompanyUserInput {
+  const isConductor = form.role === "conductor";
   const input: UpdateCompanyUserInput = {
     email:    form.email.trim().toLowerCase(),
     username: form.username.trim().toLowerCase(),
@@ -307,13 +374,21 @@ function formToUpdateInput(form: UserFormState): UpdateCompanyUserInput {
     status:   form.status,
     modulePermissions: pruneEmptyPermissions(form.permissions),
     profileData: {
-      fullName:       form.fullName.trim(),
+      fullName:       `${form.fullName.trim()} ${form.lastName.trim()}`.trim(),
+      firstName:      form.fullName.trim(),
       lastName:       form.lastName.trim(),
       phone:          form.phone.trim(),
       site:           form.site.trim(),
+      siteId:         form.siteId || undefined,
       area:           form.area.trim(),
       documentNumber: form.documentNumber.trim(),
       notes:          form.notes.trim(),
+      ...(isConductor ? {
+        licenseNumber: form.licenseNumber.trim() || undefined,
+        licenseType:   form.licenseType || undefined,
+        licenseExpiry: form.licenseExpiry || undefined,
+        licensePoints: Number.isFinite(form.licensePoints) ? form.licensePoints : 0,
+      } : {}),
     },
     photoUrl: form.photoUrl ?? null,
   };
@@ -321,8 +396,32 @@ function formToUpdateInput(form: UserFormState): UpdateCompanyUserInput {
   return input;
 }
 
-function userToForm(user: CompanyUser): UserFormState {
+function userToForm(user: CompanyUser, defaultSiteId: string = "", defaultSiteName: string = ""): UserFormState {
   const p = user.profileData;
+  // Resolver firstName/lastName desde profileData. Preferencia: firstName
+  // explícito > primera palabra de fullName. Si no hay nada, vacío.
+  const fullNameStr = String(
+    p.fullName ??
+    [p.firstName, p.lastName].filter(Boolean).join(" ") ??
+    ""
+  ).trim();
+  const firstFromProfile = typeof p.firstName === "string" ? p.firstName.trim() : "";
+  const lastFromProfile  = typeof p.lastName  === "string" ? p.lastName.trim()  : "";
+  let resolvedFirst = firstFromProfile;
+  let resolvedLast  = lastFromProfile;
+  if (!resolvedFirst && !resolvedLast && fullNameStr) {
+    const tokens = fullNameStr.split(/\s+/).filter(Boolean);
+    resolvedFirst = tokens[0] ?? "";
+    resolvedLast  = tokens.slice(1).join(" ");
+  }
+  // siteId puede venir como número crudo o como string "site-N" (compat).
+  let siteId = "";
+  if (p.siteId != null && p.siteId !== "") {
+    siteId = typeof p.siteId === "number"
+      ? `site-${p.siteId}`
+      : String(p.siteId);
+  }
+
   return {
     email:          user.email,
     username:       user.username,
@@ -332,18 +431,19 @@ function userToForm(user: CompanyUser): UserFormState {
     permissions:    Object.keys(user.modulePermissions).length > 0
                       ? normalizeModulePermissions(user.modulePermissions)
                       : ROLE_DEFAULT_PERMISSIONS[user.role] ?? {},
-    fullName:       String(
-                      p.fullName ??
-                      [p.firstName, p.lastName].filter(Boolean).join(" ") ??
-                      ""
-                    ),
-    lastName:       String(p.lastName ?? ""),
+    fullName:       resolvedFirst,
+    lastName:       resolvedLast,
     phone:          String(p.phone ?? ""),
-    site:           String(p.site ?? ""),
+    site:           String(p.site ?? defaultSiteName),
+    siteId:         siteId || defaultSiteId,
     area:           String(p.area ?? ""),
     documentNumber: String(p.documentNumber ?? ""),
     notes:          String(p.notes ?? ""),
     photoUrl:       user.photoUrl ?? null,
+    licenseNumber:  String(p.licenseNumber ?? ""),
+    licenseType:    String(p.licenseType ?? ""),
+    licenseExpiry:  String(p.licenseExpiry ?? ""),
+    licensePoints:  typeof p.licensePoints === "number" ? p.licensePoints : 0,
   };
 }
 
@@ -568,7 +668,7 @@ function UserFormModal({
 }: {
   open: boolean;
   user: CompanyUser | null;
-  siteOptions: string[];
+  siteOptions: Array<{ id: string; name: string }>;
   roleOptions: { key: string; label: string }[];
   companyRoles: Array<{ key: string; permissions: PermissionMap }>;
   /**
@@ -581,7 +681,7 @@ function UserFormModal({
   onUpdate: (id: string, input: UpdateCompanyUserInput) => Promise<void>;
 }) {
   const { session } = useAuth();
-  const [form, setForm]         = useState<UserFormState>(() => createEmptyForm(siteOptions[0] ?? ""));
+  const [form, setForm]         = useState<UserFormState>(() => createEmptyForm(siteOptions[0]?.name ?? "", siteOptions[0]?.id ?? ""));
   const [errors, setErrors]     = useState<UserFormErrors>({});
   const [saving, setSaving]     = useState(false);
   const [usernameTouched, setUsernameTouched] = useState(false);
@@ -589,10 +689,10 @@ function UserFormModal({
   useEffect(() => {
     if (open) {
       if (user) {
-        setForm(userToForm(user));
+        setForm(userToForm(user, siteOptions[0]?.id ?? "", siteOptions[0]?.name ?? ""));
         setUsernameTouched(true);
       } else {
-        setForm(createEmptyForm(siteOptions[0] ?? ""));
+        setForm(createEmptyForm(siteOptions[0]?.name ?? "", siteOptions[0]?.id ?? ""));
         setUsernameTouched(false);
       }
       setErrors({});
@@ -776,9 +876,17 @@ function UserFormModal({
                     <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Datos laborales</p>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <FormField label="Sede" error={errors.site}>
-                        <select className={inputCls} value={form.site} onChange={(e) => set("site", e.target.value)}>
+                        <select
+                          className={inputCls}
+                          value={form.siteId}
+                          onChange={(e) => {
+                            const opt = siteOptions.find((s) => s.id === e.target.value);
+                            set("siteId", e.target.value);
+                            set("site", opt?.name ?? "");
+                          }}
+                        >
                           <option value="">Seleccionar sede…</option>
-                          {siteOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+                          {siteOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                         </select>
                       </FormField>
                       <FormField label="Área / Cargo">
@@ -798,6 +906,64 @@ function UserFormModal({
                       </FormField>
                     </div>
                   </div>
+
+                  {/* Datos del conductor (solo si rol === "conductor") */}
+                  {form.role === "conductor" && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
+                        Información de licencia
+                      </p>
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <FormField label="Número de licencia" error={errors.licenseNumber}>
+                          <input
+                            className={inputCls}
+                            placeholder="0912345678"
+                            maxLength={10}
+                            value={form.licenseNumber}
+                            onKeyDown={(e) => {
+                              if (!/[0-9]/.test(e.key) && !['Backspace','Delete','Tab','ArrowLeft','ArrowRight','Home','End'].includes(e.key)) e.preventDefault();
+                            }}
+                            onChange={(e) => set("licenseNumber", e.target.value.replace(/\D/g, "").slice(0, 10))}
+                          />
+                        </FormField>
+                        <FormField label="Tipo de licencia" error={errors.licenseType}>
+                          <select className={inputCls} value={form.licenseType} onChange={(e) => set("licenseType", e.target.value)}>
+                            <option value="">Seleccionar…</option>
+                            {["A", "B", "C", "D", "E", "F"].map((t) => (
+                              <option key={t} value={t}>{t}</option>
+                            ))}
+                          </select>
+                        </FormField>
+                        <FormField label="Vencimiento de licencia" error={errors.licenseExpiry}>
+                          <input
+                            type="date"
+                            className={inputCls}
+                            value={form.licenseExpiry}
+                            onChange={(e) => set("licenseExpiry", e.target.value)}
+                          />
+                        </FormField>
+                        <FormField label="Puntos de licencia" error={errors.licensePoints}>
+                          <input
+                            type="number"
+                            min={0}
+                            max={30}
+                            className={inputCls}
+                            placeholder="30"
+                            value={form.licensePoints}
+                            onChange={(e) => {
+                              // Forzar 0..30, default 0 si vacío o NaN.
+                              const n = Number(e.target.value);
+                              const safe = Number.isFinite(n) ? Math.max(0, Math.min(30, n)) : 0;
+                              setForm((prev) => ({ ...prev, licensePoints: safe }));
+                            }}
+                          />
+                        </FormField>
+                      </div>
+                      <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        Estos datos se guardan también en la ficha del conductor y se usan para alertas de vencimiento.
+                      </p>
+                    </div>
+                  )}
 
                   {/* Credenciales */}
                   <div>
@@ -900,7 +1066,7 @@ export function UsersPage() {
   const [originalPermissionsSnapshot, setOriginalPermissionsSnapshot] = useState<PermissionMap | undefined>(undefined);
 
   const activeSites = useMemo(
-    () => sites.filter((s) => s.status === "Activa").map((s) => s.name),
+    () => sites.filter((s) => s.status === "Activa").map((s) => ({ id: s.id, name: s.name })),
     [sites]
   );
 

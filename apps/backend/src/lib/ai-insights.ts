@@ -15,7 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import { createHash } from "crypto";
-import { and, eq, gte, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { companyStatsInsightsCache } from "../db/schema/operational";
 import { chatCompletion, isAiEnabled } from "./ai-client";
@@ -100,9 +100,15 @@ export async function generateInsights(opts: GenerateOpts): Promise<GenerateResu
     payload:   opts.payload,
   });
 
+  // Normalizar filtros NULL → -1 (sentinel) para alinear con el unique index.
+  // Si esto cambia, hay que migrar datos y re-crear el índice (ver comentario en
+  // la migración 0016).
+  const assetId  = opts.assetId  ?? -1;
+  const driverId = opts.driverId ?? -1;
+
   // 1) ¿Hay cache válido?
   if (!opts.forzarRegenerar) {
-    const cached = await findCache(opts.companyId, opts.modulo, opts.periodo, opts.fechaRef, opts.fechaHasta, opts.assetId, opts.driverId, inputHash);
+    const cached = await findCache(opts.companyId, opts.modulo, opts.periodo, opts.fechaRef, opts.fechaHasta, assetId, driverId, inputHash);
     if (cached) {
       return {
         insights: parseInsights(cached),
@@ -154,14 +160,18 @@ export async function generateInsights(opts: GenerateOpts): Promise<GenerateResu
   const expiresAt = new Date();
   expiresAt.setHours(expiresAt.getHours() + TTL_HOURS);
 
+  // ON CONFLICT DO UPDATE: si una request concurrente ganó la carrera e insertó
+  // la misma fila (mismo input_hash), actualizamos en lugar de tirar 23505.
+  // El target coincide exactamente con el unique index limpio
+  // (company_id, modulo, periodo, fecha_ref, fecha_hasta, asset_id, driver_id, input_hash).
   const inserted = await db.insert(companyStatsInsightsCache).values({
     companyId:        opts.companyId,
     modulo:           opts.modulo,
     periodo:          opts.periodo,
     fechaRef:         opts.fechaRef,
     fechaHasta:       opts.fechaHasta,
-    assetId:          opts.assetId,
-    driverId:         opts.driverId,
+    assetId,                                       // ya normalizado a -1 si era NULL
+    driverId,                                      // idem
     provider:         "groq",
     model:            result.model,
     payload:          opts.payload as any,
@@ -176,6 +186,33 @@ export async function generateInsights(opts: GenerateOpts): Promise<GenerateResu
     latencyMs,
     expiresAt,
     inputHash,
+  }).onConflictDoUpdate({
+    target: [
+      companyStatsInsightsCache.companyId,
+      companyStatsInsightsCache.modulo,
+      companyStatsInsightsCache.periodo,
+      companyStatsInsightsCache.fechaRef,
+      companyStatsInsightsCache.fechaHasta,
+      companyStatsInsightsCache.assetId,
+      companyStatsInsightsCache.driverId,
+      companyStatsInsightsCache.inputHash,
+    ],
+    set: {
+      provider:         "groq",
+      model:            result.model,
+      payload:          opts.payload as any,
+      responseRaw:      result.content,
+      resumenEjecutivo: parsed.resumenEjecutivo,
+      puntosClave:      parsed.puntosClave as any,
+      recomendaciones:  parsed.recomendaciones as any,
+      alertas:          parsed.alertas as any,
+      inputTokens:      result.promptTokens,
+      outputTokens:     result.completionTokens,
+      totalTokens:      result.totalTokens,
+      latencyMs,
+      expiresAt,
+      createdAt:        new Date(),
+    },
   }).returning({ id: companyStatsInsightsCache.id });
 
   return {
@@ -215,8 +252,12 @@ ${RESPONSE_SCHEMA_HINT}`;
 async function findCache(
   companyId: number, modulo: string, periodo: Periodo,
   fechaRef: string, fechaHasta: string,
-  assetId: number | null, driverId: number | null, inputHash: string,
+  assetId: number, driverId: number, inputHash: string,
 ) {
+  // assetId/driverId llegan normalizados a -1 (sentinel "sin filtro").
+  // El unique index es (company_id, modulo, periodo, fecha_ref, fecha_hasta,
+  // asset_id, driver_id, input_hash) sin COALESCE, así que la comparación es
+  // directa y soporta múltiples combinaciones de filtro sin chocar.
   const rows = await db.select()
     .from(companyStatsInsightsCache)
     .where(and(
@@ -225,13 +266,8 @@ async function findCache(
       eq(companyStatsInsightsCache.periodo,   periodo),
       eq(companyStatsInsightsCache.fechaRef,  fechaRef),
       eq(companyStatsInsightsCache.fechaHasta,fechaHasta),
-      // asset/driver: NULL = sin filtro, 0/missing = filtrado
-      assetId  == null
-        ? isNull(companyStatsInsightsCache.assetId)
-        : eq(companyStatsInsightsCache.assetId, assetId),
-      driverId == null
-        ? isNull(companyStatsInsightsCache.driverId)
-        : eq(companyStatsInsightsCache.driverId, driverId),
+      eq(companyStatsInsightsCache.assetId,   assetId),
+      eq(companyStatsInsightsCache.driverId,  driverId),
       eq(companyStatsInsightsCache.inputHash, inputHash),
       gte(companyStatsInsightsCache.expiresAt, new Date()),
     ))

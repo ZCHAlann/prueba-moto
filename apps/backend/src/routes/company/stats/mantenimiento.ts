@@ -13,7 +13,7 @@
 // Anomalías: bucket histórico con z-score > 1; asset con costo > 2σ.
 // ─────────────────────────────────────────────────────────────────────
 
-import { eq, and, gte, lte, sql, desc } from "drizzle-orm";
+import { eq, and, gte, lte, sql, desc, inArray } from "drizzle-orm";
 import { db } from "../../../db/client";
 import {
   companyMaintenanceRecords,
@@ -153,7 +153,7 @@ export async function calculateMantenimiento(input: StatInput): Promise<StatResu
     const assets = await db
       .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate })
       .from(companyAssets)
-      .where(and(eq(companyAssets.companyId, companyId), sql`${companyAssets.id} = ANY(${assetIds})`));
+      .where(and(eq(companyAssets.companyId, companyId), inArray(companyAssets.id, assetIds)));
     for (const a of assets) assetMap.set(a.id, { name: a.name, plate: a.plate });
   }
 
@@ -201,12 +201,12 @@ export async function calculateMantenimiento(input: StatInput): Promise<StatResu
 
   // Aceite
   const cambiosAceiteActuales = oilChanges.filter((o) => {
-    const d = new Date(o.date);
-    return d >= currentStart;
+    const d = toDateSafe(o.date);
+    return d != null && d >= currentStart;
   });
   const cambiosAceiteAnterior = oilChanges.filter((o) => {
-    const d = new Date(o.date);
-    return d >= previousStart && d <= previousEnd;
+    const d = toDateSafe(o.date);
+    return d != null && d >= previousStart && d <= previousEnd;
   });
   const aceiteCantActual = cambiosAceiteActuales.reduce((a, c) => a + (c.quantity ?? 0), 0);
   const aceiteCantAnterior = cambiosAceiteAnterior.reduce((a, c) => a + (c.quantity ?? 0), 0);
@@ -352,8 +352,21 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-function dateOf(r: { completedAt: Date | null; scheduledFor: Date; createdAt: Date }): Date | null {
-  return r.completedAt ?? r.scheduledFor ?? r.createdAt;
+function dateOf(r: { completedAt: any; scheduledFor: any; createdAt: any }): Date | null {
+  // postgres-js puede devolver `date` como string YYYY-MM-DD y `timestamp` como Date.
+  // Normalizamos con toDateSafe para que las comparaciones con Date funcionen siempre.
+  return toDateSafe(r.completedAt) ?? toDateSafe(r.scheduledFor) ?? toDateSafe(r.createdAt);
+}
+
+function toDateSafe(v: any): Date | null {
+  if (v == null) return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  if (typeof v === "string") {
+    // Soporta "YYYY-MM-DD" y "YYYY-MM-DDTHH:mm:ssZ"
+    const d = v.length === 10 ? new Date(`${v}T00:00:00Z`) : new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
 }
 
 function startOfBucket(ref: Date, periodo: Periodo): Date {

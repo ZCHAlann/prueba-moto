@@ -93,9 +93,12 @@ export function classifySeverity(z: number): "baja" | "media" | "alta" | null {
 
 export type Periodo = "month" | "quarter" | "year";
 
-export function bucketByPeriod(date: Date, periodo: Periodo): string {
-  const y = date.getUTCFullYear();
-  const m = date.getUTCMonth() + 1; // 1-12
+export function bucketByPeriod(date: Date | string, periodo: Periodo): string {
+  // Coerce: Drizzle/postgres-js devuelve columnas `date` como string "YYYY-MM-DD"
+  // (y `timestamp` como Date), por lo que aceptamos ambos para no romper callers.
+  const d = date instanceof Date ? date : new Date(`${date}T00:00:00Z`);
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth() + 1; // 1-12
   if (periodo === "year") {
     return `${y}`;
   }

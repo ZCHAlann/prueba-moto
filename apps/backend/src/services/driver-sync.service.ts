@@ -14,6 +14,12 @@
 // llamaba a `company_drivers` con `user_id = companyUserId` y a veces
 // no encontraba la fila (driver creado a mano sin user, o user creado
 // sin driver). Ahora la garantía es 1-a-1 y automática.
+//
+// Datos sincronizados desde `companyUsers.profileData` (JSON):
+//   - firstName, lastName, phone, siteId, documentNumber
+// Si la fila del driver ya existe y el user tiene datos más frescos
+// en su profile, la fila se actualiza para que el módulo Conductores
+// muestre info coherente sin depender de hooks del frontend.
 
 import { eq, and } from "drizzle-orm";
 import { db } from "../db/client";
@@ -25,6 +31,20 @@ export type SyncResult =
   | { action: "updated";  driverId: number }
   | { action: "deleted";  driverId: number }
   | { action: "no-op";    driverId: number | null };
+
+type ProfileData = {
+  firstName?:       string | null;
+  lastName?:        string | null;
+  phone?:           string | null;
+  siteId?:          number | null;
+  documentNumber?:  string | null;
+  // Datos de licencia (viven también en profileData para que el admin los
+  // capture desde el form de Usuarios; el sync los copia a la fila del driver).
+  licenseNumber?:   string | null;
+  licenseType?:     string | null;
+  licenseExpiry?:   string | null;
+  licensePoints?:   number | null;
+};
 
 /**
  * Garantiza que company_drivers tenga (o no tenga) una fila para este user
@@ -47,19 +67,78 @@ export async function syncDriverWithUser(input: {
     .limit(1);
 
   if (isConductor) {
-    if (existing) {
-      return { action: "no-op", driverId: existing.id };
-    }
-    // Resolver firstName / lastName del companyUser.username si es posible
+    // Traer el user completo (incluye profileData) para sincronizar todo.
     const [u] = await db
-      .select({ username: companyUsers.username, email: companyUsers.email, photoUrl: companyUsers.photoUrl })
+      .select({
+        username:    companyUsers.username,
+        email:       companyUsers.email,
+        photoUrl:    companyUsers.photoUrl,
+        profileData: companyUsers.profileData,
+      })
       .from(companyUsers)
       .where(eq(companyUsers.id, userId))
       .limit(1);
-    const name = (u?.username ?? "Conductor").split(/\s+/);
-    const firstName = name[0] ?? "Conductor";
-    const lastName  = name.slice(1).join(" ") || "—";
+
+    const profile: ProfileData =
+      ((u?.profileData as Record<string, unknown> | null) ?? {}) as ProfileData;
+
+    // Fallback: si profileData viene vacío (caso legado o admin sin form completo),
+    // o si solo trae `fullName` y no `firstName`/`lastName`, partir `fullName`.
+    // Como último recurso, usar el username.
+    const fullName = (profile.fullName ?? "").toString().trim();
+    let pFirst = (profile.firstName ?? "").toString().trim();
+    let pLast  = (profile.lastName  ?? "").toString().trim();
+    if (!pFirst && !pLast && fullName) {
+      const tokens = fullName.split(/\s+/).filter(Boolean);
+      pFirst = tokens[0] ?? "";
+      pLast  = tokens.slice(1).join(" ");
+    }
+    const fallbackName = (u?.username ?? "Conductor").trim().split(/\s+/);
+    const firstName = pFirst || fallbackName[0] || "Conductor";
+    const lastName  = pLast  || fallbackName.slice(1).join(" ") || "—";
+    const phone     = (profile.phone ?? "").toString().trim() || null;
+    // El frontend puede mandar `siteId` como número crudo (1) o como string
+    // prefijado ("site-1"). Aceptamos ambos formatos.
+    const rawSiteId = profile.siteId;
+    let siteId: number | null = null;
+    if (rawSiteId != null && rawSiteId !== "") {
+      const s = String(rawSiteId).replace(/^site-/, "").trim();
+      const n = Number(s);
+      if (Number.isFinite(n) && n > 0) siteId = n;
+    }
+    // Licencia: si el admin la capturó en el form de Usuarios, la copiamos
+    // a la fila del driver. Si no, conservamos lo que ya tenga la fila.
+    const licenseNumber = (profile.licenseNumber ?? "").toString().trim() || null;
+    const licenseType   = (profile.licenseType   ?? "").toString().trim() || null;
+    const licenseExpiry = (profile.licenseExpiry ?? "").toString().trim() || null;
+    const licensePoints = Number.isFinite(profile.licensePoints)
+                            ? Number(profile.licensePoints)
+                            : null;
     const code      = `COND-${userId}`;
+
+    if (existing) {
+      // La fila ya existe. Refrescamos datos personales. La licencia solo
+      // se sobreescribe si el profileData trae valores (no pisamos datos
+      // ya capturados en el módulo Conductores con campos vacíos).
+      const update: any = {
+        firstName,
+        lastName,
+        email:    u?.email ?? null,
+        phone,
+        siteId,
+        photoUrl: u?.photoUrl ?? null,
+        updatedAt: new Date(),
+      };
+      if (licenseNumber !== null) update.licenseNumber = licenseNumber;
+      if (licenseType   !== null) update.licenseType   = licenseType;
+      if (licenseExpiry !== null) update.licenseExpiry = licenseExpiry;
+      if (licensePoints !== null) update.licensePoints = licensePoints;
+      await db
+        .update(companyDrivers)
+        .set(update)
+        .where(eq(companyDrivers.id, existing.id));
+      return { action: "updated", driverId: existing.id };
+    }
 
     const [created] = await db
       .insert(companyDrivers)
@@ -69,9 +148,18 @@ export async function syncDriverWithUser(input: {
         code,
         firstName,
         lastName,
-        email:   u?.email ?? null,
+        email:    u?.email ?? null,
+        phone,
+        siteId,
         photoUrl: u?.photoUrl ?? null,
-        status:  "Activo",
+        status:   "Activo",
+        // Si la licencia viene en el profileData la grabamos al insertar.
+        // Si no, la fila queda con NULL en esos campos y el admin puede
+        // completarla después desde el módulo Conductores.
+        licenseNumber: licenseNumber ?? undefined,
+        licenseType:   licenseType   ?? undefined,
+        licenseExpiry: licenseExpiry ?? undefined,
+        licensePoints: licensePoints ?? 0,
       })
       .returning({ id: companyDrivers.id });
     return { action: "created", driverId: created!.id };

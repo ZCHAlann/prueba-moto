@@ -70,6 +70,57 @@ const permissionsSchema = z.object({
 
 // ─── Serializer ───────────────────────────────────────────────────────────────
 
+/**
+ * Normaliza `profileData` antes de persistirlo:
+ *   - Si el frontend mandó `fullName` (un solo string con nombres y apellidos)
+ *     y NO mandó `firstName`, lo partimos en firstName + lastName usando
+ *     la convención: primer token = firstName, resto = lastName.
+ *   - Esto resuelve el bug donde el módulo Conductores mostraba el driver
+ *     con `firstName = username` y `lastName = "—"` porque el profileData
+ *     solo traía `fullName`.
+ *   - `documentNumber`, `phone`, `siteId`, `area`, `notes`, `site` se
+ *     conservan tal cual.
+ *
+ *   Si el frontend ya manda `firstName` y `lastName` por separado, no se
+ *   toca `fullName` (lo dejamos para referencia / mostrar en la tabla de
+ *   Accesos).
+ */
+function normalizeProfileData(
+  profileData: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!profileData || typeof profileData !== "object") return {};
+  const out: Record<string, unknown> = { ...profileData };
+
+  const hasFirst = typeof out.firstName === "string" && (out.firstName as string).trim().length > 0;
+  const hasLast  = typeof out.lastName  === "string" && (out.lastName  as string).trim().length > 0;
+  const fullRaw  = typeof out.fullName  === "string" ? (out.fullName as string).trim() : "";
+
+  if (!hasFirst && !hasLast && fullRaw.length > 0) {
+    // El frontend solo envió fullName. Partirlo.
+    const tokens = fullRaw.split(/\s+/).filter(Boolean);
+    if (tokens.length === 1) {
+      out.firstName = tokens[0];
+    } else {
+      out.firstName = tokens[0];
+      out.lastName  = tokens.slice(1).join(" ");
+    }
+  } else if (!hasFirst && hasLast && fullRaw.length > 0) {
+    // Mandó lastName pero no firstName. Sacar firstName de fullName si el
+    // prefijo de fullName coincide con algo distinto al lastName.
+    const tokens = fullRaw.split(/\s+/).filter(Boolean);
+    if (tokens.length >= 2) {
+      out.firstName = tokens.slice(0, tokens.length - 1).join(" ");
+    }
+  }
+
+  // Trim a todos los string para evitar espacios fantasma
+  for (const k of Object.keys(out)) {
+    if (typeof out[k] === "string") out[k] = (out[k] as string).trim();
+  }
+
+  return out;
+}
+
 function serializeUser(u: typeof companyUsers.$inferSelect) {
   const profile = (u.profileData as Record<string, unknown>) ?? {};
   return {
@@ -151,6 +202,8 @@ router.post(
 
       const { modulePermissions, profileData, photoUrl, ...rest } = body;
 
+      const normalizedProfile = normalizeProfileData(profileData);
+
       const [created] = await db
         .insert(companyUsers)
         .values({
@@ -161,7 +214,7 @@ router.post(
           role:              rest.role,
           status:            rest.status,
           modulePermissions: modulePermissions ?? {},
-          profileData:       profileData ?? {},
+          profileData:       normalizedProfile,
           photoUrl:          photoUrl ?? null,
         })
         .returning();
@@ -235,7 +288,8 @@ router.put(
 
       if (profileData !== undefined) {
         const currentProfile = (existing[0].profileData as Record<string, unknown>) ?? {};
-        updateData.profileData = { ...currentProfile, ...profileData };
+        const merged = { ...currentProfile, ...profileData };
+        updateData.profileData = normalizeProfileData(merged);
       }
 
       const [updated] = await db
@@ -249,8 +303,14 @@ router.put(
         )
         .returning();
 
-      // 1-a-1: si cambió el rol, mover la fila de drivers según corresponda.
-      if (body.role !== undefined || body.username !== undefined) {
+      // 1-a-1: sincronizar driver si cambió rol, username, photoUrl o profileData
+      // (profileData trae firstName/lastName/phone/siteId que se copian al driver).
+      if (
+        body.role        !== undefined ||
+        body.username    !== undefined ||
+        body.profileData !== undefined ||
+        body.photoUrl    !== undefined
+      ) {
         await syncDriverWithUser({
           companyId,
           userId:  updated.id,

@@ -16,7 +16,7 @@
 //   - Promedio de score de la flota
 // ─────────────────────────────────────────────────────────────────────
 
-import { eq, and, sql, gte, lte, desc } from "drizzle-orm";
+import { eq, and, sql, gte, lte, desc, inArray } from "drizzle-orm";
 import { db } from "../../../db/client";
 import {
   companyAssets,
@@ -105,7 +105,7 @@ export async function calculateFlotas(input: StatInput): Promise<StatResult> {
     const odo = await db
       .select({ assetId: companyOdometerReadings.assetId, km: sql<number>`MAX(${companyOdometerReadings.km})` })
       .from(companyOdometerReadings)
-      .where(and(eq(companyOdometerReadings.companyId, companyId), sql`${companyOdometerReadings.assetId} = ANY(${ids})`))
+      .where(and(eq(companyOdometerReadings.companyId, companyId), inArray(companyOdometerReadings.assetId, ids)))
       .groupBy(companyOdometerReadings.assetId);
     for (const o of odo) odoByAsset[o.assetId] = Number(o.km);
   }

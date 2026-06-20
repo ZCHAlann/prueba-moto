@@ -147,11 +147,13 @@ router.get('/:assetId', requireModule('gestion', 'flotas'), async (req, res, nex
 
     if (!rows.length) throw new NotFoundError('Activo', req.params.assetId);
 
-    // ── Enrichment: cargar conductor actual via asignación activa ──────────────
-    const [assignment] = await db
+    // ── Enrichment: cargar asignación activa (incluye el acta completa) ───────
+    const [assignmentRow] = await db
       .select({
-        driverId:   companyAssignments.driverId,
-        driverName: companyDrivers.firstName,
+        assignment: companyAssignments,
+        driverFirst: companyDrivers.firstName,
+        driverLast:  companyDrivers.lastName,
+        driverPhone: companyDrivers.phone,
       })
       .from(companyAssignments)
       .leftJoin(companyDrivers, eq(companyAssignments.driverId, companyDrivers.id))
@@ -163,16 +165,25 @@ router.get('/:assetId', requireModule('gestion', 'flotas'), async (req, res, nex
       .orderBy(desc(companyAssignments.createdAt))
       .limit(1);
 
-    const currentDriver = assignment?.driverId
+    const a = assignmentRow;
+    const currentDriver = a?.assignment?.driverId
     ? {
-        id:        toId('driver', assignment.driverId),
-        name:      assignment.driverName ?? '',
-        firstName: assignment.driverName ?? '',
-        lastName:  '',
-        phone:     null,
+        id:        toId('driver', a.assignment.driverId),
+        name:      [a.driverFirst, a.driverLast].filter(Boolean).join(' ').trim(),
+        firstName: a.driverFirst ?? '',
+        lastName:  a.driverLast  ?? '',
+        phone:     a.driverPhone ?? null,
       }
     : null;
-    res.json(serializeAsset(rows[0], currentDriver));
+
+    // El "acta" es la asignación activa en sí: lleva número/fecha/lugar de
+    // entrega, odómetro, combustible, condición, fotos, firmas, etc.
+    // Se devuelve null cuando el vehículo no tiene asignación activa.
+    const currentAssignment = a?.assignment
+      ? serializeAssignment(a.assignment, { firstName: a.driverFirst, lastName: a.driverLast, phone: a.driverPhone })
+      : null;
+
+    res.json(serializeAsset(rows[0], currentDriver, currentAssignment));
   } catch (err) {
     next(err);
   }
@@ -356,7 +367,8 @@ router.delete(
 
 function serializeAsset(
   a: typeof companyAssets.$inferSelect,
-  currentDriver?: { id: string; firstName: string; lastName: string; phone: string | null } | null
+  currentDriver?: { id: string; firstName: string; lastName: string; phone: string | null } | null,
+  currentAssignment?: ReturnType<typeof serializeAssignment> | null,
 ) {
   return {
     id: toId('asset', a.id),
@@ -387,6 +399,61 @@ function serializeAsset(
     garageId: a.garageId ? toId('garage', a.garageId) : null,
     // ── Enrichment: conductor asignado actualmente ──────────────────────────
     currentDriver: currentDriver ?? null,
+    // ── Enrichment: acta de asignación activa (null si no tiene) ───────────
+    currentAssignment: currentAssignment ?? null,
+  };
+}
+
+/**
+ * Serializa una asignación (el "acta" tal como la diligencia el admin
+ * al momento de entrega). Lo usa el endpoint de detalle de vehículo y
+ * de conductor para devolver, en el mismo response, los datos de la
+ * entrega/recepción: número de acta, fecha, hora, lugar, área, condición
+ * del vehículo, fotos, firmas, novedades, etc.
+ *
+ * Mantenemos la forma de la respuesta estable y autoexplicativa: el
+ * frontend no necesita un endpoint adicional para pintar el acta.
+ */
+function serializeAssignment(
+  asg: typeof companyAssignments.$inferSelect,
+  driver?: { firstName: string | null; lastName: string | null; phone: string | null } | null,
+) {
+  return {
+    id:               toId('assignment', asg.id),
+    status:           asg.status,
+    startDate:        asg.startDate,
+    endDate:          asg.endDate,
+    notes:            asg.notes,
+    // Datos del acta
+    actaNumber:       asg.actaNumber,
+    actaDate:         asg.actaDate,
+    actaTime:         asg.actaTime,
+    actaPlace:        asg.actaPlace,
+    actaArea:         asg.actaArea,
+    handoverUrl:      asg.handoverUrl,
+    // Datos del vehículo al momento de la entrega
+    vehicleOdometer:  asg.vehicleOdometer,
+    vehicleFuelLevel: asg.vehicleFuelLevel,
+    vehicleCondition: asg.vehicleCondition,
+    vehiclePhotoUrls: asg.vehiclePhotoUrls ?? [],
+    // Firmas digitalizadas (URLs)
+    signatureLogUrl:  asg.signatureLogUrl,
+    signatureRespUrl: asg.signatureRespUrl,
+    // Datos del conductor congelados al momento de la entrega
+    driverDni:        asg.driverDni,
+    driverPhone:      asg.driverPhone,
+    driverRole:       asg.driverRole,
+    driverSnapshot:   driver ? {
+      firstName: driver.firstName ?? null,
+      lastName:  driver.lastName  ?? null,
+      phone:     driver.phone     ?? null,
+    } : null,
+    // Novedades / accesorios
+    novedades:        asg.novedades       ?? {},
+    accesorios:       asg.accesorios      ?? {},
+    novedadesText:    asg.novedadesText,
+    createdAt:        asg.createdAt,
+    updatedAt:        asg.updatedAt,
   };
 }
 

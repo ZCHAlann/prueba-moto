@@ -481,7 +481,8 @@ router.post(
         }));
 
       // 3) Insights del cache (sin generar nuevos para el PDF)
-      const { generateInsights, isAiEnabled } = await import("../../lib/ai-insights");
+      const { generateInsights } = await import("../../lib/ai-insights");
+      const { isAiEnabled }     = await import("../../lib/ai-client");
       let insights: any = null;
       let insightsMeta: any = null;
       if (isAiEnabled()) {
@@ -612,7 +613,8 @@ router.post(
                             : await calculateAsignaciones({ companyId, periodo, refDate, endDate, assetId, driverId });
 
       // 2) Llamar al generador de insights (con cache automático).
-      const { generateInsights, isAiEnabled } = await import("../../lib/ai-insights");
+      const { generateInsights } = await import("../../lib/ai-insights");
+      const { isAiEnabled }     = await import("../../lib/ai-client");
       if (!isAiEnabled()) {
         return res.status(503).json({
           error: "Análisis IA no disponible: GROQ_API_KEY no configurada en el backend.",

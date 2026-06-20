@@ -136,6 +136,11 @@ const cancelRescheduleSchema = z.object({
   reason:           safeString({ min: 3, max: 1000, fieldLabel: 'Motivo', allowEmpty: false }),
 });
 
+const requestCorrectionSchema = z.object({
+  reason: safeString({ min: 3, max: 1000, fieldLabel: 'Motivo', allowEmpty: false }),
+  newScheduledFor: z.string().optional().nullable(), // si no viene, se corrige "hoy"
+});
+
 const noteSchema = z.object({
   text: safeString({ min: 1, max: 4000, fieldLabel: 'Nota', allowEmpty: false }),
 });
@@ -395,8 +400,11 @@ router.get(
       const where: any[] = [eq(companyMaintenanceRecords.companyId, companyId)];
       // Filtrado por role:
       //  - full access (admin/owner/supervisor) → ve todo, salvo que ?scope=mine
-      //  - operador → solo los suyos: assigned_user_id = me OR created_by = me
-      if (!isFull || scope === 'mine') {
+      //  - operador → ve lo suyo (assigned_user_id = me OR created_by = me)
+      //    + lo que está LIBRE (assigned_user_id IS NULL) para poder tomarlo.
+      //  - ?scope=mine fuerza la vista estricta "solo lo mío", sin los libres,
+      //    tanto para operador como para full access.
+      if (scope === 'mine') {
         if (meId == null) {
           return res.json({ data: [], total: 0 });
         }
@@ -404,6 +412,17 @@ router.get(
           or(
             eq(companyMaintenanceRecords.assignedUserId, meId),
             eq(companyMaintenanceRecords.createdBy, meId),
+          )!,
+        );
+      } else if (!isFull) {
+        if (meId == null) {
+          return res.json({ data: [], total: 0 });
+        }
+        where.push(
+          or(
+            eq(companyMaintenanceRecords.assignedUserId, meId),
+            eq(companyMaintenanceRecords.createdBy, meId),
+            isNull(companyMaintenanceRecords.assignedUserId),
           )!,
         );
       } else if (mine === 'me' && meId != null) {
@@ -512,11 +531,14 @@ router.get(
         gte(companyMaintenanceRecords.scheduledFor, from),
         lte(companyMaintenanceRecords.scheduledFor, to),
       ];
+      // Igual que en GET / : el operador ve lo suyo + lo libre (sin asignar)
+      // para poder tomarlo desde la agenda también.
       if (!isFull && meId != null) {
         whereParts.push(
           or(
             eq(companyMaintenanceRecords.assignedUserId, meId),
             eq(companyMaintenanceRecords.createdBy, meId),
+            isNull(companyMaintenanceRecords.assignedUserId),
           )!,
         );
       }
@@ -615,9 +637,13 @@ router.get(
       if (!row) throw new NotFoundError('Mantenimiento', req.params.id);
 
       const m = { ...(row.m as any), ...row } as any;
-      // Control de visibilidad: si no es full access y no es suyo → 404
+      // Control de visibilidad: si no es full access, puede ver el suyo
+      // (asignado o creado por él) o cualquiera que esté LIBRE (sin
+      // asignar) para poder tomarlo. Si no es nada de eso → 404.
       if (!isFull) {
-        if (meId == null || (m.assignedUserId !== meId && m.createdBy !== meId)) {
+        const isMine = meId != null && (m.assignedUserId === meId || m.createdBy === meId);
+        const isFree = m.assignedUserId == null;
+        if (!isMine && !isFree) {
           throw new NotFoundError('Mantenimiento', req.params.id);
         }
       }
@@ -723,6 +749,7 @@ router.post(
           cadenceValue:   body.cadenceValue ?? null,
           nextTriggerKm:  body.nextTriggerKm ?? null,
           scheduledFor:   new Date(body.scheduledFor),
+          executedAt:     isUrgente ? new Date() : null,
           notes:          body.notes ?? null,
           totalCost:      '0',
           // v3.1: campos de lavada
@@ -972,8 +999,11 @@ router.post(
 );
 
 // ─── POST /:id/take ───────────────────────────────────────────────────────────
-// Operador "toma" un mantenimiento Programado disponible. Si ya está
-// asignado a otro, devuelve 409. El user debe tener execution.crear.
+// Operador (o admin/supervisor) "toma" un mantenimiento Programado/Corrección
+// disponible o ya propio: lo asocia al usuario, pero NO cambia el estado.
+// El mantenimiento sigue en Programado (o Correccion) hasta que el usuario
+// decida iniciarlo explícitamente con /:id/start. Si ya está asignado a
+// otro, devuelve 409.
 router.post(
   '/:id/take',
   requireModule('mantenimiento'),
@@ -991,11 +1021,21 @@ router.post(
         .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
         .limit(1);
       if (!existing) throw new NotFoundError('Mantenimiento', req.params.id);
-      if (existing.status !== 'Programado' && existing.status !== 'En curso' && existing.status !== 'En proceso') {
+      if (existing.status !== 'Programado' && existing.status !== 'En curso' && existing.status !== 'En proceso' && existing.status !== 'Correccion') {
         throw new ForbiddenError(`No se puede tomar un mantenimiento en estado "${existing.status}".`);
       }
       if (existing.assignedUserId && existing.assignedUserId !== meId) {
         throw new AppError(409, 'Este mantenimiento ya está asignado a otro operador.');
+      }
+
+      // Si ya es suyo, "tomar" es un no-op (no duplicamos el evento).
+      if (existing.assignedUserId === meId) {
+        return res.json({
+          ok: true,
+          id: toId('maintenance', existing.id),
+          status: normalizeStatus(existing.status),
+          assignedUserId: toId('company-user', meId),
+        });
       }
 
       const [updated] = await db
@@ -1003,13 +1043,74 @@ router.post(
         .set({
           assignedUserId: meId,
           takenAt:        new Date(),
-          status:         'En proceso',
           updatedAt:      new Date(),
         })
         .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
         .returning();
 
       await recordEvent(companyId, id, 'taken', { userId: meId, name: req.user!.name ?? null });
+      res.json({
+        ok: true,
+        id: toId('maintenance', updated.id),
+        status: normalizeStatus(updated.status),
+        assignedUserId: toId('company-user', meId),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── POST /:id/start ──────────────────────────────────────────────────────────
+// Pasa un mantenimiento Programado/Corrección, ya asignado al usuario (o
+// full access), a "En proceso". Separado de /take: tomar ya no implica
+// arrancar — el operador puede tomarlo con anticipación y arrancarlo el
+// día que corresponda.
+router.post(
+  '/:id/start',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'crear'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+      const meId   = getUserIdFromSub(req.user!.sub);
+      const meRole = req.user!.role;
+      const isFull = hasFullAccess(meRole);
+      if (meId == null) throw new ForbiddenError('Sesión sin userId.');
+
+      const [existing] = await db
+        .select()
+        .from(companyMaintenanceRecords)
+        .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
+        .limit(1);
+      if (!existing) throw new NotFoundError('Mantenimiento', req.params.id);
+      if (existing.status !== 'Programado' && existing.status !== 'En curso' && existing.status !== 'Correccion') {
+        throw new ForbiddenError(`No se puede iniciar un mantenimiento en estado "${normalizeStatus(existing.status)}".`);
+      }
+      // Solo el dueño (asignado o creador) o full access puede iniciar.
+      const isMine = existing.assignedUserId === meId || existing.createdBy === meId;
+      if (!isFull && !isMine) {
+        throw new ForbiddenError('Este mantenimiento está asignado a otro operador.');
+      }
+      // Si por alguna razón sigue libre (no debería pasar con la UI
+      // actual, que exige "tomar" antes de "iniciar"), lo asignamos al
+      // que lo inicia para no dejar un "En proceso" sin dueño.
+      const assignedUserId = existing.assignedUserId ?? meId;
+
+      const [updated] = await db
+        .update(companyMaintenanceRecords)
+        .set({
+          assignedUserId,
+          takenAt:        existing.takenAt ?? new Date(),
+          executedAt:     new Date(),
+          status:         'En proceso',
+          updatedAt:      new Date(),
+        })
+        .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
+        .returning();
+
+      await recordEvent(companyId, id, 'started', { userId: meId, name: req.user!.name ?? null });
       res.json({ ok: true, id: toId('maintenance', updated.id), status: 'En proceso' });
     } catch (err) {
       next(err);
@@ -1090,7 +1191,6 @@ router.post(
           status:      'Completado',
           completedAt: new Date(),
           completedBy: meId,
-          executedAt:  new Date(),
           updatedAt:   new Date(),
         })
         .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
@@ -1177,6 +1277,75 @@ router.post(
         id: toId('maintenance', updated.id),
         status: 'Programado',
         isReprogrammed: true,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── POST /:id/request-correction ────────────────────────────────────────────
+// Solo owner/admin/supervisor pueden reabrir un Completado para corrección.
+// Si mandan newScheduledFor, se reagenda (como reprogramar); si no, queda
+// para corregir el mismo día, directo en 'Correccion'.
+router.post(
+  '/:id/request-correction',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'editar'),
+  validate(requestCorrectionSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+      const body = req.body as z.infer<typeof requestCorrectionSchema>;
+      const meId   = getUserIdFromSub(req.user!.sub);
+      const meRole = req.user!.role;
+
+      if (meRole !== 'owner_empresa' && meRole !== 'admin_empresa' && meRole !== 'supervisor') {
+        throw new ForbiddenError('Solo administradores o supervisores pueden marcar una corrección.');
+      }
+
+      const [existing] = await db
+        .select()
+        .from(companyMaintenanceRecords)
+        .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
+        .limit(1);
+      if (!existing) throw new NotFoundError('Mantenimiento', req.params.id);
+      if (existing.status !== 'Completado') {
+        throw new ForbiddenError('Solo se puede solicitar corrección sobre un mantenimiento completado.');
+      }
+
+      const updateData: Record<string, unknown> = {
+        status:                'Correccion',
+        correctionReason:      body.reason,
+        correctionRequestedAt: new Date(),
+        completedAt:           null,
+        completedBy:           null,
+        updatedAt:             new Date(),
+      };
+      if (body.newScheduledFor) {
+        updateData.scheduledFor = new Date(body.newScheduledFor);
+      }
+
+      const [updated] = await db
+        .update(companyMaintenanceRecords)
+        .set(updateData)
+        .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
+        .returning();
+
+      await recordEvent(companyId, id, 'correction_requested', {
+        userId: meId,
+        name:   req.user!.name ?? null,
+      }, {
+        reason: body.reason,
+        newScheduledFor: body.newScheduledFor ?? null,
+        rescheduled: !!body.newScheduledFor,
+      });
+
+      res.json({
+        ok: true,
+        id: toId('maintenance', updated.id),
+        status: 'Correccion',
       });
     } catch (err) {
       next(err);
@@ -1472,5 +1641,261 @@ router.post(
     return router.handle(req, res, next);
   },
 );
+
+// ─── DELETE /:id ──────────────────────────────────────────────────────────────
+router.delete(
+  '/:id',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'records', 'eliminar'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+      const meId   = getUserIdFromSub(req.user!.sub);
+      const meRole = req.user!.role;
+
+      // Solo admin_empresa y owner_empresa pueden eliminar mantenimientos.
+      if (meRole !== 'owner_empresa' && meRole !== 'admin_empresa') {
+        throw new ForbiddenError('Solo administradores pueden eliminar mantenimientos.');
+      }
+
+      const [existing] = await db
+        .select()
+        .from(companyMaintenanceRecords)
+        .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
+        .limit(1);
+      if (!existing) throw new NotFoundError('Mantenimiento', req.params.id);
+      if (existing.status === 'Completado') {
+        throw new ForbiddenError('Los mantenimientos completados no se pueden eliminar.');
+      }
+
+      await db.delete(companyMaintenanceItems).where(eq(companyMaintenanceItems.maintenanceId, id));
+      await db.delete(companyMaintenanceCarwashExtras).where(eq(companyMaintenanceCarwashExtras.maintenanceId, id));
+      await db.delete(companyMaintenanceCarwashPhotos).where(eq(companyMaintenanceCarwashPhotos.maintenanceId, id));
+      await db.delete(companyMaintenanceEvents).where(eq(companyMaintenanceEvents.maintenanceId, id));
+      await db
+        .delete(companyMaintenanceRecords)
+        .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)));
+
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── GET /company/:id/maintenances/cost-breakdown ─────────────────
+// Devuelve el desglose por mantenimiento: mano de obra (taller) +
+// repuestos agrupados por proveedor.
+//
+// Query params opcionales:
+//   from, to       → rango de fechas (default: últimos 12 meses)
+//   workshopId     → filtra por taller
+//   supplierId     → filtra por proveedor (solo repuestos de ese proveedor)
+//   assetId        → filtra por vehículo
+//
+// Devuelve:
+//   {
+//     totals: { manoObra, repuestos, total },
+//     byWorkshop: [{ workshopId, workshopName, total, count }],
+//     bySupplier: [{ supplierId, supplierName, total, count }],
+//     mantenances: [{ id, title, assetPlate, scheduledDate, completedDate,
+//                    workshop, manoObra, repuestos, total }]
+//   }
+router.get(
+  "/cost-breakdown",
+  requireModule("mantenimiento"),
+  requirePermission("mantenimiento", "records", "ver"),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const from = (req.query.from as string | undefined)
+        ? new Date(req.query.from as string)
+        : (() => { const d = new Date(); d.setMonth(d.getMonth() - 12); return d; })();
+      const to = (req.query.to as string | undefined)
+        ? new Date(req.query.to as string)
+        : new Date();
+      const workshopId = req.query.workshopId ? Number(req.query.workshopId) : null;
+      const supplierId = req.query.supplierId ? Number(req.query.supplierId) : null;
+      const assetId    = req.query.assetId    ? Number(req.query.assetId)    : null;
+
+      // 1) Traer los mantenimientos del rango
+      const whereMant: any[] = [
+        eq(companyMaintenanceRecords.companyId, companyId),
+        gte(companyMaintenanceRecords.createdAt, from),
+        lte(companyMaintenanceRecords.createdAt, to),
+      ];
+      if (assetId)    whereMant.push(eq(companyMaintenanceRecords.assetId, assetId));
+      if (workshopId) whereMant.push(eq(companyMaintenanceRecords.workshopId, workshopId));
+
+      const mantenances = await db
+        .select({
+          id:             companyMaintenanceRecords.id,
+          title:          companyMaintenanceRecords.title,
+          assetId:        companyMaintenanceRecords.assetId,
+          workshopId:     companyMaintenanceRecords.workshopId,
+          status:         companyMaintenanceRecords.status,
+          totalCost:      companyMaintenanceRecords.totalCost,
+          laborCost:      companyMaintenanceRecords.laborCost,
+          scheduledFor:   companyMaintenanceRecords.scheduledFor,
+          completedAt:    companyMaintenanceRecords.completedAt,
+        })
+        .from(companyMaintenanceRecords)
+        .where(and(...whereMant))
+        .orderBy(desc(companyMaintenanceRecords.scheduledFor));
+
+      // 2) Traer los items de esos mantenimientos (con supplier)
+      const mantenimientoIds = mantenances.map((m) => m.id);
+      let items: Array<{
+        id: number; mantenimientoId: number; supplierId: number | null;
+        name: string; quantity: string; unitCost: string; subtotal: string;
+      }> = [];
+      if (mantenimientoIds.length) {
+        const whereItems: any[] = [inArray(companyMaintenanceItems.maintenanceId, mantenimientoIds)];
+        if (supplierId) whereItems.push(eq(companyMaintenanceItems.supplierId, supplierId));
+        items = await db
+          .select({
+            id:             companyMaintenanceItems.id,
+            mantenimientoId: companyMaintenanceItems.maintenanceId,
+            supplierId:     companyMaintenanceItems.supplierId,
+            name:           companyMaintenanceItems.name,
+            quantity:       companyMaintenanceItems.quantity,
+            unitCost:       companyMaintenanceItems.unitCost,
+            subtotal:       companyMaintenanceItems.subtotal,
+          })
+          .from(companyMaintenanceItems)
+          .where(and(...whereItems));
+      }
+
+      // 3) Traer talleres y proveedores (para mapear id → nombre)
+      const [workshops, suppliers, assetRows] = await Promise.all([
+        db.select().from(companyWorkshops).where(eq(companyWorkshops.companyId, companyId)),
+        db.select().from(companySuppliers).where(eq(companySuppliers.companyId, companyId)),
+        mantenances.length
+          ? db
+              .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate })
+              .from(companyAssets)
+              .where(and(
+                eq(companyAssets.companyId, companyId),
+                sql`${companyAssets.id} = ANY(${mantenances.map((m) => m.assetId)})`,
+              ))
+          : Promise.resolve([] as Array<{ id: number; name: string; plate: string | null }>),
+      ]);
+
+      const workshopMap  = new Map(workshops.map((w)  => [w.id,  { name: w.name,  nit: w.nit  }]));
+      const supplierMap  = new Map(suppliers.map((s)  => [s.id,  { name: s.name,  nit: s.nit  }]));
+      const assetMap     = new Map(assetRows.map((a)   => [a.id,  { name: a.name,  plate: a.plate }]));
+
+      // 4) Por mantenimiento: agrupar items por supplier
+      const itemsByMant = new Map<number, typeof items>();
+      for (const it of items) {
+        if (!itemsByMant.has(it.mantenimientoId)) itemsByMant.set(it.mantenimientoId, []);
+        itemsByMant.get(it.mantenimientoId)!.push(it);
+      }
+
+      // 5) Construir la respuesta
+      const mantenancesOut = mantenances.map((m) => {
+        const myItems = itemsByMant.get(m.id) ?? [];
+        const repuestos = myItems.reduce((acc, it) => acc + Number(it.subtotal ?? 0), 0);
+        const labor     = Number(m.laborCost ?? 0);
+        const total     = Number(m.totalCost ?? 0);
+        // Si hay supplierId en el filtro, repuestos refleja solo ese proveedor
+        return {
+          id:             m.id,
+          title:          m.title ?? "—",
+          assetPlate:     assetMap.get(m.assetId)?.plate || assetMap.get(m.assetId)?.name || "—",
+          assetName:      assetMap.get(m.assetId)?.name ?? null,
+          scheduledDate:  m.scheduledFor,
+          completedAt:    m.completedAt,
+          status:         m.status,
+          workshop:       m.workshopId ? {
+            id:    m.workshopId,
+            name:  workshopMap.get(m.workshopId)?.name ?? "—",
+            nit:   workshopMap.get(m.workshopId)?.nit  ?? null,
+          } : null,
+          manoObra:       round2(labor),
+          repuestos:      round2(repuestos),
+          total:          round2(total),
+          // Cuando NO se filtra por supplierId, mostramos el desglose por proveedor
+          // dentro de la misma OT.
+          repuestosPorProveedor: supplierId
+            ? null
+            : (() => {
+                const map: Record<number, { supplierId: number; supplierName: string; total: number; count: number }> = {};
+                for (const it of myItems) {
+                  if (!it.supplierId) continue;
+                  if (!map[it.supplierId]) {
+                    map[it.supplierId] = {
+                      supplierId: it.supplierId,
+                      supplierName: supplierMap.get(it.supplierId)?.name ?? "Sin proveedor",
+                      total: 0,
+                      count: 0,
+                    };
+                  }
+                  map[it.supplierId].total += Number(it.subtotal ?? 0);
+                  map[it.supplierId].count += 1;
+                }
+                return Object.values(map).map((r) => ({
+                  supplierId:   r.supplierId,
+                  supplierName: r.supplierName,
+                  total:        round2(r.total),
+                  itemsCount:   r.count,
+                }));
+              })(),
+        };
+      });
+
+      // 6) Totales por taller y por proveedor (sobre TODO el rango, sin filtros de asset)
+      const byWorkshop: Record<number, { workshopId: number; workshopName: string; total: number; count: number }> = {};
+      for (const m of mantenances) {
+        if (!m.workshopId) continue;
+        if (!byWorkshop[m.workshopId]) {
+          byWorkshop[m.workshopId] = {
+            workshopId:   m.workshopId,
+            workshopName: workshopMap.get(m.workshopId)?.name ?? "—",
+            total:        0,
+            count:        0,
+          };
+        }
+        byWorkshop[m.workshopId].total += Number(m.totalCost ?? 0);
+        byWorkshop[m.workshopId].count += 1;
+      }
+
+      const bySupplier: Record<number, { supplierId: number; supplierName: string; total: number; itemsCount: number }> = {};
+      for (const it of items) {
+        if (!it.supplierId) continue;
+        if (!bySupplier[it.supplierId]) {
+          bySupplier[it.supplierId] = {
+            supplierId:   it.supplierId,
+            supplierName: supplierMap.get(it.supplierId)?.name ?? "Sin proveedor",
+            total:        0,
+            itemsCount:   0,
+          };
+        }
+        bySupplier[it.supplierId].total += Number(it.subtotal ?? 0);
+        bySupplier[it.supplierId].itemsCount += 1;
+      }
+
+      const totals = {
+        manoObra:  round2(mantenances.reduce((a, m) => a + Number(m.laborCost ?? 0), 0)),
+        repuestos: round2(items.reduce((a, it) => a + Number(it.subtotal ?? 0), 0)),
+        total:     round2(mantenances.reduce((a, m) => a + Number(m.totalCost ?? 0), 0)),
+      };
+
+      return res.json({
+        rango:        { desde: from.toISOString().slice(0, 10), hasta: to.toISOString().slice(0, 10) },
+        filtros:      { workshopId, supplierId, assetId },
+        totals,
+        byWorkshop:   Object.values(byWorkshop).sort((a, b) => b.total - a.total),
+        bySupplier:   Object.values(bySupplier).sort((a, b) => b.total - a.total),
+        mantenances:  mantenancesOut,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+function round2(n: number): number { return Math.round(n * 100) / 100; }
 
 export default router;

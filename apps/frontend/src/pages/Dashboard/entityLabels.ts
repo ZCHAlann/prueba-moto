@@ -15,7 +15,6 @@ export const ENTITY_META: Record<string, EntityMeta> = {
   company_assignments:       { label: "Asignaciones",           color: "bg-cyan-500",    text: "text-cyan-300" },
   company_fuel_entries:      { label: "Combustible",            color: "bg-sky-500",     text: "text-sky-300" },
   company_maintenances:      { label: "Mantenimientos",         color: "bg-emerald-500", text: "text-emerald-300" },
-  company_oil_changes:       { label: "Cambios de aceite",      color: "bg-lime-500",    text: "text-lime-300" },
   company_checklists:        { label: "Inspecciones",           color: "bg-fuchsia-500", text: "text-fuchsia-300" },
   company_checklist_categories: { label: "Categorías de inspección", color: "bg-pink-500", text: "text-pink-300" },
   company_ac_units:          { label: "Unidades de AC",         color: "bg-rose-500",    text: "text-rose-300" },

@@ -121,28 +121,6 @@ export const navigationSections: NavigationSection[] = [
     ],
   },
   {
-    label: "Motores",
-    icon: "MT",
-    description: "Dominio tecnico de motores",
-    accent: "orange",
-    items: [
-      {
-        label: "Lista de motores",
-        href: "/motores",
-        icon: "LM",
-        description: "Inventario tecnico de motores",
-        accent: "orange",
-      },
-      {
-        label: "Historial de motor",
-        href: "/motores/historial",
-        icon: "HM",
-        description: "Eventos y trazabilidad tecnica",
-        accent: "orange",
-      },
-    ],
-  },
-  {
     label: "Generadores",
     icon: "GE",
     description: "Respaldo electrico y plantas",
@@ -190,13 +168,6 @@ export const navigationSections: NavigationSection[] = [
         href: "/mantenimiento",
         icon: "PC",
         description: "Agendar y dar seguimiento a mantenimientos",
-        accent: "amber",
-      },
-      {
-        label: "Verificación de aceite",
-        href: "/mantenimiento/verificacion-aceite",
-        icon: "VA",
-        description: "Análisis con IA del nivel y estado del aceite",
         accent: "amber",
       },
     ],

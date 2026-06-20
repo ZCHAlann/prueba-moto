@@ -8,7 +8,7 @@ import { useSites } from "@/hooks/useSites";
 import { useCompanyUsers, uploadUserPhoto, type CompanyUser, type CreateCompanyUserInput, type UpdateCompanyUserInput } from "@/hooks/useCompanyUsers";
 import { useCompanyRoles } from "@/hooks/useCompanyRoles";
 import type { PlatformRole } from "@/types/platform";
-import { MODULE_TREE, type ActionKey, type PermissionMap } from "@/lib/module-tree";
+import { MODULE_TREE, countModulesWithAccess, type ActionKey, type PermissionMap } from "@/lib/module-tree";
 import { PermissionEditor } from "@/components/users/PermissionEditor";
 import { RowActionMenu } from "@/components/ui/table/RowActionMenu";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -256,6 +256,28 @@ function validateEditForm(form: UserFormState): UserFormErrors {
   return errors;
 }
 
+/**
+ * Elimina submódulos con array vacío y módulos sin ningún submódulo activo.
+ * Evita que queden claves "fantasma" en modulePermissions cuando el admin
+ * activó y luego desactivó permisos en el editor (ej. tocó "Ninguno" en un
+ * módulo que no terminó usando).
+ */
+function pruneEmptyPermissions(perms: PermissionMap): PermissionMap {
+  const result: PermissionMap = {};
+  for (const [mod, subs] of Object.entries(perms)) {
+    const cleanSubs: Record<string, ActionKey[]> = {};
+    let hasAny = false;
+    for (const [sub, actions] of Object.entries(subs ?? {})) {
+      if (Array.isArray(actions) && actions.length > 0) {
+        cleanSubs[sub] = actions;
+        hasAny = true;
+      }
+    }
+    if (hasAny) result[mod] = cleanSubs;
+  }
+  return result;
+}
+
 function formToCreateInput(form: UserFormState): CreateCompanyUserInput {
   return {
     email:    form.email.trim().toLowerCase(),
@@ -263,7 +285,7 @@ function formToCreateInput(form: UserFormState): CreateCompanyUserInput {
     password: form.password,
     role:     form.role,
     status:   form.status,
-    modulePermissions: form.permissions,
+    modulePermissions: pruneEmptyPermissions(form.permissions),
     profileData: {
       fullName:       form.fullName.trim(),
       lastName:       form.lastName.trim(),
@@ -283,7 +305,7 @@ function formToUpdateInput(form: UserFormState): UpdateCompanyUserInput {
     username: form.username.trim().toLowerCase(),
     role:     form.role,
     status:   form.status,
-    modulePermissions: form.permissions,
+    modulePermissions: pruneEmptyPermissions(form.permissions),
     profileData: {
       fullName:       form.fullName.trim(),
       lastName:       form.lastName.trim(),
@@ -588,16 +610,10 @@ function UserFormModal({
         );
       }
       if (key === "role") {
-        // Si el user ya tiene override per-user con permisos definidos,
-        // NO lo pisamos — el admin lo configuró explícitamente. Solo
-        // cambiamos los defaults si el user está "heredando" del rol
-        // anterior (override vacío).
-        const hasExisting = Object.values(prev.permissions).some(
-          (subs) => subs && Object.values(subs).some((a) => Array.isArray(a) && a.length > 0),
-        );
-        if (!hasExisting) {
-          next.permissions = getDefaultPermissionsForRole(value, companyRoles);
-        }
+        // Al cambiar de rol, siempre partimos de los permisos completos
+        // de ese rol nuevo como punto de partida. El admin ajusta desde
+        // ahí (enciende/apaga lo que quiera) — eso queda como override.
+        next.permissions = getDefaultPermissionsForRole(value, companyRoles);
       }
       return next;
     });
@@ -811,6 +827,7 @@ function UserFormModal({
                       onChange={(next) => setForm((prev) => ({ ...prev, permissions: next }))}
                       defaultPermissions={getDefaultPermissionsForRole(form.role, companyRoles)}
                       readOnlyWithFullAccess={form.role === "owner_empresa" || form.role === "admin_empresa"}
+                      originalPermissions={user ? originalPermissions : undefined}
                     />
                   </div>
 
@@ -1078,30 +1095,30 @@ export function UsersPage() {
                           <td className="px-5 py-3.5">
                             <RoleBadge role={u.role} />
                           </td>
-                          <td className="px-5 py-3.5">
-                            {["owner_empresa", "admin_empresa"].includes(u.role) ? (
-                              <span className="inline-flex items-center rounded-full bg-purple-50 dark:bg-purple-500/10 px-2 py-0.5 text-xs font-medium text-purple-700 dark:text-purple-400">
-                                Acceso total
-                              </span>
-                            ) : (
-                              <>
-                                <span className="text-sm font-medium text-gray-800 dark:text-white">
-                                  {Object.keys(u.modulePermissions).length}
-                                </span>
-                                <span className="ml-1 text-xs text-gray-400 dark:text-gray-500">
-                                  / {Object.keys(MODULE_TREE).length}
-                                </span>
-                              </>
-                            )}
-                          </td>
-                          <td className="px-5 py-3.5">
-                            <StatusBadge status={u.status} />
-                          </td>
-                          <td className="group-hover:bg-gray-50 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
-                            {canManage && (
-                              <RowMenu onEdit={() => openEdit(u)} onDelete={() => setDeleteTarget(u)} />
-                            )}
-                          </td>
+                            <td className="px-5 py-3.5">
+                                {["owner_empresa", "admin_empresa"].includes(u.role) ? (
+                                  <span className="inline-flex items-center rounded-full bg-purple-50 dark:bg-purple-500/10 px-2 py-0.5 text-xs font-medium text-purple-700 dark:text-purple-400">
+                                    Acceso trotal
+                                  </span>
+                                ) : (
+                                  <>
+                                    <span className="text-sm font-medium text-gray-800 dark:text-white">
+                                      {Object.keys(u.modulePermissions).length}
+                                    </span>
+                                    <span className="ml-1 text-xs text-gray-400 dark:text-gray-500">
+                                      / {Object.keys(MODULE_TREE).length}
+                                    </span>
+                                  </>
+                                )}
+                              </td>
+                              <td className="px-5 py-3.5">
+                                <StatusBadge status={u.status} />
+                              </td>
+                              <td className="group-hover:bg-gray-50 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
+                                {canManage && (
+                                  <RowMenu onEdit={() => openEdit(u)} onDelete={() => setDeleteTarget(u)} />
+                                )}
+                              </td>
                         </tr>
                       );
                     })}

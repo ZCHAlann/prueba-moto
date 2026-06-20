@@ -1,14 +1,3 @@
-// pages/Mantenimientos/components/MaintenanceFormModal.tsx
-//
-// Modal dark/light completo. Soporta 3 tipos:
-//   * Programado: variante normal (vehículo, taller, cadencia, items, mano de obra)
-//   * Correctivo: variante normal, arranca en En proceso, auto-asignado
-//   * Lavada: variante simplificada (sin taller, sin items, sin cadencia);
-//     tiene lugar/proveedor/notas y total cost
-//
-// Al agendar (maintenance = null), el selector de tipo se muestra.
-// Al editar (maintenance != null), el selector también.
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   X, Plus, Trash2, Save, Calendar as CalIcon,
@@ -191,6 +180,11 @@ export function MaintenanceFormModal({
   const [attachments, setAttachments]         = useState<{ url: string; label: string; uploadedAt?: string }[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const attachmentFileRef                     = useRef<HTMLInputElement>(null);
+  // Archivo elegido pero todavía sin clasificar (factura / evidencia).
+  // Se sube recién cuando la persona elige el tipo en el mini-panel de
+  // abajo — así el label queda correcto sin tener que adivinarlo por
+  // la extensión del archivo (una factura puede ser perfectamente un .jpg).
+  const [pendingAttachmentFile, setPendingAttachmentFile] = useState<File | null>(null);
   // Lavada
   const [carwashLocation, setCarwashLocation] = useState<string>("");
   const [carwashProvider, setCarwashProvider] = useState<string>("");
@@ -247,6 +241,7 @@ export function MaintenanceFormModal({
       setAttachments([]);
       setCarwashTotal(null);
     }
+    setPendingAttachmentFile(null);
   }, [open, maintenance, prefill, defaultType]);
 
   // Cuando cambia el tipo, ajustar status por defecto (UI) y limpiar items si es Lavada
@@ -255,13 +250,28 @@ export function MaintenanceFormModal({
     if (type === "Correctivo" || type === "Lavada") setStatus("En proceso");
     else setStatus("Programado");
     if (type === "Lavada" && items.length) setItems([]);
+    if (type === "Lavada") setCategory("Lavada");
+    else if (category === "Lavada") setCategory("Otro");
     // Auto-asignación del operador: si NO es full access y crea Correctivo/Lavada,
     // se auto-asigna (lo está haciendo él mismo).
-    if (!isEditing && !isFullAccess && (type === "Correctivo" || type === "Lavada") && session?.sub) {
-      const meId = session.sub.replace("company-user-", "");
-      setAssignedUserId(meId);
+    if (!isEditing && !isFullAccess && (type === "Correctivo" || type === "Lavada") && session?.id) {
+      setAssignedUserId(session.id);
     }
   }, [type]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Autocompletar "Encargado" en Lavada con el conductor asignado al
+  // vehículo seleccionado. Se recalcula cada vez que cambia el vehículo
+  // (el conductor del asset manda); el usuario puede igual editarlo a
+  // mano para ese envío puntual. No aplica al editar un mantenimiento
+  // ya existente (ahí se respeta lo que ya estaba guardado al abrir).
+  useEffect(() => {
+    if (isEditing) return;
+    if (type !== "Lavada") return;
+    if (!assetId) return;
+    const asset = assetsList.find((a) => a.id === assetId);
+    const driverName = asset?.currentDriver?.name?.trim();
+    setCarwashProvider(driverName || "");
+  }, [assetId, type, assetsList, isEditing]);
 
   const isLavada = type === "Lavada";
 
@@ -291,6 +301,33 @@ export function MaintenanceFormModal({
     }
   };
 
+  // ─── Adjuntos (facturas / evidencias) ────────────────────────────────────
+  // Sube el archivo ya elegido (pendingAttachmentFile) con el tipo que la
+  // persona acaba de seleccionar en el mini-panel.
+  const uploadPendingAttachment = async (kind: "invoice" | "evidence") => {
+    const file = pendingAttachmentFile;
+    if (!file) return;
+    setUploadingAttachment(true);
+    try {
+      const url = await uploadMaintenanceAttachment(file, Number(session?.companyId ?? 0));
+      const baseName = file.name.replace(/\.[^.]+$/, "").slice(0, 40);
+      const label = kind === "invoice" ? `Factura · ${baseName}` : `Evidencia · ${baseName}`;
+      setAttachments((p) => [
+        ...p,
+        { url, label, uploadedAt: new Date().toISOString() },
+      ]);
+      toast.success(kind === "invoice" ? "Factura subida" : "Evidencia subida");
+    } catch (err) {
+      toast.error("No se pudo subir el adjunto", {
+        description: err instanceof Error ? err.message : "Error",
+      });
+    } finally {
+      setUploadingAttachment(false);
+      setPendingAttachmentFile(null);
+      if (attachmentFileRef.current) attachmentFileRef.current.value = "";
+    }
+  };
+
   // ─── Submit ─────────────────────────────────────────────────────────────
   const submit = async () => {
     if (!title.trim()) { toast.error("Título requerido"); return; }
@@ -300,6 +337,7 @@ export function MaintenanceFormModal({
 
     const payload: MaintenanceInput = {
       assetId, type, status, category, title,
+      workshopId: isLavada ? null : (workshopId || null),
       description: description || null,
       odometerKm: odometerKm ?? null,
       laborCost: laborCost || 0,
@@ -791,7 +829,9 @@ export function MaintenanceFormModal({
           {/* ── Facturas y evidencias ── */}
           {/* Se muestra cuando el mantenimiento ya está "En proceso" o
               "Completado", o si ya tiene adjuntos. Igual que la sección
-              de repuestos: arranca oculta al agendar, aparece al iniciar. */}
+              de repuestos: arranca oculta al agendar, aparece al iniciar.
+              Al elegir un archivo, se pregunta explícitamente si es
+              Factura o Evidencia antes de subirlo (mini-panel abajo). */}
           {!isLavada && (status === "En proceso" || status === "Completado" || attachments.length > 0) && (
             <div className="rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -806,7 +846,7 @@ export function MaintenanceFormModal({
                     </span>
                   )}
                 </div>
-                {!isReadOnly && (
+                {!isReadOnly && !pendingAttachmentFile && (
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
@@ -820,6 +860,52 @@ export function MaintenanceFormModal({
                   </div>
                 )}
               </div>
+
+              {/* ── Mini-panel de clasificación: aparece tras elegir el
+                  archivo, antes de que se suba. Evita adivinar si es
+                  factura o evidencia por el tipo de archivo. ── */}
+              {pendingAttachmentFile && (
+                <div className="rounded-lg border border-sky-200 dark:border-sky-500/30 bg-sky-50 dark:bg-sky-500/10 p-3">
+                  <p className="text-xs font-medium text-gray-700 dark:text-gray-200 mb-2">
+                    <span className="truncate">{pendingAttachmentFile.name}</span> — ¿qué tipo de archivo es?
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={uploadingAttachment}
+                      onClick={() => uploadPendingAttachment("invoice")}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md bg-orange-600 hover:bg-orange-700 px-3 py-1.5 text-xs font-medium text-white transition disabled:opacity-50"
+                    >
+                      <Receipt size={12} /> Factura
+                    </button>
+                    <button
+                      type="button"
+                      disabled={uploadingAttachment}
+                      onClick={() => uploadPendingAttachment("evidence")}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-medium text-white transition disabled:opacity-50"
+                    >
+                      <Camera size={12} /> Evidencia
+                    </button>
+                    <button
+                      type="button"
+                      disabled={uploadingAttachment}
+                      onClick={() => {
+                        setPendingAttachmentFile(null);
+                        if (attachmentFileRef.current) attachmentFileRef.current.value = "";
+                      }}
+                      className="inline-flex items-center justify-center rounded-md border border-gray-200 dark:border-white/[0.08] px-2.5 py-1.5 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06] transition"
+                      title="Cancelar"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                  {uploadingAttachment && (
+                    <p className="mt-2 text-[11px] text-sky-700 dark:text-sky-300 inline-flex items-center gap-1">
+                      <Loader2 size={10} className="animate-spin" /> Subiendo…
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Lista de adjuntos */}
               {attachments.length > 0 && (
@@ -870,35 +956,16 @@ export function MaintenanceFormModal({
                 </ul>
               )}
 
+              {/* El input ya NO sube directo: solo guarda el file
+                  pendiente y dispara el mini-panel de clasificación. */}
               <input
                 ref={attachmentFileRef}
                 type="file"
                 accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,application/pdf"
                 className="hidden"
-                onChange={async (e) => {
+                onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (!file) return;
-                  setUploadingAttachment(true);
-                  try {
-                    const url = await uploadMaintenanceAttachment(file, Number(session?.companyId ?? 0));
-                    // Auto-label: si el archivo es PDF → "Factura"; si es imagen → "Evidencia".
-                    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-                    const label = isPdf
-                      ? `Factura · ${file.name.replace(/\.pdf$/i, "").slice(0, 40)}`
-                      : `Evidencia · ${file.name.replace(/\.[^.]+$/, "").slice(0, 40)}`;
-                    setAttachments((p) => [
-                      ...p,
-                      { url, label, uploadedAt: new Date().toISOString() },
-                    ]);
-                    toast.success("Adjunto subido");
-                  } catch (err) {
-                    toast.error("No se pudo subir el adjunto", {
-                      description: err instanceof Error ? err.message : "Error",
-                    });
-                  } finally {
-                    setUploadingAttachment(false);
-                    if (attachmentFileRef.current) attachmentFileRef.current.value = "";
-                  }
+                  if (file) setPendingAttachmentFile(file);
                 }}
               />
             </div>

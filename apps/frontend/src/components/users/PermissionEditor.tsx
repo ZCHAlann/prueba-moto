@@ -67,6 +67,19 @@ function isModuleNone(perms: PermissionMap, mod: string): boolean {
   );
 }
 
+/** Cuenta permisos activos / posibles de un módulo, sumando todos sus
+ *  submódulos. Ej: 2 submódulos con "ver" cada uno → { active: 2, total: 8 }. */
+function countModuleProgress(perms: PermissionMap, mod: string): { active: number; total: number } {
+  const modDef = MODULE_TREE[mod as keyof typeof MODULE_TREE];
+  if (!modDef) return { active: 0, total: 0 };
+  const subs = Object.keys(modDef.submodules);
+  let active = 0;
+  for (const sub of subs) {
+    active += (perms[mod]?.[sub] ?? []).length;
+  }
+  return { active, total: subs.length * ACTIONS.length };
+}
+
 /* ── Componente principal ──────────────────────────────────────────────── */
 
 type Props = {
@@ -82,7 +95,7 @@ type Props = {
   readOnlyWithFullAccess?: boolean;
   /**
    * Snapshot de los permisos originales al abrir el editor. Si está
-   * presente, se muestra un botón "Volver a originales" que restaura
+   * presente, se muestra un botón "Permisos actuales" que restaura
    * este objeto. Solo aplica en modo edición.
    */
   originalPermissions?: PermissionMap;
@@ -116,8 +129,13 @@ export function PermissionEditor({
   combineWithRole = false,
 }: Props) {
   const hasUserOverride = hasAnyPermission(permissions);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [filter, setFilter]     = useState<"todos" | "asignados" | "vacios">("todos");
+
+  // Acordeón: solo un módulo abierto a la vez. `null` = todos cerrados.
+  // Se inicializa cerrado y SOLO cambia por clicks del usuario (no se
+  // resetea cuando cambian `permissions` ni `defaultPermissions`, p.ej.
+  // al elegir otro rol en el selector del padre).
+  const [openModule, setOpenModule] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"todos" | "asignados" | "vacios">("todos");
 
   const moduleKeys = Object.keys(MODULE_TREE);
 
@@ -175,7 +193,7 @@ export function PermissionEditor({
     onChange(userOnly);
   };
 
-  // Restaurar los permisos originales (al abrir el modal)
+  // Restaurar los permisos originales (los que el user tenía al abrir el modal)
   const restoreOriginal = () => {
     if (originalPermissions) onChange(JSON.parse(JSON.stringify(originalPermissions)));
   };
@@ -196,7 +214,7 @@ export function PermissionEditor({
   // Permisos efectivos que se renderizan. Si es admin/owner, se
   // muestran todos los del MODULE_TREE ya marcados (sin tocar `permissions`).
   const effectivePerms: PermissionMap = useMemo(() => {
-    if (!readOnlyWithFullAccess) return permissions;
+    if (!readOnlyWithFullAccess) return displayedPerms;
     const full: PermissionMap = {};
     for (const [mod, def] of Object.entries(MODULE_TREE)) {
       full[mod] = {};
@@ -205,7 +223,7 @@ export function PermissionEditor({
       }
     }
     return full;
-  }, [permissions, readOnlyWithFullAccess]);
+  }, [displayedPerms, readOnlyWithFullAccess]);
 
   const toggle = (mod: string, sub: string, action: ActionKey) => {
     if (readOnlyWithFullAccess) return;
@@ -247,8 +265,13 @@ export function PermissionEditor({
   const applyTemplate = () => {
     if (readOnlyWithFullAccess) return;
     if (!defaultPermissions) return;
-    // Reemplaza el override con los permisos del rol (clon profundo).
-    onChange(JSON.parse(JSON.stringify(defaultPermissions)));
+    // Reemplaza el override con los permisos del rol (clon profundo),
+    // pasando por handleChange para que respete combineWithRole.
+    handleChange(JSON.parse(JSON.stringify(defaultPermissions)));
+  };
+
+  const toggleModule = (mod: string) => {
+    setOpenModule((prev) => (prev === mod ? null : mod));
   };
 
   return (
@@ -291,11 +314,11 @@ export function PermissionEditor({
             <button
               type="button"
               onClick={restoreOriginal}
-              title="Descarta todos los cambios manuales y restaura los permisos que el usuario tenía al abrir este modal"
+              title="Descarta todos los cambios manuales y restaura los permisos que el usuario tiene actualmente guardados"
               className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-700 dark:text-amber-300 transition hover:bg-amber-100 dark:hover:bg-amber-500/20"
             >
               <RotateCcw size={12} />
-              Volver a originales
+              Permisos actuales
             </button>
           )}
           {!readOnlyWithFullAccess && (
@@ -346,14 +369,13 @@ export function PermissionEditor({
 
       {!readOnlyWithFullAccess && hasUserOverride && defaultPermissions && Object.keys(defaultPermissions).length > 0 && (
         <div className="flex items-start gap-3 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-4 py-3">
-          <Sparkles size={18} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
           <div className="flex-1">
             <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
               Permisos personalizados
             </p>
             <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/80">
               Este usuario tiene permisos definidos individualmente que prevalecen
-              sobre los del rol. Si querés volver a heredar del rol, presioná
+              sobre los del rol. 
               <strong> Limpiar todo</strong>.
             </p>
           </div>
@@ -376,8 +398,9 @@ export function PermissionEditor({
           {visibleMods.map((modKey) => {
             const modDef = MODULE_TREE[modKey as keyof typeof MODULE_TREE];
             const subs   = Object.keys(modDef.submodules);
-            const isOpen = collapsed[modKey] !== true;
+            const isOpen = openModule === modKey;
             const all    = isModuleAll(effectivePerms, modKey);
+            const { active: activeCount, total: totalCount } = countModuleProgress(effectivePerms, modKey);
 
             return (
               <div
@@ -388,7 +411,7 @@ export function PermissionEditor({
                 <div className="flex items-center gap-3 px-4 py-2.5">
                   <button
                     type="button"
-                    onClick={() => setCollapsed((p) => ({ ...p, [modKey]: isOpen }))}
+                    onClick={() => toggleModule(modKey)}
                     className="flex flex-1 items-center gap-2 text-left"
                   >
                     <ChevronDown
@@ -398,6 +421,17 @@ export function PermissionEditor({
                     <p className="truncate text-sm font-semibold text-gray-800 dark:text-white">
                       {modDef.label}
                     </p>
+                    {activeCount > 0 && (
+                      <span
+                        className={`inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
+                          all
+                            ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                            : "bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                        }`}
+                      >
+                        {activeCount}/{totalCount}
+                      </span>
+                    )}
                     {all && (
                       <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 dark:bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
                         <CheckCircle2 size={10} /> Completo

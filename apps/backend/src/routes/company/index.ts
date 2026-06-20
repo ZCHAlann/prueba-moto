@@ -16,8 +16,6 @@ import garagesRouter from './garages';
 import acUnitsRouter from './ac-units';
 import auditRouter from './audit';
 import analyticsRouter from './analytics';
-import oilsRouter from './oils';
-import oilChangesRouter from './oil-changes';
 import vehiculoRouter from './vehiculo';
 import profileRouter from './auth.me';
 import usersRouter from './user'; 
@@ -30,6 +28,7 @@ import suppliersRouter from './suppliers';
 import odometerRouter from './odometer';
 import notificationsRouter from './notifications';
 import reportsRouter from './reports';
+import estadisticasRouter from './estadisticas';
 
 const router = Router({ mergeParams: true });
 
@@ -51,8 +50,6 @@ router.use('/garages', garagesRouter);
 router.use('/ac-units', acUnitsRouter);
 router.use('/audit', auditRouter);
 router.use('/analytics', analyticsRouter);
-router.use('/oils', oilsRouter);
-router.use('/oil-changes', oilChangesRouter);
 router.use('/vehicle-cockpit', vehiculoRouter);
 router.use('/auth/me', profileRouter);
 router.use('/users', usersRouter);  
@@ -65,6 +62,7 @@ router.use('/suppliers', suppliersRouter);
 router.use('/odometer', odometerRouter);
 router.use('/notifications', notificationsRouter);
 router.use('/reports', reportsRouter);
+router.use('/estadisticas', estadisticasRouter);
 
 
 export default router;

@@ -3,6 +3,8 @@ import { createServer } from 'http';
 import app from './app';
 import { attachWebSocket } from './services/websocket';
 import { startMaintenanceCron } from './lib/cron/maintenance';
+import { startStatsAnomaliesCron } from './lib/cron/stats-anomalies';
+import { startStatsCleanupCron } from './lib/cron/cleanup';
 
 const PORT = process.env.PORT || 5000;
 
@@ -11,6 +13,8 @@ attachWebSocket(server);
 
 // Cron jobs (opcional, se apaga con MAINTENANCE_CRON_ENABLED != true)
 startMaintenanceCron();
+startStatsAnomaliesCron();
+startStatsCleanupCron();
 
 server.listen(PORT, () => {
   console.log(`✓ Backend corriendo en puerto ${PORT}`);

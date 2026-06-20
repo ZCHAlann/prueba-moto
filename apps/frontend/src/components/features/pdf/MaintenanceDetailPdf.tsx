@@ -1,76 +1,227 @@
 // components/features/pdf/MaintenanceDetailPdf.tsx
 // PDF individual de un mantenimiento (un solo OT, con items y resumen
 // financiero). Estilo empresarial, sin emojis, con:
-//   * Header corporativo (folio grande, status, tipo, reprogramado)
+//   * Header corporativo (folio, status, tipo, reprogramado)
 //   * Secciones con líneas separadoras y títulos en versalita
 //   * Mano de obra separada de repuestos / adicionales
 //   * Lavada: lugar, proveedor, adicionales
 //   * Fotografías de repuestos y adjuntos
 //   * Total destacado (calculado desde items + mano de obra)
 //
-// v3.2: se quitó la línea de tiempo del PDF (queda solo en el drawer
-// de detalle dentro de la app), se agregó la galería de fotos, y el
-// total ahora se calcula localmente desde items/laborCost en vez de
-// depender únicamente del totalCost que llega del backend.
+// v3.3: rediseño visual completo — paleta monocromática con un solo
+// acento de color (en vez de violeta/ámbar/esmeralda compitiendo entre
+// sí), tabla real de datos clave en dos columnas, badges de estado más
+// discretos, banners de aviso reducidos a una línea de borde lateral en
+// vez de cajas de alerta tipo spreadsheet. Funcionalmente idéntico a
+// v3.2 (mismos campos, mismo cálculo de total).
 
 import { pdf, Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
 import type { Maintenance } from "../../../hooks/useMaintenancesV2";
+
+// ─── Paleta ───────────────────────────────────────────────────────────────────
+// Un solo acento (slate oscuro casi negro) para títulos/cifras importantes,
+// grises neutros para todo lo demás. El color solo aparece para distinguir
+// estado (puntos pequeños) y el total final.
+const COLOR = {
+  ink:       "#111827", // texto principal / cifras
+  inkSoft:   "#1f2937",
+  label:     "#6b7280", // labels secundarios
+  muted:     "#9ca3af", // texto terciario / folio
+  line:      "#e5e7eb", // líneas divisorias
+  lineSoft:  "#f0f1f3",
+  surface:   "#fafafa", // fondo de tarjetas
+  accent:    "#0f172a", // acento principal (casi negro azulado)
+  total:     "#065f46", // verde apagado solo para el total final
+  warn:      "#92400e", // texto de aviso (reprogramado / corrección)
+  warnBar:   "#d97706",
+  danger:    "#9f1239",
+  dangerBar: "#e11d48",
+};
 
 const s = StyleSheet.create({
   page: {
     fontFamily: "Helvetica",
     fontSize: 9,
-    color: "#0f172a",
-    paddingTop: 30,
-    paddingBottom: 30,
-    paddingHorizontal: 36,
+    color: COLOR.ink,
+    paddingTop: 34,
+    paddingBottom: 36,
+    paddingHorizontal: 40,
   },
-  // ── Header
-  headerBand: { borderBottom: "3pt solid #7c3aed", paddingBottom: 8, marginBottom: 14 },
-  title:    { fontSize: 18, fontFamily: "Helvetica-Bold", marginBottom: 2 },
-  subtitle: { fontSize: 9,  color: "#475569", marginBottom: 2 },
-  folio:    { fontSize: 8,  color: "#94a3b8", fontFamily: "Courier" },
-  // ── Secciones
-  sectionTitle: {
-    fontSize: 9,
-    fontFamily: "Helvetica-Bold",
-    color: "#475569",
-    marginTop: 12,
+
+  // ── Header ─────────────────────────────────────────────────────────────
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 10,
+  },
+  folio: {
+    fontSize: 7.5,
+    color: COLOR.muted,
+    fontFamily: "Courier",
+    letterSpacing: 0.5,
     marginBottom: 4,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
   },
-  divider: { borderBottom: "0.5pt solid #cbd5e1", marginBottom: 6 },
-  // ── Filas label/valor
-  row:        { flexDirection: "row", marginBottom: 3 },
-  label:      { width: 130, color: "#64748b" },
-  value:      { flex: 1, color: "#0f172a" },
-  // ── Tabla de repuestos
-  itemRow:    { flexDirection: "row", borderBottom: "0.5pt solid #e2e8f0", paddingVertical: 4, alignItems: "center" },
-  itemName:   { flex: 2, fontSize: 9 },
-  itemQty:    { width: 50, fontSize: 9, textAlign: "right" },
-  itemUnit:   { width: 80, fontSize: 9, textAlign: "right" },
-  itemSub:    { width: 90, fontSize: 9, textAlign: "right", fontFamily: "Helvetica-Bold" },
-  // ── Costos
-  kpiBox:     { flexDirection: "row", gap: 8, marginBottom: 8 },
-  kpiCard:    { flex: 1, border: "0.5pt solid #e2e8f0", borderRadius: 4, padding: 6, backgroundColor: "#f8fafc" },
-  kpiLabel:   { fontSize: 7, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.6 },
-  kpiValue:   { fontSize: 12, fontFamily: "Helvetica-Bold", color: "#0f172a", marginTop: 2 },
-  // ── Fotografías
-  photoGrid:  { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4, marginBottom: 6 },
-  photoBox:   { width: 110 },
-  photoImg:   { width: 110, height: 80, objectFit: "cover", borderRadius: 4, border: "0.5pt solid #e2e8f0" },
-  photoCaption: { fontSize: 7, color: "#64748b", marginTop: 2, textAlign: "center" },
-  // ── Reprogramación
-  reprogBox: { border: "0.5pt solid #fbbf24", backgroundColor: "#fef3c7", padding: 6, borderRadius: 4, marginBottom: 6 },
-  // ── Footer
-  footer: { position: "absolute", bottom: 16, left: 0, right: 0, textAlign: "center", fontSize: 8, color: "#94a3b8" },
+  title: {
+    fontSize: 17,
+    fontFamily: "Helvetica-Bold",
+    color: COLOR.ink,
+    marginBottom: 6,
+  },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  badge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    borderRadius: 2,
+    paddingVertical: 2.5,
+    paddingHorizontal: 6,
+    border: `0.75pt solid ${COLOR.line}`,
+  },
+  badgeDot: { width: 4, height: 4, borderRadius: 2 },
+  badgeText: { fontSize: 7.5, fontFamily: "Helvetica-Bold", letterSpacing: 0.4, textTransform: "uppercase" },
+  metaSep: { fontSize: 8, color: COLOR.muted },
+
+  headerDivider: { borderBottom: `1.25pt solid ${COLOR.ink}`, marginBottom: 16 },
+
+  // ── Secciones ──────────────────────────────────────────────────────────
+  sectionTitle: {
+    fontSize: 8,
+    fontFamily: "Helvetica-Bold",
+    color: COLOR.label,
+    marginTop: 16,
+    marginBottom: 7,
+    textTransform: "uppercase",
+    letterSpacing: 1.1,
+  },
+  sectionTitleFirst: { marginTop: 0 },
+  divider: { borderBottom: `0.75pt solid ${COLOR.line}`, marginBottom: 8 },
+
+  // ── Grilla de datos clave (2 columnas) ────────────────────────────────
+  dataGrid: { flexDirection: "row", flexWrap: "wrap" },
+  dataCell: { width: "50%", flexDirection: "row", marginBottom: 7, paddingRight: 10 },
+  dataLabel: { width: 70, fontSize: 8, color: COLOR.label },
+  dataValue: { flex: 1, fontSize: 9, color: COLOR.ink, fontFamily: "Helvetica-Bold" },
+  dataValueMuted: { flex: 1, fontSize: 9, color: COLOR.muted, fontFamily: "Helvetica" },
+
+  // ── Tabla de repuestos ─────────────────────────────────────────────────
+  tableHead: {
+    flexDirection: "row",
+    borderBottom: `1pt solid ${COLOR.ink}`,
+    paddingBottom: 5,
+    marginBottom: 2,
+  },
+  tableHeadText: { fontSize: 7, fontFamily: "Helvetica-Bold", color: COLOR.label, textTransform: "uppercase", letterSpacing: 0.6 },
+  itemRow: {
+    flexDirection: "row",
+    borderBottom: `0.5pt solid ${COLOR.lineSoft}`,
+    paddingVertical: 5.5,
+    alignItems: "center",
+  },
+  itemThumbCell: { width: 30, paddingRight: 6 },
+  itemThumb:    { width: 24, height: 24, borderRadius: 2, objectFit: "cover", border: `0.5pt solid ${COLOR.line}` },
+  itemThumbPlaceholder: {
+    width: 24, height: 24, borderRadius: 2,
+    border: `0.5pt dashed ${COLOR.line}`,
+  },
+  itemNameCell: { flex: 2 },
+  itemName:   { fontSize: 9, color: COLOR.ink },
+  itemSupplier: { fontSize: 7.5, color: COLOR.muted },
+  itemQty:    { width: 44, fontSize: 9, textAlign: "right", color: COLOR.inkSoft },
+  itemUnit:   { width: 78, fontSize: 9, textAlign: "right", color: COLOR.inkSoft },
+  itemSub:    { width: 88, fontSize: 9, textAlign: "right", fontFamily: "Helvetica-Bold", color: COLOR.ink },
+
+  // ── Bloque final de totales (debajo de la tabla de repuestos) ─────────
+  totalsBlock: { marginTop: 4, alignItems: "flex-end" },
+  totalsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    width: 220,
+    paddingVertical: 3.5,
+  },
+  totalsRowFinal: {
+    borderTop: `1pt solid ${COLOR.ink}`,
+    marginTop: 3,
+    paddingTop: 6,
+  },
+  totalsLabel: { fontSize: 8.5, color: COLOR.label },
+  totalsLabelFinal: { fontSize: 9.5, fontFamily: "Helvetica-Bold", color: COLOR.ink },
+  totalsValue: { fontSize: 9, color: COLOR.inkSoft, fontFamily: "Helvetica-Bold" },
+  totalsValueFinal: { fontSize: 12, fontFamily: "Helvetica-Bold", color: COLOR.total },
+
+  // ── Costos (resumen destacado) ────────────────────────────────────────
+  kpiBox: { flexDirection: "row", gap: 10, marginBottom: 4 },
+  kpiCard: {
+    flex: 1,
+    borderTop: `2pt solid ${COLOR.line}`,
+    paddingTop: 7,
+  },
+  kpiCardTotal: { borderTopColor: COLOR.total },
+  kpiLabel: { fontSize: 7, color: COLOR.label, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 3 },
+  kpiValue: { fontSize: 14, fontFamily: "Helvetica-Bold", color: COLOR.ink },
+  kpiValueTotal: { color: COLOR.total },
+
+  // ── Fotografías ────────────────────────────────────────────────────────
+  photoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 2 },
+  photoBox:  { width: 112 },
+  photoImg:  { width: 112, height: 82, objectFit: "cover", borderRadius: 2, border: `0.75pt solid ${COLOR.line}` },
+  photoTag: {
+    alignSelf: "flex-start",
+    fontSize: 6,
+    fontFamily: "Helvetica-Bold",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    color: "#ffffff",
+    backgroundColor: COLOR.ink,
+    paddingHorizontal: 4,
+    paddingVertical: 1.5,
+    borderRadius: 2,
+    marginBottom: 3,
+  },
+  photoTagInvoice: { backgroundColor: "#9a3412" },
+  photoCaption: { fontSize: 7, color: COLOR.label, marginTop: 3 },
+
+  // ── Avisos (reprogramado / corrección) — barra lateral, no caja ──────
+  noticeBox: {
+    borderLeft: "2.5pt solid",
+    paddingLeft: 10,
+    paddingVertical: 2,
+    marginBottom: 14,
+  },
+  noticeTitle: { fontSize: 8, fontFamily: "Helvetica-Bold", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 2 },
+  noticeText: { fontSize: 8.5, color: COLOR.inkSoft, marginBottom: 2 },
+  noticeMeta: { fontSize: 7.5, color: COLOR.muted },
+
+  // ── Descripción / notas ───────────────────────────────────────────────
+  bodyText: { fontSize: 9, color: COLOR.inkSoft, lineHeight: 1.4 },
+
+  // ── Footer ─────────────────────────────────────────────────────────────
+  footer: {
+    position: "absolute",
+    bottom: 18,
+    left: 40,
+    right: 40,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    borderTop: `0.5pt solid ${COLOR.line}`,
+    paddingTop: 6,
+    fontSize: 7,
+    color: COLOR.muted,
+  },
 });
 
 const STATUS_LABEL: Record<string, string> = {
   Programado:   "Programado",
   "En proceso": "En proceso",
   Completado:   "Completado",
+  Correccion:   "Corrección",
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  Programado:   "#7c3aed",
+  "En proceso": "#0284c7",
+  Completado:   "#059669",
+  Correccion:   "#e11d48",
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -92,6 +243,24 @@ function isImageUrl(url: string): boolean {
   return /\.(jpe?g|png|webp|gif)$/i.test(url);
 }
 
+function Badge({ label, color }: { label: string; color: string }) {
+  return (
+    <View style={s.badge}>
+      <View style={[s.badgeDot, { backgroundColor: color }]} />
+      <Text style={[s.badgeText, { color }]}>{label}</Text>
+    </View>
+  );
+}
+
+function DataCell({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
+  return (
+    <View style={s.dataCell}>
+      <Text style={s.dataLabel}>{label}</Text>
+      <Text style={muted ? s.dataValueMuted : s.dataValue}>{value}</Text>
+    </View>
+  );
+}
+
 function MaintenanceDetailDocument({ m }: { m: Maintenance }) {
   const isLavada = m.type === "Lavada";
 
@@ -108,67 +277,99 @@ function MaintenanceDetailDocument({ m }: { m: Maintenance }) {
   const partsCost = isLavada ? Math.max(0, total - laborCost) : itemsTotal;
 
   // ── Fotos a mostrar: repuestos con foto + adjuntos que sean imagen ──────
+  // Cada foto lleva un "kind" para distinguir visualmente facturas de
+  // evidencias/repuestos en la galería. El kind de los adjuntos se
+  // infiere del label (que la persona elige explícitamente al subir:
+  // "Factura · ..." o "Evidencia · ..."), no de la extensión del
+  // archivo — una factura puede perfectamente ser un .jpg.
   const itemPhotos = (m.items ?? [])
     .filter((it) => !!it.photoUrl && isImageUrl(it.photoUrl as string))
-    .map((it) => ({ url: it.photoUrl as string, caption: it.name }));
+    .map((it) => ({ url: it.photoUrl as string, caption: it.name, kind: "part" as const }));
   const attachmentPhotos = (m.attachments ?? [])
     .filter((a) => isImageUrl(a.url))
-    .map((a) => ({ url: a.url, caption: a.label }));
+    .map((a) => ({
+      url: a.url,
+      caption: a.label,
+      kind: /^factura/i.test(a.label) ? ("invoice" as const) : ("evidence" as const),
+    }));
   const allPhotos = [...itemPhotos, ...attachmentPhotos];
+
+  // Adjuntos que NO son imagen (ej. facturas en PDF) — no se pueden incrustar
+  // pero igual se listan por nombre para que quede constancia en el documento.
+  const nonImageAttachments = (m.attachments ?? []).filter((a) => !isImageUrl(a.url));
+
+  const statusColor = STATUS_COLOR[m.status] ?? COLOR.label;
 
   return (
     <Document>
       <Page size="A4" style={s.page}>
         {/* ─── Header ─── */}
-        <View style={s.headerBand}>
-          <Text style={s.folio}>FOLIO {m.id}</Text>
-          <Text style={s.title}>{m.title ?? "Mantenimiento"}</Text>
-          <Text style={s.subtitle}>
-            {STATUS_LABEL[m.status] ?? m.status}  ·  {TYPE_LABEL[m.type] ?? m.type}
-            {m.isReprogrammed ? `  ·  REPROGRAMADO${m.reprogramCount > 1 ? ` (${m.reprogramCount}x)` : ""}` : ""}
-          </Text>
+        <View style={s.headerRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.folio}>FOLIO {m.id}</Text>
+            <Text style={s.title}>{m.title ?? "Mantenimiento"}</Text>
+            <View style={s.metaRow}>
+              <Badge label={STATUS_LABEL[m.status] ?? m.status} color={statusColor} />
+              <Badge label={TYPE_LABEL[m.type] ?? m.type} color={COLOR.label} />
+              {m.isReprogrammed && (
+                <Badge label={`Reprogramado${m.reprogramCount > 1 ? ` ×${m.reprogramCount}` : ""}`} color={COLOR.warnBar} />
+              )}
+            </View>
+          </View>
         </View>
+        <View style={s.headerDivider} />
 
-        {/* ─── Reprogramación (banner) ─── */}
+        {/* ─── Reprogramación (aviso) ─── */}
         {m.isReprogrammed && m.reprogramReason && (
-          <View style={s.reprogBox}>
-            <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 9, color: "#92400e", marginBottom: 2 }}>
-              REPROGRAMADO{m.reprogramCount > 1 ? ` (${m.reprogramCount} veces)` : ""}
+          <View style={[s.noticeBox, { borderLeftColor: COLOR.warnBar }]}>
+            <Text style={[s.noticeTitle, { color: COLOR.warn }]}>
+              Reprogramado{m.reprogramCount > 1 ? ` — ${m.reprogramCount} veces` : ""}
             </Text>
-            <Text style={{ fontSize: 9, color: "#78350f", marginBottom: 2 }}>Motivo: {m.reprogramReason}</Text>
+            <Text style={s.noticeText}>{m.reprogramReason}</Text>
             {m.reprogrammedAt && (
-              <Text style={{ fontSize: 8, color: "#92400e" }}>Reprogramado el {fmtDateTime(m.reprogrammedAt)}</Text>
+              <Text style={s.noticeMeta}>{fmtDateTime(m.reprogrammedAt)}</Text>
+            )}
+          </View>
+        )}
+
+        {/* ─── Corrección (aviso) ─── */}
+        {m.correctionReason && (
+          <View style={[s.noticeBox, { borderLeftColor: COLOR.dangerBar }]}>
+            <Text style={[s.noticeTitle, { color: COLOR.danger }]}>Motivo de la corrección</Text>
+            <Text style={s.noticeText}>{m.correctionReason}</Text>
+            {m.correctionRequestedAt && (
+              <Text style={s.noticeMeta}>{fmtDateTime(m.correctionRequestedAt)}</Text>
             )}
           </View>
         )}
 
         {/* ─── Vehículo y programación ─── */}
-        <Text style={s.sectionTitle}>Vehículo y programación</Text>
+        <Text style={[s.sectionTitle, s.sectionTitleFirst]}>Vehículo y programación</Text>
         <View style={s.divider} />
-        <View style={s.row}><Text style={s.label}>Placa:</Text>        <Text style={s.value}>{m.assetPlate ?? "—"}</Text></View>
-        <View style={s.row}><Text style={s.label}>Nombre:</Text>       <Text style={s.value}>{m.assetName ?? "—"}</Text></View>
-        {!isLavada && (
-          <View style={s.row}><Text style={s.label}>Taller:</Text>     <Text style={s.value}>{m.workshopName ?? "—"}</Text></View>
-        )}
-        <View style={s.row}><Text style={s.label}>Asignado a:</Text>   <Text style={s.value}>{m.assignedUserName ?? "Libre — sin asignar"}</Text></View>
-        <View style={s.row}><Text style={s.label}>Programado:</Text>   <Text style={s.value}>{fmtDateTime(m.scheduledFor)}</Text></View>
-        <View style={s.row}><Text style={s.label}>Ejecutado:</Text>    <Text style={s.value}>{fmtDateTime(m.executedAt)}</Text></View>
-        <View style={s.row}><Text style={s.label}>Completado:</Text>   <Text style={s.value}>{fmtDateTime(m.completedAt)}</Text></View>
-        {m.odometerKm != null && (
-          <View style={s.row}><Text style={s.label}>Odómetro:</Text><Text style={s.value}>{m.odometerKm.toLocaleString("es-CO")} km</Text></View>
-        )}
+        <View style={s.dataGrid}>
+          <DataCell label="Placa"      value={m.assetPlate ?? "—"} />
+          <DataCell label="Vehículo"   value={m.assetName ?? "—"} />
+          {!isLavada && <DataCell label="Taller" value={m.workshopName ?? "Sin taller asignado"} muted={!m.workshopName} />}
+          <DataCell label="Asignado a" value={m.assignedUserName ?? "Sin asignar"} muted={!m.assignedUserName} />
+          <DataCell label="Programado" value={fmtDateTime(m.scheduledFor)} />
+          <DataCell label="Ejecutado"  value={fmtDateTime(m.executedAt)} muted={!m.executedAt} />
+          <DataCell label="Completado" value={fmtDateTime(m.completedAt)} muted={!m.completedAt} />
+          {m.odometerKm != null && (
+            <DataCell label="Odómetro" value={`${m.odometerKm.toLocaleString("es-CO")} km`} />
+          )}
+        </View>
 
         {/* ─── Lavada: datos específicos ─── */}
         {isLavada && (
           <>
             <Text style={s.sectionTitle}>Servicio de lavada</Text>
             <View style={s.divider} />
-            <View style={s.row}><Text style={s.label}>Lugar:</Text>     <Text style={s.value}>{m.carwashLocation ?? "—"}</Text></View>
-            <View style={s.row}><Text style={s.label}>Encargado:</Text> <Text style={s.value}>{m.carwashProvider ?? "—"}</Text></View>
+            <View style={s.dataGrid}>
+              <DataCell label="Lugar"     value={m.carwashLocation ?? "—"} />
+              <DataCell label="Encargado" value={m.carwashProvider ?? "—"} muted={!m.carwashProvider} />
+            </View>
             {m.carwashNotes && (
-              <View style={{ marginTop: 4 }}>
-                <Text style={{ fontSize: 9, color: "#0f172a" }}>{m.carwashNotes}</Text>
-              </View>
+              <Text style={[s.bodyText, { marginTop: 2 }]}>{m.carwashNotes}</Text>
             )}
           </>
         )}
@@ -187,9 +388,9 @@ function MaintenanceDetailDocument({ m }: { m: Maintenance }) {
             <Text style={s.kpiLabel}>{isLavada ? "Adicionales" : "Repuestos"}</Text>
             <Text style={s.kpiValue}>{fmtMoney(partsCost)}</Text>
           </View>
-          <View style={s.kpiCard}>
+          <View style={[s.kpiCard, s.kpiCardTotal]}>
             <Text style={s.kpiLabel}>Total</Text>
-            <Text style={[s.kpiValue, { color: "#059669" }]}>{fmtMoney(total)}</Text>
+            <Text style={[s.kpiValue, s.kpiValueTotal]}>{fmtMoney(total)}</Text>
           </View>
         </View>
 
@@ -197,28 +398,50 @@ function MaintenanceDetailDocument({ m }: { m: Maintenance }) {
         {m.items && m.items.length > 0 && (
           <>
             <Text style={s.sectionTitle}>{isLavada ? "Adicionales" : "Repuestos y servicios"}</Text>
-            <View style={s.itemRow}>
-              <Text style={s.itemName}>{isLavada ? "Adicional" : "Repuesto"}</Text>
-              <Text style={s.itemQty}>Cant.</Text>
-              <Text style={s.itemUnit}>Unitario</Text>
-              <Text style={s.itemSub}>Subtotal</Text>
+            <View style={s.tableHead}>
+              <Text style={{ width: 30 }}></Text>
+              <Text style={[s.tableHeadText, { flex: 2 }]}>{isLavada ? "Adicional" : "Repuesto"}</Text>
+              <Text style={[s.tableHeadText, { width: 44, textAlign: "right" }]}>Cant.</Text>
+              <Text style={[s.tableHeadText, { width: 78, textAlign: "right" }]}>Unitario</Text>
+              <Text style={[s.tableHeadText, { width: 88, textAlign: "right" }]}>Subtotal</Text>
             </View>
             {m.items.map((it) => (
               <View key={it.id} style={s.itemRow}>
-                <Text style={s.itemName}>
-                  {it.name}{it.supplierName ? ` — ${it.supplierName}` : ""}
-                </Text>
+                <View style={s.itemThumbCell}>
+                  {it.photoUrl && isImageUrl(it.photoUrl) ? (
+                    <Image src={it.photoUrl} style={s.itemThumb} />
+                  ) : (
+                    <View style={s.itemThumbPlaceholder} />
+                  )}
+                </View>
+                <View style={s.itemNameCell}>
+                  <Text style={s.itemName}>{it.name}</Text>
+                  {it.supplierName && <Text style={s.itemSupplier}>{it.supplierName}</Text>}
+                </View>
                 <Text style={s.itemQty}>{it.quantity}</Text>
                 <Text style={s.itemUnit}>{fmtMoney(it.unitCost)}</Text>
                 <Text style={s.itemSub}>{fmtMoney(it.subtotal)}</Text>
               </View>
             ))}
-            {/* Total de la tabla de repuestos, para que cuadre visualmente con el KPI de arriba */}
-            <View style={[s.itemRow, { borderBottom: "none", borderTop: "0.5pt solid #cbd5e1" }]}>
-              <Text style={[s.itemName, { fontFamily: "Helvetica-Bold" }]}>Subtotal repuestos</Text>
-              <Text style={s.itemQty}></Text>
-              <Text style={s.itemUnit}></Text>
-              <Text style={[s.itemSub, { color: "#059669" }]}>{fmtMoney(itemsTotal)}</Text>
+
+            {/* Bloque final: mano de obra + subtotal repuestos + total,
+                para que el documento cuadre solo (sin tener que mirar el
+                resumen de arriba) justo debajo de la tabla. */}
+            <View style={s.totalsBlock}>
+              {!isLavada && (
+                <View style={s.totalsRow}>
+                  <Text style={s.totalsLabel}>Mano de obra</Text>
+                  <Text style={s.totalsValue}>{fmtMoney(laborCost)}</Text>
+                </View>
+              )}
+              <View style={s.totalsRow}>
+                <Text style={s.totalsLabel}>{isLavada ? "Subtotal adicionales" : "Subtotal repuestos"}</Text>
+                <Text style={s.totalsValue}>{fmtMoney(itemsTotal)}</Text>
+              </View>
+              <View style={[s.totalsRow, s.totalsRowFinal]}>
+                <Text style={s.totalsLabelFinal}>Total</Text>
+                <Text style={s.totalsValueFinal}>{fmtMoney(total)}</Text>
+              </View>
             </View>
           </>
         )}
@@ -227,7 +450,21 @@ function MaintenanceDetailDocument({ m }: { m: Maintenance }) {
         {m.description && (
           <>
             <Text style={s.sectionTitle}>Descripción</Text>
-            <Text style={{ fontSize: 9, marginBottom: 4 }}>{m.description}</Text>
+            <View style={s.divider} />
+            <Text style={s.bodyText}>{m.description}</Text>
+          </>
+        )}
+
+        {/* ─── Facturas no incrustables (PDF, etc.) ─── */}
+        {nonImageAttachments.length > 0 && (
+          <>
+            <Text style={s.sectionTitle}>Documentos adjuntos</Text>
+            <View style={s.divider} />
+            {nonImageAttachments.map((a, idx) => (
+              <Text key={idx} style={[s.bodyText, { marginBottom: 2 }]}>
+                {a.label}{a.uploadedAt ? `  ·  ${fmtDateTime(a.uploadedAt)}` : ""}
+              </Text>
+            ))}
           </>
         )}
 
@@ -239,6 +476,8 @@ function MaintenanceDetailDocument({ m }: { m: Maintenance }) {
             <View style={s.photoGrid}>
               {allPhotos.map((p, idx) => (
                 <View key={idx} style={s.photoBox}>
+                  {p.kind === "invoice" && <Text style={[s.photoTag, s.photoTagInvoice]}>Factura</Text>}
+                  {p.kind === "evidence" && <Text style={s.photoTag}>Evidencia</Text>}
                   <Image src={p.url} style={s.photoImg} />
                   <Text style={s.photoCaption}>{p.caption}</Text>
                 </View>
@@ -247,7 +486,10 @@ function MaintenanceDetailDocument({ m }: { m: Maintenance }) {
           </>
         )}
 
-        <Text style={s.footer} render={({ pageNumber, totalPages }) => `Página ${pageNumber} de ${totalPages}`} fixed />
+        <View style={s.footer} fixed>
+          <Text>ApliSmart Motors</Text>
+          <Text render={({ pageNumber, totalPages }) => `Página ${pageNumber} de ${totalPages}`} />
+        </View>
       </Page>
     </Document>
   );

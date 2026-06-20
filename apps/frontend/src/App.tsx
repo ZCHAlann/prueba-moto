@@ -15,12 +15,7 @@ import PlatformLayout from "./layout/PlatformLayout";
 // Operacion pages
 import { ScrollToTop } from "./components/common/ScrollToTop";
 import { DashboardOverview } from "./pages/Dashboard/page";
-import { MotorsPage } from "./pages/Motores/page";
-import HistorialPage from "./pages/Motores/Historial/page";
 import MaintenanceGeneralPage from "./pages/Mantenimientos/page";
-import MaintenanceInventoryPage from "./pages/Mantenimientos/Inventario/page";
-import MaintenanceOilPage from "./pages/Mantenimientos/Oil/page";
-import MotorCockpitPage from "./pages/Motores/[id]/page";
 import AcPage from "./pages/AiresAcondicionados/page";
 import AcMaintenancesPage from "./pages/AiresAcondicionados/Mantenimientos/page";
 import { ChecklistPage } from "./pages/Checklist/page";
@@ -178,12 +173,7 @@ export default function App() {
         {/* ── Operacion ── */}
         <Route element={<RequireOperacion />}>
           <Route path="/dashboard" element={<DashboardOverview />} />
-          <Route path="/motores" element={<MotorsPage />} />
-          <Route path="/motores/:id" element={<MotorCockpitPage />} />
-          <Route path="/motores/historial" element={<HistorialPage />} />
           <Route path="/mantenimiento" element={<MaintenanceGeneralPage />} />
-          <Route path="/mantenimiento/inventario" element={<MaintenanceInventoryPage />} />
-          <Route path="/mantenimiento/verificacion-aceite" element={<MaintenanceOilPage />} />
           <Route path="/checklist" element={<ChecklistPage />} />
           <Route path="/alertas" element={<AlertsPage />} />
           <Route path="/reportes" element={<ReportsPage />} />

@@ -13,7 +13,6 @@ const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub
   { test: (h) => h === "/aires-acondicionados/mantenimientos",                                             mod: "ac", sub: "mantenimientos_ac" },
   // Mantenimiento sub-routes
   { test: (h) => h === "/mantenimiento/inventario",                                                         mod: "mantenimiento", sub: "inventario" },
-  { test: (h) => h === "/mantenimiento/verificacion-aceite",                                              mod: "mantenimiento", sub: "oil" },
   // Motores sub-routes
   { test: (h) => h === "/motores/historial",                                                               mod: "motores", sub: "historial_motor" },
   // ── Parent / catch-all routes ──────────────────────────────────────────────────
@@ -285,7 +284,6 @@ const rules: RouteRule[] = [
   {
     test: (pathname) =>
       pathname.startsWith("/gestion/seguros") ||
-      pathname.startsWith("/gestion/tipos-aceite") ||
       pathname.startsWith("/gestion/garajes"),
     roles: [...operationalManagers],
   },
@@ -415,7 +413,6 @@ export function getDefaultRouteForSession(session: {
     "/aires-acondicionados",
     "/mantenimiento",
     "/mantenimiento/inventario",
-    "/mantenimiento/verificacion-aceite",
     "/checklist",
     "/alertas",
     "/reportes",

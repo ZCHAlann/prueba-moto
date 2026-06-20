@@ -282,6 +282,11 @@ function MaintenanceDetailModal({ maintenance, onClose, onEdit, canEdit }: {
               style={{ background: `${color}25`, color }}
             >
               {STATUS_LABEL[m.status] ?? m.status}
+              {m.isReprogrammed && (
+                <span className="ml-1.5 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200">
+                  Reprogramado{m.reprogramCount > 1 ? ` (${m.reprogramCount}×)` : ""}
+                </span>
+              )}
             </span>
           </div>
         </div>

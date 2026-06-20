@@ -291,31 +291,6 @@ export function useChecklistsPendientes(companyId: string | null) {
   return { data, loading };
 }
 
-export interface ProximoCambioAceite {
-  assetId: number;
-  plate: string;
-  assetName: string;
-  lastChange: string;
-  lastReading: number;
-  nextReading: number;
-  kmToNext: number;
-  overdue: boolean;
-}
-export function useProximoCambioAceite(companyId: string | null) {
-  const [data, setData] = useState<{ data: ProximoCambioAceite[]; total: number } | null>(null);
-  const [loading, setLoading] = useState(false);
-  useEffect(() => {
-    if (!companyId) return;
-    setLoading(true);
-    fetch(`/api/company/${companyId}/analytics/dashboard-extended/proximo-cambio-aceite`)
-      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-      .then(j => setData({ data: j.data ?? [], total: j.total ?? 0 }))
-      .catch(() => setData({ data: [], total: 0 }))
-      .finally(() => setLoading(false));
-  }, [companyId]);
-  return { data, loading };
-}
-
 export interface InventarioBajo {
   id: number;
   code: string;

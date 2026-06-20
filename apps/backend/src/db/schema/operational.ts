@@ -275,6 +275,7 @@ export const maintenanceStatusEnum = pgEnum('maintenance_status_enum', [
   'PendienteAtencion',
   'Completado',
   'Cancelado',
+  'Correccion',
 ]);
 
 export const maintenanceCategoryEnum = pgEnum('maintenance_category_enum', [
@@ -348,6 +349,8 @@ export const companyMaintenanceRecords = pgTable('company_maintenance_records', 
   reprogramReason: text('reprogram_reason'),
   reprogrammedAt:  timestamp('reprogrammed_at'),
   reprogramCount:  integer('reprogram_count').notNull().default(0),
+  correctionReason:    text('correction_reason'),
+  correctionRequestedAt: timestamp('correction_requested_at'),
   createdAt:       timestamp('created_at').notNull().defaultNow(),
   updatedAt:       timestamp('updated_at').notNull().defaultNow(),
 });
@@ -960,5 +963,78 @@ export const companyDriverReports = pgTable('company_driver_reports', {
   fileUrls:      text('file_urls').array().default([]),
   createdAt:     timestamp('created_at').notNull().defaultNow(),
   updatedAt:     timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ═════════════════════════════════════════════
+// Anomalías detectadas en Estadísticas
+// ═════════════════════════════════════════════
+//
+// Una anomalía es una desviación significativa (z-score > 1) entre un
+// valor del período actual y la media histórica 3-6 meses del mismo
+// módulo+agrupador. Se genera en background al refrescar el tablero.
+//
+// Severidad:
+//   'baja'  1.0 ≤ z < 1.5
+//   'media' 1.5 ≤ z < 2.0
+//   'alta'  z ≥ 2.0
+//
+// `dimension` agrupa la anomalía por:
+//   - 'asset'     → por vehículo (dimension_id = asset_id)
+//   - 'driver'    → por conductor
+//   - 'category'  → por categoría (ej. tipo de mantenimiento)
+//   - 'general'   → sin agrupación específica
+export const companyStatsAnomalies = pgTable('company_stats_anomalies', {
+  id:              serial('id').primaryKey(),
+  companyId:       integer('company_id')
+                     .notNull()
+                     .references(() => companies.id, { onDelete: 'cascade' }),
+  modulo:          varchar('modulo', { length: 40 }).notNull(),                 // 'mantenimiento' | 'combustible' | 'flotas'
+  tipo:            varchar('tipo', { length: 80 }).notNull(),                   // ej. 'costo_total', 'consumo_litros'
+  dimension:       varchar('dimension', { length: 40 }),                        // 'asset' | 'driver' | 'category' | 'general'
+  dimensionId:     integer('dimension_id'),
+  dimensionLabel:  varchar('dimension_label', { length: 200 }),
+  severidad:       varchar('severidad', { length: 10 }).notNull(),              // 'baja' | 'media' | 'alta'
+  descripcion:     text('descripcion').notNull(),
+  metadata:        jsonb('metadata').notNull().default({}),
+  detectadoEn:     timestamp('detectado_en').notNull().defaultNow(),
+  createdAt:       timestamp('created_at').notNull().defaultNow(),
+});
+
+// ═════════════════════════════════════════════
+// Cache de análisis IA de Estadísticas (Fase 4)
+// ═════════════════════════════════════════════
+//
+// Una fila por combinación de (empresa, módulo, período, rango, filtros).
+// TTL por defecto: 6h. El frontend puede forzar regeneración pasando
+// `forzarRegenerar: true` al endpoint.
+//
+// `inputHash` permite cachear respuestas idénticas aunque cambien los
+// `createdAt` (por ejemplo, dos clicks del mismo usuario en minutos).
+export const companyStatsInsightsCache = pgTable('company_stats_insights_cache', {
+  id:                serial('id').primaryKey(),
+  companyId:         integer('company_id')
+                       .notNull()
+                       .references(() => companies.id, { onDelete: 'cascade' }),
+  modulo:            varchar('modulo', { length: 40 }).notNull(),
+  periodo:           varchar('periodo', { length: 20 }).notNull(),
+  fechaRef:          date('fecha_ref').notNull(),
+  fechaHasta:        date('fecha_hasta').notNull(),
+  assetId:           integer('asset_id'),
+  driverId:          integer('driver_id'),
+  provider:          varchar('provider', { length: 40 }).notNull(),
+  model:             varchar('model', { length: 80 }).notNull(),
+  payload:           jsonb('payload').notNull(),
+  responseRaw:       text('response_raw').notNull(),
+  resumenEjecutivo:  text('resumen_ejecutivo'),
+  puntosClave:       jsonb('puntos_clave').notNull().default([]),
+  recomendaciones:   jsonb('recomendaciones').notNull().default([]),
+  alertas:           jsonb('alertas').notNull().default([]),
+  inputTokens:       integer('input_tokens'),
+  outputTokens:      integer('output_tokens'),
+  totalTokens:       integer('total_tokens'),
+  latencyMs:         integer('latency_ms'),
+  createdAt:         timestamp('created_at').notNull().defaultNow(),
+  expiresAt:         timestamp('expires_at').notNull(),
+  inputHash:         varchar('input_hash', { length: 64 }).notNull(),
 });
 

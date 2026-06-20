@@ -20,8 +20,8 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-export type MaintenanceType     = 'Correctivo' | 'Programado';
-export type MaintenanceStatus   = 'Programado' | 'En proceso' | 'Completado';
+export type MaintenanceType     = 'Correctivo' | 'Programado' | 'Lavada';
+export type MaintenanceStatus = 'Programado' | 'En proceso' | 'Completado' | 'Correccion';
 export type CadenceKind         = 'none' | 'weekly' | 'days' | 'monthly' | 'km_based';
 
 export type MaintenanceEventKind =
@@ -29,6 +29,7 @@ export type MaintenanceEventKind =
   | 'assigned'
   | 'reassigned'
   | 'taken'
+  | 'started'
   | 'item_added'
   | 'note_added'
   | 'photo_uploaded'
@@ -110,6 +111,8 @@ export interface Maintenance {
   updatedAt:     string;
   items:         MaintenanceItem[];
   events:        MaintenanceEvent[];
+  correctionReason: string | null;
+  correctionRequestedAt: string | null;
 }
 
 export interface CarwashExtra {
@@ -247,7 +250,7 @@ export async function uploadMaintenanceAttachment(
   }
 
   const fd = new FormData();
-  fd.append("photos", file);
+  fd.append("files", file);
   const res = await fetch(
     `/api/upload/maintenance-evidence?companyId=${companyId}`,
     { method: "POST", body: fd, credentials: "include" },
@@ -327,13 +330,14 @@ export function useUpdateMaintenance() {
   });
 }
 
-/** Operador toma un mantenimiento Programado disponible → pasa a "En proceso". */
+/** Operador toma un mantenimiento Programado/Corrección disponible o
+ *  propio → queda asignado a él, SIN cambiar el estado. */
 export function useTakeMaintenance() {
   const { companyId } = useAuth();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      return jsonFetch<{ ok: boolean; id: string; status: string }>(
+      return jsonFetch<{ ok: boolean; id: string; status: string; assignedUserId: string }>(
         `/api/company/${companyId}/maintenances/${id}/take`,
         { method: 'POST' },
       );
@@ -341,6 +345,25 @@ export function useTakeMaintenance() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['maintenances'] });
       qc.invalidateQueries({ queryKey: ['maintenance'] });
+    },
+  });
+}
+
+/** Operador/admin inicia un mantenimiento ya asignado: pasa a "En proceso". */
+export function useStartMaintenance() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      return jsonFetch<{ ok: boolean; id: string; status: string }>(
+        `/api/company/${companyId}/maintenances/${id}/start`,
+        { method: 'POST' },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenances'] });
+      qc.invalidateQueries({ queryKey: ['maintenance'] });
+      qc.invalidateQueries({ queryKey: ['maintenances-agenda'] });
     },
   });
 }
@@ -391,6 +414,24 @@ export function useCancelRescheduleMaintenance() {
       return jsonFetch<{ ok: boolean; id: string; status: string; isReprogrammed: boolean }>(
         `/api/company/${companyId}/maintenances/${id}/cancel-reschedule`,
         { method: 'POST', body: JSON.stringify({ newScheduledFor, reason }) },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenances'] });
+      qc.invalidateQueries({ queryKey: ['maintenance'] });
+      qc.invalidateQueries({ queryKey: ['maintenances-agenda'] });
+    },
+  });
+}
+
+export function useRequestCorrection() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, reason, newScheduledFor }: { id: string; reason: string; newScheduledFor?: string | null }) => {
+      return jsonFetch<{ ok: boolean; id: string; status: string }>(
+        `/api/company/${companyId}/maintenances/${id}/request-correction`,
+        { method: 'POST', body: JSON.stringify({ reason, newScheduledFor: newScheduledFor ?? null }) },
       );
     },
     onSuccess: () => {

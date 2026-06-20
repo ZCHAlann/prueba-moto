@@ -46,7 +46,6 @@ import {
   CoberturaActivosCard,
   KpisChecklistsCard,
   ChecklistsPendientesCard,
-  ProximoCambioAceiteCard,
   InventarioBajoCard,
   KpisAcCard,
   ServiciosAcPendientesCard,
@@ -696,7 +695,6 @@ export function DashboardOverview() {
               {vis.sections.recursos.serviciosAcPendientes && <ServiciosAcPendientesCard />}
               {vis.sections.recursos.kpisChecklists        && <KpisChecklistsCard />}
               {vis.sections.recursos.checklistsPendientes  && <ChecklistsPendientesCard />}
-              {vis.sections.recursos.proximoCambioAceite   && <ProximoCambioAceiteCard />}
               {vis.sections.recursos.inventarioBajo        && <InventarioBajoCard />}
               {vis.sections.recursos.polizasPorVencer      && <PolizasPorVencerCard />}
               {vis.sections.recursos.coberturaActivos      && <CoberturaActivosCard />}

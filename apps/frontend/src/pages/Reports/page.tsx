@@ -10,6 +10,9 @@ import { useAlerts } from "../../hooks/useAlerts";
 import { useFuel } from "../../hooks/useFuel";
 import { useInventory } from "../../hooks/useInventory";
 import { useExitAuthorizations } from "../../hooks/useExitAuthorizations";
+import { useWorkshops } from "../../hooks/useWorkshops";
+import { useSuppliers } from "../../hooks/useSuppliers";
+import { useCostBreakdown } from "../../hooks/useCostBreakdown";
 import {
   FileBarChart2,
   CalendarRange,
@@ -24,7 +27,9 @@ import {
 } from "lucide-react";
 import { ExportToolbar } from "../../components/ui/export-toolbar/ExportToolbar";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
-import { MaintenanceReports } from "./MaintenanceReports";
+import { EstadisticasTab } from "./EstadisticasTab";
+import { useAuth } from "../../context/AuthContext";
+import { BarChart3, Table2 } from "lucide-react";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -78,8 +83,9 @@ const REPORT_CATALOG: ReportDef[] = [
   { id: "rep-007", label: "Inventario" },
   { id: "rep-008", label: "Autorizaciones" },
   { id: "rep-009", label: "Mantenimiento" },
-  { id: "rep-010", label: "Costos Mtto." },
 ];
+
+const ADMIN_ROLES = new Set(["owner_empresa", "admin_empresa", "superadmin"]);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -208,6 +214,8 @@ function Pagination({
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export function ReportsPage() {
+  const { session } = useAuth();
+  const isAdmin = !!session && ADMIN_ROLES.has(session.role as string);
   const { assets,       loading: loadingAssets }       = useAssets();
   const { drivers,      loading: loadingDrivers }      = useDrivers();
   const { assignments,  loading: loadingAssignments }  = useAssignments();
@@ -217,6 +225,8 @@ export function ReportsPage() {
   const { fuelEntries,  loading: loadingFuel }         = useFuel();
   const { inventory,    loading: loadingInventory }    = useInventory();
   const { items: exitAuths, loading: loadingExitAuths, fetchList: fetchExitAuths } = useExitAuthorizations();
+  const { workshops } = useWorkshops();
+  const { suppliers } = useSuppliers();
 
   useEffect(() => {
     void fetchExitAuths();
@@ -232,11 +242,12 @@ export function ReportsPage() {
   const [page, setPage]         = useState(1);
   const [draft, setDraft]       = useState<DateRange>({ from: "", to: "" });
   const [applied, setApplied]   = useState<DateRange>({ from: "", to: "" });
-  // Sub-filtros del tab "Mantenimiento". Solo aplican cuando activeId === "rep-009".
   const [maintSubtab, setMaintSubtab] = useState<"todos" | "programados" | "en_proceso" | "completados">("todos");
-  const [maintCategory, setMaintCategory] = useState<"all" | "Preventivo" | "Correctivo" | "Motor" | "Inyector">("all");
+  const [maintCategory, setMaintCategory] = useState<"all" | "Preventivo" | "Correctivo" | "Predictivo" | "Emergencia">("all");
+  const [maintWorkshopId,  setMaintWorkshopId]  = useState<number | null>(null);
+  const [maintSupplierId,  setMaintSupplierId]  = useState<number | null>(null);
+  const [view, setView] = useState<"tablas" | "estadisticas">("tablas");
 
-  // Reset page when tab or search changes
   function handleTabChange(id: string) {
     setActiveId(id);
     setPage(1);
@@ -244,6 +255,8 @@ export function ReportsPage() {
     if (id !== "rep-009") {
       setMaintSubtab("todos");
       setMaintCategory("all");
+      setMaintWorkshopId(null);
+      setMaintSupplierId(null);
     }
   }
 
@@ -256,7 +269,6 @@ export function ReportsPage() {
 
   const preview = useMemo<ReportPreview>(() => {
 
-    // ── rep-001 Gerencial ──────────────────────────────────────────────────
     if (activeId === "rep-001") {
       const columns: ReportColumn[] = [
         { key: "type",            label: "Tipo" },
@@ -288,7 +300,6 @@ export function ReportsPage() {
       };
     }
 
-    // ── rep-002 Asignaciones ───────────────────────────────────────────────
     if (activeId === "rep-002") {
       const columns: ReportColumn[] = [
         { key: "document",    label: "Documento" },
@@ -302,10 +313,9 @@ export function ReportsPage() {
         { key: "date",        label: "Fecha asignación" },
       ];
       const rows: ReportRow[] = assignments.map((a) => {
-        // prefer backend-enriched fields, fall back to local join
         const driver     = drivers.find((d) => d.id === a.driverId);
         const asset      = assets.find((x) => x.id === a.assetId);
-        const driverName = a.driverName ?? driver?.name ?? "Sin conductor";
+        const driverName = a.driverName ?? (driver ? `${driver.firstName} ${driver.lastName}`.trim() || driver.code : null) ?? "Sin conductor";
         const driverCode = a.driverCode ?? driver?.code ?? "—";
         const plate      = a.assetPlate ?? asset?.plate ?? "—";
         const brand      = a.assetBrand ?? asset?.brand ?? "—";
@@ -336,7 +346,6 @@ export function ReportsPage() {
       };
     }
 
-    // ── rep-003 Gastos ─────────────────────────────────────────────────────
     if (activeId === "rep-003") {
       const columns: ReportColumn[] = [
         { key: "plate",       label: "Placa" },
@@ -357,10 +366,11 @@ export function ReportsPage() {
       });
       const maintRows: ReportRow[] = maintenances.map((e) => {
         const asset = assets.find((a) => a.id === e.assetId);
+        const cost = (e.laborCost ?? 0) + (e.partsCost ?? 0);
         return {
           plate: asset?.plate ?? "—", type: asset?.category ?? "—", brand: asset?.brand ?? "—",
           expenseType: `Mantenimiento ${e.kind}`,
-          amount: formatCurrency(e.kind === "Correctivo" ? 780 : 340),
+          amount: formatCurrency(cost),
           status: e.status, date: e.scheduledDate, __date: e.scheduledDate,
         };
       });
@@ -380,7 +390,6 @@ export function ReportsPage() {
       };
     }
 
-    // ── rep-004 Checklist ──────────────────────────────────────────────────
     if (activeId === "rep-004") {
       const columns: ReportColumn[] = [
         { key: "targetKind", label: "Tipo equipo" },
@@ -418,7 +427,6 @@ export function ReportsPage() {
       };
     }
 
-    // ── rep-005 Combustible ────────────────────────────────────────────────
     if (activeId === "rep-005") {
       const columns: ReportColumn[] = [
         { key: "invoice",   label: "Factura" },
@@ -457,7 +465,6 @@ export function ReportsPage() {
       };
     }
 
-    // ── rep-006 Alertas ────────────────────────────────────────────────────
     if (activeId === "rep-006") {
       const columns: ReportColumn[] = [
         { key: "plate",      label: "Placa" },
@@ -492,7 +499,6 @@ export function ReportsPage() {
       };
     }
 
-    // ── rep-007 Inventario ─────────────────────────────────────────────────
     if (activeId === "rep-007") {
       const columns: ReportColumn[] = [
         { key: "code",        label: "Código" },
@@ -518,14 +524,13 @@ export function ReportsPage() {
         columns,
         rows,
         summary: [
-          { label: "Ítems",       value: inventory.length.toString(),                                    detail: "Catálogo actual",      tone: "info"    },
+          { label: "Ítems",       value: inventory.length.toString(),                                      detail: "Catálogo actual",      tone: "info"    },
           { label: "Bajo mínimo", value: inventory.filter((i) => i.stock <= i.minStock).length.toString(), detail: "Requieren reposición", tone: "warning" },
-          { label: "Stock total", value: inventory.reduce((t, i) => t + i.stock, 0).toString(),          detail: "Unidades acumuladas",  tone: "success" },
+          { label: "Stock total", value: inventory.reduce((t, i) => t + i.stock, 0).toString(),            detail: "Unidades acumuladas",  tone: "success" },
         ],
       };
     }
 
-    // ── rep-008 Autorizaciones ─────────────────────────────────────────────
     if (activeId === "rep-008") {
       const columns: ReportColumn[] = [
         { key: "assetPlate",    label: "Vehículo"         },
@@ -558,63 +563,69 @@ export function ReportsPage() {
         columns,
         rows,
         summary: [
-          { label: "Total",       value: exitAuths.length.toString(),                                              detail: "Solicitudes registradas", tone: "info"    },
-          { label: "Autorizadas", value: exitAuths.filter((a) => a.status === "Autorizada").length.toString(),    detail: "Aprobadas",               tone: "success" },
-          { label: "Rechazadas",  value: exitAuths.filter((a) => a.status === "Rechazada").length.toString(),     detail: "Denegadas",               tone: "danger"  },
-          { label: "Pendientes",  value: exitAuths.filter((a) => a.status === "Pendiente").length.toString(),     detail: "En espera",               tone: "warning" },
+          { label: "Total",       value: exitAuths.length.toString(),                                           detail: "Solicitudes registradas", tone: "info"    },
+          { label: "Autorizadas", value: exitAuths.filter((a) => a.status === "Autorizada").length.toString(),  detail: "Aprobadas",               tone: "success" },
+          { label: "Rechazadas",  value: exitAuths.filter((a) => a.status === "Rechazada").length.toString(),   detail: "Denegadas",               tone: "danger"  },
+          { label: "Pendientes",  value: exitAuths.filter((a) => a.status === "Pendiente").length.toString(),   detail: "En espera",               tone: "warning" },
         ],
       };
     }
 
-    // ── rep-009 Mantenimiento ───────────────────────────────────────────────
     if (activeId === "rep-009") {
       const columns: ReportColumn[] = [
-        { key: "title",       label: "Título"     },
-        { key: "kind",        label: "Tipo"       },
-        { key: "category",    label: "Categoría"  },
-        { key: "assetPlate",  label: "Vehículo"   },
-        { key: "status",      label: "Estado"     },
-        { key: "scheduledFor",label: "Programado" },
-        { key: "executedAt",  label: "Ejecutado"  },
-        { key: "workshop",    label: "Taller"     },
-        { key: "technician",  label: "Técnico"    },
-        { key: "cost",        label: "Costo total"},
+        { key: "title",         label: "Título"      },
+        { key: "kind",          label: "Tipo"        },
+        { key: "priority",      label: "Prioridad"   },
+        { key: "assetPlate",    label: "Vehículo"    },
+        { key: "workshop",      label: "Taller"      },
+        { key: "status",        label: "Estado"      },
+        { key: "scheduledDate", label: "Programado"  },
+        { key: "completedDate", label: "Completado"  },
+        { key: "technician",    label: "Técnico"     },
+        { key: "labor",         label: "Mano obra"   },
+        { key: "parts",         label: "Repuestos"   },
+        { key: "cost",          label: "Costo total" },
       ];
       const rows: ReportRow[] = maintenances.map((m) => {
-        const plate = m.assetPlate ?? assets.find((x) => x.id === m.assetId)?.plate ?? "—";
+        const plate = m.assetPlate ?? m.assetName ?? assets.find((x) => x.id === m.assetId)?.plate ?? "—";
+        const labor = m.laborCost ?? 0;
+        const parts = m.partsCost ?? 0;
+        const workshop = workshops.find((w) => w.id === (m as any).workshopId);
         return {
-          title:        m.title,
-          kind:         m.kind,
-          category:     m.category,
-          assetPlate:   plate,
-          status:       m.status,
-          scheduledFor: m.scheduledFor ? m.scheduledFor.slice(0, 10) : "—",
-          executedAt:   m.executedAt   ? m.executedAt.slice(0, 10)   : "—",
-          workshop:     m.workshopName ?? "—",
-          technician:   m.technician   ?? "—",
-          cost:         (m.laborCost ?? 0) + (m.partsCost ?? 0),
-          __status:     m.status, // para sub-filtros
-          __date:       m.scheduledFor,
+          title:         m.title ?? "—",
+          kind:          m.kind ?? "—",
+          priority:      m.priority ?? "—",
+          assetPlate:    plate,
+          workshop:      workshop?.name ?? "—",
+          status:        m.status,
+          scheduledDate: m.scheduledDate ? m.scheduledDate.slice(0, 10) : "—",
+          completedDate: m.completedDate ? m.completedDate.slice(0, 10) : "—",
+          technician:    m.technician || "—",
+          labor,
+          parts,
+          cost:          labor + parts,
+          __status:      m.status,
+          __date:        m.scheduledDate,
+          __workshopId:  (m as any).workshopId ?? null,
         };
       });
       return {
         title: "Reporte de mantenimientos",
-        description: "Órdenes de trabajo con estado, costo y tipo. Use las sub-pestañas para filtrar por estado o categoría.",
+        description: "Órdenes de trabajo con estado, costo y tipo. Use los filtros para acotar por taller o proveedor y ver el desglose.",
         columns,
         rows,
         summary: [
-          { label: "Total",        value: maintenances.length.toString(),                                          detail: "OT registradas",          tone: "info"    },
-          { label: "Programados",  value: maintenances.filter((m) => m.status === "Programado").length.toString(),  detail: "Pendientes de ejecución",  tone: "warning" },
-          { label: "En proceso",   value: maintenances.filter((m) => m.status === "En proceso").length.toString(),  detail: "En taller",                tone: "info"    },
-          { label: "Completados",  value: maintenances.filter((m) => m.status === "Completado").length.toString(),  detail: "Cerrados",                 tone: "success" },
+          { label: "Total",       value: maintenances.length.toString(),                                          detail: "OT registradas", tone: "info"    },
+          { label: "Pendientes",  value: maintenances.filter((m) => m.status === "Pendiente").length.toString(),  detail: "Sin iniciar",    tone: "warning" },
+          { label: "En proceso",  value: maintenances.filter((m) => m.status === "En proceso").length.toString(), detail: "En taller",      tone: "info"    },
+          { label: "Completados", value: maintenances.filter((m) => m.status === "Completado").length.toString(), detail: "Cerrados",       tone: "success" },
         ],
       };
     }
 
-    // Fallback vacío (nunca debería llegar aquí)
     return { title: "", description: "", columns: [], rows: [], summary: [] };
 
-  }, [activeId, assets, drivers, assignments, maintenances, checklists, alerts, fuelEntries, inventory, exitAuths]);
+  }, [activeId, assets, drivers, assignments, maintenances, checklists, alerts, fuelEntries, inventory, exitAuths, workshops]);
 
   // ─── Filtered rows ─────────────────────────────────────────────────────────
 
@@ -625,7 +636,6 @@ export function ReportsPage() {
 
   const visibleRows = useMemo(() => {
     let filtered = filterRows(rangedRows, preview.columns, search);
-    // Sub-filtros del tab Mantenimiento (estado + categoría)
     if (activeId === "rep-009") {
       if (maintSubtab !== "todos") {
         const statusMap: Record<string, string> = {
@@ -637,14 +647,17 @@ export function ReportsPage() {
         filtered = filtered.filter((r) => r.__status === target);
       }
       if (maintCategory !== "all") {
-        filtered = filtered.filter((r) => r.category === maintCategory);
+        filtered = filtered.filter((r) => r.kind === maintCategory);
+      }
+      if (maintWorkshopId != null) {
+        filtered = filtered.filter((r) => r.__workshopId === maintWorkshopId);
       }
     }
     return filtered;
-  }, [rangedRows, preview.columns, search, activeId, maintSubtab, maintCategory]);
+  }, [rangedRows, preview.columns, search, activeId, maintSubtab, maintCategory, maintWorkshopId]);
 
-  const totalPages  = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
-  const pagedRows   = visibleRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
+  const pagedRows  = visibleRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -665,7 +678,7 @@ export function ReportsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {activeId !== "rep-010" && (
+          {view === "tablas" && (
             <span className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-500 dark:border-white/[0.06] dark:bg-white/[0.03] dark:text-gray-400">
               <FileBarChart2 size={13} className="text-brand-500" />
               {visibleRows.length} registros
@@ -674,227 +687,493 @@ export function ReportsPage() {
               )}
             </span>
           )}
+
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setView((v) => (v === "tablas" ? "estadisticas" : "tablas"))}
+              className={`group relative inline-flex items-center gap-2 overflow-hidden rounded-xl border px-4 py-2 text-xs font-semibold transition ${
+                view === "estadisticas"
+                  ? "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/[0.12] dark:text-brand-300"
+                  : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300 dark:hover:bg-white/[0.06]"
+              }`}
+            >
+              {view === "estadisticas" ? (
+                <>
+                  <Table2 size={13} />
+                  <span>Volver a tablas</span>
+                </>
+              ) : (
+                <>
+                  <BarChart3 size={13} />
+                  <span>Estadísticas</span>
+                  <span className="pointer-events-none absolute -right-2 -top-2 h-2 w-2 rounded-full bg-brand-500 shadow-[0_0_0_3px_rgba(59,130,246,0.15)]" />
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* ── KPI cards (ocultas en rep-010) ── */}
-      {activeId !== "rep-010" && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          {preview.summary.map((item) => (
-            <StatCard key={item.label} {...item} />
-          ))}
-        </div>
-      )}
-
-      {/* ── Main card ── */}
-      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
-
-        {/* Card title (oculto en rep-010 porque MaintenanceReports trae su propio header) */}
-        {activeId !== "rep-010" && (
-          <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
-            <h2 className="text-sm font-semibold text-gray-800 dark:text-white">
-              {preview.title}
-            </h2>
-            <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
-              {preview.description}
-            </p>
+      {/* ── Vista condicional ── */}
+      {view === "estadisticas" ? (
+        session?.companyId && <EstadisticasTab companyId={session.companyId} />
+      ) : (
+        <>
+          {/* ── KPI cards ── */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            {preview.summary.map((item) => (
+              <StatCard key={item.label} {...item} />
+            ))}
           </div>
-        )}
 
-        {/* Report tabs */}
-        <div className="flex flex-wrap gap-2 border-b border-gray-100 px-5 py-3.5 dark:border-white/[0.06]">
-          {REPORT_CATALOG.map((r) => (
-            <ReportTab
-              key={r.id}
-              label={r.label}
-              active={activeId === r.id}
-              onClick={() => handleTabChange(r.id)}
-            />
-          ))}
-        </div>
+          {/* ── Main card ── */}
+          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
 
-        {/* Sub-filtros del tab Mantenimiento */}
-        {activeId === "rep-009" && (
-          <div className="flex flex-col gap-3 border-b border-gray-100 px-5 py-3.5 dark:border-white/[0.06] sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {([
-                { id: "todos",       label: "Todos"      },
-                { id: "programados", label: "Programados"},
-                { id: "en_proceso",  label: "En proceso" },
-                { id: "completados", label: "Completados"},
-              ] as const).map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => { setMaintSubtab(opt.id); setPage(1); }}
-                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                    maintSubtab === opt.id
-                      ? "bg-blue-600 text-white shadow-sm"
-                      : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white"
-                  }`}
-                >
-                  {opt.label}
-                </button>
+            {/* Card title */}
+            <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
+              <h2 className="text-sm font-semibold text-gray-800 dark:text-white">
+                {preview.title}
+              </h2>
+              <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                {preview.description}
+              </p>
+            </div>
+
+            {/* Report tabs */}
+            <div className="flex flex-wrap gap-2 border-b border-gray-100 px-5 py-3.5 dark:border-white/[0.06]">
+              {REPORT_CATALOG.map((r) => (
+                <ReportTab
+                  key={r.id}
+                  label={r.label}
+                  active={activeId === r.id}
+                  onClick={() => handleTabChange(r.id)}
+                />
               ))}
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400 dark:text-gray-500">Categoría:</span>
-              <select
-                value={maintCategory}
-                onChange={(e) => { setMaintCategory(e.target.value as typeof maintCategory); setPage(1); }}
-                className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/40 dark:border-white/[0.06] dark:bg-white/[0.04] dark:text-gray-200"
-              >
-                <option value="all">Todas</option>
-                <option value="Preventivo">Preventivo</option>
-                <option value="Correctivo">Correctivo</option>
-                <option value="Motor">Motor</option>
-                <option value="Inyector">Inyector</option>
-              </select>
-            </div>
-          </div>
-        )}
 
-        {/* Date filter */}
-        <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto]">
-              <DatePicker
-                label="Desde"
-                value={draft.from}
-                onChange={(v) => setDraft((p) => ({ ...p, from: v }))}
-                maxDate={draft.to || undefined}
-              />
-              <DatePicker
-                label="Hasta"
-                value={draft.to}
-                onChange={(v) => setDraft((p) => ({ ...p, to: v }))}
-                minDate={draft.from || undefined}
-              />
-              <div className="flex items-end">
-                <button
-                  type="button"
-                  onClick={() => { setApplied(draft); setPage(1); }}
-                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-brand-500 px-5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95"
-                >
-                  Consultar
-                </button>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
-              <CalendarRange size={13} className="shrink-0 text-brand-400" />
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                  Rango aplicado
-                </p>
-                <p className="mt-0.5 text-xs font-medium text-gray-700 dark:text-gray-300">
-                  {applied.from
-                    ? new Date(applied.from + "T00:00:00").toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" })
-                    : "Inicio abierto"
-                  } — {applied.to
-                    ? new Date(applied.to + "T00:00:00").toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" })
-                    : "Fin abierto"
-                  }
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Search + Export (oculto en rep-010) */}
-        {activeId !== "rep-010" && (
-          <div className="border-b border-gray-100 px-5 py-3 dark:border-white/[0.06]">
-            <div className="flex items-center gap-3">
-              <div className="relative flex-1 max-w-sm">
-                <Search
-                  size={14}
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-                />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => handleSearchChange(e.target.value)}
-                  placeholder="Buscar dentro del reporte..."
-                  className="h-9 w-full rounded-xl border border-gray-200 bg-transparent pl-9 pr-4 text-sm text-gray-700 placeholder:text-gray-400 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:text-gray-300 dark:placeholder:text-gray-500"
-                />
-              </div>
-              <ExportToolbar
-                title={preview.title}
-                columns={preview.columns}
-                rows={visibleRows}
-                subtitle={`Rango: ${applied.from || "inicio abierto"} — ${applied.to || "fin abierto"}`}
-                filename={`reporte-${activeId}`}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Table body (oculto en rep-010: usamos MaintenanceReports) */}
-        {activeId === "rep-010" ? (
-          <div className="p-5">
-            <MaintenanceReports />
-          </div>
-        ) : loading ? (
-          <div className="flex items-center justify-center gap-3 py-20 text-gray-400">
-            <Loader2 size={18} className="animate-spin" />
-            <span className="text-sm">Cargando datos...</span>
-          </div>
-        ) : visibleRows.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-16">
-            <FileBarChart2 size={20} className="text-gray-300 dark:text-gray-600" />
-            <p className="text-sm font-medium text-gray-400 dark:text-gray-500">Sin registros</p>
-            <p className="text-xs text-gray-400 dark:text-gray-500">
-              Ninguna fila coincide con el rango o filtro actual.
-            </p>
-          </div>
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                    {preview.columns.map((col) => (
-                      <th
-                        key={col.key}
-                        className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500"
+            {/* Sub-filtros del tab Mantenimiento */}
+            {activeId === "rep-009" && (
+              <div className="flex flex-col gap-3 border-b border-gray-100 px-5 py-3.5 dark:border-white/[0.06]">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {([
+                      { id: "todos",       label: "Todos"       },
+                      { id: "programados", label: "Programados" },
+                      { id: "en_proceso",  label: "En proceso"  },
+                      { id: "completados", label: "Completados" },
+                    ] as const).map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => { setMaintSubtab(opt.id); setPage(1); }}
+                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                          maintSubtab === opt.id
+                            ? "bg-blue-600 text-white shadow-sm"
+                            : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white"
+                        }`}
                       >
-                        {col.label}
-                      </th>
+                        {opt.label}
+                      </button>
                     ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                  {pagedRows.map((row, i) => (
-                    <tr
-                      key={i}
-                      className="transition-colors hover:bg-gray-50/80 dark:hover:bg-white/[0.02]"
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 dark:text-gray-500">Categoría:</span>
+                    <select
+                      value={maintCategory}
+                      onChange={(e) => { setMaintCategory(e.target.value as typeof maintCategory); setPage(1); }}
+                      className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/40 dark:border-white/[0.06] dark:bg-white/[0.04] dark:text-gray-200"
                     >
-                      {preview.columns.map((col) => (
-                        <td
-                          key={col.key}
-                          className="px-5 py-3.5 text-gray-600 dark:text-gray-300"
-                        >
-                          {String(row[col.key] ?? "—")}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      <option value="all">Todas</option>
+                      <option value="Preventivo">Preventivo</option>
+                      <option value="Correctivo">Correctivo</option>
+                      <option value="Predictivo">Predictivo</option>
+                      <option value="Emergencia">Emergencia</option>
+                    </select>
+                  </div>
+                </div>
+
+                <CostBreakdownFilters
+                  workshops={workshops}
+                  suppliers={suppliers}
+                  workshopId={maintWorkshopId}
+                  supplierId={maintSupplierId}
+                  onWorkshopChange={(id) => { setMaintWorkshopId(id); setPage(1); }}
+                  onSupplierChange={(id) => { setMaintSupplierId(id); setPage(1); }}
+                />
+              </div>
+            )}
+
+            {/* Date filter */}
+            <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto]">
+                  <DatePicker
+                    label="Desde"
+                    value={draft.from}
+                    onChange={(v) => setDraft((p) => ({ ...p, from: v }))}
+                    maxDate={draft.to || undefined}
+                  />
+                  <DatePicker
+                    label="Hasta"
+                    value={draft.to}
+                    onChange={(v) => setDraft((p) => ({ ...p, to: v }))}
+                    minDate={draft.from || undefined}
+                  />
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      onClick={() => { setApplied(draft); setPage(1); }}
+                      className="inline-flex h-10 items-center gap-2 rounded-xl bg-brand-500 px-5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95"
+                    >
+                      Consultar
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
+                  <CalendarRange size={13} className="shrink-0 text-brand-400" />
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                      Rango aplicado
+                    </p>
+                    <p className="mt-0.5 text-xs font-medium text-gray-700 dark:text-gray-300">
+                      {applied.from
+                        ? new Date(applied.from + "T00:00:00").toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" })
+                        : "Inicio abierto"
+                      } — {applied.to
+                        ? new Date(applied.to + "T00:00:00").toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" })
+                        : "Fin abierto"
+                      }
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {/* ── Pagination ── */}
-            <Pagination
-              page={page}
-              totalPages={totalPages}
-              onPrev={() => setPage((p) => p - 1)}
-              onNext={() => setPage((p) => p + 1)}
-              onPage={setPage}
-            />
-          </>
-        )}
+            {/* Desglose de costos (solo rep-009) */}
+            {activeId === "rep-009" && (
+              <CostBreakdownPanel
+                companyId={session?.companyId ?? null}
+                workshopId={maintWorkshopId}
+                supplierId={maintSupplierId}
+                onClear={() => { setMaintWorkshopId(null); setMaintSupplierId(null); }}
+              />
+            )}
 
-      </div>
+            {/* Search + Export */}
+            <div className="border-b border-gray-100 px-5 py-3 dark:border-white/[0.06]">
+              <div className="flex items-center gap-3">
+                <div className="relative flex-1 max-w-sm">
+                  <Search
+                    size={14}
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                  />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    placeholder="Buscar dentro del reporte..."
+                    className="h-9 w-full rounded-xl border border-gray-200 bg-transparent pl-9 pr-4 text-sm text-gray-700 placeholder:text-gray-400 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:text-gray-300 dark:placeholder:text-gray-500"
+                  />
+                </div>
+                <ExportToolbar
+                  title={preview.title}
+                  columns={preview.columns}
+                  rows={visibleRows}
+                  subtitle={`Rango: ${applied.from || "inicio abierto"} — ${applied.to || "fin abierto"}`}
+                  filename={`reporte-${activeId}`}
+                />
+              </div>
+            </div>
+
+            {/* Table body */}
+            {loading ? (
+              <div className="flex items-center justify-center gap-3 py-20 text-gray-400">
+                <Loader2 size={18} className="animate-spin" />
+                <span className="text-sm">Cargando datos...</span>
+              </div>
+            ) : visibleRows.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 py-16">
+                <FileBarChart2 size={20} className="text-gray-300 dark:text-gray-600" />
+                <p className="text-sm font-medium text-gray-400 dark:text-gray-500">Sin registros</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">
+                  Ninguna fila coincide con el rango o filtro actual.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[900px] text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100 dark:border-white/[0.06]">
+                        {preview.columns.map((col) => (
+                          <th
+                            key={col.key}
+                            className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500"
+                          >
+                            {col.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
+                      {pagedRows.map((row, i) => (
+                        <tr
+                          key={i}
+                          className="transition-colors hover:bg-gray-50/80 dark:hover:bg-white/[0.02]"
+                        >
+                          {preview.columns.map((col) => (
+                            <td
+                              key={col.key}
+                              className="px-5 py-3.5 text-gray-600 dark:text-gray-300"
+                            >
+                              {String(row[col.key] ?? "—")}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <Pagination
+                  page={page}
+                  totalPages={totalPages}
+                  onPrev={() => setPage((p) => p - 1)}
+                  onNext={() => setPage((p) => p + 1)}
+                  onPage={setPage}
+                />
+              </>
+            )}
+
+          </div>
+        </>
+      )}
     </div>
   );
+}
+
+
+// ─── Sub-componentes del desglose de costos (taller + proveedor) ──
+
+function CostBreakdownFilters({
+  workshops, suppliers, workshopId, supplierId,
+  onWorkshopChange, onSupplierChange,
+}: {
+  workshops: Array<{ id: string; name: string }>;
+  suppliers: Array<{ id: string; name: string }>;
+  workshopId: number | null;
+  supplierId: number | null;
+  onWorkshopChange: (id: number | null) => void;
+  onSupplierChange: (id: number | null) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3 dark:border-white/[0.06]">
+      <div className="flex flex-col gap-0.5">
+        <span className="text-[9px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Taller</span>
+        <select
+          value={workshopId ?? ""}
+          onChange={(e) => onWorkshopChange(e.target.value ? Number(e.target.value) : null)}
+          className="h-8 rounded-md border border-gray-200 bg-white px-2 text-[11px] text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200"
+        >
+          <option value="">Todos los talleres</option>
+          {workshops.map((w) => (
+            <option key={w.id} value={w.id}>{w.name}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="flex flex-col gap-0.5">
+        <span className="text-[9px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Proveedor (repuestos)</span>
+        <select
+          value={supplierId ?? ""}
+          onChange={(e) => onSupplierChange(e.target.value ? Number(e.target.value) : null)}
+          className="h-8 rounded-md border border-gray-200 bg-white px-2 text-[11px] text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200"
+        >
+          <option value="">Todos los proveedores</option>
+          {suppliers.map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+      </div>
+
+      {(workshopId || supplierId) && (
+        <button
+          type="button"
+          onClick={() => { onWorkshopChange(null); onSupplierChange(null); }}
+          className="inline-flex h-8 items-center gap-1 rounded-md border border-gray-200 bg-white px-2 text-[11px] font-medium text-gray-500 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300"
+        >
+          Limpiar filtros
+        </button>
+      )}
+
+      <p className="ml-auto text-[10px] text-gray-400 dark:text-gray-500">
+        La mano de obra se atribuye al <strong className="text-gray-600 dark:text-gray-300">taller</strong>; los repuestos al <strong className="text-gray-600 dark:text-gray-300">proveedor</strong>.
+      </p>
+    </div>
+  );
+}
+
+function CostBreakdownPanel({
+  companyId, workshopId, supplierId, onClear,
+}: {
+  companyId: string | null;
+  workshopId: number | null;
+  supplierId: number | null;
+  onClear: () => void;
+}) {
+  const enabled = companyId != null && (workshopId != null || supplierId != null);
+  const { data, loading, error } = useCostBreakdown(companyId, {
+    workshopId, supplierId,
+  });
+
+  if (!enabled) {
+    return (
+      <div className="border-b border-gray-100 px-5 py-3 dark:border-white/[0.06]">
+        <p className="text-[11px] text-gray-400 dark:text-gray-500">
+          Selecciona un <strong className="text-gray-600 dark:text-gray-300">taller</strong> o un <strong className="text-gray-600 dark:text-gray-300">proveedor</strong> arriba para ver el desglose de mano de obra y repuestos.
+        </p>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 border-b border-gray-100 px-5 py-4 text-gray-400 dark:border-white/[0.06]">
+        <span className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
+        <span className="text-[11px]">Cargando desglose…</span>
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="border-b border-rose-200 bg-rose-50 px-5 py-3 text-[11px] text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+        Error al cargar el desglose: {error ?? "sin datos"}
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-b border-gray-100 bg-gray-50/40 px-5 py-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
+      <div className="mb-2.5 flex items-center justify-between">
+        <p className="text-[11px] font-semibold text-gray-800 dark:text-white">
+          Desglose de costos
+          {supplierId != null && <span className="ml-2 text-[10px] font-normal text-gray-500">· repuestos solo del proveedor seleccionado</span>}
+          {workshopId != null && !supplierId && <span className="ml-2 text-[10px] font-normal text-gray-500">· taller seleccionado</span>}
+        </p>
+        <button
+          type="button"
+          onClick={onClear}
+          className="text-[10px] font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
+        >
+          Limpiar
+        </button>
+      </div>
+
+      <div className="mb-3 grid grid-cols-3 gap-2">
+        <div className="rounded-md border border-gray-200 bg-white px-3 py-2 dark:border-white/[0.06] dark:bg-white/[0.03]">
+          <p className="text-[9px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Mano de obra</p>
+          <p className="mt-0.5 text-sm font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(data.totals.manoObra)}</p>
+        </div>
+        <div className="rounded-md border border-gray-200 bg-white px-3 py-2 dark:border-white/[0.06] dark:bg-white/[0.03]">
+          <p className="text-[9px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Repuestos</p>
+          <p className="mt-0.5 text-sm font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(data.totals.repuestos)}</p>
+        </div>
+        <div className="rounded-md border border-gray-200 bg-white px-3 py-2 dark:border-white/[0.06] dark:bg-white/[0.03]">
+          <p className="text-[9px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Total</p>
+          <p className="mt-0.5 text-sm font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(data.totals.total)}</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {data.byWorkshop.length > 0 && (
+          <div>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Por taller</p>
+            <div className="space-y-1">
+              {data.byWorkshop.map((w) => (
+                <div key={w.workshopId} className="flex items-center justify-between rounded-md border border-gray-200 bg-white px-2.5 py-1.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
+                  <div>
+                    <p className="text-[11px] font-medium text-gray-700 dark:text-gray-200">{w.workshopName}</p>
+                    <p className="text-[9px] text-gray-400">{w.count} OT</p>
+                  </div>
+                  <p className="text-[11px] font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(w.total)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {data.bySupplier.length > 0 && (
+          <div>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              Por proveedor (repuestos)
+            </p>
+            <div className="space-y-1">
+              {data.bySupplier.map((s) => (
+                <div key={s.supplierId} className="flex items-center justify-between rounded-md border border-gray-200 bg-white px-2.5 py-1.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
+                  <div>
+                    <p className="text-[11px] font-medium text-gray-700 dark:text-gray-200">{s.supplierName}</p>
+                    <p className="text-[9px] text-gray-400">{s.itemsCount} ítems</p>
+                  </div>
+                  <p className="text-[11px] font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(s.total)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {data.mantenances.length > 0 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wider text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white">
+            Ver {data.mantenances.length} mantenimiento{data.mantenances.length === 1 ? "" : "s"} con desglose
+          </summary>
+          <div className="mt-2 overflow-x-auto rounded-md border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.02]">
+            <table className="w-full text-[10px]">
+              <thead>
+                <tr className="border-b border-gray-100 dark:border-white/[0.06]">
+                  <th className="px-2 py-1.5 text-left font-semibold text-gray-500 dark:text-gray-400">OT</th>
+                  <th className="px-2 py-1.5 text-left font-semibold text-gray-500 dark:text-gray-400">Vehículo</th>
+                  <th className="px-2 py-1.5 text-right font-semibold text-gray-500 dark:text-gray-400">Mano obra</th>
+                  <th className="px-2 py-1.5 text-right font-semibold text-gray-500 dark:text-gray-400">
+                    Repuestos{supplierId != null ? " (filtrado)" : ""}
+                  </th>
+                  <th className="px-2 py-1.5 text-right font-semibold text-gray-500 dark:text-gray-400">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.mantenances.slice(0, 30).map((m) => (
+                  <tr key={m.id} className="border-b border-gray-50 dark:border-white/[0.04]">
+                    <td className="px-2 py-1.5 text-gray-700 dark:text-gray-300">{m.id} · {m.title}</td>
+                    <td className="px-2 py-1.5 text-gray-700 dark:text-gray-300">{m.assetPlate}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-300">{fmtMoney(m.manoObra)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-300">{fmtMoney(m.repuestos)}</td>
+                    <td className="px-2 py-1.5 text-right font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(m.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {data.mantenances.length > 30 && (
+              <p className="border-t border-gray-100 px-2 py-1.5 text-center text-[10px] text-gray-400 dark:border-white/[0.06]">
+                Mostrando 30 de {data.mantenances.length} mantenimientos.
+              </p>
+            )}
+          </div>
+        </details>
+      )}
+
+      {data.mantenances.length === 0 && (
+        <p className="mt-2 text-center text-[11px] text-gray-400 dark:text-gray-500">
+          No hay mantenimientos con esos filtros en el rango seleccionado.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function fmtMoney(n: number): string {
+  if (!Number.isFinite(n)) return "0.00";
+  return n.toLocaleString("es-EC", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }

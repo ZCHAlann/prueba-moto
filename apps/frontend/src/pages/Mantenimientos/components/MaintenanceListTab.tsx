@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -14,8 +13,10 @@ import {
   useMaintenancesList,
   useDeleteMaintenance,
   useTakeMaintenance,
+  useStartMaintenance,
   useFinalizeMaintenance,
   useCancelRescheduleMaintenance,
+  useRequestCorrection,
   useMaintenanceCategories,
   type Maintenance,
   type MaintenanceStatus,
@@ -25,6 +26,7 @@ import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import { MaintenanceFormModal } from "./MaintenanceFormModal";
 import { MaintenanceDetailDrawer } from "./MaintenanceDetailDrawer";
 import { ReprogramDialog } from "./ReprogramDialog";
+import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 
 const PAGE_SIZE = 10;
 
@@ -32,12 +34,12 @@ const STATUS_CFG: Record<MaintenanceStatus, { label: string; cls: string; dot: s
   Programado:    { label: "Programado",   cls: "text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-500/10 border-violet-200 dark:border-violet-500/20",   dot: "bg-violet-500 dark:bg-violet-400" },
   "En proceso":  { label: "En proceso",   cls: "text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/10 border-sky-200 dark:border-sky-500/20",                     dot: "bg-sky-500 dark:bg-sky-400"        },
   Completado:    { label: "Completado",   cls: "text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20", dot: "bg-emerald-500 dark:bg-emerald-400" },
+  Correccion:    { label: "Corrección",   cls: "text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/20",               dot: "bg-rose-500 dark:bg-rose-400" },
 };
 
 const TYPE_CFG: Record<string, { label: string; cls: string; rowAccent: string }> = {
   Correctivo:  { label: "Correctivo",  cls: "text-orange-700 dark:text-orange-300",  rowAccent: "border-l-orange-500"   },
   Programado:  { label: "Programado",  cls: "text-violet-700 dark:text-violet-300",  rowAccent: "border-l-violet-500"   },
-  // Preventivo se conserva como fallback para registros legacy (no aparece en UI)
   Preventivo:  { label: "Programado",  cls: "text-violet-700 dark:text-violet-300",  rowAccent: "border-l-violet-500"   },
 };
 
@@ -60,8 +62,6 @@ function userIdFromSession(sub: string | undefined): number | null {
   return m ? Number(m[1]) : null;
 }
 
-// Extrae el id numérico de un string con formato "prefix-123".
-// Devuelve null si el input no matchea ese patrón.
 function idFromPrefixedString(s: string | null | undefined): number | null {
   if (!s) return null;
   const m = String(s).match(/(\d+)$/);
@@ -86,17 +86,12 @@ export function MaintenanceListTab({ title }: Props) {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
 
-  // Chips de estado (incluye "all" para Todos)
   const [subTab, setSubTab] = useState<"all" | MaintenanceStatus>("all");
-  // Chips de categoría (string libre, "all" = todas)
   const [catChip, setCatChip] = useState<"all" | string>("all");
-  // Chips de tipo (incluye "all" para Todos)
   const [typeChip, setTypeChip] = useState<"all" | "Correctivo" | "Programado">("all");
 
-  // Filtros de rango de fechas (compat con lo que ya teníamos)
   const [from, setFrom] = useState<string>("");
   const [to,   setTo]   = useState<string>("");
-  // Filtro por vehículo desde query string (?assetId=asset-123)
   const [searchParams, setSearchParams] = useSearchParams();
   const assetIdFromUrl = searchParams.get("assetId") || "";
 
@@ -124,7 +119,6 @@ export function MaintenanceListTab({ title }: Props) {
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pageRows   = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  // Categorías: base + custom
   const { data: customCats = [] } = useMaintenanceCategories();
   const allCategories = useMemo(() => {
     const map: Record<string, { label: string; dot: string; cls: string }> = {
@@ -132,26 +126,25 @@ export function MaintenanceListTab({ title }: Props) {
       "Primordial:Motores":  { label: "Primordial · Motores", dot: "bg-cyan-500",    cls: "text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-500/10" },
       "Aceite:Cambio":       { label: "Aceite · Cambio",      dot: "bg-yellow-500",  cls: "text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-500/10" },
       "Aceite:Inventario":   { label: "Aceite · Inventario",  dot: "bg-emerald-500", cls: "text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10" },
+      "Lavada":              { label: "Lavada",                dot: "bg-sky-500",     cls: "text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/10" },
       "Otro":                { label: "Otro",                  dot: "bg-gray-400",    cls: "text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-white/[0.04]" },
     };
     for (const c of customCats) {
       const id = `custom:${c.id}`;
       map[id] = {
         label: c.label,
-        dot:   "", // se sobreescribe con style inline abajo
+        dot:   "",
         cls:   "text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-white/[0.06]",
       };
     }
     return map;
   }, [customCats]);
 
-  // Chips de categoría — base + custom (con dot sutil)
   const categoryChips: Array<{ id: "all" | string; label: string; dot: React.ReactNode }> = useMemo(() => {
     const dotFor = (key: string): React.ReactNode => {
       if (key === "all") return <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />;
       const cfg = allCategories[key];
       if (!cfg) return <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />;
-      // Para customs, el dot toma el color custom de la BD
       if (key.startsWith("custom:")) {
         const id = key.replace("custom:", "");
         const c = customCats.find((x) => x.id === id);
@@ -165,6 +158,7 @@ export function MaintenanceListTab({ title }: Props) {
       { id: "Primordial:Motores",    label: "Primordial · Motores", dot: dotFor("Primordial:Motores") },
       { id: "Aceite:Cambio",         label: "Aceite · Cambio",      dot: dotFor("Aceite:Cambio") },
       { id: "Aceite:Inventario",     label: "Aceite · Inventario",  dot: dotFor("Aceite:Inventario") },
+      { id: "Lavada",                label: "Lavada",                 dot: dotFor("Lavada") },
       { id: "Otro",                  label: "Otro",                  dot: dotFor("Otro") },
     ];
     for (const c of customCats) {
@@ -180,26 +174,52 @@ export function MaintenanceListTab({ title }: Props) {
   const [detailId, setDetailId]   = useState<string | null>(null);
   const [reprogramTarget, setReprogramTarget] = useState<Maintenance | null>(null);
   const [reprogramOpen, setReprogramOpen]     = useState(false);
+  const [finalizeTarget, setFinalizeTarget]   = useState<Maintenance | null>(null);
+  const [deleteTarget, setDeleteTarget]       = useState<Maintenance | null>(null);
+
+  const [correctionTarget, setCorrectionTarget] = useState<Maintenance | null>(null);
+  const [correctionOpen, setCorrectionOpen]     = useState(false);
+  const correctionMut = useRequestCorrection();
 
   const delMut        = useDeleteMaintenance();
   const takeMut       = useTakeMaintenance();
+  const startMut      = useStartMaintenance();
   const finalizeMut   = useFinalizeMaintenance();
   const rescheduleMut = useCancelRescheduleMaintenance();
 
-  const onDelete = async (m: Maintenance) => {
-    if (!confirm(`¿Eliminar el mantenimiento "${m.title}"?`)) return;
+  const onDelete = (m: Maintenance) => setDeleteTarget(m);
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    const m = deleteTarget;
+    setDeleteTarget(null);
     try { await delMut.mutateAsync(m.id); toast.success("Mantenimiento eliminado"); }
     catch (e) { toast.error((e as Error).message); }
   };
+
+  // "Tomar": asigna el mantenimiento a quien lo toma, pero NO cambia el
+  // estado (sigue Programado/Corrección hasta que se inicie).
   const onTake = async (m: Maintenance) => {
-    try { await takeMut.mutateAsync(m.id); toast.success("Mantenimiento iniciado"); }
+    try { await takeMut.mutateAsync(m.id); toast.success("Mantenimiento tomado", { description: "Quedó asignado a vos. Iniciálo cuando corresponda." }); }
     catch (e) { toast.error((e as Error).message); }
   };
-  const onFinalize = async (m: Maintenance) => {
-    if (!confirm(`¿Marcar "${m.title}" como completado?`)) return;
+
+  // "Iniciar": pasa el mantenimiento (ya asignado) a "En proceso".
+  const onStart = async (m: Maintenance) => {
+    try { await startMut.mutateAsync(m.id); toast.success("Mantenimiento iniciado"); }
+    catch (e) { toast.error((e as Error).message); }
+  };
+
+  const onFinalize = (m: Maintenance) => setFinalizeTarget(m);
+
+  const confirmFinalize = async () => {
+    if (!finalizeTarget) return;
+    const m = finalizeTarget;
+    setFinalizeTarget(null);
     try { await finalizeMut.mutateAsync(m.id); toast.success("Mantenimiento completado"); }
     catch (e) { toast.error((e as Error).message); }
   };
+
   const onReschedule = async (newScheduledFor: string, reason: string) => {
     if (!reprogramTarget) return;
     try {
@@ -207,6 +227,16 @@ export function MaintenanceListTab({ title }: Props) {
       toast.success("Mantenimiento reprogramado", { description: `Nueva fecha: ${fmtDate(newScheduledFor)}` });
       setReprogramOpen(false);
       setReprogramTarget(null);
+    } catch (e) { toast.error((e as Error).message); }
+  };
+
+  const onRequestCorrection = async (newScheduledFor: string | null, reason: string) => {
+    if (!correctionTarget) return;
+    try {
+      await correctionMut.mutateAsync({ id: correctionTarget.id, reason, newScheduledFor });
+      toast.success("Mantenimiento marcado para corrección");
+      setCorrectionOpen(false);
+      setCorrectionTarget(null);
     } catch (e) { toast.error((e as Error).message); }
   };
 
@@ -251,6 +281,7 @@ export function MaintenanceListTab({ title }: Props) {
             { id: "Programado",  label: "Programado",  dot: <span className="h-1.5 w-1.5 rounded-full bg-violet-500 dark:bg-violet-400" /> },
             { id: "En proceso",  label: "En proceso",  dot: <span className="h-1.5 w-1.5 rounded-full bg-sky-500 dark:bg-sky-400" /> },
             { id: "Completado",  label: "Completado",  dot: <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" /> },
+            { id: "Correccion",  label: "Corrección",  dot: <span className="h-1.5 w-1.5 rounded-full bg-rose-500 dark:bg-rose-400" /> },
           ]}
         />
 
@@ -486,6 +517,15 @@ export function MaintenanceListTab({ title }: Props) {
         onConfirm={onReschedule}
       />
 
+      <ReprogramDialog
+        open={correctionOpen}
+        target={correctionTarget}
+        saving={correctionMut.isPending}
+        mode="correction"
+        onClose={() => { setCorrectionOpen(false); setCorrectionTarget(null); }}
+        onConfirm={onRequestCorrection}
+      />
+
       <MaintenanceDetailDrawer
         id={detailId}
         isFullAccess={isFullAccess}
@@ -493,16 +533,36 @@ export function MaintenanceListTab({ title }: Props) {
         onClose={() => setDetailId(null)}
         onEdit={(m) => { setDetailId(null); setEditing(m); setModalOpen(true); }}
         onTake={onTake}
+        onStart={onStart}
         onFinalize={onFinalize}
         onReschedule={(m) => { setReprogramTarget(m); setReprogramOpen(true); }}
+        onRequestCorrection={(m) => { setCorrectionTarget(m); setCorrectionOpen(true); }}
+      />
+
+      <ConfirmModal
+        open={!!finalizeTarget}
+        onClose={() => setFinalizeTarget(null)}
+        onConfirm={confirmFinalize}
+        title="Finalizar mantenimiento"
+        tone="info"
+        confirmLabel="Finalizar"
+        description={finalizeTarget ? <>¿Marcar <strong className="text-gray-800 dark:text-white">{finalizeTarget.title}</strong> como completado?</> : null}
+      />
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+        title="Eliminar mantenimiento"
+        tone="danger"
+        confirmLabel="Eliminar"
+        description={deleteTarget ? <>¿Eliminar <strong className="text-gray-800 dark:text-white">{deleteTarget.title}</strong>? Esta acción no se puede deshacer.</> : null}
       />
     </motion.div>
   );
 }
 
 // ─── FilterDropdown ──────────────────────────────────────────────────────────
-// Dropdown compacto con label arriba + trigger + panel de opciones.
-// Cierra con click-outside o con Escape.
 
 type FilterOption = { id: string; label: string; dot?: React.ReactNode };
 

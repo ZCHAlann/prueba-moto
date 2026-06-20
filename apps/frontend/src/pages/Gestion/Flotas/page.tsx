@@ -408,16 +408,6 @@ function VehicleFormFields({ form, set, inputCls, selectCls, labelCls, spanCls }
             </select>
           </label>
           <label className={labelCls}>
-            <span className={spanCls}>Responsable</span>
-            <select className={selectCls} value={form.responsible}
-              onChange={(e) => set("responsible", e.target.value)}>
-              <option value="">Sin responsable</option>
-              {drivers.filter(d => d.status === "Activo").map(d => (
-                <option key={d.id} value={d.name}>{d.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className={labelCls}>
             <span className={spanCls}>Estado</span>
             <select className={selectCls} value={form.status}
               onChange={(e) => set("status", e.target.value as AssetStatus)}>
@@ -634,7 +624,6 @@ function RowMenu({ onView, onEdit, onMaintenance, onDelete, canEdit, canDelete, 
       items={[
         { label: "Ver detalle",         icon: <Eye size={13} />,    onClick: onView,        tone: "default" },
         { label: "Editar",              icon: <Pencil size={13} />, onClick: onEdit,        tone: "default", disabled: !canEdit },
-        { label: "Nuevo mantenimiento", icon: <Wrench size={13} />, onClick: onMaintenance, tone: "warning", disabled: !canMaintenance },
         { label: "Eliminar",            icon: <Trash2 size={13} />, onClick: onDelete,      tone: "danger",  disabled: !canDelete },
       ]}
     />

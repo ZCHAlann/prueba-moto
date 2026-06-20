@@ -115,7 +115,10 @@ function ModuleSection({
   onSetAll: (mod: string, sub: string | null, all: boolean) => void;
 }) {
   const subs = Object.entries(modDef.submodules);
-  const activeSubCount = subs.filter(([s]) => (draft[modKey]?.[s]?.length ?? 0) > 0).length;
+  const activePermCount = subs.reduce((sum, [s]) => sum + (draft[modKey]?.[s]?.length ?? 0), 0);
+  const totalPermCount  = subs.length * ALL_ACTIONS.length;
+  const isComplete = activePermCount > 0 && activePermCount === totalPermCount;
+  const isPartial  = activePermCount > 0 && !isComplete;
   const [open, setOpen] = useState(false);
 
   return (
@@ -144,8 +147,17 @@ function ModuleSection({
             {/* Label */}
             <span className="text-xs font-bold text-gray-600 dark:text-gray-300">{modDef.label}</span>
             {/* Counter */}
-            <span className="text-[10px] text-gray-400 dark:text-gray-600 tabular-nums">
-              {activeSubCount}/{subs.length}
+            <span
+              className={[
+                "text-[10px] font-semibold tabular-nums rounded-full px-1.5 py-0.5",
+                isComplete
+                  ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  : isPartial
+                  ? "bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                  : "text-gray-400 dark:text-gray-600",
+              ].join(" ")}
+            >
+              {activePermCount}/{totalPermCount}
             </span>
             {/* Todo / Nada */}
             {canManage && (

@@ -631,33 +631,7 @@ export function ChecklistsPendientesCard() {
   );
 }
 
-// 14. Próximos cambios de aceite
-export function ProximoCambioAceiteCard() {
-  const { session } = useAuth();
-  const companyId = session?.companyId ?? null;
-  const { data, loading } = useProximoCambioAceite(companyId);
-  return (
-    <ChartCard title="Próximos cambios de aceite" subtitle={`${data?.total ?? 0} vehículos requieren servicio pronto`}>
-      {loading || !data
-        ? <ChartSkeleton height="h-[220px]" />
-        : data.data.length === 0
-          ? <p className="text-xs text-gray-400 py-8 text-center">Sin cambios de aceite próximos</p>
-          : <Table
-              headers={["Placa", "Vehículo", "Último", "Próximo (km)", "Faltan"]}
-              rows={data.data.map((o: ProximoCambioAceite) => [
-                o.plate,
-                o.assetName,
-                `${o.lastReading} km`,
-                `${o.nextReading} km`,
-                o.overdue ? "VENCIDO" : `${o.kmToNext} km`,
-              ])}
-            />
-      }
-    </ChartCard>
-  );
-}
-
-// 15. Inventario bajo mínimo
+// 14. Inventario bajo mínimo
 export function InventarioBajoCard() {
   const { session } = useAuth();
   const companyId = session?.companyId ?? null;

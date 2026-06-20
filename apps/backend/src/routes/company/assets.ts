@@ -115,6 +115,7 @@ router.get('/', requireModuleAny([
       if (a.assetId && !driverMap.has(a.assetId)) {
         driverMap.set(a.assetId, {
           id:        toId('driver', a.driverId),
+          name:      a.driverName ?? '',
           firstName: a.driverName ?? '',
           lastName:  '',
           phone:     null,
@@ -163,9 +164,14 @@ router.get('/:assetId', requireModule('gestion', 'flotas'), async (req, res, nex
       .limit(1);
 
     const currentDriver = assignment?.driverId
-      ? { id: toId('driver', assignment.driverId), firstName: assignment.driverName ?? '', lastName: '', phone: null }
-      : null;
-
+    ? {
+        id:        toId('driver', assignment.driverId),
+        name:      assignment.driverName ?? '',
+        firstName: assignment.driverName ?? '',
+        lastName:  '',
+        phone:     null,
+      }
+    : null;
     res.json(serializeAsset(rows[0], currentDriver));
   } catch (err) {
     next(err);

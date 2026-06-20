@@ -5,14 +5,22 @@
 // claramente separadas, mano de obra, lavada (cuando aplica), y
 // línea de tiempo con colores por acción y por usuario.
 // v3.2: agregado soporte de foto al agregar repuesto desde el drawer.
+// v3.3: estado "Correccion" — solo owner/admin/supervisor pueden marcar
+// un mantenimiento Completado para corrección (con o sin reagendar).
+// v3.4: mano de obra editable en línea (En proceso) + sección de
+// facturas y evidencias (adjuntos), igual que en MaintenanceFormModal.
+// Ambos campos quedan reflejados automáticamente en el PDF de detalle.
+// v3.5: se separa "Tomar" de "Iniciar". Tomar solo asigna (sigue
+// Programado/Corrección); Iniciar pasa a En proceso. Se agrega la
+// sección "Taller" (faltaba mostrarse en el drawer).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Truck, Calendar, Hash, Download, RefreshCw, CheckCircle2, Play,
   User as UserIcon, Clock, AlertCircle, Package, Wrench, MapPin,
   Store, Plus, Image as ImageIcon, Camera, DollarSign, FileText,
-  CalendarDays, TruckIcon, ClipboardList, History,
+  CalendarDays, TruckIcon, ClipboardList, History, Receipt, Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -20,14 +28,17 @@ import {
   useAddMaintenanceNote,
   useAddMaintenanceItems,
   useAssignMaintenance,
+  useUpdateMaintenance,
   useCarwashExtras,
   useAddCarwashExtras,
   useCarwashPhotos,
   useAddCarwashPhotos,
+  uploadMaintenanceAttachment,
   type Maintenance,
   type MaintenanceItemInput,
   type CarwashExtraInput,
   type CarwashPhotoInput,
+  type MaintenanceAttachment,
 } from "../../../hooks/useMaintenancesV2";
 import { useCompanyUsers } from "../../../hooks/useCompanyUsers";
 import { useAuth } from "../../../context/AuthContext";
@@ -105,16 +116,18 @@ function colorForUser(id: number | string | null | undefined): { ring: string; b
 
 // Colores por tipo de evento (línea de tiempo)
 const KIND_META: Record<string, { label: string; dot: string; ring: string; tone: string }> = {
-  created:         { label: "Mantenimiento creado",       dot: "bg-violet-500",  ring: "ring-violet-300",   tone: "text-violet-700 dark:text-violet-200" },
-  assigned:        { label: "Asignado a un operador",     dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
-  reassigned:      { label: "Reasignado",                 dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
-  taken:           { label: "Operador tomó el mantenimiento", dot: "bg-amber-500", ring: "ring-amber-300",    tone: "text-amber-700 dark:text-amber-200" },
-  item_added:      { label: "Repuestos / adicionales",     dot: "bg-cyan-500",    ring: "ring-cyan-300",     tone: "text-cyan-700 dark:text-cyan-200" },
-  note_added:      { label: "Nota agregada",               dot: "bg-slate-500",   ring: "ring-slate-300",    tone: "text-slate-700 dark:text-slate-200" },
-  photo_uploaded: { label: "Foto subida",                 dot: "bg-fuchsia-500", ring: "ring-fuchsia-300",  tone: "text-fuchsia-700 dark:text-fuchsia-200" },
-  cancelled:       { label: "Reprogramado",                dot: "bg-amber-500",   ring: "ring-amber-300",    tone: "text-amber-700 dark:text-amber-200" },
-  finalized:       { label: "Finalizado",                  dot: "bg-emerald-500", ring: "ring-emerald-300",  tone: "text-emerald-700 dark:text-emerald-200" },
-  viewed:          { label: "Visualizado",                 dot: "bg-gray-400",    ring: "ring-gray-300",     tone: "text-gray-500 dark:text-gray-400" },
+  created:              { label: "Mantenimiento creado",       dot: "bg-violet-500",  ring: "ring-violet-300",   tone: "text-violet-700 dark:text-violet-200" },
+  assigned:             { label: "Asignado a un operador",     dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
+  reassigned:           { label: "Reasignado",                 dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
+  taken:                { label: "Operador tomó el mantenimiento", dot: "bg-amber-500", ring: "ring-amber-300",    tone: "text-amber-700 dark:text-amber-200" },
+  started:              { label: "Mantenimiento iniciado",     dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
+  item_added:           { label: "Repuestos / adicionales",     dot: "bg-cyan-500",    ring: "ring-cyan-300",     tone: "text-cyan-700 dark:text-cyan-200" },
+  note_added:           { label: "Nota agregada",               dot: "bg-slate-500",   ring: "ring-slate-300",    tone: "text-slate-700 dark:text-slate-200" },
+  photo_uploaded:       { label: "Foto subida",                 dot: "bg-fuchsia-500", ring: "ring-fuchsia-300",  tone: "text-fuchsia-700 dark:text-fuchsia-200" },
+  cancelled:            { label: "Reprogramado",                dot: "bg-amber-500",   ring: "ring-amber-300",    tone: "text-amber-700 dark:text-amber-200" },
+  correction_requested: { label: "Marcado para corrección",     dot: "bg-rose-500",    ring: "ring-rose-300",     tone: "text-rose-700 dark:text-rose-200" },
+  finalized:            { label: "Finalizado",                  dot: "bg-emerald-500", ring: "ring-emerald-300",  tone: "text-emerald-700 dark:text-emerald-200" },
+  viewed:               { label: "Visualizado",                 dot: "bg-gray-400",    ring: "ring-gray-300",     tone: "text-gray-500 dark:text-gray-400" },
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -221,10 +234,16 @@ function groupViewedEvents(events: EventNode[]): Array<EventNode | { kind: "view
   return out;
 }
 
+// Devuelve true si la URL parece ser una imagen (para decidir si mostrar
+// thumbnail o un ícono de documento genérico, ej. para PDFs de factura).
+function isImageUrl(url: string): boolean {
+  return /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(url);
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function MaintenanceDetailDrawer({
-  id, isFullAccess, meId, onClose, onEdit, onTake, onFinalize, onReschedule,
+  id, isFullAccess, meId, onClose, onEdit, onTake, onStart, onFinalize, onReschedule, onRequestCorrection,
 }: {
   id: string | null;
   isFullAccess: boolean;
@@ -232,8 +251,10 @@ export function MaintenanceDetailDrawer({
   onClose: () => void;
   onEdit: (m: Maintenance) => void;
   onTake: (m: Maintenance) => void;
+  onStart: (m: Maintenance) => void;
   onFinalize: (m: Maintenance) => void;
   onReschedule: (m: Maintenance) => void;
+  onRequestCorrection: (m: Maintenance) => void;
 }) {
   const { data: m, isLoading, refetch } = useMaintenance(id ?? undefined);
   const { session } = useAuth();
@@ -263,9 +284,18 @@ export function MaintenanceDetailDrawer({
   const [newPhoto, setNewPhoto] = useState<string>("");
   const [newPhotoCaption, setNewPhotoCaption] = useState<string>("");
 
+  // Mano de obra (edición en línea, solo Programado/Correctivo en proceso)
+  const [laborCostDraft, setLaborCostDraft] = useState<number>(0);
+  const [savingLabor, setSavingLabor] = useState(false);
+
+  // Facturas y evidencias (adjuntos)
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const attachmentFileRef = useRef<HTMLInputElement | null>(null);
+
   const addNoteMut         = useAddMaintenanceNote();
   const addItemsMut        = useAddMaintenanceItems();
   const assignMut          = useAssignMaintenance();
+  const updateMut          = useUpdateMaintenance();
   const addCarwashExtraMut = useAddCarwashExtras();
   const addCarwashPhotoMut = useAddCarwashPhotos();
 
@@ -276,7 +306,15 @@ export function MaintenanceDetailDrawer({
     setNewPhoto("");
     setNewPhotoCaption("");
     setAssignTo("");
+    setLaborCostDraft(0);
   }, [id]);
+
+  // Sincroniza el draft de mano de obra cuando llegan/cambian los datos
+  // del mantenimiento (la carga es async, así que no alcanza con el
+  // efecto de arriba, que solo corre al cambiar `id`).
+  useEffect(() => {
+    if (m) setLaborCostDraft(m.laborCost ?? 0);
+  }, [m?.id, m?.laborCost]);
 
   const item: Maintenance | null = m ?? null;
   const events = (item?.events ?? []) as EventNode[];
@@ -306,13 +344,79 @@ export function MaintenanceDetailDrawer({
     : false;
   const canOperate = isFullAccess || isOwn;
 
+  // Solo owner/admin/supervisor pueden marcar un mantenimiento Completado
+  // como "Corrección". isFullAccess ya cubre exactamente esos 3 roles
+  // (ver MaintenanceListTab: isFullAccess = owner_empresa || admin_empresa || supervisor).
+  const canManageCorrection = isFullAccess;
+
   const isProgramado = item?.status === "Programado";
   const isProceso    = item?.status === "En proceso";
   const isCompleto   = item?.status === "Completado";
-  const isLavada     = item?.type === "Lavada";
+  const isCorreccion = item?.status === "Correccion";
+  const isLavada     = item?.type?.toString() === "Lavada";
+
+  // ¿El mantenimiento está libre (sin nadie asignado)? Disponible para
+  // ser tomado por cualquiera con permiso (operador o full access).
+  const isFree = assignedNum == null;
+  // ¿Ya es de quien está mirando el drawer? (asignado a él, sea
+  // operador o full access que se auto-asignó).
+  const isMine = meIdNum != null && assignedNum === meIdNum;
 
   const currentAssignedId = item?.assignedUserId ?? "";
   const partsCost = (item?.totalCost ?? 0) - (item?.laborCost ?? 0);
+
+  // Mano de obra: editable en línea mientras está "En proceso" y el
+  // usuario puede operar sobre el mantenimiento (dueño o full access).
+  // Fuera de ese estado se muestra de solo lectura (igual que antes).
+  const canEditLabor = !isLavada && isProceso && canOperate;
+
+  const saveLaborCost = async (value: number) => {
+    if (!item) return;
+    if (value === (item.laborCost ?? 0)) return;
+    setSavingLabor(true);
+    try {
+      await updateMut.mutateAsync({ id: item.id, body: { laborCost: value } });
+      toast.success("Mano de obra actualizada");
+      refetch();
+    } catch (e) {
+      toast.error((e as Error).message);
+      setLaborCostDraft(item.laborCost ?? 0);
+    } finally {
+      setSavingLabor(false);
+    }
+  };
+
+  // Facturas y evidencias: subir habilitado mientras está "En proceso" y
+  // el usuario puede operar. La sección igual se muestra (solo lectura)
+  // si ya hay adjuntos cargados, sin importar el estado.
+  const canUploadAttachment = !isLavada && isProceso && canOperate;
+  const attachments = item?.attachments ?? [];
+
+  const handleAttachmentUpload = async (file: File) => {
+    if (!item) return;
+    setUploadingAttachment(true);
+    try {
+      const url = await uploadMaintenanceAttachment(file, Number(session?.companyId ?? 0));
+      const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+      const label = isPdf
+        ? `Factura · ${file.name.replace(/\.pdf$/i, "").slice(0, 40)}`
+        : `Evidencia · ${file.name.replace(/\.[^.]+$/, "").slice(0, 40)}`;
+      const nextAttachments: MaintenanceAttachment[] = [
+        ...attachments,
+        { url, label, uploadedAt: new Date().toISOString() },
+      ];
+      await updateMut.mutateAsync({ id: item.id, body: { attachments: nextAttachments } });
+      toast.success("Adjunto subido");
+      refetch();
+    } catch (err) {
+      toast.error("No se pudo subir el adjunto", {
+        description: err instanceof Error ? err.message : "Error",
+      });
+    } finally {
+      setUploadingAttachment(false);
+      if (attachmentFileRef.current) attachmentFileRef.current.value = "";
+    }
+  };
 
   return (
     <AnimatePresence>
@@ -349,6 +453,11 @@ export function MaintenanceDetailDrawer({
                         {item.isReprogrammed && (
                           <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-200">
                             <RefreshCw size={10} /> Re-programado{item.reprogramCount > 1 ? ` (${item.reprogramCount}×)` : ""}
+                          </span>
+                        )}
+                        {isCorreccion && (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700 dark:bg-rose-500/20 dark:text-rose-200">
+                            <RefreshCw size={10} /> En corrección
                           </span>
                         )}
                       </div>
@@ -399,11 +508,31 @@ export function MaintenanceDetailDrawer({
                     </div>
                   )}
 
+                  {/* ── Banner: motivo de la corrección ── */}
+                  {item.correctionReason && (isCorreccion || isProceso) && (
+                    <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 dark:border-rose-500/30 dark:bg-rose-500/10">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-rose-700 dark:text-rose-300">
+                        Motivo de la corrección
+                      </p>
+                      <p className="mt-1 whitespace-pre-wrap text-sm text-rose-900 dark:text-rose-100">{item.correctionReason}</p>
+                      {item.correctionRequestedAt && (
+                        <p className="mt-1 text-[11px] text-rose-700 dark:text-rose-300">Solicitada el {fmtDateTime(item.correctionRequestedAt)}</p>
+                      )}
+                    </div>
+                  )}
+
                   {/* ── Vehículo ── */}
                   <Section icon={<Truck size={11} />} title="Vehículo">
                     <Row label="Placa"  value={item.assetPlate ?? "—"} />
                     <Row label="Nombre" value={item.assetName ?? "—"} />
                   </Section>
+
+                  {/* ── Taller ── */}
+                  {item.workshopName && (
+                    <Section icon={<Wrench size={11} />} title="Taller">
+                      <Row label="Nombre" value={item.workshopName} />
+                    </Section>
+                  )}
 
                   {/* ── Asignación ── */}
                   <Section icon={<UserIcon size={11} />} title="Asignación">
@@ -428,11 +557,30 @@ export function MaintenanceDetailDrawer({
                     )}
                   </Section>
 
-                  {/* ── Costo (mano de obra + repuestos + total) ── */}
+                  {/* ── Costo (mano de obra editable en proceso + repuestos + total) ── */}
                   <Section icon={<DollarSign size={11} />} title="Costo">
                     <div className="grid grid-cols-3 gap-2 px-3 py-3">
                       {!isLavada && (
-                        <Kpi label="Mano de obra" value={fmtMoney(item.laborCost)} accent="violet" />
+                        canEditLabor ? (
+                          <div className="rounded-lg border border-violet-200 dark:border-violet-500/20 bg-violet-50 dark:bg-violet-500/10 px-3 py-2">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                              Mano de obra
+                            </p>
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                min={0}
+                                value={laborCostDraft}
+                                onChange={(e) => setLaborCostDraft(Number(e.target.value))}
+                                onBlur={() => saveLaborCost(laborCostDraft)}
+                                className="w-full min-w-0 rounded-md border border-violet-200 dark:border-violet-500/30 bg-white dark:bg-white/[0.04] px-2 py-1 text-sm font-bold text-violet-700 dark:text-violet-200 focus:outline-none focus:ring-2 focus:ring-violet-400/30 transition"
+                              />
+                              {savingLabor && <Loader2 size={12} className="shrink-0 animate-spin text-violet-500" />}
+                            </div>
+                          </div>
+                        ) : (
+                          <Kpi label="Mano de obra" value={fmtMoney(item.laborCost)} accent="violet" />
+                        )
                       )}
                       <Kpi label="Repuestos / Extras" value={fmtMoney(partsCost)} accent={isLavada ? "sky" : "sky"} />
                       <Kpi label="Total" value={fmtMoney(item.totalCost)} accent="emerald" />
@@ -461,7 +609,76 @@ export function MaintenanceDetailDrawer({
                     </Section>
                   )}
 
-                  {/* ── Repuestos / avance — solo para Programado/Correctado en proceso ── */}
+                  {/* ── Facturas y evidencias — Programado/Correctivo, no lavada ──
+                      Subida habilitada en "En proceso" (dueño o full access);
+                      la sección se muestra de solo lectura si ya hay adjuntos
+                      cargados, sin importar el estado (ej. ya Completado). */}
+                  {!isLavada && (canUploadAttachment || attachments.length > 0) && (
+                    <Section
+                      icon={<Receipt size={11} />}
+                      title={`Facturas y evidencias${attachments.length ? ` · ${attachments.length}` : ""}`}
+                      right={
+                        canUploadAttachment ? (
+                          <button
+                            type="button"
+                            disabled={uploadingAttachment}
+                            onClick={() => attachmentFileRef.current?.click()}
+                            className="inline-flex items-center gap-1 rounded-md border border-sky-200 dark:border-sky-500/40 px-2 py-1 text-[11px] font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition disabled:opacity-50"
+                          >
+                            {uploadingAttachment ? <Loader2 size={11} className="animate-spin" /> : <Camera size={11} />}
+                            {uploadingAttachment ? "Subiendo…" : "Subir archivo"}
+                          </button>
+                        ) : undefined
+                      }
+                    >
+                      {attachments.length === 0 ? (
+                        <p className="px-3 py-3 text-center text-xs text-gray-400 dark:text-gray-500">
+                          Sin facturas o evidencias todavía.
+                        </p>
+                      ) : (
+                        <ul className="divide-y divide-gray-100 dark:divide-white/[0.05]">
+                          {attachments.map((a) => (
+                            <li key={a.url} className="flex items-center gap-3 px-3 py-2.5 text-xs">
+                              <a
+                                href={a.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-gray-100 text-gray-500 dark:bg-white/[0.06]"
+                                title={a.label}
+                              >
+                                {isImageUrl(a.url) ? (
+                                  <img src={a.url} alt={a.label} className="h-full w-full object-cover" />
+                                ) : (
+                                  <FileText size={16} />
+                                )}
+                              </a>
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate font-medium text-gray-800 dark:text-white">{a.label}</p>
+                                {a.uploadedAt && (
+                                  <p className="text-[11px] text-gray-400 dark:text-gray-500">{fmtDateTime(a.uploadedAt)}</p>
+                                )}
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
+                      {canUploadAttachment && (
+                        <input
+                          ref={attachmentFileRef}
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,application/pdf"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleAttachmentUpload(file);
+                          }}
+                        />
+                      )}
+                    </Section>
+                  )}
+
+                  {/* ── Repuestos / avance — Programado/Correctivo en proceso o ya completado ── */}
                   {!isLavada && (isProceso || isCompleto) && canOperate && (
                     <Section icon={<Package size={11} />} title="Repuestos y avance">
                       {item.items && item.items.length > 0 && (
@@ -496,22 +713,22 @@ export function MaintenanceDetailDrawer({
                             <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300 inline-flex items-center gap-1.5">
                               <Plus size={12} /> Agregar repuesto
                             </summary>
-                            <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                               <input
                                 placeholder="Nombre"
                                 value={newItem.name}
                                 onChange={(e) => setNewItem((p) => ({ ...p, name: e.target.value }))}
-                                className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5 col-span-2"
+                                className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-3 py-2 col-span-2"
                               />
                               <input
                                 type="number" min={0} placeholder="Cant." value={newItem.quantity}
                                 onChange={(e) => setNewItem((p) => ({ ...p, quantity: Number(e.target.value) }))}
-                                className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
+                                className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-3 py-2"
                               />
                               <input
                                 type="number" min={0} placeholder="Costo unit." value={newItem.unitCost}
                                 onChange={(e) => setNewItem((p) => ({ ...p, unitCost: Number(e.target.value) }))}
-                                className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
+                                className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-3 py-2"
                               />
 
                               {/* ── Foto del repuesto (nuevo) ── */}
@@ -541,7 +758,7 @@ export function MaintenanceDetailDrawer({
                                         if (!f) return;
                                         setNewItem((p) => ({ ...p, uploading: true }));
                                         try {
-                                          const url = await uploadPartPhoto(f, session?.companyId);
+                                          const url = await uploadPartPhoto(f, session?.companyId ?? undefined);
                                           setNewItem((p) => ({ ...p, photoUrl: url }));
                                           toast.success("Foto subida");
                                         } catch (err) {
@@ -585,13 +802,13 @@ export function MaintenanceDetailDrawer({
                             <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300 inline-flex items-center gap-1.5">
                               <Plus size={12} /> Agregar nota
                             </summary>
-                            <div className="mt-2 space-y-2">
+                            <div className="mt-2 flex flex-col sm:flex-row sm:items-end gap-2">
                               <textarea
                                 rows={2}
                                 placeholder="Escribí una nota…"
                                 value={newNote}
                                 onChange={(e) => setNewNote(e.target.value)}
-                                className="w-full rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5 text-xs resize-none"
+                                className="flex-1 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5 text-xs resize-none"
                               />
                               <button
                                 onClick={async () => {
@@ -603,7 +820,7 @@ export function MaintenanceDetailDrawer({
                                     refetch();
                                   } catch (e) { toast.error((e as Error).message); }
                                 }}
-                                className="rounded-md bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-medium text-white transition"
+                                className="rounded-md bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-medium text-white transition shrink-0"
                               >
                                 Guardar nota
                               </button>
@@ -744,8 +961,8 @@ export function MaintenanceDetailDrawer({
                     </Section>
                   )}
 
-                  {/* ── Línea de tiempo (con colores y agrupada) ── */}
-                  {item.events && item.events.length > 0 && (
+                  {/* ── Línea de tiempo (con colores y agrupada) — solo owner/admin ── */}
+                  {canManageCorrection && item.events && item.events.length > 0 && (
                     <Section icon={<History size={11} />} title={`Línea de tiempo · ${item.events.length}`}>
                       <div className="max-h-72 overflow-y-auto px-2 py-3">
                         <ol className="relative space-y-3 pl-5 before:absolute before:left-1.5 before:top-1 before:bottom-1 before:w-px before:bg-gray-200 dark:before:bg-white/[0.08]">
@@ -791,6 +1008,14 @@ export function MaintenanceDetailDrawer({
                                   {ev.kind === "cancelled" && (ev.payload as any)?.reason && (
                                     <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-300">Motivo: {String((ev.payload as any).reason)}</p>
                                   )}
+                                  {ev.kind === "correction_requested" && (ev.payload as any)?.reason && (
+                                    <p className="mt-0.5 text-[11px] text-rose-700 dark:text-rose-300">
+                                      Motivo: {String((ev.payload as any).reason)}
+                                      {(ev.payload as any)?.rescheduled && (ev.payload as any)?.newScheduledFor && (
+                                        <> · Reagendado para {fmtDateTime(String((ev.payload as any).newScheduledFor))}</>
+                                      )}
+                                    </p>
+                                  )}
                                   {ev.kind === "item_added" && (
                                     <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
                                       {String((ev.payload as any).count ?? 0)} {(ev.payload as any)?.kind === "carwash_extra" ? "adicional(es)" : "repuesto(s)"} — total {fmtMoney((ev.payload as any).totalAdded ?? 0)}
@@ -800,7 +1025,10 @@ export function MaintenanceDetailDrawer({
                                     <p className="mt-0.5 text-[11px] text-emerald-700 dark:text-emerald-300">Mantenimiento cerrado como completado.</p>
                                   )}
                                   {ev.kind === "taken" && (
-                                    <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-300">Operador tomó el mantenimiento y pasó a En proceso.</p>
+                                    <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-300">Operador tomó el mantenimiento (sigue {normalizeStatusLabel(item.status)} hasta que se inicie).</p>
+                                  )}
+                                  {ev.kind === "started" && (
+                                    <p className="mt-0.5 text-[11px] text-sky-700 dark:text-sky-300">El mantenimiento pasó a En proceso.</p>
                                   )}
                                 </div>
                               </li>
@@ -812,7 +1040,7 @@ export function MaintenanceDetailDrawer({
                   )}
 
                   {/* ── Reasignar operador — solo admin/owner/supervisor ── */}
-                  {isFullAccess && (isProgramado || isProceso) && (
+                  {isFullAccess && (isProgramado || isProceso || isCorreccion) && (
                     <Section icon={<UserIcon size={11} />} title="Reasignar operador">
                       <div className="p-3 space-y-2">
                         <select
@@ -856,35 +1084,37 @@ export function MaintenanceDetailDrawer({
                     Cerrar
                   </button>
 
-                  {/* Iniciar — Programado, operador (dueño o libre) */}
-                  {isProgramado && meRole === "operador" && (assignedNum === meIdNum || assignedNum == null) && (
+                  {/* Tomar — Programado/Corrección, libre, para cualquiera con permiso
+                      (operador o full access). Solo asigna; NO cambia el estado. */}
+                  {(isProgramado || isCorreccion) && isFree && (
                     <button
                       onClick={() => onTake(item)}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 px-4 py-2 text-xs font-semibold text-white transition"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 px-4 py-2 text-xs font-semibold text-white transition"
                     >
-                      <Play size={13} /> Iniciar mantenimiento
+                      <UserIcon size={13} /> {isCorreccion ? "Tomar corrección" : "Tomar mantenimiento"}
                     </button>
                   )}
 
-                  {/* Tomar — admin en programado libre */}
-                  {isProgramado && isFullAccess && !item.assignedUserId && (
+                  {/* Iniciar — Programado/Corrección, ya asignado a quien mira (o
+                      full access dueño/creador). Pasa a En proceso. */}
+                  {(isProgramado || isCorreccion) && !isFree && (isMine || canOperate) && (
                     <button
-                      onClick={() => onTake(item)}
+                      onClick={() => onStart(item)}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 px-4 py-2 text-xs font-semibold text-white transition"
                     >
-                      <Play size={13} /> Tomar mantenimiento
+                      <Play size={13} /> {isCorreccion ? "Iniciar corrección" : "Iniciar mantenimiento"}
                     </button>
                   )}
 
-                  {/* Asignado a otro — informativo */}
-                  {isProgramado && !isFullAccess && assignedNum != null && assignedNum !== meIdNum && (
+                  {/* Asignado a otro — informativo (no es libre ni es suyo) */}
+                  {(isProgramado || isCorreccion) && !isFree && !isMine && !isFullAccess && (
                     <span className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.06] px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
                       <AlertCircle size={12} /> Asignado a {item.assignedUserName}
                     </span>
                   )}
 
-                  {/* Reprogramar */}
-                  {(isProceso || isProgramado) && canOperate && !isLavada && (
+                  {/* Reprogramar — disponible también en Corrección (aún no iniciada) */}
+                  {(isProceso || isProgramado || isCorreccion) && canOperate && !isLavada && (
                     <button
                       onClick={() => onReschedule(item)}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/10 dark:hover:bg-amber-500/20 px-4 py-2 text-xs font-semibold text-amber-700 dark:text-amber-300 transition"
@@ -900,6 +1130,16 @@ export function MaintenanceDetailDrawer({
                       className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-xs font-semibold text-white transition"
                     >
                       <CheckCircle2 size={13} /> Finalizar
+                    </button>
+                  )}
+
+                  {/* Marcar corrección — solo sobre un Completado, solo owner/admin/supervisor */}
+                  {isCompleto && canManageCorrection && (
+                    <button
+                      onClick={() => onRequestCorrection(item)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 dark:border-rose-500/30 dark:bg-rose-500/10 dark:hover:bg-rose-500/20 px-4 py-2 text-xs font-semibold text-rose-700 dark:text-rose-300 transition"
+                    >
+                      <RefreshCw size={13} /> Marcar corrección
                     </button>
                   )}
 
@@ -920,11 +1160,16 @@ export function MaintenanceDetailDrawer({
 
 // ─── Helpers de status / type ───────────────────────────────────────────────
 
+function normalizeStatusLabel(status: string): string {
+  return status === "Correccion" ? "en Corrección" : "Programado";
+}
+
 function statusGradient(status: string): string {
   switch (status) {
     case "Programado": return "rgba(124, 58, 237, 0.10)";
     case "En proceso": return "rgba(56, 189, 248, 0.10)";
     case "Completado": return "rgba(16, 185, 129, 0.10)";
+    case "Correccion": return "rgba(244, 63, 94, 0.10)";
     default:           return "rgba(148, 163, 184, 0.10)";
   }
 }
@@ -934,12 +1179,14 @@ function StatusBadge({ status }: { status: string }) {
     Programado: { dot: "bg-violet-500",  cls: "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-200" },
     "En proceso": { dot: "bg-sky-500",     cls: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-200" },
     Completado: { dot: "bg-emerald-500", cls: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-200" },
+    Correccion: { dot: "bg-rose-500",    cls: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/15 dark:text-rose-200" },
   };
   const c = map[status] ?? { dot: "bg-gray-400", cls: "border-gray-200 bg-gray-50 text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200" };
+  const label = status === "Correccion" ? "Corrección" : status;
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${c.cls}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
-      {status}
+      {label}
     </span>
   );
 }

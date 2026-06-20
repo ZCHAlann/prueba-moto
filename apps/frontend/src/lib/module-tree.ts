@@ -73,13 +73,6 @@ export const MODULE_TREE = {
       proveedores:      "Proveedores",
     },
   },
-  motores: {
-    label: "Motores",
-    submodules: {
-      lista_motores:        "Lista de motores",
-      historial_motor:      "Historial de motor",
-    },
-  },
   generadores: {
     label: "Generadores",
     submodules: {
@@ -124,6 +117,9 @@ export const MODULE_TREE = {
     label: "Reportes",
     submodules: {
       reportes: "Reportes",
+      // Submódulo "Estadísticas" — solo owner/admin por defecto (ver ROLE_DEFAULT_PERMISSIONS).
+      // Se renderiza como tab colorida dentro de /reportes con KPIs + 6 charts + matemática.
+      estadisticas: "Estadísticas",
     },
   },
   combustible: {
@@ -187,3 +183,16 @@ export const ACTION_COLORS: Record<ActionKey, { active: string; inactive: string
     inactive: "bg-transparent text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]",
   },
 };
+
+/** Cuenta cuántos módulos tienen al menos una acción activa en algún submódulo. */
+export function countModulesWithAccess(permissions: PermissionMap): number {
+  let count = 0;
+  for (const subs of Object.values(permissions ?? {})) {
+    if (!subs) continue;
+    const hasAccess = Object.values(subs).some(
+      (actions) => Array.isArray(actions) && actions.length > 0
+    );
+    if (hasAccess) count++;
+  }
+  return count;
+}

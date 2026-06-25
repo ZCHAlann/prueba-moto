@@ -42,6 +42,7 @@ import {
 } from "../../../hooks/useMaintenancesV2";
 import { useCompanyUsers } from "../../../hooks/useCompanyUsers";
 import { useAuth } from "../../../context/AuthContext";
+import { EditDatesInline } from "../../../components/features/maintenances/EditDatesInline";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -348,6 +349,7 @@ export function MaintenanceDetailDrawer({
   // como "Corrección". isFullAccess ya cubre exactamente esos 3 roles
   // (ver MaintenanceListTab: isFullAccess = owner_empresa || admin_empresa || supervisor).
   const canManageCorrection = isFullAccess;
+  const canEditDates = meRole === "owner_empresa" || meRole === "admin_empresa";
 
   const isProgramado = item?.status === "Programado";
   const isProceso    = item?.status === "En proceso";
@@ -557,8 +559,29 @@ export function MaintenanceDetailDrawer({
                   {/* ── Programación ── */}
                   <Section icon={<Calendar size={11} />} title="Programación">
                     <Row label="Programado" value={fmtDateTime(item.scheduledFor)} />
-                    <Row label="Ejecutado"  value={fmtDateTime(item.executedAt)} />
-                    <Row label="Completado" value={fmtDateTime(item.completedAt)} />
+                    {canEditDates ? (
+                      <>
+                        <EditDatesInline
+                          maintenanceId={item.id}
+                          label="Ejecutado"
+                          value={item.executedAt}
+                          field="executedAt"
+                          onSaved={refetch}
+                        />
+                        <EditDatesInline
+                          maintenanceId={item.id}
+                          label="Completado"
+                          value={item.completedAt}
+                          field="completedAt"
+                          onSaved={refetch}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <Row label="Ejecutado"  value={fmtDateTime(item.executedAt)} />
+                        <Row label="Completado" value={fmtDateTime(item.completedAt)} />
+                      </>
+                    )}
                     {item.odometerKm != null && (
                       <Row icon={<Hash size={11} />} label="Odómetro" value={`${item.odometerKm.toLocaleString("es-CO")} km`} />
                     )}

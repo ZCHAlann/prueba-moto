@@ -38,6 +38,7 @@ import {
   companyExitAuthorizations,
   companyDrivers,
   companyAssets,
+  companyAssignments,
   exitAuthorizationAnalyses,
   exitAnalysisRejections
 } from '../../db/schema/operational'
@@ -493,6 +494,28 @@ router.post('/', requireModule('autorizaciones'), validate(createAuthorizationSc
         throw new ForbiddenError('Solo podés crear solicitudes para tu propio conductor.');
       }
       driverId = driverRow.id;
+
+      // ── Validar que el conductor tenga una asignación ACTIVA para este
+      //    vehículo hoy. Sin asignación activa, no puede solicitar salida.
+      //    Misma semántica que GET /conductor-context.
+      const today = new Date().toISOString().slice(0, 10);
+      const [activeAsg] = await db
+        .select({ id: companyAssignments.id })
+        .from(companyAssignments)
+        .where(and(
+          eq(companyAssignments.companyId, companyId),
+          eq(companyAssignments.driverId, driverRow.id),
+          eq(companyAssignments.assetId, body.assetId),
+          eq(companyAssignments.status, 'Activa'),
+          lte(companyAssignments.startDate, today),
+          or(isNull(companyAssignments.endDate), gte(companyAssignments.endDate, today)),
+        ))
+        .limit(1);
+      if (!activeAsg) {
+        throw new ForbiddenError(
+          'No tenés un vehículo asignado. Pedile a tu supervisor que te asigne uno antes de solicitar la salida.'
+        );
+      }
     }
 
     const [assetOk] = await db

@@ -395,6 +395,29 @@ export function useAssignMaintenance() {
   });
 }
 
+/**
+ * Edita fecha de ejecución y/o finalización de un mantenimiento.
+ */
+export function useUpdateMaintenanceDates() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id, executedAt, completedAt,
+    }: { id: string; executedAt?: string | null; completedAt?: string | null }) => {
+      return jsonFetch<{ ok: boolean; id: string; executedAt: string | null; completedAt: string | null }>(
+        `/api/company/${companyId}/maintenances/${id}/dates`,
+        { method: 'PATCH', body: JSON.stringify({ executedAt, completedAt }) },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenances'] });
+      qc.invalidateQueries({ queryKey: ['maintenance'] });
+      qc.invalidateQueries({ queryKey: ['maintenances-agenda'] });
+    },
+  });
+}
+
 /** Operador / admin / supervisor cierran un mantenimiento (status = Completado). */
 export function useFinalizeMaintenance() {
   const { companyId } = useAuth();

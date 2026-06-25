@@ -1023,10 +1023,17 @@ function ConductorView({ loading, myAsset, driverId, items, onSolicitar, onOpenD
               </p>
             )}
           </div>
-          <button type="button" onClick={onSolicitar}
-            className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/30 transition active:scale-95 sm:w-auto">
-            <Plus size={14} /> Solicitar autorización de salida
-          </button>
+          {myAsset && (
+            <button type="button" onClick={onSolicitar}
+              className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-500/30 transition active:scale-95 sm:w-auto">
+              <Plus size={14} /> Solicitar autorización de salida
+            </button>
+          )}
+          {!myAsset && (
+            <div className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] px-4 py-2.5 text-sm font-medium text-gray-500 dark:text-gray-400 sm:w-auto">
+              <Truck size={14} /> Sin vehículo asignado
+            </div>
+          )}
         </div>
       </div>
 

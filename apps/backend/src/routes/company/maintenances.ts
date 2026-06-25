@@ -121,7 +121,6 @@ const updateMaintenanceSchema = z.object({
   cadenceValue:   z.number().int().positive().max(1_000_000).optional().nullable(),
   nextTriggerKm:  z.number().int().nonnegative().max(10_000_000).optional().nullable(),
   scheduledFor:   z.string().optional(),
-  executedAt:     z.string().optional().nullable(),
   notes:          validators.longTextOptional,
   items:          z.array(itemSchema).max(50).optional(),
   // v3.1: campos de lavada
@@ -152,6 +151,14 @@ const noteSchema = z.object({
 const assignSchema = z.object({
   userId: z.string().min(1, 'Operador requerido'),
 });
+
+const updateDatesSchema = z.object({
+  executedAt:  z.string().datetime().optional().nullable(),
+  completedAt: z.string().datetime().optional().nullable(),
+}).refine(
+  (b) => b.executedAt !== undefined || b.completedAt !== undefined,
+  { message: 'Debe enviar al menos executedAt o completedAt.' },
+);
 
 const carwashExtraSchema = z.object({
   name:     safeString({ min: 1, max: 180, fieldLabel: 'Nombre', allowEmpty: false }),
@@ -875,9 +882,7 @@ router.put(
       if (body.cadenceValue !== undefined) updateData.cadenceValue = body.cadenceValue;
       if (body.nextTriggerKm !== undefined) updateData.nextTriggerKm = body.nextTriggerKm;
       if (body.scheduledFor !== undefined) updateData.scheduledFor = new Date(body.scheduledFor);
-      if (body.executedAt !== undefined) updateData.executedAt = body.executedAt ? new Date(body.executedAt) : null;
       if (body.notes !== undefined) updateData.notes = body.notes;
-      // v3.1: campos de lavada (solo aplican si type === 'Lavada')
       if (body.carwashLocation !== undefined) updateData.carwashLocation = body.carwashLocation ?? null;
       if (body.carwashProvider !== undefined) updateData.carwashProvider = body.carwashProvider ?? null;
       if (body.carwashNotes !== undefined) updateData.carwashNotes = body.carwashNotes ?? null;
@@ -1173,6 +1178,60 @@ router.post(
 
       await recordEvent(companyId, id, 'assigned', { userId: meId, name: req.user!.name ?? null }, { targetId });
       res.json({ ok: true, id: toId('maintenance', updated.id), assignedUserId: toId('company-user', targetId) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── PATCH /:id/dates ─────────────────────────────────────────────────────────
+// Edita las fechas de ejecución y/o finalización de un mantenimiento ya
+// existente. Pensado para corregir registros históricos que se cargan hoy
+// pero ocurrieron en el pasado
+router.patch(
+  '/:id/dates',
+  requireModule('mantenimiento'),
+  requireAdmin,
+  validate(updateDatesSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+      const meRole = req.user!.role;
+
+      if (meRole !== 'owner_empresa' && meRole !== 'admin_empresa') {
+        throw new ForbiddenError('Solo administradores o propietarios pueden editar estas fechas.');
+      }
+
+      const body = req.body as z.infer<typeof updateDatesSchema>;
+
+      const [existing] = await db
+        .select({ id: companyMaintenanceRecords.id })
+        .from(companyMaintenanceRecords)
+        .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
+        .limit(1);
+      if (!existing) throw new NotFoundError('Mantenimiento', req.params.id);
+
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (body.executedAt !== undefined) {
+        updateData.executedAt = body.executedAt ? new Date(body.executedAt) : null;
+      }
+      if (body.completedAt !== undefined) {
+        updateData.completedAt = body.completedAt ? new Date(body.completedAt) : null;
+      }
+
+      const [updated] = await db
+        .update(companyMaintenanceRecords)
+        .set(updateData)
+        .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
+        .returning();
+
+      res.json({
+        ok: true,
+        id: toId('maintenance', updated.id),
+        executedAt: updated.executedAt,
+        completedAt: updated.completedAt,
+      });
     } catch (err) {
       next(err);
     }

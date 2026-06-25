@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAssets } from "../../hooks/useAssets";
 import { useDrivers } from "../../hooks/useDrivers";
 import { useAssignments } from "../../hooks/useAssignments";
@@ -24,16 +24,32 @@ import {
   Loader2,
   ChevronLeft,
   ChevronRight,
+  Truck,
+  Users,
+  Wallet,
+  ClipboardList,
+  Fuel,
+  Bell,
+  Package,
+  ShieldCheck,
+  Wrench,
+  BarChart3,
+  Table2,
+  Sparkles,
+  Pin,
+  PinOff,
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { ExportToolbar } from "../../components/ui/export-toolbar/ExportToolbar";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import { EstadisticasTab } from "./EstadisticasTab";
 import { useAuth } from "../../context/AuthContext";
-import { BarChart3, Table2 } from "lucide-react";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 6;
+const SIDEBAR_EXPANDED_WIDTH = 216;
+const SIDEBAR_COLLAPSED_WIDTH = 56;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,23 +82,27 @@ type DateRange = {
   to: string;
 };
 
-// ─── Report catalog ───────────────────────────────────────────────────────────
+// ─── Módulos con íconos y colores ─────────────────────────────────────────────
 
-type ReportDef = {
+type ModuleDef = {
   id: string;
   label: string;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  /** Paleta del sistema: emerald / amber / rose / blue / cyan / violet / orange / fuchsia / teal. */
+  palette: "emerald" | "amber" | "rose" | "blue" | "cyan" | "violet" | "orange" | "fuchsia" | "teal";
+  short: string;
 };
 
-const REPORT_CATALOG: ReportDef[] = [
-  { id: "rep-001", label: "Gerencial" },
-  { id: "rep-002", label: "Asignaciones" },
-  { id: "rep-003", label: "Gastos" },
-  { id: "rep-004", label: "Checklist" },
-  { id: "rep-005", label: "Combustible" },
-  { id: "rep-006", label: "Alertas" },
-  { id: "rep-007", label: "Inventario" },
-  { id: "rep-008", label: "Autorizaciones" },
-  { id: "rep-009", label: "Mantenimiento" },
+const REPORT_MODULES: ModuleDef[] = [
+  { id: "rep-001", label: "Gerencial",       icon: ShieldCheck, palette: "emerald", short: "Estado general de la flota"          },
+  { id: "rep-002", label: "Asignaciones",    icon: Users,       palette: "blue",    short: "Conductor, placa y disponibilidad"  },
+  { id: "rep-003", label: "Gastos",          icon: Wallet,      palette: "amber",   short: "Combustible + mantenimiento"       },
+  { id: "rep-004", label: "Checklist",       icon: ClipboardList, palette: "cyan",  short: "Inspecciones y hallazgos"           },
+  { id: "rep-005", label: "Combustible",     icon: Fuel,        palette: "orange",  short: "Cargas, km, costo por estación"    },
+  { id: "rep-006", label: "Alertas",         icon: Bell,        palette: "rose",    short: "Severidad y estado"                 },
+  { id: "rep-007", label: "Inventario",      icon: Package,     palette: "violet",  short: "Stock y mínimos"                    },
+  { id: "rep-008", label: "Autorizaciones",  icon: ShieldCheck, palette: "teal",    short: "Salidas de vehículos"               },
+  { id: "rep-009", label: "Mantenimiento",   icon: Wrench,      palette: "fuchsia", short: "Órdenes de trabajo"                 },
 ];
 
 const ADMIN_ROLES = new Set(["owner_empresa", "admin_empresa", "superadmin"]);
@@ -109,54 +129,300 @@ function filterRows(rows: ReportRow[], columns: ReportColumn[], query: string) {
   );
 }
 
-// ─── Tone config ──────────────────────────────────────────────────────────────
+// ─── Color tokens por paleta (light + dark) ───────────────────────────────────
 
-const TONE: Record<Tone, { bar: string; value: string; icon: React.ReactNode }> = {
-  info:    { bar: "bg-brand-500",   value: "text-brand-600 dark:text-brand-400",     icon: <Info size={13} /> },
-  success: { bar: "bg-success-500", value: "text-success-600 dark:text-success-400", icon: <CheckCircle2 size={13} /> },
-  warning: { bar: "bg-warning-500", value: "text-warning-600 dark:text-warning-400", icon: <AlertTriangle size={13} /> },
-  danger:  { bar: "bg-error-500",   value: "text-error-600 dark:text-error-400",     icon: <AlertTriangle size={13} /> },
-  neutral: { bar: "bg-gray-400",    value: "text-gray-700 dark:text-gray-200",       icon: <TrendingUp size={13} /> },
+const PALETTE: Record<ModuleDef["palette"], {
+  border:    string;
+  bg:        string;
+  bgActive:  string;
+  icon:      string;
+  text:      string;
+  dot:       string;
+  kpi:       string;
+  wave:      string;
+}> = {
+  emerald: {
+    border:   "border-emerald-200 dark:border-emerald-500/30",
+    bg:       "bg-emerald-50/40 dark:bg-emerald-500/[0.04]",
+    bgActive: "bg-emerald-500 text-white shadow-lg shadow-emerald-500/30",
+    icon:     "text-emerald-600 dark:text-emerald-400",
+    text:     "text-emerald-900 dark:text-emerald-200",
+    dot:      "bg-emerald-500",
+    kpi:      "from-emerald-500/15 via-emerald-500/5 to-transparent",
+    wave:     "#10b981",
+  },
+  amber: {
+    border:   "border-amber-200 dark:border-amber-500/30",
+    bg:       "bg-amber-50/40 dark:bg-amber-500/[0.04]",
+    bgActive: "bg-amber-500 text-white shadow-lg shadow-amber-500/30",
+    icon:     "text-amber-600 dark:text-amber-400",
+    text:     "text-amber-900 dark:text-amber-200",
+    dot:      "bg-amber-500",
+    kpi:      "from-amber-500/15 via-amber-500/5 to-transparent",
+    wave:     "#f59e0b",
+  },
+  rose: {
+    border:   "border-rose-200 dark:border-rose-500/30",
+    bg:       "bg-rose-50/40 dark:bg-rose-500/[0.04]",
+    bgActive: "bg-rose-500 text-white shadow-lg shadow-rose-500/30",
+    icon:     "text-rose-600 dark:text-rose-400",
+    text:     "text-rose-900 dark:text-rose-300",
+    dot:      "bg-rose-500",
+    kpi:      "from-rose-500/15 via-rose-500/5 to-transparent",
+    wave:     "#f43f5e",
+  },
+  blue: {
+    border:   "border-blue-200 dark:border-blue-500/30",
+    bg:       "bg-blue-50/40 dark:bg-blue-500/[0.04]",
+    bgActive: "bg-blue-500 text-white shadow-lg shadow-blue-500/30",
+    icon:     "text-blue-600 dark:text-blue-400",
+    text:     "text-blue-900 dark:text-blue-200",
+    dot:      "bg-blue-500",
+    kpi:      "from-blue-500/15 via-blue-500/5 to-transparent",
+    wave:     "#3b82f6",
+  },
+  cyan: {
+    border:   "border-cyan-200 dark:border-cyan-500/30",
+    bg:       "bg-cyan-50/40 dark:bg-cyan-500/[0.04]",
+    bgActive: "bg-cyan-500 text-white shadow-lg shadow-cyan-500/30",
+    icon:     "text-cyan-600 dark:text-cyan-400",
+    text:     "text-cyan-900 dark:text-cyan-200",
+    dot:      "bg-cyan-500",
+    kpi:      "from-cyan-500/15 via-cyan-500/5 to-transparent",
+    wave:     "#06b6d4",
+  },
+  violet: {
+    border:   "border-violet-200 dark:border-violet-500/30",
+    bg:       "bg-violet-50/40 dark:bg-violet-500/[0.04]",
+    bgActive: "bg-violet-500 text-white shadow-lg shadow-violet-500/30",
+    icon:     "text-violet-600 dark:text-violet-400",
+    text:     "text-violet-900 dark:text-violet-200",
+    dot:      "bg-violet-500",
+    kpi:      "from-violet-500/15 via-violet-500/5 to-transparent",
+    wave:     "#8b5cf6",
+  },
+  orange: {
+    border:   "border-orange-200 dark:border-orange-500/30",
+    bg:       "bg-orange-50/40 dark:bg-orange-500/[0.04]",
+    bgActive: "bg-orange-500 text-white shadow-lg shadow-orange-500/30",
+    icon:     "text-orange-600 dark:text-orange-400",
+    text:     "text-orange-900 dark:text-orange-200",
+    dot:      "bg-orange-500",
+    kpi:      "from-orange-500/15 via-orange-500/5 to-transparent",
+    wave:     "#f97316",
+  },
+  fuchsia: {
+    border:   "border-fuchsia-200 dark:border-fuchsia-500/30",
+    bg:       "bg-fuchsia-50/40 dark:bg-fuchsia-500/[0.04]",
+    bgActive: "bg-fuchsia-500 text-white shadow-lg shadow-fuchsia-500/30",
+    icon:     "text-fuchsia-600 dark:text-fuchsia-400",
+    text:     "text-fuchsia-900 dark:text-fuchsia-200",
+    dot:      "bg-fuchsia-500",
+    kpi:      "from-fuchsia-500/15 via-fuchsia-500/5 to-transparent",
+    wave:     "#d946ef",
+  },
+  teal: {
+    border:   "border-teal-200 dark:border-teal-500/30",
+    bg:       "bg-teal-50/40 dark:bg-teal-500/[0.04]",
+    bgActive: "bg-teal-500 text-white shadow-lg shadow-teal-500/30",
+    icon:     "text-teal-600 dark:text-teal-400",
+    text:     "text-teal-900 dark:text-teal-200",
+    dot:      "bg-teal-500",
+    kpi:      "from-teal-500/15 via-teal-500/5 to-transparent",
+    wave:     "#14b8a6",
+  },
 };
 
-// ─── Stat card ────────────────────────────────────────────────────────────────
+// ─── Wave chart inline (SVG, sin libs externas) ──────────────────────────────
 
-function StatCard({ label, value, detail, tone }: SummaryItem) {
-  const t = TONE[tone];
+function WaveBar({ value, max, color }: {
+  value: number;
+  max: number;
+  color: string;
+}) {
+  const pct = max > 0 ? value / max : 0;
+  const w = 240;
+  const h = 40;
+  const points: string[] = [];
+  const samples = 40;
+  for (let i = 0; i <= samples; i++) {
+    const x = (i / samples) * w;
+    const phase = (i / samples) * Math.PI * 2.5;
+    const baseY = h * (1 - pct);
+    const wave = Math.sin(phase) * 7;
+    const y = Math.max(3, Math.min(h - 3, baseY + wave * (1 - Math.abs(pct - 0.5) * 0.6)));
+    points.push(`${x},${y}`);
+  }
+  const path = `M ${points.join(" L ")}`;
+  const fillPath = `${path} L ${w},${h} L 0,${h} Z`;
+  const gradId = `wave-${color.replace("#", "")}-${Math.random().toString(36).slice(2, 8)}`;
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 dark:border-white/[0.06] dark:bg-white/[0.03]">
-      <div className={`absolute inset-x-0 top-0 h-0.5 ${t.bar} opacity-70`} />
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-          {label}
-        </p>
-        <span className={`opacity-60 ${t.value}`}>{t.icon}</span>
-      </div>
-      <p className={`mt-2 text-3xl font-black tabular-nums ${t.value}`}>{value}</p>
-      <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{detail}</p>
-    </div>
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-10" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.45" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <path d={fillPath} fill={`url(#${gradId})`} />
+      <path d={path} stroke={color} strokeWidth="2" fill="none" strokeLinecap="round" />
+    </svg>
   );
 }
 
-// ─── Report tab ───────────────────────────────────────────────────────────────
+// ─── KPI card con wave + color de módulo ─────────────────────────────────────
 
-function ReportTab({
-  label, active, onClick,
+function KpiCard({
+  item,
+  palette,
+  maxValue,
+  numericValue,
 }: {
-  label: string; active: boolean; onClick: () => void;
+  item: SummaryItem;
+  palette: ModuleDef["palette"];
+  maxValue: number;
+  numericValue: number;
 }) {
+  const p = PALETTE[palette];
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`inline-flex items-center rounded-xl border px-3 py-2 text-xs font-semibold transition-all ${
-        active
-          ? "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/[0.12] dark:text-brand-400"
-          : "border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:bg-gray-50 dark:border-white/[0.06] dark:bg-transparent dark:text-gray-400 dark:hover:bg-white/[0.04]"
-      }`}
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
+      className={`relative overflow-hidden rounded-2xl border ${p.border} ${p.bg} p-3.5`}
     >
-      {label}
-    </button>
+      <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${p.kpi}`} />
+
+      <div className="relative flex items-start justify-between gap-2">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+          {item.label}
+        </p>
+        <span className={`h-2 w-2 rounded-full ${p.dot} shadow-[0_0_0_3px] shadow-current/10`} />
+      </div>
+
+      <p className={`relative mt-1 text-xl sm:text-2xl font-black tabular-nums ${p.text}`}>
+        {item.value}
+      </p>
+      <p className="relative mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+        {item.detail}
+      </p>
+
+      <div className="relative mt-1.5 -mx-1 -mb-1">
+        <WaveBar value={numericValue} max={maxValue} color={p.wave} />
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Sidebar de módulos (hover-expand, igual lógica que EstadisticasTab) ──────
+
+function ModuleSidebar({
+  activeId,
+  onSelect,
+}: {
+  activeId: string;
+  onSelect: (id: string) => void;
+}) {
+  const [pinned, setPinned] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const closeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const expanded = pinned || hovered;
+
+  function enter() {
+    if (closeRef.current) { clearTimeout(closeRef.current); closeRef.current = null; }
+    setHovered(true);
+  }
+  function leave() {
+    if (pinned) return;
+    closeRef.current = setTimeout(() => setHovered(false), 200);
+  }
+
+  return (
+    <motion.nav
+      aria-label="Módulos de reporte"
+      onMouseEnter={enter}
+      onMouseLeave={leave}
+      animate={{ width: expanded ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_COLLAPSED_WIDTH }}
+      transition={{ type: "spring", stiffness: 420, damping: 34 }}
+      className="relative shrink-0 overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]"
+      style={{ willChange: "width" }}
+    >
+      <div className="flex h-full flex-col p-2">
+        <div className={`flex items-center pb-2 pt-1 ${expanded ? "justify-start px-1.5" : "justify-center"}`}>
+          {expanded ? (
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+              Módulos
+            </p>
+          ) : (
+            <FileBarChart2 size={15} className="text-gray-400" />
+          )}
+        </div>
+
+        <ul className="flex-1 space-y-1 overflow-y-auto overflow-x-hidden">
+          {REPORT_MODULES.map((m) => {
+            const isActive = activeId === m.id;
+            const Icon = m.icon;
+            const p = PALETTE[m.palette];
+            return (
+              <li key={m.id}>
+                <button
+                  type="button"
+                  onClick={() => onSelect(m.id)}
+                  title={!expanded ? m.label : undefined}
+                  aria-current={isActive ? "page" : undefined}
+                  className={`relative flex w-full items-center gap-2.5 rounded-xl text-left transition-colors
+                    ${expanded ? "px-2 py-2" : "h-11 w-11 mx-auto justify-center"}
+                    ${isActive
+                      ? p.bgActive
+                      : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/[0.06]"
+                    }`}
+                >
+                  <span
+                    className={`flex shrink-0 items-center justify-center rounded-lg
+                      ${expanded ? "h-7 w-7" : "h-8 w-8"}
+                      ${isActive ? "bg-white/20 text-white" : `${p.bg} ${p.icon}`}`}
+                  >
+                    <Icon size={expanded ? 13 : 15} />
+                  </span>
+                  {expanded && (
+                    <span className="min-w-0 flex-1">
+                      <span className={`block truncate text-xs font-semibold ${isActive ? "text-white" : ""}`}>
+                        {m.label}
+                      </span>
+                      <span className={`block truncate text-[10px] ${isActive ? "text-white/80" : "text-gray-400 dark:text-gray-500"}`}>
+                        {m.short}
+                      </span>
+                    </span>
+                  )}
+                  {isActive && (
+                    <motion.span
+                      layoutId="module-active-dot"
+                      className={`h-1.5 w-1.5 rounded-full bg-white ${expanded ? "" : "absolute right-1.5 top-1.5"}`}
+                    />
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+
+        <div className={`mt-1 flex border-t border-gray-100 pt-2 dark:border-white/[0.05] ${expanded ? "justify-end px-1" : "justify-center"}`}>
+          <button
+            type="button"
+            onClick={() => setPinned((v) => !v)}
+            title={pinned ? "Soltar" : "Fijar"}
+            className={`flex h-7 w-7 items-center justify-center rounded-lg transition ${
+              pinned
+                ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
+                : "text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06]"
+            }`}
+          >
+            {pinned ? <PinOff size={12} /> : <Pin size={12} />}
+          </button>
+        </div>
+      </div>
+    </motion.nav>
   );
 }
 
@@ -177,7 +443,7 @@ function Pagination({
 }) {
   if (totalPages <= 1) return null;
   return (
-    <div className="flex items-center justify-between border-t border-gray-100 dark:border-white/[0.06] px-5 py-3">
+    <div className="flex items-center justify-between border-t border-gray-100 dark:border-white/[0.06] px-4 py-2.5">
       <button
         disabled={page <= 1}
         onClick={onPrev}
@@ -247,6 +513,9 @@ export function ReportsPage() {
   const [maintWorkshopId,  setMaintWorkshopId]  = useState<number | null>(null);
   const [maintSupplierId,  setMaintSupplierId]  = useState<number | null>(null);
   const [view, setView] = useState<"tablas" | "estadisticas">("tablas");
+
+  const activeModule = REPORT_MODULES.find((m) => m.id === activeId) ?? REPORT_MODULES[0];
+  const activePalette = PALETTE[activeModule.palette];
 
   function handleTabChange(id: string) {
     setActiveId(id);
@@ -659,22 +928,36 @@ export function ReportsPage() {
   const totalPages = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
   const pagedRows  = visibleRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  const numericSummary = useMemo(() => {
+    return preview.summary.map((s) => {
+      const cleaned = String(s.value).replace(/[^\d.-]/g, "");
+      const n = Number(cleaned);
+      return { ...s, n: Number.isFinite(n) ? n : 0 };
+    });
+  }, [preview.summary]);
+  const maxSummaryValue = useMemo(
+    () => Math.max(1, ...numericSummary.map((s) => s.n)),
+    [numericSummary]
+  );
+
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
 
       {/* ── Header ── */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <span className="inline-flex rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-brand-600 dark:bg-brand-500/[0.12] dark:text-brand-400">
-            Reportes
+          <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-brand-600 dark:bg-brand-500/[0.12] dark:text-brand-400">
+            <Sparkles size={10} /> {view === "estadisticas" ? "Inteligencia de negocio" : "Reportes"}
           </span>
-          <h1 className="mt-2 text-2xl font-bold text-gray-800 dark:text-white">
-            Centro de reportes
+          <h1 className="mt-1.5 text-2xl font-bold text-gray-800 dark:text-white">
+            {view === "estadisticas" ? "Estadísticas" : "Centro de reportes"}
           </h1>
           <p className="mt-1 max-w-xl text-sm text-gray-500 dark:text-gray-400">
-            Consulta, filtra y revisa datos de la operación diaria por módulo.
+            {view === "estadisticas"
+              ? "Resumen inteligente, tendencias y desglose por módulo con análisis IA."
+              : "Consulta, filtra y revisa datos de la operación diaria por módulo."}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -715,129 +998,143 @@ export function ReportsPage() {
         </div>
       </div>
 
-      {/* ── Vista condicional ── */}
+      {/* ── Vista condicional: Estadísticas o Tablas ── */}
       {view === "estadisticas" ? (
         session?.companyId && <EstadisticasTab companyId={session.companyId} />
       ) : (
-        <>
-          {/* ── KPI cards ── */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            {preview.summary.map((item) => (
-              <StatCard key={item.label} {...item} />
-            ))}
+        <div className="flex items-start gap-3">
+
+          {/* ── Sidebar de módulos (hover-expand, sticky) ── */}
+          <div className="sticky top-4 self-start">
+            <ModuleSidebar activeId={activeId} onSelect={handleTabChange} />
           </div>
 
-          {/* ── Main card ── */}
-          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
+          {/* ── Panel principal con animación de cambio de módulo ── */}
+          <div className="min-w-0 flex-1">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeId}
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -6 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
+                className="space-y-3"
+              >
+                {/* ── KPI cards con wave del módulo activo ── */}
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+                  {numericSummary.map((item) => (
+                    <KpiCard
+                      key={`${activeId}-${item.label}`}
+                      item={item}
+                      palette={activeModule.palette}
+                      maxValue={maxSummaryValue}
+                      numericValue={item.n}
+                    />
+                  ))}
+                </div>
 
-            {/* Card title */}
-            <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
-              <h2 className="text-sm font-semibold text-gray-800 dark:text-white">
-                {preview.title}
-              </h2>
-              <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
-                {preview.description}
-              </p>
-            </div>
+                {/* ── Main card ── */}
+                <div className={`overflow-hidden rounded-2xl border ${activePalette.border} bg-white dark:bg-white/[0.03]`}>
 
-            {/* Report tabs */}
-            <div className="flex flex-wrap gap-2 border-b border-gray-100 px-5 py-3.5 dark:border-white/[0.06]">
-              {REPORT_CATALOG.map((r) => (
-                <ReportTab
-                  key={r.id}
-                  label={r.label}
-                  active={activeId === r.id}
-                  onClick={() => handleTabChange(r.id)}
-                />
-              ))}
-            </div>
+                  {/* Card title con marca del módulo activo */}
+                  <div className="flex items-start gap-3 border-b border-gray-100 px-4 py-3 dark:border-white/[0.06]">
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${activePalette.bg} ${activePalette.icon}`}>
+                      {(() => {
+                        const Icon = activeModule.icon;
+                        return <Icon size={15} />;
+                      })()}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-sm font-semibold text-gray-800 dark:text-white">
+                        {preview.title}
+                      </h2>
+                      <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                        {preview.description}
+                      </p>
+                    </div>
+                  </div>
 
-            {/* Sub-filtros del tab Mantenimiento */}
-            {activeId === "rep-009" && (
-              <div className="flex flex-col gap-3 border-b border-gray-100 px-5 py-3.5 dark:border-white/[0.06]">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {([
-                      { id: "todos",       label: "Todos"       },
-                      { id: "programados", label: "Programados" },
-                      { id: "en_proceso",  label: "En proceso"  },
-                      { id: "completados", label: "Completados" },
-                    ] as const).map((opt) => (
+                  {/* Sub-filtros del tab Mantenimiento */}
+                  {activeId === "rep-009" && (
+                    <div className="flex flex-col gap-2.5 border-b border-gray-100 px-4 py-3 dark:border-white/[0.06]">
+                      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {([
+                            { id: "todos",       label: "Todos"       },
+                            { id: "programados", label: "Programados" },
+                            { id: "en_proceso",  label: "En proceso"  },
+                            { id: "completados", label: "Completados" },
+                          ] as const).map((opt) => (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => { setMaintSubtab(opt.id); setPage(1); }}
+                              className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                                maintSubtab === opt.id
+                                  ? "bg-blue-600 text-white shadow-sm"
+                                  : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white"
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-400 dark:text-gray-500">Categoría:</span>
+                          <select
+                            value={maintCategory}
+                            onChange={(e) => { setMaintCategory(e.target.value as typeof maintCategory); setPage(1); }}
+                            className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/40 dark:border-white/[0.06] dark:bg-white/[0.04] dark:text-gray-200"
+                          >
+                            <option value="all">Todas</option>
+                            <option value="Preventivo">Preventivo</option>
+                            <option value="Correctivo">Correctivo</option>
+                            <option value="Predictivo">Predictivo</option>
+                            <option value="Emergencia">Emergencia</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <CostBreakdownFilters
+                        workshops={workshops}
+                        suppliers={suppliers}
+                        workshopId={maintWorkshopId}
+                        supplierId={maintSupplierId}
+                        onWorkshopChange={(id) => { setMaintWorkshopId(id); setPage(1); }}
+                        onSupplierChange={(id) => { setMaintSupplierId(id); setPage(1); }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Date filter */}
+                  <div className={`flex flex-col gap-2.5 border-b border-gray-100 px-4 py-2.5 dark:border-white/[0.06] sm:flex-row sm:items-center sm:justify-between ${activePalette.bg}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <CalendarRange size={13} className={activePalette.icon} />
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                        Rango
+                      </span>
+                      <DatePicker
+                        label=""
+                        value={draft.from}
+                        onChange={(v) => setDraft((p) => ({ ...p, from: v }))}
+                        maxDate={draft.to || undefined}
+                      />
+                      <span className="text-xs text-gray-400">—</span>
+                      <DatePicker
+                        label=""
+                        value={draft.to}
+                        onChange={(v) => setDraft((p) => ({ ...p, to: v }))}
+                        minDate={draft.from || undefined}
+                      />
                       <button
-                        key={opt.id}
                         type="button"
-                        onClick={() => { setMaintSubtab(opt.id); setPage(1); }}
-                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                          maintSubtab === opt.id
-                            ? "bg-blue-600 text-white shadow-sm"
-                            : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white"
-                        }`}
+                        onClick={() => { setApplied(draft); setPage(1); }}
+                        className={`ml-1 inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold text-white shadow-sm transition active:scale-95 ${activePalette.bgActive}`}
                       >
-                        {opt.label}
+                        Aplicar
                       </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-400 dark:text-gray-500">Categoría:</span>
-                    <select
-                      value={maintCategory}
-                      onChange={(e) => { setMaintCategory(e.target.value as typeof maintCategory); setPage(1); }}
-                      className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/40 dark:border-white/[0.06] dark:bg-white/[0.04] dark:text-gray-200"
-                    >
-                      <option value="all">Todas</option>
-                      <option value="Preventivo">Preventivo</option>
-                      <option value="Correctivo">Correctivo</option>
-                      <option value="Predictivo">Predictivo</option>
-                      <option value="Emergencia">Emergencia</option>
-                    </select>
-                  </div>
-                </div>
-
-                <CostBreakdownFilters
-                  workshops={workshops}
-                  suppliers={suppliers}
-                  workshopId={maintWorkshopId}
-                  supplierId={maintSupplierId}
-                  onWorkshopChange={(id) => { setMaintWorkshopId(id); setPage(1); }}
-                  onSupplierChange={(id) => { setMaintSupplierId(id); setPage(1); }}
-                />
-              </div>
-            )}
-
-            {/* Date filter */}
-            <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
-              <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto]">
-                  <DatePicker
-                    label="Desde"
-                    value={draft.from}
-                    onChange={(v) => setDraft((p) => ({ ...p, from: v }))}
-                    maxDate={draft.to || undefined}
-                  />
-                  <DatePicker
-                    label="Hasta"
-                    value={draft.to}
-                    onChange={(v) => setDraft((p) => ({ ...p, to: v }))}
-                    minDate={draft.from || undefined}
-                  />
-                  <div className="flex items-end">
-                    <button
-                      type="button"
-                      onClick={() => { setApplied(draft); setPage(1); }}
-                      className="inline-flex h-10 items-center gap-2 rounded-xl bg-brand-500 px-5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95"
-                    >
-                      Consultar
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
-                  <CalendarRange size={13} className="shrink-0 text-brand-400" />
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                      Rango aplicado
-                    </p>
-                    <p className="mt-0.5 text-xs font-medium text-gray-700 dark:text-gray-300">
+                    </div>
+                    <p className="text-[10px] text-gray-400 dark:text-gray-500">
                       {applied.from
                         ? new Date(applied.from + "T00:00:00").toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" })
                         : "Inicio abierto"
@@ -847,108 +1144,111 @@ export function ReportsPage() {
                       }
                     </p>
                   </div>
+
+                  {/* Desglose de costos (solo rep-009) */}
+                  {activeId === "rep-009" && (
+                    <CostBreakdownPanel
+                      companyId={session?.companyId ?? null}
+                      workshopId={maintWorkshopId}
+                      supplierId={maintSupplierId}
+                      onClear={() => { setMaintWorkshopId(null); setMaintSupplierId(null); }}
+                    />
+                  )}
+
+                  {/* Search + Export */}
+                  <div className="border-b border-gray-100 px-4 py-2.5 dark:border-white/[0.06]">
+                    <div className="flex items-center gap-3">
+                      <div className="relative flex-1 max-w-sm">
+                        <Search
+                          size={14}
+                          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                        />
+                        <input
+                          type="text"
+                          value={search}
+                          onChange={(e) => handleSearchChange(e.target.value)}
+                          placeholder="Buscar dentro del reporte..."
+                          className="h-9 w-full rounded-xl border border-gray-200 bg-transparent pl-9 pr-4 text-sm text-gray-700 placeholder:text-gray-400 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:text-gray-300 dark:placeholder:text-gray-500"
+                        />
+                      </div>
+                      <ExportToolbar
+                        title={preview.title}
+                        columns={preview.columns}
+                        rows={visibleRows}
+                        subtitle={`Rango: ${applied.from || "inicio abierto"} — ${applied.to || "fin abierto"}`}
+                        filename={`reporte-${activeId}`}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Table body */}
+                  {loading ? (
+                    <div className="flex items-center justify-center gap-3 py-16 text-gray-400">
+                      <Loader2 size={18} className="animate-spin" />
+                      <span className="text-sm">Cargando datos...</span>
+                    </div>
+                  ) : visibleRows.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center gap-2 py-14">
+                      <FileBarChart2 size={20} className="text-gray-300 dark:text-gray-600" />
+                      <p className="text-sm font-medium text-gray-400 dark:text-gray-500">Sin registros</p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500">
+                        Ninguna fila coincide con el rango o filtro actual.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[840px] text-sm">
+                          <thead>
+                            <tr className="border-b border-gray-100 dark:border-white/[0.06]">
+                              {preview.columns.map((col) => (
+                                <th
+                                  key={col.key}
+                                  className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500"
+                                >
+                                  {col.label}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody key={`${activeId}-${page}`} className="divide-y divide-gray-100 dark:divide-white/[0.04]">
+                            {pagedRows.map((row, i) => (
+                              <motion.tr
+                                key={i}
+                                initial={{ opacity: 0, y: 6 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.16, delay: i * 0.025, ease: "easeOut" }}
+                                className="hover:bg-gray-50/80 dark:hover:bg-white/[0.02]"
+                              >
+                                {preview.columns.map((col) => (
+                                  <td
+                                    key={col.key}
+                                    className="px-4 py-2.5 text-gray-600 dark:text-gray-300"
+                                  >
+                                    {String(row[col.key] ?? "—")}
+                                  </td>
+                                ))}
+                              </motion.tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <Pagination
+                        page={page}
+                        totalPages={totalPages}
+                        onPrev={() => setPage((p) => p - 1)}
+                        onNext={() => setPage((p) => p + 1)}
+                        onPage={setPage}
+                      />
+                    </>
+                  )}
+
                 </div>
-              </div>
-            </div>
-
-            {/* Desglose de costos (solo rep-009) */}
-            {activeId === "rep-009" && (
-              <CostBreakdownPanel
-                companyId={session?.companyId ?? null}
-                workshopId={maintWorkshopId}
-                supplierId={maintSupplierId}
-                onClear={() => { setMaintWorkshopId(null); setMaintSupplierId(null); }}
-              />
-            )}
-
-            {/* Search + Export */}
-            <div className="border-b border-gray-100 px-5 py-3 dark:border-white/[0.06]">
-              <div className="flex items-center gap-3">
-                <div className="relative flex-1 max-w-sm">
-                  <Search
-                    size={14}
-                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-                  />
-                  <input
-                    type="text"
-                    value={search}
-                    onChange={(e) => handleSearchChange(e.target.value)}
-                    placeholder="Buscar dentro del reporte..."
-                    className="h-9 w-full rounded-xl border border-gray-200 bg-transparent pl-9 pr-4 text-sm text-gray-700 placeholder:text-gray-400 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:text-gray-300 dark:placeholder:text-gray-500"
-                  />
-                </div>
-                <ExportToolbar
-                  title={preview.title}
-                  columns={preview.columns}
-                  rows={visibleRows}
-                  subtitle={`Rango: ${applied.from || "inicio abierto"} — ${applied.to || "fin abierto"}`}
-                  filename={`reporte-${activeId}`}
-                />
-              </div>
-            </div>
-
-            {/* Table body */}
-            {loading ? (
-              <div className="flex items-center justify-center gap-3 py-20 text-gray-400">
-                <Loader2 size={18} className="animate-spin" />
-                <span className="text-sm">Cargando datos...</span>
-              </div>
-            ) : visibleRows.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-2 py-16">
-                <FileBarChart2 size={20} className="text-gray-300 dark:text-gray-600" />
-                <p className="text-sm font-medium text-gray-400 dark:text-gray-500">Sin registros</p>
-                <p className="text-xs text-gray-400 dark:text-gray-500">
-                  Ninguna fila coincide con el rango o filtro actual.
-                </p>
-              </div>
-            ) : (
-              <>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[900px] text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                        {preview.columns.map((col) => (
-                          <th
-                            key={col.key}
-                            className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500"
-                          >
-                            {col.label}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                      {pagedRows.map((row, i) => (
-                        <tr
-                          key={i}
-                          className="transition-colors hover:bg-gray-50/80 dark:hover:bg-white/[0.02]"
-                        >
-                          {preview.columns.map((col) => (
-                            <td
-                              key={col.key}
-                              className="px-5 py-3.5 text-gray-600 dark:text-gray-300"
-                            >
-                              {String(row[col.key] ?? "—")}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <Pagination
-                  page={page}
-                  totalPages={totalPages}
-                  onPrev={() => setPage((p) => p - 1)}
-                  onNext={() => setPage((p) => p + 1)}
-                  onPage={setPage}
-                />
-              </>
-            )}
-
+              </motion.div>
+            </AnimatePresence>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -1030,7 +1330,7 @@ function CostBreakdownPanel({
 
   if (!enabled) {
     return (
-      <div className="border-b border-gray-100 px-5 py-3 dark:border-white/[0.06]">
+      <div className="border-b border-gray-100 px-4 py-2.5 dark:border-white/[0.06]">
         <p className="text-[11px] text-gray-400 dark:text-gray-500">
           Selecciona un <strong className="text-gray-600 dark:text-gray-300">taller</strong> o un <strong className="text-gray-600 dark:text-gray-300">proveedor</strong> arriba para ver el desglose de mano de obra y repuestos.
         </p>
@@ -1040,7 +1340,7 @@ function CostBreakdownPanel({
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 border-b border-gray-100 px-5 py-4 text-gray-400 dark:border-white/[0.06]">
+      <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-3 text-gray-400 dark:border-white/[0.06]">
         <span className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
         <span className="text-[11px]">Cargando desglose…</span>
       </div>
@@ -1049,14 +1349,14 @@ function CostBreakdownPanel({
 
   if (error || !data) {
     return (
-      <div className="border-b border-rose-200 bg-rose-50 px-5 py-3 text-[11px] text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+      <div className="border-b border-rose-200 bg-rose-50 px-4 py-2.5 text-[11px] text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
         Error al cargar el desglose: {error ?? "sin datos"}
       </div>
     );
   }
 
   return (
-    <div className="border-b border-gray-100 bg-gray-50/40 px-5 py-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
+    <div className="border-b border-gray-100 bg-gray-50/40 px-4 py-3 dark:border-white/[0.06] dark:bg-white/[0.02]">
       <div className="mb-2.5 flex items-center justify-between">
         <p className="text-[11px] font-semibold text-gray-800 dark:text-white">
           Desglose de costos
@@ -1107,15 +1407,13 @@ function CostBreakdownPanel({
 
         {data.bySupplier.length > 0 && (
           <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-              Por proveedor (repuestos)
-            </p>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Por proveedor</p>
             <div className="space-y-1">
               {data.bySupplier.map((s) => (
                 <div key={s.supplierId} className="flex items-center justify-between rounded-md border border-gray-200 bg-white px-2.5 py-1.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
                   <div>
                     <p className="text-[11px] font-medium text-gray-700 dark:text-gray-200">{s.supplierName}</p>
-                    <p className="text-[9px] text-gray-400">{s.itemsCount} ítems</p>
+                    <p className="text-[9px] text-gray-400">{s.count} repuestos</p>
                   </div>
                   <p className="text-[11px] font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(s.total)}</p>
                 </div>
@@ -1124,56 +1422,10 @@ function CostBreakdownPanel({
           </div>
         )}
       </div>
-
-      {data.mantenances.length > 0 && (
-        <details className="mt-3">
-          <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wider text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white">
-            Ver {data.mantenances.length} mantenimiento{data.mantenances.length === 1 ? "" : "s"} con desglose
-          </summary>
-          <div className="mt-2 overflow-x-auto rounded-md border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.02]">
-            <table className="w-full text-[10px]">
-              <thead>
-                <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                  <th className="px-2 py-1.5 text-left font-semibold text-gray-500 dark:text-gray-400">OT</th>
-                  <th className="px-2 py-1.5 text-left font-semibold text-gray-500 dark:text-gray-400">Vehículo</th>
-                  <th className="px-2 py-1.5 text-right font-semibold text-gray-500 dark:text-gray-400">Mano obra</th>
-                  <th className="px-2 py-1.5 text-right font-semibold text-gray-500 dark:text-gray-400">
-                    Repuestos{supplierId != null ? " (filtrado)" : ""}
-                  </th>
-                  <th className="px-2 py-1.5 text-right font-semibold text-gray-500 dark:text-gray-400">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.mantenances.slice(0, 30).map((m) => (
-                  <tr key={m.id} className="border-b border-gray-50 dark:border-white/[0.04]">
-                    <td className="px-2 py-1.5 text-gray-700 dark:text-gray-300">{m.id} · {m.title}</td>
-                    <td className="px-2 py-1.5 text-gray-700 dark:text-gray-300">{m.assetPlate}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-300">{fmtMoney(m.manoObra)}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-300">{fmtMoney(m.repuestos)}</td>
-                    <td className="px-2 py-1.5 text-right font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(m.total)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {data.mantenances.length > 30 && (
-              <p className="border-t border-gray-100 px-2 py-1.5 text-center text-[10px] text-gray-400 dark:border-white/[0.06]">
-                Mostrando 30 de {data.mantenances.length} mantenimientos.
-              </p>
-            )}
-          </div>
-        </details>
-      )}
-
-      {data.mantenances.length === 0 && (
-        <p className="mt-2 text-center text-[11px] text-gray-400 dark:text-gray-500">
-          No hay mantenimientos con esos filtros en el rango seleccionado.
-        </p>
-      )}
     </div>
   );
 }
 
-function fmtMoney(n: number): string {
-  if (!Number.isFinite(n)) return "0.00";
-  return n.toLocaleString("es-EC", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function fmtMoney(n: number) {
+  return `${n.toFixed(2)} USD`;
 }

@@ -1,27 +1,7 @@
 "use client";
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  useExitAuthorizations
-// ─────────────────────────────────────────────────────────────────────────────
-//  CRUD + WebSocket para el módulo de autorizaciones de salida.
-//
-//  Eventos WS consumidos:
-//    - exit-authorization:created   → nueva solicitud
-//    - exit-authorization:decided   → aprobada o rechazada
-//    - exit-authorization:deleted   → borrada
-//
-//  Para el conductor, el filtro `driverId` se aplica en el backend
-//  (sólo ve las suyas). Para el resto, ve todas las de la empresa.
-//
-//  Comportamiento en vivo:
-//    • Cuando llega un `created`/`decided`/`deleted` por WS actualizamos el
-//      estado local de forma optimista (UX instantánea).
-//    • A continuación disparamos un `fetchList` silencioso (sin spinner) para
-//      reconciliar cualquier campo calculado en backend (p. ej. joins) y
-//      evitar filas "fantasma" si el evento WS llegó con datos incompletos.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { useCallback, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
 import { useExitAuthorizationsSocket } from "./useExitAuthorizationsSocket";
 
@@ -54,6 +34,10 @@ export type ExitAuthorization = {
   assetPlate: string | null;
   driverName: string | null;
   decidedByName: string | null;
+  aiAnalysisStatus: string | null;
+  correctionsSentAt: string | null;
+  correctionsRound: number;
+  correctionsResubmittedAt: string | null;
 };
 
 export type CreateExitAuthorizationInput = {
@@ -109,6 +93,12 @@ function mapRow(raw: Record<string, unknown>): ExitAuthorization {
     decisionNotes:             (raw.decisionNotes as string | null) ?? (raw.decision_notes as string | null) ?? null,
     decisionByUserId:          raw.decisionByUserId ? String(raw.decisionByUserId) : (raw.decision_by_user_id ? String(raw.decision_by_user_id) : null),
     decidedAt:                 (raw.decidedAt  as string | null) ?? (raw.decided_at  as string | null) ?? null,
+    aiAnalysisStatus:  (raw.aiAnalysisStatus  as string | null) ?? (raw.ai_analysis_status  as string | null) ?? null,
+    correctionsSentAt: (raw.correctionsSentAt as string | null) ?? (raw.corrections_sent_at as string | null) ?? null,
+    correctionsRound:  typeof raw.correctionsRound === "number"
+      ? raw.correctionsRound
+      : (typeof raw.corrections_round === "number" ? raw.corrections_round : 0),
+    correctionsResubmittedAt: (raw.correctionsResubmittedAt as string | null) ?? (raw.corrections_resubmitted_at as string | null) ?? null,
     requestedAt:               String(raw.requestedAt ?? raw.requested_at ?? ""),
     createdAt:                 String(raw.createdAt   ?? raw.created_at   ?? ""),
     updatedAt:                 String(raw.updatedAt   ?? raw.updated_at   ?? ""),
@@ -128,10 +118,26 @@ export function useExitAuthorizations() {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const [wsChangeCount, setWsChangeCount] = useState(0);
-  const [wsDecidedCount, setWsDecidedCount] = useState(0);
+  const [wsCorrectionsCount, setWsCorrectionsCount] = useState(0);
+  // AuthId de la última decisión recibida por WS. La página del
+  // conductor compara contra `shownIds` para no mostrar el popup de
+  // decisión DOS veces para la misma autorización.
+  const [wsLastDecidedId, setWsLastDecidedId] = useState<string | null>(null);
+  // AuthId del último análisis IA aprobado. La página del conductor
+  // muestra el popup "¡IA aprobó!" solo cuando este valor cambia.
+  // Antes era un counter que se incrementaba N veces por análisis
+  // (re-análisis, polling, etc.) y disparaba el popup múltiples veces.
+  const [wsLastAiAptoId, setWsLastAiAptoId] = useState<string | null>(null);
+  // AuthId del último análisis IA que falló (ej: video muy grande).
+  // La página del conductor lo escucha para cerrar el AnalyzingModal
+  // y mostrar el modal de "reenviar solo el video".
+  const [wsLastFailedId, setWsLastFailedId] = useState<string | null>(null);
+  // Mensaje del último error de análisis IA. Se setea junto con el
+  // counter y se usa para mostrar el mini-modal de "reenviar" SOLO
+  // cuando el errorCode es `VIDEO_TOO_LARGE`. Para otros errores
+  // (transitorios, desconocidos) solo se muestra el toast.
+  const [lastAnalysisError, setLastAnalysisError] = useState<{ authId: string; message: string; code: string } | null>(null);
 
-  // ── fetchList ref-estable para que el `useEffect` del WS no la liste
-  //    como dependencia (lo recrearía en cada cambio de estado).
   const fetchListRef = useRef<(params?: ListExitAuthorizationsParams) => Promise<void>>(
     async () => {},
   );
@@ -168,8 +174,6 @@ export function useExitAuthorizations() {
     [companyIdStr],
   );
 
-  // Variante silenciosa — no toca el spinner. La usamos para reconciliar
-  // estado en respuesta a eventos WebSocket sin parpadear la UI.
   const fetchListSilent = useCallback(
     async (params: ListExitAuthorizationsParams = {}) => {
       if (!companyIdStr) return;
@@ -192,33 +196,55 @@ export function useExitAuthorizations() {
         );
         setItems(arr);
       } catch {
-        // Silencioso: en WS no queremos propagar errores de reconciliación.
+        // Silencioso
       }
     },
     [companyIdStr],
   );
 
-  // Mantener la ref siempre apuntando a la última versión.
   fetchListRef.current = fetchListSilent;
 
-  // ── Suscripción WS ────────────────────────────────────────────────────────
-  //  Importante: este useEffect SOLO depende de (session, companyIdStr) para
-  //  evitar reconexiones por re-render. La lógica de "refetch silencioso
-  //  cuando llega un evento" se hace aquí mismo.
   useExitAuthorizationsSocket(companyIdStr, {
     onCreated: (a) => {
       const mapped = mapRow(a as unknown as Record<string, unknown>);
       setItems((prev) => {
-        // Si ya existe (por nuestra propia creación optimista), reemplazamos.
         if (prev.some((x) => x.id === mapped.id)) {
           return prev.map((x) => (x.id === mapped.id ? mapped : x));
         }
         return [mapped, ...prev];
       });
       setWsChangeCount((n) => n + 1);
-      // Reconciliación silenciosa: si el evento WS vino con datos incompletos
-      // (p. ej. sin driverName), el GET devuelve la fila completa.
       void fetchListRef.current().catch(() => {});
+    },
+    onCorrectionsSent: () => {
+      void fetchListRef.current().catch(() => {});
+      setWsCorrectionsCount((n) => n + 1);
+    },
+    onCorrectionsResubmitted: () => {
+      void fetchListRef.current().catch(() => {});
+      setWsCorrectionsCount((n) => n + 1);
+    },
+    onAnalysisFailed: (data) => {
+      // El análisis IA falló. Mostramos un toast con el mensaje
+      // AMIGABLE (`userMessage`) que el backend clasificó. NUNCA
+      // mostramos el errorMessage técnico (JSON crudo de Gemini).
+      //
+      // Si el código es VIDEO_TOO_LARGE, el `ResubmitVideoModal` se
+      // va a abrir para que el conductor reenvíe solo el video. Para
+      // otros códigos (UNKNOWN), el toast le avisa que contacte al
+      // supervisor.
+      toast.error(data.userMessage, {
+        duration: 8000,
+      });
+      // Refetch silencioso para actualizar el status de la autorización.
+      void fetchListRef.current().catch(() => {});
+      // Guardamos el authId, el mensaje y el código. La página del
+      // conductor compara contra `wsLastFailedId` para mostrar el
+      // mini-modal UNA sola vez por authId, y usa `code` para decidir
+      // si abrir el modal de "reenviar video" (solo VIDEO_TOO_LARGE)
+      // o solo mostrar el toast.
+      setWsLastFailedId(data.exitAuthorizationId);
+      setLastAnalysisError({ authId: data.exitAuthorizationId, message: data.userMessage, code: data.errorCode });
     },
     onDecided: (a) => {
       const mapped = mapRow(a as unknown as Record<string, unknown>);
@@ -226,13 +252,38 @@ export function useExitAuthorizations() {
         prev.map((x) => (x.id === mapped.id ? { ...x, ...mapped } : x))
       );
       setWsChangeCount((n) => n + 1);
-      setWsDecidedCount((n) => n + 1);
+      // Guardamos el authId de la última decisión. La página del
+      // conductor compara contra `wsLastDecidedId` para no mostrar el
+      // popup de decisión DOS veces para la misma autorización.
+      setWsLastDecidedId(mapped.id);
       void fetchListRef.current().catch(() => {});
     },
     onDeleted: ({ id }) => {
       setItems((prev) => prev.filter((x) => x.id !== id));
       setWsChangeCount((n) => n + 1);
       void fetchListRef.current().catch(() => {});
+    },
+    onAnalysisCompleted: (data) => {
+      // Refetch silencioso para actualizar aiAnalysisStatus en la lista.
+      void fetchListRef.current().catch(() => {});
+
+      if (data.decision === "apto" || data.decision === "aprobado_ia") {
+        // La IA aprobó. Guardamos el authId del último análisis apto.
+        // La página del conductor compara contra `wsLastAiAptoId` para
+        // mostrar el popup "¡IA aprobó!" UNA sola vez por authId.
+        setWsLastAiAptoId(data.exitAuthorizationId);
+        // Si había un error de análisis pendiente para este mismo
+        // authId, lo limpiamos: la aprobación del re-análisis significa
+        // que el problema se resolvió.
+        setLastAnalysisError((prev) =>
+          prev?.authId === data.exitAuthorizationId ? null : prev
+        );
+      } else if (data.decision === "requiere_correccion") {
+        // corrections-sent ya lo maneja, pero incrementamos por si acaso.
+        setWsCorrectionsCount((n) => n + 1);
+      }
+      // requiere_revision_humana: no hacemos nada especial en el conductor,
+      // el supervisor lo ve en su panel.
     },
   });
 
@@ -307,10 +358,7 @@ export function useExitAuthorizations() {
       if (!companyIdStr) throw new Error("companyId requerido");
       const res = await fetch(
         `/api/company/${companyIdStr}/exit-authorizations/${id}`,
-        {
-          method: "DELETE",
-          credentials: "include",
-        },
+        { method: "DELETE", credentials: "include" },
       );
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -325,6 +373,17 @@ export function useExitAuthorizations() {
     items, loading, error,
     fetchList, fetchListSilent, fetchConductorContext, create, decide, remove,
     refetch: () => fetchList(),
-    wsChangeCount, wsDecidedCount,
+    wsChangeCount, wsCorrectionsCount,
+    // AuthId de la última decisión recibida por WS. La página del
+    // conductor compara contra `shownIds` para no mostrar el popup de
+    // decisión DOS veces.
+    wsLastDecidedId,
+    // AuthId del último análisis IA aprobado. La página del conductor
+    // muestra el popup "¡IA aprobó!" solo cuando este valor cambia.
+    wsLastAiAptoId,
+    // AuthId del último análisis IA que falló. La página del conductor
+    // muestra el mini-modal de "reenviar solo el video" solo cuando
+    // este valor cambia.
+    wsLastFailedId, lastAnalysisError,
   };
 }

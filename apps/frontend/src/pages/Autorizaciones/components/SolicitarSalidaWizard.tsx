@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, ChevronLeft, ChevronRight, Camera, Video, Upload, Check,
   Loader2, Droplet, CircleDot, Battery, Wrench,
-  Lightbulb, Wind, Disc3, FileText,
+  Lightbulb, Wind, Disc3, FileText, Lock, AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../../../context/AuthContext";
@@ -62,13 +62,23 @@ type Props = {
   onCreated: (auth: ExitAuthorization) => void;
   initialAsset?: AssetLite | null;
   driverId?: number | null;
+  correctionMode?: {
+    authId: string;
+    companyId: string;
+    items: Array<{
+      stepId: StepId;
+      reason: string;
+      photoField: 'coolantPhotoUrl' | 'brakeFluidPhotoUrl' | 'lightsPhotoUrl' | 'batteryPhotoUrl' | 'oilBayonetaVideoUrl';
+    }>;
+    existingAuthorization: ExitAuthorization;
+  } | null;
 };
 
-export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset = null, driverId = null }: Props) {
+export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset = null, driverId = null, correctionMode = null }: Props) {
   const { session } = useAuth();
   const companyId = session?.companyId;
   const { create } = useExitAuthorizations();
-  const { enqueue, resolveAll, getState, reset } = useUploadQueue(companyId ?? "");
+  const { enqueue, resolveAll, getState, reset } = useUploadQueue(correctionMode?.companyId ?? companyId ?? "");
 
   const myDriverId: number | null = (() => {
     if (driverId) return driverId;
@@ -81,27 +91,102 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
   const [stepIdx, setStepIdx] = useState(0);
   const step = STEPS[stepIdx];
 
+  type CorrectionItemLocal = {
+    stepId: StepId;
+    reason: string;
+    photoField: 'coolantPhotoUrl' | 'brakeFluidPhotoUrl' | 'lightsPhotoUrl' | 'batteryPhotoUrl' | 'oilBayonetaVideoUrl';
+  };
+  const [localCorrectionItems, setLocalCorrectionItems] = useState<CorrectionItemLocal[] | null>(null);
+  const [correctionsLoading, setCorrectionsLoading] = useState(false);
+  const [correctionsError, setCorrectionsError] = useState<string | null>(null);
+
+  const ITEM_TYPE_TO_STEP: Record<string, { stepId: StepId; photoField: CorrectionItemLocal['photoField'] } | null> = {
+    refrigerante:    { stepId: "coolant",            photoField: "coolantPhotoUrl"      },
+    frenos:          { stepId: "brake_fluid",        photoField: "brakeFluidPhotoUrl"   },
+    tablero_luces:   { stepId: "lights",             photoField: "lightsPhotoUrl"       },
+    bateria:         { stepId: "battery",            photoField: "batteryPhotoUrl"      },
+    bayoneta_aceite: { stepId: "oil_bayoneta_video", photoField: "oilBayonetaVideoUrl"  },
+    llanta_delantera_izq:  null,
+    llanta_delantera_der:  null,
+    llanta_trasera_izq:    null,
+    llanta_trasera_der:    null,
+    limpiaparabrisas:      null,
+    gato:                  null,
+  };
+
   const [assetId] = useState<number | null>(initialAsset?.id ? Number(initialAsset.id) : null);
-  // Previews locales — URLs de objeto creadas con URL.createObjectURL
-  // El chofer ve la foto/video inmediatamente sin esperar el upload
   const [localPreviews, setLocalPreviews] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Limpiar object URLs al desmontar para no leakear memoria
   const previewsRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     if (open) {
-      // Limpiar previews anteriores
       Object.values(previewsRef.current).forEach(URL.revokeObjectURL);
       previewsRef.current = {};
       setLocalPreviews({});
       setStepIdx(0);
       setNotes("");
       reset();
+      setLocalCorrectionItems(null);
+      setCorrectionsError(null);
+      setCorrectionsLoading(false);
     }
   }, [open, reset]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!correctionMode) return;
+    if (correctionMode.items.length > 0) {
+      setLocalCorrectionItems(correctionMode.items.map((i) => ({
+        stepId: i.stepId,
+        reason: i.reason,
+        photoField: i.photoField,
+      })));
+      return;
+    }
+    let cancelled = false;
+    setCorrectionsLoading(true);
+    setCorrectionsError(null);
+    fetch(`/api/company/${correctionMode.companyId}/exit-authorizations/${correctionMode.authId}/corrections`, {
+      credentials: 'include',
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<{
+          round: number;
+          sentAt: string;
+          items: Array<{ itemType: string; photoField: CorrectionItemLocal['photoField']; reason: string }>;
+        }>;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const mapped: CorrectionItemLocal[] = [];
+        const skipped: string[] = [];
+        for (const it of data.items) {
+          const m = ITEM_TYPE_TO_STEP[it.itemType];
+          if (m) {
+            mapped.push({ stepId: m.stepId, reason: it.reason, photoField: it.photoField });
+          } else {
+            skipped.push(it.itemType);
+          }
+        }
+        if (skipped.length > 0) {
+          console.warn('[wizard:corrections] tipos sin mapping (no se pueden rehacer):', skipped);
+        }
+        setLocalCorrectionItems(mapped);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('[wizard:corrections] error:', err);
+        setCorrectionsError(err instanceof Error ? err.message : 'Error al cargar correcciones');
+      })
+      .finally(() => {
+        if (!cancelled) setCorrectionsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [open, correctionMode]);
 
   useEffect(() => {
     return () => {
@@ -112,21 +197,80 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
   if (!open) return null;
 
   const hasPreview = (stepId: string) => !!localPreviews[stepId];
-  const totalRequired = STEPS.filter((s) => s.required).length;
-  const completedRequired = STEPS.filter((s) => s.required && hasPreview(s.id)).length;
-  // El chofer puede avanzar apenas tiene preview local — no espera el upload
-  const canAdvance = !step.required || hasPreview(step.id);
+
+  const isCorrectionMode = !!correctionMode;
+  const effectiveCorrectionItems = localCorrectionItems ?? (correctionMode?.items ?? []);
+  const correctionStepIds = new Set<StepId>(
+    effectiveCorrectionItems.map((i) => i.stepId)
+  );
+
+  // ── FIX 1: Progreso y condición de submit adaptados al modo ──
+  // En corrección: solo cuentan los steps que el supervisor marcó.
+  // En normal: cuentan todos los steps requeridos.
+  const relevantSteps = isCorrectionMode
+    ? STEPS.filter((s) => correctionStepIds.has(s.id as StepId))
+    : STEPS.filter((s) => s.required);
+
+  const totalRequired = relevantSteps.length;
+  const completedRequired = relevantSteps.filter((s) => hasPreview(s.id)).length;
+
+  const isStepLocked = (stepId: StepId): boolean => {
+    if (!isCorrectionMode) return false;
+    if (stepId === "notes") return false;
+    return !correctionStepIds.has(stepId);
+  };
+
+  // ── FIX 2: Reason del step actual para mostrárselo al conductor ──
+  const currentCorrectionItem = isCorrectionMode
+    ? effectiveCorrectionItems.find((i) => i.stepId === step.id) ?? null
+    : null;
+
+  function getCurrentUrlForStep(stepId: StepId): string | null {
+    if (!isCorrectionMode) return null;
+    const auth = correctionMode!.existingAuthorization as unknown as Record<string, any>;
+    switch (stepId) {
+      case "coolant":            return auth.coolantPhotoUrl ?? null;
+      case "brake_fluid":        return auth.brakeFluidPhotoUrl ?? null;
+      case "lights":             return auth.lightsPhotoUrl ?? null;
+      case "battery":            return auth.batteryPhotoUrl ?? null;
+      case "oil_bayoneta_video": return auth.oilBayonetaVideoUrl ?? null;
+      case "windshield_washer":  return auth.windshieldWasherPhotoUrl ?? null;
+      case "jack":               return auth.jackPhotoUrl ?? null;
+      case "tire_front_left":    return Array.isArray(auth.tirePhotosUrl) ? (auth.tirePhotosUrl[0] ?? null) : null;
+      case "tire_front_right":   return Array.isArray(auth.tirePhotosUrl) ? (auth.tirePhotosUrl[1] ?? null) : null;
+      case "tire_rear_left":     return Array.isArray(auth.tirePhotosUrl) ? (auth.tirePhotosUrl[2] ?? null) : null;
+      case "tire_rear_right":    return Array.isArray(auth.tirePhotosUrl) ? (auth.tirePhotosUrl[3] ?? null) : null;
+      default:                   return null;
+    }
+  }
+
+  function isStepConsideredComplete(stepId: StepId): boolean {
+    if (hasPreview(stepId)) return true;
+    if (isCorrectionMode && !correctionStepIds.has(stepId) && stepId !== "notes") {
+      return true;
+    }
+    return false;
+  }
+  const canAdvance = !step.required || isStepConsideredComplete(step.id);
+
+  function getNextUnlockedStep(currentIdx: number): number {
+    if (!isCorrectionMode) return Math.min(STEPS.length - 1, currentIdx + 1);
+    for (let i = currentIdx + 1; i < STEPS.length; i++) {
+      if (!isStepLocked(STEPS[i].id)) return i;
+    }
+    return STEPS.length - 1;
+  }
 
   async function handleFile(captured: File) {
     if (!companyId) return;
 
-    const sizeMB = +(captured.size / 1024 / 1024).toFixed(2); 
+    if (isStepLocked(step.id)) {
+      toast.error("Esta foto no necesita correcciones. Avanza al siguiente paso.");
+      return;
+    }
 
-    // ── Guard de tamaño para videos: bloqueamos > 50 MB antes de subir ──
-    // La política del producto es: videos de **máximo 2 minutos**.
-    // Como no podemos leer la duración antes de decodificar, usamos
-    // tamaño como proxy: un video de 2 min a 720p H.264 pesa ~25-40 MB.
-    // Si llega más de 50 MB, asumimos que es más largo o está en 1080p HEVC.
+    const sizeMB = +(captured.size / 1024 / 1024).toFixed(2);
+
     const MAX_VIDEO_MB = 50;
     if (step.type === "video" && sizeMB > MAX_VIDEO_MB) {
       toast.error(
@@ -138,24 +282,19 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
       return;
     }
 
-    // 1. Preview local inmediato
     const localUrl = URL.createObjectURL(captured);
     previewsRef.current[step.id] = localUrl;
     setLocalPreviews((prev) => ({ ...prev, [step.id]: localUrl }));
 
-    // 2. Comprimir imagen (no video) antes de encolar
     let toUpload = captured;
     if (captured.type.startsWith("image/")) {
       try { toUpload = await compressImage(captured); } catch { /* usar original */ }
     }
 
-    // 3. Lanzar upload en background — sin await
     const isVideo = step.type === "video";
     enqueue(step.id, toUpload, isVideo).catch((err: any) => {
       console.error("[wizard:capture-error] full err:", err);
-      // Mostramos el mensaje real al usuario para que sepamos qué falló.
       let msg = err?.message ?? String(err);
-      // Errores típicos de red
       if (err?.name === "TypeError" && /fetch/i.test(msg)) {
         msg = "No se pudo conectar al servidor. Revisá tu conexión.";
       } else if (err?.name === "AbortError") {
@@ -165,7 +304,7 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
     });
   }
 
-  function next() { if (canAdvance) setStepIdx((i) => Math.min(STEPS.length - 1, i + 1)); }
+  function next() { if (canAdvance) setStepIdx((i) => getNextUnlockedStep(i)); }
   function prev() { setStepIdx((i) => Math.max(0, i - 1)); }
 
   async function handleSubmit() {
@@ -174,28 +313,38 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
       return;
     }
 
-    // Verificar que no haya capturas pendientes
-    const missing = MEDIA_STEP_IDS.filter((id) => !localPreviews[id]);
+    if (isCorrectionMode && (correctionsLoading || !localCorrectionItems)) {
+      toast.error("Esperá a que terminen de cargar las correcciones.");
+      return;
+    }
+
+    // ── FIX 1 (submit): En corrección, solo validar los steps marcados ──
+    const missing = MEDIA_STEP_IDS.filter((id) => {
+      if (localPreviews[id]) return false;
+      if (isCorrectionMode && !correctionStepIds.has(id)) return false;
+      return true;
+    });
     if (missing.length > 0) {
       toast.error("Faltan capturas por subir. Completá todos los pasos antes de enviar.");
       return;
     }
 
-    // Verificar que no haya uploads en error
-    const errorSteps = MEDIA_STEP_IDS.filter((id) => getState(id) === "error");
+    const errorSteps = MEDIA_STEP_IDS.filter((id) => {
+      if (isCorrectionMode && !correctionStepIds.has(id)) return false;
+      return getState(id) === "error";
+    });
     if (errorSteps.length > 0) {
-      toast.error("Algunos archivos fallaron al subir. Vuelve atrás y repite esas capturas.");
+      toast.error("Algunos archivos fallaron al subir. Volvé atrás y repetí esas capturas.");
       return;
     }
 
-    // Si todavía hay uploads en vuelo, no dejamos enviar — el usuario
-    // debe esperar a que terminen (puede tardar varios segundos si es un
-    // video pesado con muchos chunks).
-    const uploadingSteps = MEDIA_STEP_IDS.filter((id) => getState(id) === "uploading");
+    const uploadingSteps = MEDIA_STEP_IDS.filter((id) => {
+      if (isCorrectionMode && !correctionStepIds.has(id)) return false;
+      return getState(id) === "uploading";
+    });
     if (uploadingSteps.length > 0) {
       toast.error(
-        `Espera a que termine de subirse el video (${uploadingSteps.length} archivo(s) en curso). ` +
-        `Esto puede tardar unos segundos.`,
+        `Esperá a que termine de subirse el archivo (${uploadingSteps.length} en curso). Esto puede tardar unos segundos.`,
         { duration: 6000 },
       );
       return;
@@ -203,9 +352,68 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
 
     setSubmitting(true);
     try {
-      // Esperar cualquier upload que todavía esté en vuelo
-      // (no debería haber ninguno aquí, pero por seguridad)
       const urls = await resolveAll(MEDIA_STEP_IDS);
+
+      if (isCorrectionMode && correctionMode) {
+        const correctionCompanyId = correctionMode.companyId;
+        const correctionAuthId = correctionMode.authId;
+        if (effectiveCorrectionItems.length === 0) {
+          throw new Error("No hay correcciones para enviar. Recargá la página.");
+        }
+
+        for (const item of effectiveCorrectionItems) {
+          const newUrl = urls[item.stepId];
+          if (!newUrl) {
+            throw new Error(`No hay URL nueva para ${item.stepId}. Volvé a tomar la foto.`);
+          }
+          if (!correctionStepIds.has(item.stepId)) continue;
+          const patchRes = await fetch(
+            `/api/company/${correctionCompanyId}/exit-authorizations/${correctionAuthId}/photo`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ field: item.photoField, url: newUrl }),
+            },
+          );
+          if (!patchRes.ok) {
+            const body = await patchRes.json().catch(() => ({}));
+            throw new Error((body as { error?: string }).error ?? `HTTP ${patchRes.status}`);
+          }
+        }
+
+        const submitRes = await fetch(
+          `/api/company/${correctionCompanyId}/exit-authorizations/${correctionAuthId}/corrections/submit`,
+          { method: 'POST', credentials: 'include' },
+        );
+        if (!submitRes.ok) {
+          const body = await submitRes.json().catch(() => ({}));
+          throw new Error((body as { error?: string }).error ?? `HTTP ${submitRes.status}`);
+        }
+        // El backend responde 200 OK apenas persiste el state. El
+        // re-análisis de Gemini corre en background y se entera el
+        // cliente por WS. Acá cerramos el wizard y disparamos el
+        // modal "Reanalizando con IA..." del page.
+        //
+        // NOTA: el backend ya no devuelve la lista de items a
+        // re-analizar (el reanálisis es async), así que no podemos
+        // mostrar el conteo. Mostramos un mensaje genérico.
+        await submitRes.json().catch(() => ({}));
+        toast.success(
+          "Correcciones enviadas. La IA está re-analizando tus fotos.",
+        );
+        setSubmitting(false);
+
+        onClose();
+        // onCreated recibe un ExitAuthorization; acá nos alcanza con
+        // pasar el `id` porque page.tsx solo usa `auth.id` para
+        // abrir el AnalyzingModal con ese authId. Hacemos cast a
+        // ExitAuthorization.
+        onCreated({ id: correctionAuthId } as unknown as ExitAuthorization);
+        return;
+
+
+      }
 
       const tires = ["tire_front_left", "tire_front_right", "tire_rear_left", "tire_rear_right"]
         .map((k) => urls[k])
@@ -226,9 +434,9 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
         notes: notes.trim() || null,
       });
 
-      toast.success("Solicitud enviada");
-      onCreated(created);
       onClose();
+      onCreated(created);
+      toast.success("Solicitud enviada");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error al enviar");
     } finally {
@@ -247,10 +455,15 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
         <header className="px-6 py-4 border-b border-gray-200 dark:border-white/[0.08] shrink-0">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">Nueva autorización</p>
-              <h2 className="mt-0.5 text-lg font-semibold text-gray-900 dark:text-white tracking-tight">Solicitar autorización de salida</h2>
+              <p className={`text-[10px] font-bold uppercase tracking-widest ${isCorrectionMode ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                {isCorrectionMode ? "Corrección de autorización" : "Nueva autorización"}
+              </p>
+              <h2 className="mt-0.5 text-lg font-semibold text-gray-900 dark:text-white tracking-tight">
+                {isCorrectionMode ? "Volver a tomar las fotos marcadas" : "Solicitar autorización de salida"}
+              </h2>
               <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
                 Paso {stepIdx + 1} de {STEPS.length} · {completedRequired}/{totalRequired} completados
+                {isCorrectionMode && ` · ${correctionStepIds.size} foto(s) a rehacer`}
               </p>
             </div>
             <button type="button" onClick={onClose} disabled={submitting}
@@ -259,30 +472,68 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
             </button>
           </div>
 
-          {/* Barra de progreso principal */}
+          {/* Barra de progreso — en corrección refleja solo los steps a rehacer */}
           <div className="mt-3 h-1 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
-            <div className="h-full bg-emerald-500 transition-all duration-300"
-              style={{ width: `${((stepIdx + 1) / STEPS.length) * 100}%` }} />
+            <div
+              className={`h-full transition-all duration-300 ${isCorrectionMode ? "bg-amber-500" : "bg-emerald-500"}`}
+              style={{ width: totalRequired > 0 ? `${(completedRequired / totalRequired) * 100}%` : "0%" }}
+            />
           </div>
 
-          {/* Indicadores de upload por paso */}
+          {/* Indicadores de upload — en corrección solo muestra los steps marcados */}
           <div className="mt-2 flex gap-1">
-            {STEPS.filter((s) => s.type !== "note").map((s) => {
-              const state = getState(s.id);
-              const preview = hasPreview(s.id);
-              return (
-                <div key={s.id} title={s.label}
-                  className={`h-1 flex-1 rounded-full transition-all duration-300 ${
-                    state === "done"      ? "bg-emerald-500" :
-                    state === "uploading" ? "bg-amber-400 animate-pulse" :
-                    state === "error"     ? "bg-rose-500" :
-                    preview               ? "bg-emerald-200 dark:bg-emerald-500/30" :
-                    "bg-gray-200 dark:bg-white/[0.06]"
-                  }`} />
-              );
-            })}
+            {STEPS
+              .filter((s) => s.type !== "note")
+              .filter((s) => isCorrectionMode ? correctionStepIds.has(s.id as StepId) : true)
+              .map((s) => {
+                const state = getState(s.id);
+                const preview = hasPreview(s.id);
+                return (
+                  <div key={s.id} title={s.label}
+                    className={`h-1 flex-1 rounded-full transition-all duration-300 ${
+                      state === "done"      ? "bg-emerald-500" :
+                      state === "uploading" ? "bg-amber-400 animate-pulse" :
+                      state === "error"     ? "bg-rose-500" :
+                      preview               ? "bg-emerald-200 dark:bg-emerald-500/30" :
+                      "bg-gray-200 dark:bg-white/[0.06]"
+                    }`} />
+                );
+              })}
           </div>
         </header>
+
+        {/* Banner modo corrección */}
+        {isCorrectionMode && (
+          <div className="shrink-0 px-6 py-3 bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200 dark:border-amber-500/20">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle size={18} className="shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                {correctionsLoading ? (
+                  <div className="flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin text-amber-600" />
+                    <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                      Cargando correcciones…
+                    </p>
+                  </div>
+                ) : correctionsError ? (
+                  <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">
+                    Error al cargar correcciones: {correctionsError}
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                      Tu supervisor te pidió rehacer {correctionStepIds.size} foto(s) o video.
+                    </p>
+                    <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300 leading-snug">
+                      Solo los pasos marcados con candado abierto requieren acción. Los demás ya
+                      están bien. Cuando termines, tocá "Enviar correcciones".
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
@@ -291,7 +542,9 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
               initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }}
               transition={{ duration: 0.15 }}>
               <div className="flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-white mb-1">
-                <span className="text-emerald-500">{step.icon}</span>
+                <span className={isCorrectionMode && correctionStepIds.has(step.id as StepId) ? "text-amber-500" : "text-emerald-500"}>
+                  {step.icon}
+                </span>
                 {step.label}
                 {step.required && <span className="ml-1 text-[10px] uppercase tracking-wider text-rose-500">Obligatorio</span>}
                 {/* Indicador de upload del paso actual */}
@@ -312,28 +565,52 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
                     className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] text-sm text-gray-800 dark:text-gray-200 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 resize-none" />
                   <p className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">{notes.length}/500</p>
 
-                  {/* Resumen de estados de upload en el paso final */}
                   <div className="mt-4 rounded-xl border border-gray-100 dark:border-white/[0.06] bg-gray-50/50 dark:bg-white/[0.02] p-3 space-y-1.5">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-2">Estado de subidas</p>
-                    {STEPS.filter((s) => s.type !== "note").map((s) => {
-                      const state = getState(s.id);
-                      return (
-                        <div key={s.id} className="flex items-center justify-between text-xs">
-                          <span className="text-gray-600 dark:text-gray-400 truncate">{s.label}</span>
-                          {state === "done"      && <span className="text-emerald-500 font-semibold shrink-0">✓ Listo</span>}
-                          {state === "uploading" && <span className="text-amber-500 font-semibold shrink-0 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Subiendo</span>}
-                          {state === "error"     && <span className="text-rose-500 font-semibold shrink-0">✗ Error</span>}
-                          {state === "idle"      && <span className="text-gray-400 shrink-0">—</span>}
-                        </div>
-                      );
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-2">
+                      {isCorrectionMode ? "Pasos a corregir" : "Estado de subidas"}
+                    </p>
+                    {STEPS
+                      .filter((s) => s.type !== "note")
+                      .filter((s) => isCorrectionMode ? correctionStepIds.has(s.id as StepId) : true)
+                      .map((s) => {
+                        const state = getState(s.id);
+                        // En corrección, mostrar la razón junto al label
+                        const reason = isCorrectionMode
+                          ? effectiveCorrectionItems.find((i) => i.stepId === s.id)?.reason ?? null
+                          : null;
+                        return (
+                          <div key={s.id} className="flex items-start justify-between gap-2 text-xs">
+                            <div className="flex-1 min-w-0">
+                              <span className="text-gray-600 dark:text-gray-400 truncate block">{s.label}</span>
+                              {reason && (
+                                <span className="text-[10px] text-amber-600 dark:text-amber-400 leading-snug block mt-0.5">
+                                  {reason}
+                                </span>
+                              )}
+                            </div>
+                            {state === "done"      && <span className="text-emerald-500 font-semibold shrink-0">Listo</span>}
+                            {state === "uploading" && <span className="text-amber-500 font-semibold shrink-0 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Subiendo</span>}
+                            {state === "error"     && <span className="text-rose-500 font-semibold shrink-0">Error</span>}
+                            {state === "idle"      && <span className="text-gray-400 shrink-0">Pendiente</span>}
+                          </div>
+                        );
                     })}
                   </div>
                 </div>
+              ) : isCorrectionMode && isStepLocked(step.id) ? (
+                // Step bloqueado: muestra la foto actual, no se puede rehacer
+                <LockedPreview
+                  step={step}
+                  currentUrl={getCurrentUrlForStep(step.id)}
+                  reason={null}
+                />
               ) : (
+                // ── FIX 2: Se pasa el reason del item al CaptureStep ──
                 <CaptureStep
                   step={step}
                   previewUrl={localPreviews[step.id] ?? null}
                   onCapture={handleFile}
+                  correctionReason={currentCorrectionItem?.reason ?? null}
                 />
               )}
             </motion.div>
@@ -354,9 +631,13 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
           ) : (
             <button type="button" onClick={handleSubmit}
               disabled={submitting || completedRequired < totalRequired || !assetId || !myDriverId}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 px-5 py-1.5 text-sm font-semibold text-white transition">
+              className={`inline-flex items-center gap-1.5 rounded-lg disabled:opacity-40 px-5 py-1.5 text-sm font-semibold text-white transition ${
+                isCorrectionMode
+                  ? "bg-amber-500 hover:bg-amber-600"
+                  : "bg-emerald-500 hover:bg-emerald-600"
+              }`}>
               {submitting && <Loader2 size={14} className="animate-spin" />}
-              {submitting ? "Enviando…" : "Enviar solicitud"}
+              {submitting ? "Enviando…" : isCorrectionMode ? "Enviar correcciones" : "Enviar solicitud"}
             </button>
           )}
         </footer>
@@ -365,13 +646,57 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
   );
 }
 
-// ─── CaptureStep ─────────────────────────────────────────────────────────────
-// Ya no recibe `uploading` — el upload es transparente en background
+// ─── LockedPreview ────────────────────────────────────────────────────────────
 
-function CaptureStep({ step, previewUrl, onCapture }: {
+function LockedPreview({ step, currentUrl, reason }: {
+  step: Step;
+  currentUrl: string | null;
+  reason: string | null;
+}) {
+  const isVideo = step.type === "video";
+  return (
+    <div className="space-y-2">
+      <div className="relative aspect-video w-full overflow-hidden rounded-xl border-2 border-dashed border-gray-300 dark:border-white/[0.12] bg-gray-100 dark:bg-white/[0.02]">
+        {currentUrl ? (
+          isVideo ? (
+            <video src={currentUrl} controls className="h-full w-full object-cover opacity-70" />
+          ) : (
+            <img src={currentUrl} alt={step.label} className="h-full w-full object-cover opacity-70" />
+          )
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <div className="text-center">
+              <Lock size={32} className="mx-auto text-gray-300 dark:text-gray-600" />
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">Sin preview disponible</p>
+            </div>
+          </div>
+        )}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="rounded-full bg-white/95 dark:bg-gray-900/95 px-3 py-1.5 shadow-lg flex items-center gap-1.5">
+            <Lock size={13} className="text-gray-500" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300">
+              No requiere corrección
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="rounded-lg border border-emerald-200 dark:border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-500/5 p-2.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+        <p className="font-semibold mb-0.5">Esta foto ya está bien — no la toques.</p>
+        <p className="text-emerald-600 dark:text-emerald-400 leading-snug">
+          {reason ?? "No se detectó ningún problema con esta evidencia."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── CaptureStep ──────────────────────────────────────────────────────────────
+
+function CaptureStep({ step, previewUrl, onCapture, correctionReason }: {
   step: Step;
   previewUrl: string | null;
   onCapture: (f: File) => void;
+  correctionReason?: string | null;
 }) {
   const [previewKind, setPreviewKind] = useState<"image" | "video" | null>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -382,7 +707,6 @@ function CaptureStep({ step, previewUrl, onCapture }: {
   useEffect(() => {
     if (!previewUrl) { setPreviewKind(null); return; }
     if (/\.(webm|mp4|mov)/i.test(previewUrl) || previewUrl.startsWith("blob:")) {
-      // Para blob URLs de video usamos el tipo del step
       setPreviewKind(step.type === "video" ? "video" : "image");
     } else {
       setPreviewKind("image");
@@ -391,12 +715,6 @@ function CaptureStep({ step, previewUrl, onCapture }: {
 
   const isVideo = step.type === "video";
 
-  /**
-   * Botón "Cámara" — fuerza la cámara nativa del dispositivo.
-   * Usamos un <input> con `capture` en lugar de getUserMedia + ImageCapture
-   * porque así se integra con el flujo nativo de iOS/Android y permite
-   * video + audio cuando el step lo requiere.
-   */
   function openCamera() {
     if (isVideo) {
       cameraVideoInputRef.current?.click();
@@ -405,11 +723,6 @@ function CaptureStep({ step, previewUrl, onCapture }: {
     }
   }
 
-  /**
-   * Botón "Subir archivo" — abre el selector de archivos / galería SIN
-   * forzar la cámara. NO lleva `capture` para que el SO muestre la opción
-   * de elegir de la galería/archivos.
-   */
   function openGallery() {
     if (isVideo) {
       galleryVideoInputRef.current?.click();
@@ -420,6 +733,21 @@ function CaptureStep({ step, previewUrl, onCapture }: {
 
   return (
     <div>
+      {/* ── FIX 2: Banner con la razón del supervisor ── */}
+      {correctionReason && (
+        <div className="mb-3 rounded-lg border border-amber-200 dark:border-amber-500/25 bg-amber-50 dark:bg-amber-500/10 px-3 py-2.5 flex items-start gap-2">
+          <AlertCircle size={14} className="shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+          <div>
+            <p className="text-[11px] font-bold text-amber-800 dark:text-amber-200 uppercase tracking-wider mb-0.5">
+              Motivo del rechazo
+            </p>
+            <p className="text-xs text-amber-700 dark:text-amber-300 leading-snug">
+              {correctionReason}
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-xl border-2 border-dashed border-gray-200 dark:border-white/[0.08] bg-gray-50/50 dark:bg-white/[0.02] p-4 min-h-[260px] flex items-center justify-center overflow-hidden">
         {previewUrl ? (
           previewKind === "video"
@@ -435,16 +763,12 @@ function CaptureStep({ step, previewUrl, onCapture }: {
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        {/* Para FOTOS: botón cámara (capture) + galería. Para VIDEO: solo archivo,
-            porque capture en video en iOS/Android suele colgarse en conexiones
-            lentas (intenta grabar + subir al mismo tiempo). */}
         {!isVideo && (
           <button type="button" onClick={openCamera}
             className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white transition">
             <Camera size={13} /> Tomar foto
           </button>
         )}
-        {/* Botón galería/archivo — sin capture, abre el selector de archivos. */}
         <button type="button" onClick={openGallery}
           className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white transition">
           <Upload size={13} /> {isVideo ? "Subir video" : "Subir archivo"}
@@ -461,8 +785,6 @@ function CaptureStep({ step, previewUrl, onCapture }: {
         )}
       </div>
 
-      {/* Inputs separados por intención: uno con capture (fuerza cámara),
-          otro sin capture (abre selector de archivos/galería). */}
       {!isVideo && (
         <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) onCapture(f); e.target.value = ""; }} />

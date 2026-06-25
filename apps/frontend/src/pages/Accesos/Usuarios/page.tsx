@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { useSites } from "@/hooks/useSites";
@@ -186,14 +187,22 @@ type UserFormErrors = Partial<Record<keyof UserFormState, string>>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function createEmptyForm(defaultSiteName: string, defaultSiteId: string = ""): UserFormState {
+function createEmptyForm(
+  defaultSiteName: string,
+  defaultSiteId: string = "",
+  initialRole: PlatformRole = "operador",
+): UserFormState {
+  // Si el rol pedido existe en el mapa de defaults, se usan sus permisos.
+  // Si no, caemos al default de "operador" para no romper.
+  const roleForPerms: PlatformRole =
+    initialRole in ROLE_DEFAULT_PERMISSIONS ? initialRole : "operador";
   return {
     email: "",
     username: "",
     password: "",
-    role: "operador",
+    role: initialRole,
     status: "active",
-    permissions: ROLE_DEFAULT_PERMISSIONS.operador,
+    permissions: ROLE_DEFAULT_PERMISSIONS[roleForPerms],
     fullName: "",
     lastName: "",
     phone: "",
@@ -662,6 +671,7 @@ function UserFormModal({
   roleOptions,
   companyRoles,
   originalPermissions,
+  initialRole,
   onClose,
   onCreate,
   onUpdate,
@@ -676,12 +686,23 @@ function UserFormModal({
    * el botón "Volver a originales" del editor. Solo en modo edición.
    */
   originalPermissions?: PermissionMap;
+  /**
+   * Rol con el que se pre-selecciona el `<select>` al crear un usuario
+   * nuevo. Útil cuando se abre el modal desde otra página con un query
+   * param `?rol=conductor` (ej: el botón "Nuevo conductor" de
+   * /operaciones/conductores redirige acá). En modo edición se ignora.
+   */
+  initialRole?: PlatformRole;
   onClose: () => void;
   onCreate: (input: CreateCompanyUserInput) => Promise<void>;
   onUpdate: (id: string, input: UpdateCompanyUserInput) => Promise<void>;
 }) {
   const { session } = useAuth();
-  const [form, setForm]         = useState<UserFormState>(() => createEmptyForm(siteOptions[0]?.name ?? "", siteOptions[0]?.id ?? ""));
+  const [form, setForm]         = useState<UserFormState>(() => createEmptyForm(
+    siteOptions[0]?.name ?? "",
+    siteOptions[0]?.id ?? "",
+    initialRole,
+  ));
   const [errors, setErrors]     = useState<UserFormErrors>({});
   const [saving, setSaving]     = useState(false);
   const [usernameTouched, setUsernameTouched] = useState(false);
@@ -692,7 +713,11 @@ function UserFormModal({
         setForm(userToForm(user, siteOptions[0]?.id ?? "", siteOptions[0]?.name ?? ""));
         setUsernameTouched(true);
       } else {
-        setForm(createEmptyForm(siteOptions[0]?.name ?? "", siteOptions[0]?.id ?? ""));
+        setForm(createEmptyForm(
+          siteOptions[0]?.name ?? "",
+          siteOptions[0]?.id ?? "",
+          initialRole,
+        ));
         setUsernameTouched(false);
       }
       setErrors({});
@@ -1032,8 +1057,41 @@ export function UsersPage() {
   const { sites } = useSites();
   const { users, loading, createUser, updateUser, deleteUser } = useCompanyUsers();
   const { roles: companyRoles } = useCompanyRoles();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const canManage = ["owner_empresa", "admin_empresa"].includes(session?.role ?? "");
+
+  // ── Apertura por deep link ────────────────────────────────────────────────
+  // Si el admin llega con `?rol=conductor&nuevo=1` (caso típico: el botón
+  // "Nuevo conductor" de /operaciones/conductores redirige acá para que
+  // los conductores se creen SIEMPRE desde Accesos/Usuarios), abrimos
+  // el modal automáticamente con el rol pre-seleccionado.
+  //
+  // El query param `nuevo=1` se limpia después de abrir el modal para que
+  // un refresh de la página no reabra el modal (UX consistente con el
+  // resto de "deep links" de la app).
+  const deepLinkRole = searchParams.get("rol") as PlatformRole | null;
+  const deepLinkNuevo = searchParams.get("nuevo") === "1";
+  const deepLinkInitialRole: PlatformRole | undefined =
+    deepLinkNuevo && deepLinkRole && (deepLinkRole in ROLE_LABELS || ["supervisor", "operador", "conductor"].includes(deepLinkRole))
+      ? deepLinkRole
+      : undefined;
+
+  useEffect(() => {
+    if (!deepLinkInitialRole) return;
+    // Solo abrir si el admin tiene permiso y no estamos ya editando.
+    if (!canManage) return;
+    if (modalOpen) return;
+    setEditingUser(null);
+    setOriginalPermissionsSnapshot(undefined);
+    setModalOpen(true);
+    // Limpiar el query param para que un refresh no reabra el modal.
+    const next = new URLSearchParams(searchParams);
+    next.delete("rol");
+    next.delete("nuevo");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkInitialRole, canManage]);
 
   const roleOptions = useMemo(() => {
     const opts: { key: string; label: string }[] = PLATFORM_ROLES.map((r) => ({
@@ -1345,6 +1403,7 @@ export function UsersPage() {
         roleOptions={roleOptions}
         companyRoles={companyRoles as Array<{ key: string; permissions: PermissionMap }>}
         originalPermissions={originalPermissionsSnapshot}
+        initialRole={editingUser ? undefined : deepLinkInitialRole}
         onClose={() => setModalOpen(false)}
         onCreate={async (input) => { await createUser(input); }}
         onUpdate={async (id, input) => { await updateUser(id, input); }}

@@ -1,1488 +1,1016 @@
 "use client";
 // ─────────────────────────────────────────────────────────────────────
-// pages/Reports/EstadisticasTab.tsx
-// Submódulo "reportes > estadisticas".
+// EstadisticasTab.tsx — V9 (Producción)
+// Gráficas con sentido real por módulo, conectadas al backend existente.
+// Usa los shapes exactos que devuelve cada calculate*:
+//   lineChart, barVChart, barHChart, comparacionChart, exponencialChart
 //
-// Vista con 4 KPIs + 6 charts por módulo. 11 módulos soportados:
-// mantenimiento, combustible, flotas, conductores, checklists, alertas,
-// inventario, ac, seguros, peajes, asignaciones.
-//
-// Estilo: plano, SIN gradientes. Color de acento único (azul) en chips
-// y bordes. Filtros: módulo, período (Mensual/Trimestral/Anual),
-// rango Desde/Hasta, activo, conductor.
+// Cambios vs V8:
+//   - Cada módulo tiene su propia composición de gráficas semántica
+//   - Los títulos de los charts son los que devuelve el backend
+//   - Colores condicionales (verde/rojo) donde corresponde
+//   - Panel IA colapsable al fondo (no interrumpe el flujo visual)
+//   - Sin gráficas fake: si no hay data, skeleton honesto con mensaje
 // ─────────────────────────────────────────────────────────────────────
 
-import { useEffect, useState } from "react";
+import { useState, useMemo, useRef } from "react";
 import {
-  ResponsiveContainer,
   AreaChart, Area,
-  LineChart, Line,
   BarChart, Bar,
-  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell,
+  ComposedChart,
+  LineChart, Line,
+  XAxis, YAxis, CartesianGrid, Tooltip,
+  Legend, ReferenceLine, ResponsiveContainer, Cell,
+  PieChart, Pie,
 } from "recharts";
 import {
-  TrendingUp, TrendingDown, AlertTriangle, RefreshCw, Sparkles, Gauge,
-  Wrench, Fuel, Truck, Calendar, Filter, BarChart3, History,
-  Minus, Info, Activity, DollarSign, ClipboardList, Droplet,
-  Users, Shield, Package, MapPin, FileText, Bell, Map, AirVent,
-  ChevronRight, X, FileDown, ExternalLink, GitCompareArrows, Plus, Trash2,
+  Wrench, Fuel, Truck, Users, ClipboardList, Bell,
+  AirVent, Shield, MapPin, FileText,
+  Pin, PinOff, ChevronRight, RefreshCw, FileDown,
+  Sparkles, TrendingUp, TrendingDown, AlertTriangle,
+  ArrowUp, ArrowDown, Activity, DollarSign,
+  CheckCircle2, Clock, Database, X,
 } from "lucide-react";
-import { useEstadisticas, useAnomalias, useRedetectarAnomalias, useAnalisisIA, useExportarPDF, useEstadisticasMulti, type Modulo, type Periodo, type KpiItem, type AnomaliaItem, type AIInsights, type SaludFlota, type ScorecardItem, type TcoItem, type MultiRango } from "../../hooks/useEstadisticas";
-import { useAssets } from "../../hooks/useAssets";
-import { useDrivers } from "../../hooks/useDrivers";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  useEstadisticas,
+  useAnalisisIA,
+  useExportarPDF,
+  type Modulo,
+  type Periodo,
+  type KpiItem,
+  type EstadisticasData,
+} from "../../hooks/useEstadisticas";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 
-// ─── Constants ──────────────────────────────────────────────────────
+// ─── Módulos ──────────────────────────────────────────────────────────
+type ModuloDef = {
+  key: Modulo;
+  label: string;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  color: string;
+  group: "Operación" | "Control";
+};
 
-const MODULOS: Array<{ key: Modulo; label: string; icon: React.ReactNode }> = [
-  { key: "mantenimiento", label: "Mantenimiento", icon: <Wrench size={13} /> },
-  { key: "combustible",   label: "Combustible",   icon: <Fuel size={13} /> },
-  { key: "flotas",        label: "Flotas",        icon: <Truck size={13} /> },
-  { key: "conductores",   label: "Conductores",   icon: <Users size={13} /> },
-  { key: "checklists",    label: "Checklists",    icon: <ClipboardList size={13} /> },
-  { key: "alertas",       label: "Alertas",       icon: <Bell size={13} /> },
-  { key: "inventario",    label: "Inventario",    icon: <Package size={13} /> },
-  { key: "ac",            label: "Aires Acond.",  icon: <AirVent size={13} /> },
-  { key: "seguros",       label: "Seguros",       icon: <Shield size={13} /> },
-  { key: "peajes",        label: "Peajes",        icon: <MapPin size={13} /> },
-  { key: "asignaciones",  label: "Asignaciones",  icon: <FileText size={13} /> },
+const MODULOS: ModuloDef[] = [
+  { key: "mantenimiento", label: "Mantenimiento", icon: Wrench,        color: "#f59e0b", group: "Operación" },
+  { key: "combustible",   label: "Combustible",   icon: Fuel,          color: "#f97316", group: "Operación" },
+  { key: "flotas",        label: "Flotas",        icon: Truck,         color: "#3b82f6", group: "Operación" },
+  { key: "conductores",   label: "Conductores",   icon: Users,         color: "#8b5cf6", group: "Operación" },
+  { key: "checklists",    label: "Checklists",    icon: ClipboardList, color: "#06b6d4", group: "Control" },
+  { key: "alertas",       label: "Alertas",       icon: Bell,          color: "#f43f5e", group: "Control" },
+  { key: "ac",            label: "A/C",           icon: AirVent,       color: "#14b8a6", group: "Control" },
+  { key: "seguros",       label: "Seguros",       icon: Shield,        color: "#6366f1", group: "Control" },
+  { key: "peajes",        label: "Peajes",        icon: MapPin,        color: "#d946ef", group: "Control" },
+  { key: "asignaciones",  label: "Asignaciones",  icon: FileText,      color: "#10b981", group: "Control" },
 ];
 
-const PERIODOS: Array<{ key: Periodo; label: string }> = [
-  { key: "month",   label: "Mensual" },
-  { key: "quarter", label: "Trimestral" },
-  { key: "year",    label: "Anual" },
+const PERIODS: { key: Periodo; label: string }[] = [
+  { key: "month",   label: "Este mes" },
+  { key: "quarter", label: "Trimestre" },
+  { key: "year",    label: "Año" },
 ];
 
-// Paleta neutra (sin gradientes) para los charts.
-const CHART_COLORS = [
-  "#3B82F6", // blue
-  "#10B981", // emerald
-  "#F59E0B", // amber
-  "#EF4444", // red
-  "#8B5CF6", // violet
-  "#06B6D4", // cyan
-];
-
-// ─── Helpers ────────────────────────────────────────────────────────
-
-function fmtNumber(n: number, d = 2): string {
-  if (!Number.isFinite(n)) return "—";
-  return n.toLocaleString("es-EC", { minimumFractionDigits: d, maximumFractionDigits: d });
+// ─── Helpers ──────────────────────────────────────────────────────────
+function n(v: number, decimals = 0) {
+  if (!Number.isFinite(v)) return "—";
+  return v.toLocaleString("es-EC", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+function fmtDelta(pct?: number) {
+  if (pct == null || !Number.isFinite(pct)) return null;
+  const v = Math.round(pct * 10) / 10;
+  return { text: `${v > 0 ? "+" : ""}${v.toFixed(1)}%`, up: v >= 0 };
 }
 
-function fmtPct(n: number | undefined): { text: string; tone: "up" | "down" | "flat" } {
-  if (n == null || !Number.isFinite(n)) return { text: "—", tone: "flat" };
-  const v = Math.round(n * 10) / 10;
-  if (Math.abs(v) < 0.1) return { text: "0%", tone: "flat" };
-  return { text: `${v > 0 ? "+" : ""}${v.toFixed(1)}%`, tone: v > 0 ? "up" : "down" };
-}
-
-function fmtBucketLabel(b: string, periodo: Periodo): string {
-  if (periodo === "year") return b;
-  if (periodo === "quarter") return b.replace("-", " ");
-  const [y, m] = b.split("-");
-  const months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-  return `${months[Number(m) - 1] || m} ${y.slice(2)}`;
-}
-
-function kpiIcon(icono?: string) {
-  switch (icono) {
-    case "dollar-sign":     return <DollarSign size={13} />;
-    case "trending-up":     return <TrendingUp size={13} />;
-    case "alert-triangle":  return <AlertTriangle size={13} />;
-    case "clipboard-list":  return <ClipboardList size={13} />;
-    case "fuel":            return <Fuel size={13} />;
-    case "droplet":         return <Droplet size={13} />;
-    case "truck":           return <Truck size={13} />;
-    case "check-circle":    return <Activity size={13} />;
-    case "activity":        return <Activity size={13} />;
-    case "calendar":        return <Calendar size={13} />;
-    case "users":           return <Users size={13} />;
-    case "shield":          return <Shield size={13} />;
-    case "package":         return <Package size={13} />;
-    case "map-pin":         return <MapPin size={13} />;
-    case "file-text":       return <FileText size={13} />;
-    case "map":             return <Map size={13} />;
-    case "bell":            return <Bell size={13} />;
-    default:                return <Info size={13} />;
-  }
-}
-
-// ─── KPI Card ───────────────────────────────────────────────────────
-
-function KpiCard({ kpi }: { kpi: KpiItem }) {
-  const v = fmtPct(kpi.variacionPct);
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white p-3.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
-      <div className="flex items-center gap-1.5">
-        <span className="text-gray-400 dark:text-gray-500">{kpiIcon(kpi.icono)}</span>
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-          {kpi.label}
-        </p>
-      </div>
-      <p className="mt-1.5 text-xl font-bold tabular-nums text-gray-800 dark:text-white">
-        {typeof kpi.valor === "number" ? fmtNumber(kpi.valor, 0) : kpi.valor}
-        {kpi.unidad && (
-          <span className="ml-1 text-[11px] font-medium text-gray-400">{kpi.unidad}</span>
-        )}
-      </p>
-      <div className="mt-1.5 flex items-center gap-1">
-        {v.tone === "up"   && <span className="inline-flex items-center gap-0.5 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"><TrendingUp size={9} />{v.text}</span>}
-        {v.tone === "down" && <span className="inline-flex items-center gap-0.5 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"><TrendingDown size={9} />{v.text}</span>}
-        {v.tone === "flat" && <span className="inline-flex items-center gap-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 dark:bg-white/5 dark:text-gray-400"><Minus size={9} />{v.text}</span>}
-        <span className="text-[9px] text-gray-400 dark:text-gray-500">vs período anterior</span>
-      </div>
-    </div>
-  );
-}
-
-// ─── Chart card wrapper ─────────────────────────────────────────────
-
-function ChartCard({ title, subtitle, children, span = 1 }: { title: string; subtitle?: string; children: React.ReactNode; span?: 1 | 2 }) {
-  return (
-    <div className={`rounded-xl border border-gray-200 bg-white p-3.5 dark:border-white/[0.06] dark:bg-white/[0.03] ${span === 2 ? "sm:col-span-2" : ""}`}>
-      <div className="mb-2.5">
-        <p className="text-[11px] font-semibold text-gray-800 dark:text-white">{title}</p>
-        {subtitle && <p className="text-[10px] text-gray-400 dark:text-gray-500">{subtitle}</p>}
-      </div>
-      <div style={{ width: "100%", height: 200 }}>{children}</div>
-    </div>
-  );
-}
-
-// ─── Tooltip genérico ───────────────────────────────────────────────
-
-function MiniTooltip({ active, payload, label, unidad }: any) {
+// ─── Tooltip custom ──────────────────────────────────────────────────
+function CT({ active, payload, label, color = "#111", prefix = "", suffix = "" }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-md border border-gray-200 bg-white/95 px-2.5 py-1.5 text-xs shadow-md backdrop-blur dark:border-white/[0.08] dark:bg-gray-900/95">
-      <p className="font-mono text-[10px] text-gray-500 dark:text-gray-400">{label}</p>
+    <div className="rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-xl text-[12px]">
+      <p className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400">{label}</p>
       {payload.map((p: any, i: number) => (
-        <p key={i} className="mt-0.5 flex items-center gap-1.5 font-bold tabular-nums" style={{ color: p.color || p.fill }}>
-          <span className="inline-block h-2 w-2 rounded-full" style={{ background: p.color || p.fill }} />
-          {fmtNumber(p.value, 0)} {unidad && <span className="text-[10px] font-normal text-gray-400">{unidad}</span>}
-          {p.payload?.proyectado && <span className="ml-1 rounded bg-violet-100 px-1 text-[9px] font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">PROY</span>}
+        <p key={i} className="flex items-center gap-2 font-semibold" style={{ color: p.color || color }}>
+          <span className="inline-block h-2 w-2 rounded-full flex-shrink-0" style={{ background: p.color || color }} />
+          <span className="font-mono">{prefix}{typeof p.value === "number" ? n(p.value, 1) : p.value}{suffix}</span>
+          <span className="text-gray-400 font-normal text-[11px]">{p.name}</span>
         </p>
       ))}
     </div>
   );
 }
 
-// ─── Charts por tipo ────────────────────────────────────────────────
-
-function LineWithProjection({ data, periodo, unidad }: { data: { x: string; y: number; proyectado?: boolean }[]; periodo: Periodo; unidad: string }) {
-  const color = CHART_COLORS[0];
-  const formatted = data.map((d) => ({ ...d, label: fmtBucketLabel(d.x, periodo) }));
+// ─── Empty / Skeleton ─────────────────────────────────────────────────
+function ChartEmpty({ color }: { color: string }) {
+  const bars = [38, 62, 48, 78, 55, 84, 44, 70, 58, 90];
   return (
-    <ResponsiveContainer>
-      <AreaChart data={formatted} margin={{ top: 4, right: 6, left: -22, bottom: 0 }}>
+    <div className="flex h-full w-full items-end gap-2 px-3 pb-6">
+      {bars.map((h, i) => (
+        <div key={i} className="flex-1 animate-pulse rounded-t-sm"
+          style={{ height: `${h}%`, background: `${color}18`, animationDelay: `${i * 0.07}s` }} />
+      ))}
+    </div>
+  );
+}
+
+// ─── Chart Card ──────────────────────────────────────────────────────
+function CC({
+  title, subtitle, children, height = 240, col = 1,
+}: {
+  title: string; subtitle?: string; children: React.ReactNode; height?: number; col?: number;
+}) {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.02]"
+      style={{ gridColumn: `span ${col}` }}>
+      <div className="mb-3">
+        <p className="text-[13.5px] font-semibold text-gray-900 dark:text-white tracking-tight">{title}</p>
+        {subtitle && <p className="mt-0.5 text-[11px] text-gray-400 font-medium">{subtitle}</p>}
+      </div>
+      <div style={{ height }}>{children}</div>
+    </div>
+  );
+}
+
+// ─── KPI Card ────────────────────────────────────────────────────────
+function KpiCard({ kpi, color }: { kpi: KpiItem; color: string }) {
+  const val = typeof kpi.valor === "number" ? n(kpi.valor, kpi.unidad === "USD" ? 2 : 0) : kpi.valor;
+  const delta = fmtDelta(kpi.variacionPct);
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <p className="text-[11.5px] font-medium text-gray-500 dark:text-gray-400 leading-snug">{kpi.label}</p>
+        {delta && (
+          <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold flex-shrink-0 ${
+            delta.up ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
+                     : "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300"
+          }`}>
+            {delta.up ? <ArrowUp size={9} /> : <ArrowDown size={9} />}
+            {delta.text}
+          </span>
+        )}
+      </div>
+      <p className="text-2xl font-black tabular-nums text-gray-900 dark:text-white leading-none tracking-tight">
+        {kpi.unidad === "USD" ? `$${val}` : val}
+        {kpi.unidad && kpi.unidad !== "USD" && (
+          <span className="ml-1 text-sm font-medium text-gray-400">{kpi.unidad}</span>
+        )}
+      </p>
+    </div>
+  );
+}
+
+// ─── Donut pequeño ───────────────────────────────────────────────────
+function MiniDonut({
+  data, color, centerLabel, centerValue,
+}: { data: { x: string; y: number }[]; color: string; centerLabel?: string; centerValue?: string }) {
+  if (!data.length) return <ChartEmpty color={color} />;
+  const OPACITIES = [1, 0.75, 0.5, 0.3, 0.2];
+  const total = data.reduce((s, d) => s + d.y, 0) || 1;
+  return (
+    <div className="flex flex-col h-full">
+      <div className="relative flex-1 min-h-[160px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={data} dataKey="y" nameKey="x" cx="50%" cy="50%"
+              innerRadius="54%" outerRadius="88%" paddingAngle={2}
+              startAngle={90} endAngle={-270} stroke="none">
+              {data.map((_, i) => (
+                <Cell key={i} fill={color} fillOpacity={OPACITIES[i] ?? 0.15} />
+              ))}
+            </Pie>
+            <Tooltip content={<CT color={color} />} />
+          </PieChart>
+        </ResponsiveContainer>
+        {centerValue && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400">{centerLabel}</p>
+            <p className="text-[22px] font-black tabular-nums text-gray-900 dark:text-white mt-0.5">{centerValue}</p>
+          </div>
+        )}
+      </div>
+      <ul className="mt-2 space-y-1.5">
+        {data.slice(0, 4).map((d, i) => (
+          <li key={d.x} className="flex items-center gap-2 text-[11px]">
+            <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: color, opacity: OPACITIES[i] ?? 0.2 }} />
+            <span className="flex-1 truncate text-gray-600 dark:text-gray-300">{d.x}</span>
+            <span className="font-mono font-semibold text-gray-500 dark:text-gray-400 tabular-nums">
+              {n(d.y)} <span className="text-gray-300 dark:text-gray-600">({n((d.y / total) * 100)}%)</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ─── Área chart ──────────────────────────────────────────────────────
+function AreaC({
+  data, color, unidad, showProjected = true,
+}: { data: { x: string; y: number; proyectado?: boolean }[]; color: string; unidad: string; showProjected?: boolean }) {
+  if (data.filter(d => !d.proyectado).length < 2) return <ChartEmpty color={color} />;
+  const gId = `ag${color.replace(/[^a-z0-9]/gi, "")}`;
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={data} margin={{ top: 6, right: 8, left: -10, bottom: 0 }}>
         <defs>
-          <linearGradient id="grad-stats" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"   stopColor={color} stopOpacity={0.28} />
-            <stop offset="100%" stopColor={color} stopOpacity={0}    />
+          <linearGradient id={gId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity={0.45} />
+            <stop offset="100%" stopColor={color} stopOpacity={0.02} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="2 6" stroke="rgba(120,120,140,0.10)" vertical={false} />
-        <XAxis dataKey="label" tick={{ fontSize: 9, fill: "currentColor", opacity: 0.5 }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-        <YAxis tick={{ fontSize: 9, fill: "currentColor", opacity: 0.5 }} axisLine={false} tickLine={false} width={38} />
-        <Tooltip content={<MiniTooltip unidad={unidad} />} cursor={{ stroke: `${color}40`, strokeWidth: 1, strokeDasharray: "3 3" }} />
-        <Area type="monotone" dataKey="y" stroke={color} strokeWidth={2} fill="url(#grad-stats)" dot={false} activeDot={{ r: 3, fill: color }} />
+        <CartesianGrid strokeDasharray="3 4" stroke="currentColor" className="text-gray-100 dark:text-white/[0.05]" vertical={false} />
+        <XAxis dataKey="x" tick={{ fontSize: 10, fill: "currentColor" }} axisLine={false} tickLine={false}
+          className="text-gray-400" interval="preserveStartEnd" />
+        <YAxis tick={{ fontSize: 10, fill: "currentColor" }} axisLine={false} tickLine={false}
+          className="text-gray-400" width={38} />
+        <Tooltip content={<CT color={color} suffix={` ${unidad}`} />}
+          cursor={{ stroke: color, strokeWidth: 1, strokeDasharray: "3 3", strokeOpacity: 0.5 }} />
+        {showProjected && (
+          <ReferenceLine x={data.filter(d => !d.proyectado).at(-1)?.x}
+            stroke={color} strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.6} />
+        )}
+        <Area dataKey="y" name={unidad} stroke={color} strokeWidth={2.2} fill={`url(#${gId})`}
+          dot={false} activeDot={{ r: 4, fill: color, stroke: "#fff", strokeWidth: 2 }}
+          isAnimationActive animationDuration={600} />
       </AreaChart>
     </ResponsiveContainer>
   );
 }
 
-function BarV({ data }: { data: { x: string; y: number }[] }) {
+// ─── Barras verticales con color condicional ──────────────────────────
+function BarCV({
+  data, color, unidad, benchmarkKey, benchmarkValue, colorFn,
+}: {
+  data: { x: string; y: number }[];
+  color: string;
+  unidad: string;
+  benchmarkKey?: string;
+  benchmarkValue?: number;
+  colorFn?: (d: { x: string; y: number }) => string;
+}) {
+  if (!data.length) return <ChartEmpty color={color} />;
   return (
-    <ResponsiveContainer>
-      <BarChart data={data} margin={{ top: 4, right: 6, left: -22, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="2 6" stroke="rgba(120,120,140,0.10)" vertical={false} />
-        <XAxis dataKey="x" tick={{ fontSize: 9, fill: "currentColor", opacity: 0.5 }} axisLine={false} tickLine={false} />
-        <YAxis tick={{ fontSize: 9, fill: "currentColor", opacity: 0.5 }} axisLine={false} tickLine={false} width={38} />
-        <Tooltip content={<MiniTooltip />} cursor={{ fill: "rgba(99,102,241,0.08)" }} />
-        <Bar dataKey="y" radius={[4, 4, 0, 0]}>
-          {data.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={data} margin={{ top: 6, right: 8, left: -10, bottom: 0 }} barCategoryGap="28%">
+        <CartesianGrid strokeDasharray="3 4" stroke="currentColor" className="text-gray-100 dark:text-white/[0.05]" vertical={false} />
+        <XAxis dataKey="x" tick={{ fontSize: 10, fill: "currentColor" }} axisLine={false} tickLine={false} className="text-gray-400" />
+        <YAxis tick={{ fontSize: 10, fill: "currentColor" }} axisLine={false} tickLine={false} className="text-gray-400" width={34} />
+        <Tooltip content={<CT color={color} suffix={` ${unidad}`} />} cursor={{ fill: color, fillOpacity: 0.06 }} />
+        {benchmarkValue != null && (
+          <ReferenceLine y={benchmarkValue} stroke="#6b7280" strokeWidth={1.5} strokeDasharray="4 3"
+            label={{ value: benchmarkKey ?? "", fill: "#9ca3af", fontSize: 10, position: "right" }} />
+        )}
+        <Bar dataKey="y" name={unidad} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive animationDuration={550}>
+          {data.map((d, i) => (
+            <Cell key={i} fill={colorFn ? colorFn(d) : color} fillOpacity={colorFn ? 1 : 1 - (i / data.length) * 0.3} />
+          ))}
         </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
-function BarH({ data, unidad }: { data: { label: string; value: number; meta?: string }[]; unidad: string }) {
+// ─── Barras horizontales ──────────────────────────────────────────────
+function BarCH({
+  data, color, unidad, colorFn,
+}: {
+  data: { label: string; value: number; meta?: string }[];
+  color: string;
+  unidad: string;
+  colorFn?: (v: number, max: number) => string;
+}) {
+  if (!data.length) return <ChartEmpty color={color} />;
+  const max = Math.max(...data.map(d => d.value));
   return (
-    <ResponsiveContainer>
-      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 12, left: 8, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="2 6" stroke="rgba(120,120,140,0.10)" horizontal={false} />
-        <XAxis type="number" tick={{ fontSize: 9, fill: "currentColor", opacity: 0.5 }} axisLine={false} tickLine={false} />
-        <YAxis type="category" dataKey="label" tick={{ fontSize: 9, fill: "currentColor", opacity: 0.7 }} axisLine={false} tickLine={false} width={80} />
-        <Tooltip content={<MiniTooltip unidad={unidad} />} cursor={{ fill: "rgba(99,102,241,0.08)" }} />
-        <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-          {data.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 12, left: 4, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 4" stroke="currentColor" className="text-gray-100 dark:text-white/[0.05]" horizontal={false} />
+        <XAxis type="number" tick={{ fontSize: 10, fill: "currentColor" }} axisLine={false} tickLine={false} className="text-gray-400" />
+        <YAxis dataKey="label" type="category" tick={{ fontSize: 11, fill: "currentColor" }} axisLine={false} tickLine={false}
+          className="text-gray-700 dark:text-gray-300" width={110} />
+        <Tooltip content={<CT color={color} suffix={` ${unidad}`} />} cursor={{ fill: color, fillOpacity: 0.06 }} />
+        <Bar dataKey="value" name={unidad} radius={[0, 4, 4, 0]} maxBarSize={14} isAnimationActive animationDuration={550}>
+          {data.map((d, i) => (
+            <Cell key={i} fill={colorFn ? colorFn(d.value, max) : color} fillOpacity={colorFn ? 1 : 1 - (i / data.length) * 0.35} />
+          ))}
         </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
-function RadarStat({ data }: { data: { axis: string; value: number }[] }) {
+// ─── Grouped bar (comparación actual vs anterior) ─────────────────────
+function BarComp({
+  data, color, unidad,
+}: { data: { label: string; actual: number; anterior: number }[]; color: string; unidad: string }) {
+  if (!data.length) return <ChartEmpty color={color} />;
   return (
-    <ResponsiveContainer>
-      <RadarChart data={data} margin={{ top: 4, right: 12, left: 12, bottom: 0 }}>
-        <PolarGrid stroke="rgba(120,120,140,0.18)" />
-        <PolarAngleAxis dataKey="axis" tick={{ fontSize: 9, fill: "currentColor", opacity: 0.7 }} />
-        <PolarRadiusAxis tick={{ fontSize: 8, fill: "currentColor", opacity: 0.4 }} angle={90} />
-        <Tooltip content={<MiniTooltip />} />
-        <Radar name="valor" dataKey="value" stroke={CHART_COLORS[0]} fill={CHART_COLORS[0]} fillOpacity={0.22} strokeWidth={2} />
-      </RadarChart>
-    </ResponsiveContainer>
-  );
-}
-
-function ComparacionBars({ data }: { data: { label: string; actual: number; anterior: number }[] }) {
-  return (
-    <ResponsiveContainer>
-      <BarChart data={data} margin={{ top: 4, right: 6, left: -22, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="2 6" stroke="rgba(120,120,140,0.10)" vertical={false} />
-        <XAxis dataKey="label" tick={{ fontSize: 9, fill: "currentColor", opacity: 0.5 }} axisLine={false} tickLine={false} />
-        <YAxis tick={{ fontSize: 9, fill: "currentColor", opacity: 0.5 }} axisLine={false} tickLine={false} width={38} />
-        <Tooltip content={<MiniTooltip />} cursor={{ fill: "rgba(99,102,241,0.08)" }} />
-        <Legend wrapperStyle={{ fontSize: 10 }} iconType="circle" />
-        <Bar dataKey="anterior" fill="#94A3B8" radius={[4, 4, 0, 0]} name="Anterior" />
-        <Bar dataKey="actual"   fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} name="Actual" />
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={data} margin={{ top: 6, right: 8, left: -10, bottom: 0 }} barGap={3} barCategoryGap="24%">
+        <CartesianGrid strokeDasharray="3 4" stroke="currentColor" className="text-gray-100 dark:text-white/[0.05]" vertical={false} />
+        <XAxis dataKey="label" tick={{ fontSize: 10, fill: "currentColor" }} axisLine={false} tickLine={false} className="text-gray-400" />
+        <YAxis tick={{ fontSize: 10, fill: "currentColor" }} axisLine={false} tickLine={false} className="text-gray-400" width={34} />
+        <Tooltip content={<CT color={color} />} cursor={{ fill: color, fillOpacity: 0.05 }} />
+        <Legend wrapperStyle={{ fontSize: 11, paddingTop: 6 }} iconType="circle" />
+        <Bar dataKey="anterior" name="Anterior" fill="#d1d5db" radius={[3, 3, 0, 0]} maxBarSize={14} isAnimationActive animationDuration={500} />
+        <Bar dataKey="actual" name="Actual" fill={color} radius={[3, 3, 0, 0]} maxBarSize={14} isAnimationActive animationDuration={500} />
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
-// ─── Panel de Salud de Flota (Fase 5) ─────────────────────────────
-
-function riskTone(level: ScorecardItem["riskLevel"]) {
-  switch (level) {
-    case "saludable": return "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/30";
-    case "atencion":  return "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/30";
-    case "riesgo":    return "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-500/30";
-    case "critico":   return "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-500/10 dark:text-rose-300 dark:border-rose-500/30";
-  }
-}
-
-function riskLabel(level: ScorecardItem["riskLevel"]) {
-  return level.charAt(0).toUpperCase() + level.slice(1);
-}
-
-function saludFlotaColor(avg: number): { bar: string; text: string } {
-  if (avg >= 80) return { bar: "bg-emerald-500", text: "text-emerald-700 dark:text-emerald-300" };
-  if (avg >= 60) return { bar: "bg-amber-500",   text: "text-amber-700 dark:text-amber-300" };
-  if (avg >= 40) return { bar: "bg-orange-500",  text: "text-orange-700 dark:text-orange-300" };
-  return            { bar: "bg-rose-500",    text: "text-rose-700 dark:text-rose-300" };
-}
-
-function SaludFlotaPanel({ salud }: { salud: SaludFlota }) {
-  const tone = saludFlotaColor(salud.fleetAvgScore);
-  const totalTCO = salud.tco.reduce((a, t) => a + t.tco.total, 0);
-  const fleetKm  = salud.tco.reduce((a, t) => a + t.tco.kmRecorridos, 0);
-  const fleetCostPerKm = fleetKm > 0 ? totalTCO / fleetKm : 0;
-
+// ─── Composited (barras + línea) ──────────────────────────────────────
+function ComposedC({
+  data, color, barKey, barName, lineKey, lineName, lineColor = "#6b7280", unidad = "",
+}: any) {
+  if (!data.length) return <ChartEmpty color={color} />;
   return (
-    <div className="space-y-3">
-      {/* Header de salud de flota */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {/* Score promedio */}
-        <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.03]">
-          <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300">
-              <Gauge size={13} />
-            </span>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Scorecard promedio</p>
-          </div>
-          <p className={`mt-2 text-3xl font-black tabular-nums ${tone.text}`}>{salud.fleetAvgScore}</p>
-          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-white/5">
-            <div className={`h-full ${tone.bar}`} style={{ width: `${salud.fleetAvgScore}%` }} />
-          </div>
-          <p className="mt-1.5 text-[10px] text-gray-400 dark:text-gray-500">
-            {salud.fleetAvgScore >= 80 ? "Flota saludable" :
-             salud.fleetAvgScore >= 60 ? "Flota requiere atención" :
-             salud.fleetAvgScore >= 40 ? "Flota en riesgo" : "Flota crítica"}
-          </p>
-        </div>
-
-        {/* TCO total 12m */}
-        <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.03]">
-          <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300">
-              <DollarSign size={13} />
-            </span>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">TCO 12 meses</p>
-          </div>
-          <p className="mt-2 text-3xl font-black tabular-nums text-gray-800 dark:text-white">${fmtNumber(totalTCO, 0)}</p>
-          <p className="mt-1.5 text-[10px] text-gray-400 dark:text-gray-500">
-            {fmtNumber(fleetCostPerKm, 2)} USD/km · {fmtNumber(fleetKm, 0)} km
-          </p>
-        </div>
-
-        {/* Desglose por componente */}
-        <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.03]">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Composición del TCO</p>
-          <div className="mt-2.5 space-y-1">
-            {[
-              { label: "Combustible",   value: salud.tco.reduce((a, t) => a + t.tco.combustible,   0) },
-              { label: "Mantenimiento", value: salud.tco.reduce((a, t) => a + t.tco.mantenimiento, 0) },
-              { label: "Peajes",        value: salud.tco.reduce((a, t) => a + t.tco.peajes,        0) },
-            ].map((row) => {
-              const pct = totalTCO > 0 ? (row.value / totalTCO) * 100 : 0;
-              return (
-                <div key={row.label}>
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-gray-600 dark:text-gray-300">{row.label}</span>
-                    <span className="font-mono tabular-nums text-gray-500 dark:text-gray-400">${fmtNumber(row.value, 0)} · {pct.toFixed(0)}%</span>
-                  </div>
-                  <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-white/5">
-                    <div className="h-full bg-gray-700 dark:bg-gray-300" style={{ width: `${pct}%` }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Top 5 vehículos por scorecard y TCO */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {/* Top Riesgo */}
-        <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.03]">
-          <div className="mb-2.5 flex items-center gap-2">
-            <AlertTriangle size={13} className="text-orange-600 dark:text-orange-400" />
-            <p className="text-[11px] font-semibold text-gray-800 dark:text-white">Top 5 vehículos con peor scorecard</p>
-          </div>
-          {salud.topRiesgo.length === 0 ? (
-            <p className="py-4 text-center text-[11px] text-gray-400">Sin datos.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {salud.topRiesgo.map((s) => (
-                <ScorecardRow key={s.assetId} s={s} />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Top TCO */}
-        <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.03]">
-          <div className="mb-2.5 flex items-center gap-2">
-            <DollarSign size={13} className="text-gray-600 dark:text-gray-400" />
-            <p className="text-[11px] font-semibold text-gray-800 dark:text-white">Top 5 vehículos con mayor TCO (12m)</p>
-          </div>
-          {salud.topTco.length === 0 ? (
-            <p className="py-4 text-center text-[11px] text-gray-400">Sin datos.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {salud.topTco.map((t) => (
-                <TcoRow key={t.assetId} t={t} maxTotal={salud.topTco[0]?.tco.total ?? 1} />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={data} margin={{ top: 6, right: 12, left: -10, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 4" stroke="currentColor" className="text-gray-100 dark:text-white/[0.05]" vertical={false} />
+        <XAxis dataKey="x" tick={{ fontSize: 10, fill: "currentColor" }} axisLine={false} tickLine={false} className="text-gray-400" />
+        <YAxis tick={{ fontSize: 10, fill: "currentColor" }} axisLine={false} tickLine={false} className="text-gray-400" width={34} />
+        <Tooltip content={<CT color={color} suffix={unidad ? ` ${unidad}` : ""} />} cursor={{ fill: color, fillOpacity: 0.05 }} />
+        <Legend wrapperStyle={{ fontSize: 11, paddingTop: 6 }} iconType="circle" />
+        <Bar dataKey={barKey} name={barName} fill={color} fillOpacity={0.85} radius={[4, 4, 0, 0]} maxBarSize={20} isAnimationActive animationDuration={550} />
+        {lineKey && (
+          <Line dataKey={lineKey} name={lineName} stroke={lineColor} strokeWidth={2} strokeDasharray="4 3"
+            dot={false} isAnimationActive={false} />
+        )}
+      </ComposedChart>
+    </ResponsiveContainer>
   );
 }
 
-function ScorecardRow({ s }: { s: ScorecardItem }) {
-  return (
-    <a
-      href={`/flotas`}
-      onClick={(e) => e.preventDefault()}
-      className="block rounded-lg border border-gray-200 bg-white p-2 transition hover:border-gray-300 hover:bg-gray-50 dark:border-white/[0.06] dark:bg-white/[0.02] dark:hover:bg-white/[0.04]"
-    >
-      <div className="flex items-center gap-2.5">
-        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-[11px] font-bold ${riskTone(s.riskLevel)}`}>
-          {s.score}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <p className="truncate text-[12px] font-semibold text-gray-800 dark:text-white">{s.plate || s.name}</p>
-            <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${riskTone(s.riskLevel)}`}>
-              {riskLabel(s.riskLevel)}
-            </span>
-          </div>
-          <p className="truncate text-[10px] text-gray-500 dark:text-gray-400">{s.recomendacion}</p>
-        </div>
-        <ExternalLink size={11} className="shrink-0 text-gray-400" />
-      </div>
-    </a>
-  );
-}
+// ═════════════════════════════════════════════════════════════════════
+// LAYOUTS POR MÓDULO — cada uno usa los shapes reales del backend
+// ═════════════════════════════════════════════════════════════════════
 
-function TcoRow({ t, maxTotal }: { t: TcoItem; maxTotal: number }) {
-  const pct = maxTotal > 0 ? (t.tco.total / maxTotal) * 100 : 0;
-  return (
-    <a
-      href={`/flotas`}
-      onClick={(e) => e.preventDefault()}
-      className="block rounded-lg border border-gray-200 bg-white p-2 transition hover:border-gray-300 hover:bg-gray-50 dark:border-white/[0.06] dark:bg-white/[0.02] dark:hover:bg-white/[0.04]"
-    >
-      <div className="flex items-center gap-2.5">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between">
-            <p className="truncate text-[12px] font-semibold text-gray-800 dark:text-white">{t.plate || t.name}</p>
-            <p className="ml-2 shrink-0 text-[12px] font-bold tabular-nums text-gray-800 dark:text-white">${fmtNumber(t.tco.total, 0)}</p>
-          </div>
-          <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-white/5">
-            <div className="h-full bg-gray-700 dark:bg-gray-300" style={{ width: `${pct}%` }} />
-          </div>
-          <div className="mt-1 flex items-center gap-2 text-[9px] tabular-nums text-gray-400 dark:text-gray-500">
-            <span>${fmtNumber(t.tco.combustible, 0)} comb.</span>
-            <span>·</span>
-            <span>${fmtNumber(t.tco.mantenimiento, 0)} mant.</span>
-            <span>·</span>
-            <span>{t.tco.kmRecorridos > 0 ? fmtNumber(t.tco.costoPorKm, 2) + " USD/km" : "sin km"}</span>
-          </div>
-        </div>
-      </div>
-    </a>
-  );
-}
-
-// ─── Anomalías ──────────────────────────────────────────────────────
-
-function AnomaliaCard({ a }: { a: AnomaliaItem }) {
-  const sevColor: Record<string, string> = {
-    alta:  "bg-rose-50 border-rose-200 text-rose-700 dark:bg-rose-500/10 dark:border-rose-500/30 dark:text-rose-300",
-    media: "bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-500/10 dark:border-amber-500/30 dark:text-amber-300",
-    baja:  "bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-500/10 dark:border-blue-500/30 dark:text-blue-300",
+function MantenimientoLayout({ d, color }: { d: EstadisticasData; color: string }) {
+  // barVChart → OTs por estado → donut semántico
+  // barHChart → top 10 vehículos por costo → ranking horizontal
+  // lineChart → costo por período (con proyección)
+  // comparacionChart → costo actual vs anterior por categoría
+  const STATUS_COLORS: Record<string, string> = {
+    "Completado": "#10b981", "En curso": "#3b82f6",
+    "Programado": "#f59e0b", "PendienteAtencion": "#f97316",
+    "Cancelado": "#9ca3af",
   };
   return (
-    <div className={`flex items-start gap-2.5 rounded-lg border p-2.5 ${sevColor[a.severidad]}`}>
-      <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-[9px] font-bold uppercase tracking-wider">{a.severidad}</span>
-          {a.dimensionLabel && <span className="text-[11px] font-semibold">· {a.dimensionLabel}</span>}
-        </div>
-        <p className="mt-0.5 text-[11px]">{a.descripcion}</p>
-        {a.detectadoEn && <p className="mt-1 text-[9px] opacity-70">{new Date(a.detectadoEn).toLocaleString("es-EC")}</p>}
-      </div>
+    <div className="grid grid-cols-3 gap-3">
+      {/* Costo por período + proyección — span 2 */}
+      <CC title={d.lineChart.title} subtitle="Proyección 3 períodos en punteado" col={2} height={250}>
+        <AreaC data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} />
+      </CC>
+      {/* OTs por estado — donut */}
+      <CC title={d.barVChart.title} subtitle="Período actual" height={250}>
+        <MiniDonut
+          data={d.barVChart.data}
+          color={color}
+          centerLabel="OTs"
+          centerValue={String(d.barVChart.data.reduce((s, x) => s + x.y, 0))}
+        />
+      </CC>
+      {/* Top vehículos por costo — barras horizontales rankeadas */}
+      <CC title={d.barHChart.title} subtitle={`Unidad: ${d.barHChart.unidad}`} col={2} height={260}>
+        <BarCH data={d.barHChart.data} color={color} unidad={d.barHChart.unidad}
+          colorFn={(v, max) => {
+            const pct = v / max;
+            return pct > 0.8 ? "#f43f5e" : pct > 0.5 ? "#f97316" : color;
+          }}
+        />
+      </CC>
+      {/* Comparativa: costo actual vs anterior por categoría */}
+      <CC title={d.comparacionChart.title} subtitle="Actual vs período anterior" height={260}>
+        <BarComp data={d.comparacionChart.data} color={color} unidad="USD" />
+      </CC>
     </div>
   );
 }
 
-// ─── Panel Multi-Período (Fase 5) ─────────────────────────────────
+function CombustibleLayout({ d, color }: { d: EstadisticasData; color: string }) {
+  // lineChart  → costo de combustible por período
+  // barVChart  → litros por tipo de combustible
+  // barHChart  → top 10 vehículos por eficiencia (km/L) ← el más importante
+  // comparacionChart → costo actual vs anterior por tipo
+  // exponencialChart → costo diario (últimos 30 días)
+  const benchmark = d.barHChart.data.length
+    ? d.barHChart.data.reduce((s, x) => s + x.value, 0) / d.barHChart.data.length
+    : undefined;
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      {/* ESTRELLA: eficiencia km/L por vehículo con benchmark */}
+      <CC title={d.barHChart.title}
+        subtitle={`Verde = sobre el promedio (${benchmark ? n(benchmark, 1) : "—"} km/L) · Rojo = bajo`}
+        col={2} height={260}>
+        <BarCH data={d.barHChart.data} color={color} unidad={d.barHChart.unidad}
+          colorFn={(v, max) => (benchmark && v >= benchmark) ? "#10b981" : "#f43f5e"}
+        />
+      </CC>
+      {/* Litros por tipo (diesel / gasolina / etc.) */}
+      <CC title={d.barVChart.title} subtitle="Distribución del período" height={260}>
+        <MiniDonut data={d.barVChart.data} color={color}
+          centerLabel="Litros"
+          centerValue={n(d.barVChart.data.reduce((s, x) => s + x.y, 0))}
+        />
+      </CC>
+      {/* Costo por período — tendencia */}
+      <CC title={d.lineChart.title} subtitle="Tendencia + proyección" col={2} height={220}>
+        <AreaC data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} />
+      </CC>
+      {/* Comparación tipo actual vs anterior */}
+      <CC title={d.comparacionChart.title} subtitle="Por tipo de combustible" height={220}>
+        <BarComp data={d.comparacionChart.data} color={color} unidad="USD" />
+      </CC>
+    </div>
+  );
+}
 
-const PALETTE_RANGOS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#06B6D4"];
+function FlotasLayout({ d, color }: { d: EstadisticasData; color: string }) {
+  // barVChart  → distribución por estado actual (Operativo / En mantenimiento / Fuera de servicio)
+  // barHChart  → top 10 vehículos por km
+  // exponencialChart → disponibilidad últimos 30 días (%)
+  // lineChart  → altas de flota por período
+  const estadoColors: Record<string, string> = {
+    "Operativo": "#10b981", "En mantenimiento": "#f59e0b",
+    "Fuera de servicio": "#f43f5e", "Disponible": "#3b82f6",
+    "En ruta": "#8b5cf6", "No disponible": "#9ca3af",
+  };
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      {/* Estado actual — donut con semáforo */}
+      <CC title={d.barVChart.title} subtitle="Distribución actual de la flota" height={280}>
+        <MiniDonut
+          data={d.barVChart.data}
+          color={color}
+          centerLabel="Total"
+          centerValue={String(d.barVChart.data.reduce((s, x) => s + x.y, 0))}
+        />
+      </CC>
+      {/* Disponibilidad últimos 30 días */}
+      <CC title={d.exponencialChart.title} subtitle="% diario — línea base 80%" col={2} height={280}>
+        {d.exponencialChart.data.length > 3 ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={d.exponencialChart.data} margin={{ top: 6, right: 8, left: -10, bottom: 0 }}>
+              <defs>
+                <linearGradient id="dispGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={color} stopOpacity={0.4} />
+                  <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 4" stroke="currentColor" className="text-gray-100 dark:text-white/[0.05]" vertical={false} />
+              <XAxis dataKey="x" tick={{ fontSize: 10, fill: "currentColor" }} axisLine={false} tickLine={false} className="text-gray-400" interval={4} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "currentColor" }} axisLine={false} tickLine={false} className="text-gray-400" width={30} />
+              <Tooltip content={<CT color={color} suffix="%" />} cursor={{ stroke: color, strokeDasharray: "3 3" }} />
+              <ReferenceLine y={80} stroke="#9ca3af" strokeWidth={1} strokeDasharray="3 3"
+                label={{ value: "80%", fill: "#9ca3af", fontSize: 10, position: "right" }} />
+              <Area dataKey="y" name="%" stroke={color} strokeWidth={2} fill="url(#dispGrad)"
+                dot={false} activeDot={{ r: 4, fill: color, stroke: "#fff", strokeWidth: 2 }}
+                isAnimationActive animationDuration={600} />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : <ChartEmpty color={color} />}
+      </CC>
+      {/* Top vehículos por km */}
+      <CC title={d.barHChart.title} subtitle="Km recorridos en el período" col={2} height={240}>
+        <BarCH data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+      </CC>
+      {/* Altas de flota por período */}
+      <CC title={d.lineChart.title} subtitle="Incorporaciones al período" height={240}>
+        <AreaC data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} showProjected={false} />
+      </CC>
+    </div>
+  );
+}
 
-function MultiPeriodoPanel({
-  companyId, modulo, periodo,
+function ConductoresLayout({ d, color }: { d: EstadisticasData; color: string }) {
+  // lineChart  → asignaciones iniciadas por período
+  // barVChart  → por tipo de licencia
+  // barHChart  → top 10 conductores con más asignaciones
+  // exponencialChart → licencias por vencer (próximas 13 semanas)
+  // comparacionChart → actual vs anterior
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      {/* Top conductores por asignaciones */}
+      <CC title={d.barHChart.title} subtitle={`Unidad: ${d.barHChart.unidad}`} col={2} height={260}>
+        <BarCH data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+      </CC>
+      {/* Por tipo de licencia */}
+      <CC title={d.barVChart.title} subtitle="Distribución del período" height={260}>
+        <MiniDonut data={d.barVChart.data} color={color}
+          centerLabel="Total" centerValue={String(d.barVChart.data.reduce((s, x) => s + x.y, 0))} />
+      </CC>
+      {/* Licencias por vencer — urgente */}
+      <CC title={d.exponencialChart.title}
+        subtitle="Pico alto = semana con muchas licencias expirando"
+        col={2} height={220}>
+        {d.exponencialChart.data.length > 2 ? (
+          <BarCV data={d.exponencialChart.data} color="#f43f5e" unidad="conductores"
+            colorFn={(d) => d.y >= 3 ? "#f43f5e" : d.y >= 1 ? "#f97316" : "#10b981"}
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full gap-2">
+            <CheckCircle2 size={28} className="text-emerald-500" />
+            <p className="text-[12px] font-medium text-gray-500">Sin licencias por vencer en las próximas 13 semanas</p>
+          </div>
+        )}
+      </CC>
+      {/* Tendencia de asignaciones */}
+      <CC title={d.lineChart.title} subtitle="Asignaciones nuevas por período" height={220}>
+        <AreaC data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} showProjected={false} />
+      </CC>
+    </div>
+  );
+}
+
+function ChecklistsLayout({ d, color }: { d: EstadisticasData; color: string }) {
+  // lineChart  → inspecciones por período
+  // barVChart  → por estado (Aprobado / Observado / Pendiente)
+  // barHChart  → top 10 vehículos inspeccionados
+  // comparacionChart → actual vs anterior (por estado)
+  const statusColors: Record<string, string> = {
+    "Aprobado": "#10b981", "Observado": "#f59e0b", "Pendiente": "#f43f5e",
+  };
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      {/* Inspecciones en el tiempo */}
+      <CC title={d.lineChart.title} subtitle="Tendencia de cumplimiento" col={2} height={240}>
+        <AreaC data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} showProjected={false} />
+      </CC>
+      {/* Distribución por estado */}
+      <CC title={d.barVChart.title} subtitle="Resultado de inspecciones" height={240}>
+        <MiniDonut
+          data={d.barVChart.data}
+          color={color}
+          centerLabel="Total"
+          centerValue={String(d.barVChart.data.reduce((s, x) => s + x.y, 0))}
+        />
+      </CC>
+      {/* Top vehículos inspeccionados */}
+      <CC title={d.barHChart.title} subtitle="Mayor número de inspecciones" col={2} height={240}>
+        <BarCH data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+      </CC>
+      {/* Comparativa actual vs anterior por estado */}
+      <CC title={d.comparacionChart.title} subtitle="Aprobado / Observado / Pendiente" height={240}>
+        <BarComp data={d.comparacionChart.data} color={color} unidad="insp." />
+      </CC>
+    </div>
+  );
+}
+
+function AlertasLayout({ d, color }: { d: EstadisticasData; color: string }) {
+  // lineChart  → alertas por período
+  // barVChart  → por tipo
+  // barHChart  → por severidad
+  // comparacionChart → abierta vs cerrada actual vs anterior
+  const sevColors: Record<string, string> = {
+    "Crítica": "#f43f5e", "Alta": "#f97316",
+    "Media": "#f59e0b", "Baja": "#3b82f6",
+  };
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      {/* Tendencia de alertas en el tiempo */}
+      <CC title={d.lineChart.title} subtitle="Evolución del período" col={2} height={240}>
+        <AreaC data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} showProjected={false} />
+      </CC>
+      {/* Por tipo — donut */}
+      <CC title={d.barVChart.title} subtitle="Distribución por tipo" height={240}>
+        <MiniDonut data={d.barVChart.data} color={color}
+          centerLabel="Total" centerValue={String(d.barVChart.data.reduce((s, x) => s + x.y, 0))} />
+      </CC>
+      {/* Por severidad — barras con color crítico */}
+      <CC title={d.barHChart.title} subtitle="Alta = rojo, Media = naranja, Baja = azul" col={2} height={240}>
+        <BarCH data={d.barHChart.data} color={color} unidad={d.barHChart.unidad}
+          colorFn={(v, max) => {
+            const label = d.barHChart.data.find(x => x.value === v)?.label ?? "";
+            return sevColors[label] ?? color;
+          }}
+        />
+      </CC>
+      {/* Comparativa estado (abierta/cerrada) */}
+      <CC title={d.comparacionChart.title} subtitle="Abierta vs Cerrada" height={240}>
+        <BarComp data={d.comparacionChart.data} color={color} unidad="alertas" />
+      </CC>
+    </div>
+  );
+}
+
+function AcLayout({ d, color }: { d: EstadisticasData; color: string }) {
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      <CC title={d.lineChart.title} subtitle="Servicios por período" col={2} height={240}>
+        <AreaC data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} showProjected={false} />
+      </CC>
+      <CC title={d.barVChart.title} subtitle="Estado de unidades" height={240}>
+        <MiniDonut data={d.barVChart.data} color={color}
+          centerLabel="Unidades" centerValue={String(d.barVChart.data.reduce((s, x) => s + x.y, 0))} />
+      </CC>
+      <CC title={d.barHChart.title} subtitle="Mayor gasto de mantenimiento" col={2} height={240}>
+        <BarCH data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+      </CC>
+      <CC title={d.comparacionChart.title} subtitle="Servicios / Refrigerante / Costo" height={240}>
+        <BarComp data={d.comparacionChart.data} color={color} unidad="" />
+      </CC>
+    </div>
+  );
+}
+
+function GenericLayout({ d, color }: { d: EstadisticasData; color: string }) {
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      <CC title={d.lineChart.title} subtitle="" col={2} height={240}>
+        <AreaC data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} showProjected={false} />
+      </CC>
+      <CC title={d.barVChart.title} subtitle="" height={240}>
+        <MiniDonut data={d.barVChart.data} color={color} />
+      </CC>
+      <CC title={d.barHChart.title} subtitle="" col={2} height={240}>
+        <BarCH data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+      </CC>
+      <CC title={d.comparacionChart.title} subtitle="Actual vs anterior" height={240}>
+        <BarComp data={d.comparacionChart.data} color={color} unidad="" />
+      </CC>
+    </div>
+  );
+}
+
+function ModuleCharts({ modulo, data }: { modulo: ModuloDef; data: EstadisticasData }) {
+  switch (modulo.key) {
+    case "mantenimiento": return <MantenimientoLayout d={data} color={modulo.color} />;
+    case "combustible":   return <CombustibleLayout  d={data} color={modulo.color} />;
+    case "flotas":        return <FlotasLayout       d={data} color={modulo.color} />;
+    case "conductores":   return <ConductoresLayout  d={data} color={modulo.color} />;
+    case "checklists":    return <ChecklistsLayout   d={data} color={modulo.color} />;
+    case "alertas":       return <AlertasLayout      d={data} color={modulo.color} />;
+    case "ac":            return <AcLayout           d={data} color={modulo.color} />;
+    default:              return <GenericLayout      d={data} color={modulo.color} />;
+  }
+}
+
+// ─── Panel IA (colapsable) ────────────────────────────────────────────
+function AIPanel({
+  companyId, modulo, periodo, fecha, fechaHasta, assetId, driverId,
 }: {
-  companyId: string;
-  modulo: Modulo;
-  periodo: Periodo;
+  companyId: string; modulo: ModuloDef; periodo: Periodo;
+  fecha: string; fechaHasta: string; assetId: number | null; driverId: number | null;
 }) {
-  // ── Estado local de rangos ────────────────────────────────
-  const [rangos, setRangos] = useState<MultiRango[]>(() => defaultRangos(periodo));
-
-  // Si cambia el período, regeneramos defaults solo si el usuario no ha
-  // tocado nada (en este MVP, siempre regeneramos al cambiar periodo).
-  useEffect(() => {
-    setRangos(defaultRangos(periodo));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [periodo]);
-
-  const { data, loading, error, refetch } = useEstadisticasMulti({
-    companyId, modulo, rangos, periodo,
+  const [open, setOpen] = useState(false);
+  const { data, loading, error, regenerar, ejecutar } = useAnalisisIA({
+    companyId, modulo: modulo.key, periodo, fecha, fechaHasta, assetId, driverId,
+    manual: true,
   });
 
-  // Helpers
-  function addRango() {
-    const last = rangos[rangos.length - 1];
-    const start = last ? nextMonth(new Date(last.hasta)) : new Date();
-    const end   = new Date(start);
-    end.setMonth(end.getMonth() + 1);
-    setRangos((prev) => [
-      ...prev,
-      {
-        id:    `r${prev.length}-${start.toISOString().slice(0,10)}`,
-        label: `R${prev.length + 1}`,
-        desde: start.toISOString().slice(0, 10),
-        hasta: end.toISOString().slice(0, 10),
-      },
-    ]);
-  }
-  function updateRango(id: string, patch: Partial<MultiRango>) {
-    setRangos((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-  }
-  function removeRango(id: string) {
-    setRangos((prev) => prev.filter((r) => r.id !== id));
-  }
-  function applyPreset(preset: "anterior" | "yoy" | "qAnterior") {
-    setRangos(defaultRangos(periodo, preset));
+  function handleOpen() {
+    setOpen(true);
+    if (!data && !loading) void ejecutar();
   }
 
   return (
-    <div className="space-y-3">
-      {/* Selector de rangos */}
-      <div className="rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.06] dark:bg-white/[0.03]">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-            <GitCompareArrows size={11} /> Rangos a comparar
+    <div className="rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.02]">
+      <button
+        type="button"
+        onClick={() => open ? setOpen(false) : handleOpen()}
+        className="flex w-full items-center justify-between gap-3 p-4"
+      >
+        <div className="flex items-center gap-3">
+          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl"
+            style={{ background: `${modulo.color}14`, color: modulo.color }}>
+            <Sparkles size={16} className={loading ? "animate-pulse" : ""} />
           </span>
-          {([
-            { key: "anterior",  label: "+ Período anterior" },
-            { key: "qAnterior", label: "+ Q anterior"      },
-            { key: "yoy",       label: "+ Año pasado"      },
-          ] as const).map((p) => (
-            <button
-              key={p.key}
-              type="button"
-              onClick={() => applyPreset(p.key)}
-              className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-            >
-              {p.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={addRango}
-            className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-          >
-            <Plus size={10} /> Custom
-          </button>
-          <button
-            type="button"
-            onClick={() => refetch()}
-            disabled={loading}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-          >
-            <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
-            Refrescar
-          </button>
+          <div className="text-left">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Análisis IA</p>
+            <p className="text-[13px] font-semibold text-gray-900 dark:text-white">
+              {open ? "Ocultar análisis" : `Analizar ${modulo.label} con IA`}
+            </p>
+          </div>
         </div>
+        <div className="flex items-center gap-2">
+          {data && (
+            <span className="hidden sm:block text-[10px] text-gray-400">
+              {data.fromCache ? "caché" : "nuevo"} · {data.latencyMs}ms · {data.model}
+            </span>
+          )}
+          <ChevronRight size={14} className={`text-gray-400 transition-transform ${open ? "rotate-90" : ""}`} />
+        </div>
+      </button>
 
-        {/* Lista de rangos */}
-        <div className="mt-2 space-y-1.5">
-          {rangos.map((r, i) => (
-            <div key={r.id} className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
-              <span
-                className="h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ background: PALETTE_RANGOS[i % PALETTE_RANGOS.length] }}
-              />
-              <input
-                value={r.label}
-                onChange={(e) => updateRango(r.id, { label: e.target.value })}
-                className="h-7 w-32 rounded border border-gray-200 bg-white px-2 text-[11px] dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200"
-                placeholder="Etiqueta"
-              />
-              <input
-                type="date"
-                value={r.desde}
-                onChange={(e) => updateRango(r.id, { desde: e.target.value })}
-                className="h-7 rounded border border-gray-200 bg-white px-2 text-[11px] dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200"
-              />
-              <span className="text-[10px] text-gray-400">→</span>
-              <input
-                type="date"
-                value={r.hasta}
-                onChange={(e) => updateRango(r.id, { hasta: e.target.value })}
-                className="h-7 rounded border border-gray-200 bg-white px-2 text-[11px] dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200"
-              />
-              {rangos.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeRango(r.id)}
-                  className="ml-auto rounded-md p-1 text-gray-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 dark:hover:text-rose-300"
-                  title="Quitar rango"
-                >
-                  <Trash2 size={11} />
-                </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="border-t border-gray-100 p-4 dark:border-white/[0.04]">
+              {loading && (
+                <div className="flex items-center gap-3 py-6 justify-center">
+                  <RefreshCw size={15} className="animate-spin text-gray-400" />
+                  <p className="text-[13px] text-gray-500">Generando análisis…</p>
+                </div>
               )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Warnings */}
-      {data?.warnings?.map((w, i) => (
-        <p key={i} className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-          {w}
-        </p>
-      ))}
-
-      {loading && !data ? (
-        <div className="flex items-center justify-center gap-2.5 py-12 text-gray-400">
-          <RefreshCw size={16} className="animate-spin" />
-          <span className="text-sm">Calculando multi-período…</span>
-        </div>
-      ) : error ? (
-        <div className="rounded-md border border-rose-200 bg-rose-50 p-4 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
-          {error}
-        </div>
-      ) : data ? (
-        <>
-          {/* Tabla de KPIs multi-columna */}
-          <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
-            <table className="w-full text-[11px]">
-              <thead>
-                <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                  <th className="sticky left-0 z-10 bg-white px-3 py-2 text-left font-semibold text-gray-500 dark:bg-white/[0.03] dark:text-gray-400">KPI</th>
-                  {data.rangos.map((r, i) => (
-                    <th key={r.id} className="px-3 py-2 text-right font-semibold" style={{ color: PALETTE_RANGOS[i % PALETTE_RANGOS.length] }}>
-                      {r.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.kpis.map((kpi, i) => (
-                  <tr key={kpi.label} className={i % 2 === 0 ? "bg-gray-50/40 dark:bg-white/[0.02]" : ""}>
-                    <td className="sticky left-0 z-10 bg-inherit px-3 py-2 font-medium text-gray-700 dark:text-gray-300">
-                      {kpi.label}
-                    </td>
-                    {data.rangos.map((r) => {
-                      const v = kpi.porRango[r.id];
-                      const variacion = v?.variacionPct;
-                      return (
-                        <td key={r.id} className="px-3 py-2 text-right">
-                          <div className="font-bold tabular-nums text-gray-800 dark:text-white">
-                            {typeof v?.valor === "number" ? fmtNumber(v.valor as number, 0) : (v?.valor ?? "—")}
-                            {v?.unidad && <span className="ml-1 text-[10px] font-normal text-gray-400">{v.unidad}</span>}
-                          </div>
-                          {variacion != null && Math.abs(variacion) >= 0.1 && (
-                            <div className="mt-0.5 text-[9px] tabular-nums">
-                              {variacion > 0
-                                ? <span className="text-emerald-600 dark:text-emerald-400">+{variacion.toFixed(1)}%</span>
-                                : <span className="text-rose-600 dark:text-rose-400">{variacion.toFixed(1)}%</span>}
-                            </div>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Line chart multi-serie */}
-          <div className="rounded-xl border border-gray-200 bg-white p-3.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
-            <p className="mb-2.5 text-[11px] font-semibold text-gray-800 dark:text-white">{data.lineChart.title}</p>
-            <div style={{ width: "100%", height: 260 }}>
-              <ResponsiveContainer>
-                <LineChart data={data.lineChart.data} margin={{ top: 6, right: 12, left: -22, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="2 6" stroke="rgba(120,120,140,0.10)" vertical={false} />
-                  <XAxis dataKey="x" tick={{ fontSize: 9, fill: "currentColor", opacity: 0.5 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 9, fill: "currentColor", opacity: 0.5 }} axisLine={false} tickLine={false} width={38} />
-                  <Tooltip content={<MultiTooltip rangos={data.rangos} unidad={data.lineChart.unidad} />} />
-                  <Legend wrapperStyle={{ fontSize: 10 }} iconType="circle" />
-                  {data.rangos.map((r, i) => (
-                    <Line
-                      key={r.id}
-                      type="monotone"
-                      dataKey={r.id}
-                      name={r.label}
-                      stroke={PALETTE_RANGOS[i % PALETTE_RANGOS.length]}
-                      strokeWidth={2.2}
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                      connectNulls
-                    />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Tabla Top multi-columna */}
-          {data.barHChart.data.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
-              <table className="w-full text-[11px]">
-                <thead>
-                  <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                    <th className="bg-white px-3 py-2 text-left font-semibold text-gray-500 dark:bg-white/[0.03] dark:text-gray-400">
-                      {data.barHChart.title}
-                    </th>
-                    {data.rangos.map((r, i) => (
-                      <th key={r.id} className="px-3 py-2 text-right font-semibold" style={{ color: PALETTE_RANGOS[i % PALETTE_RANGOS.length] }}>
-                        {r.label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.barHChart.data.map((row, i) => (
-                    <tr key={String(row.label)} className={i % 2 === 0 ? "bg-gray-50/40 dark:bg-white/[0.02]" : ""}>
-                      <td className="bg-inherit px-3 py-2 font-medium text-gray-700 dark:text-gray-300">{row.label}</td>
-                      {data.rangos.map((r) => {
-                        const v = row[r.id];
+              {error && (
+                <p className="text-[12px] text-rose-600 dark:text-rose-400">{error}</p>
+              )}
+              {data && !loading && (
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">
+                  {/* Resumen + puntos clave */}
+                  <div className="space-y-3 lg:col-span-3">
+                    {data.insights.resumenEjecutivo && (
+                      <div className="rounded-xl p-3.5" style={{ background: `${modulo.color}08`, borderLeft: `3px solid ${modulo.color}` }}>
+                        <p className="text-[13px] font-medium leading-relaxed text-gray-800 dark:text-gray-100">
+                          {data.insights.resumenEjecutivo}
+                        </p>
+                      </div>
+                    )}
+                    {data.insights.puntosClave.length > 0 && (
+                      <ol className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                        {data.insights.puntosClave.map((p, i) => (
+                          <li key={i} className="flex items-start gap-2 rounded-lg border border-gray-100 bg-white/60 p-2 dark:border-white/[0.06] dark:bg-white/[0.02]">
+                            <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-black text-white"
+                              style={{ background: modulo.color }}>{i + 1}</span>
+                            <span className="text-[12px] leading-snug text-gray-700 dark:text-gray-200">{p}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </div>
+                  {/* Recomendaciones */}
+                  {data.insights.recomendaciones.length > 0 && (
+                    <div className="space-y-2 lg:col-span-2 lg:border-l lg:border-gray-100 lg:pl-3 lg:dark:border-white/[0.04]">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Recomendaciones</p>
+                      {data.insights.recomendaciones.map((r, i) => {
+                        const tone = r.prioridad === "alta"
+                          ? { bg: "bg-rose-50 dark:bg-rose-500/[0.04]", border: "border-rose-200 dark:border-rose-500/20", bar: "bg-rose-500", text: "text-rose-700 dark:text-rose-300", pill: "bg-rose-100 text-rose-700" }
+                          : r.prioridad === "media"
+                          ? { bg: "bg-amber-50 dark:bg-amber-500/[0.04]", border: "border-amber-200 dark:border-amber-500/20", bar: "bg-amber-500", text: "text-amber-700 dark:text-amber-300", pill: "bg-amber-100 text-amber-700" }
+                          : { bg: "bg-gray-50 dark:bg-white/[0.02]", border: "border-gray-200 dark:border-white/[0.06]", bar: "bg-gray-400", text: "text-gray-700 dark:text-gray-300", pill: "bg-gray-100 text-gray-600" };
                         return (
-                          <td key={r.id} className="px-3 py-2 text-right font-mono tabular-nums text-gray-800 dark:text-white">
-                            {typeof v === "number" ? fmtNumber(v, 0) : (v ?? "—")}
-                          </td>
+                          <div key={i} className={`relative overflow-hidden rounded-lg border ${tone.border} ${tone.bg} p-2.5`}>
+                            <div className={`absolute left-0 top-0 h-full w-0.5 ${tone.bar}`} />
+                            <span className={`inline-block rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest ${tone.pill}`}>
+                              {r.prioridad}
+                            </span>
+                            <p className={`mt-1 text-[12.5px] font-bold leading-snug ${tone.text}`}>{r.titulo}</p>
+                            <p className="mt-0.5 text-[11px] leading-snug text-gray-600 dark:text-gray-400">{r.accion}</p>
+                          </div>
                         );
                       })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* Anomalías multi-rango */}
-          {data.anomalias.length > 0 && (
-            <div className="rounded-xl border border-gray-200 bg-white p-3.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
-              <p className="mb-2.5 text-[11px] font-semibold text-gray-800 dark:text-white">
-                Anomalías detectadas ({data.anomalias.length})
-              </p>
-              <div className="space-y-1.5">
-                {data.anomalias.slice(0, 10).map((a, i) => {
-                  const r = data.rangos.find((x) => x.id === a.rangoId);
-                  const idx = data.rangos.findIndex((x) => x.id === a.rangoId);
-                  return (
-                    <div key={i} className="flex items-start gap-2 rounded-md border border-gray-200 bg-white p-2 dark:border-white/[0.06] dark:bg-white/[0.02]">
-                      <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: PALETTE_RANGOS[idx % PALETTE_RANGOS.length] }} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="rounded bg-rose-50 px-1 py-0.5 text-[9px] font-bold text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">{a.severidad.toUpperCase()}</span>
-                          <span className="text-[11px] font-semibold text-gray-700 dark:text-gray-300">{a.dimensionLabel}</span>
-                          {r && <span className="text-[10px] text-gray-400">· {r.label}</span>}
-                        </div>
-                        <p className="mt-0.5 text-[11px] text-gray-600 dark:text-gray-400">{a.descripcion}</p>
-                      </div>
                     </div>
+                  )}
+                </div>
+              )}
+              {data && !loading && (
+                <div className="mt-3 flex justify-end">
+                  <button type="button" onClick={() => regenerar()}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-1.5 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 dark:border-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.04]">
+                    <RefreshCw size={11} /> Regenerar
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── Sidebar ──────────────────────────────────────────────────────────
+function Sidebar({ activeKey, onSelect }: { activeKey: Modulo; onSelect: (k: Modulo) => void }) {
+  const [pinned, setPinned] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const closeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const expanded = pinned || hovered;
+
+  function enter() {
+    if (closeRef.current) { clearTimeout(closeRef.current); closeRef.current = null; }
+    setHovered(true);
+  }
+  function leave() {
+    if (pinned) return;
+    closeRef.current = setTimeout(() => setHovered(false), 220);
+  }
+
+  const groups: ("Operación" | "Control")[] = ["Operación", "Control"];
+
+  return (
+    <motion.aside
+      onMouseEnter={enter} onMouseLeave={leave}
+      animate={{ width: expanded ? 220 : 60 }}
+      transition={{ type: "spring", stiffness: 400, damping: 34 }}
+      className="relative shrink-0 overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.02]"
+      style={{ willChange: "width" }}
+    >
+      <div className="flex flex-col p-2 h-full">
+        {/* Logo */}
+        <div className={`flex items-center pt-1 pb-2 ${expanded ? "justify-between px-1 gap-2" : "justify-center"}`}>
+          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white font-black text-[14px] shadow">
+            S
+          </span>
+          {expanded && <span className="text-[12.5px] font-bold text-gray-900 dark:text-white whitespace-nowrap">Estadísticas</span>}
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto overflow-x-hidden space-y-3 mt-1">
+          {groups.map(g => (
+            <div key={g}>
+              {expanded && (
+                <p className="px-2 pb-1 text-[9.5px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">{g}</p>
+              )}
+              <ul className="space-y-1">
+                {MODULOS.filter(m => m.group === g).map(m => {
+                  const Icon = m.icon;
+                  const active = activeKey === m.key;
+                  return (
+                    <li key={m.key}>
+                      <button type="button" onClick={() => onSelect(m.key)} title={!expanded ? m.label : undefined}
+                        className={`flex w-full items-center gap-2.5 rounded-xl text-[12px] font-medium transition-colors
+                          ${expanded ? "px-2.5 py-2" : "h-11 w-11 justify-center mx-auto"}
+                          ${active
+                            ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
+                            : "text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/[0.06]"
+                          }`}
+                      >
+                        <span className={`flex flex-shrink-0 items-center justify-center rounded-lg
+                          ${expanded ? "h-7 w-7" : "h-8 w-8"}
+                          ${active ? "bg-white/15" : ""}`}
+                          style={!active ? { color: m.color, background: `${m.color}14` } : {}}>
+                          <Icon size={expanded ? 13 : 15} className={active ? "text-white dark:text-gray-900" : ""} />
+                        </span>
+                        {expanded && (
+                          <>
+                            <span className="truncate flex-1">{m.label}</span>
+                            {active && <ChevronRight size={11} className="opacity-60" />}
+                          </>
+                        )}
+                      </button>
+                    </li>
                   );
                 })}
-              </div>
+              </ul>
             </div>
-          )}
-        </>
-      ) : null}
-    </div>
-  );
-}
-
-function MultiTooltip({ active, payload, label, rangos, unidad }: any) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-md border border-gray-200 bg-white/95 px-2.5 py-1.5 text-xs shadow-md backdrop-blur dark:border-white/[0.08] dark:bg-gray-900/95">
-      <p className="font-mono text-[10px] text-gray-500 dark:text-gray-400">{label}</p>
-      {payload.map((p: any, i: number) => {
-        const r = rangos.find((x: MultiRango) => x.id === p.dataKey);
-        return (
-          <p key={i} className="mt-0.5 flex items-center gap-1.5 font-bold tabular-nums" style={{ color: p.color }}>
-            <span className="inline-block h-2 w-2 rounded-full" style={{ background: p.color }} />
-            {r?.label ?? p.dataKey}: {fmtNumber(p.value, 0)} {unidad && <span className="text-[10px] font-normal text-gray-400">{unidad}</span>}
-          </p>
-        );
-      })}
-    </div>
-  );
-}
-
-function nextMonth(d: Date): Date {
-  const x = new Date(d);
-  x.setDate(x.getDate() + 1);
-  return x;
-}
-
-function defaultRangos(periodo: Periodo, preset?: "anterior" | "yoy" | "qAnterior"): MultiRango[] {
-  const today = new Date();
-  const start = startOfBucket(today, periodo);
-  const endPrev = new Date(start.getTime() - 1);
-
-  const result: MultiRango[] = [
-    {
-      id:    "actual",
-      label: "Actual",
-      desde: start.toISOString().slice(0, 10),
-      hasta: today.toISOString().slice(0, 10),
-    },
-  ];
-  if (preset === "yoy" || !preset) {
-    const yoyStart = new Date(start); yoyStart.setFullYear(yoyStart.getFullYear() - 1);
-    const yoyEnd   = new Date(endPrev);  yoyEnd.setFullYear(yoyEnd.getFullYear() - 1);
-    result.push({
-      id:    "yoy",
-      label: `Año pasado (${yoyStart.getFullYear()})`,
-      desde: yoyStart.toISOString().slice(0, 10),
-      hasta: yoyEnd.toISOString().slice(0, 10),
-    });
-  }
-  if (preset === "anterior" || preset === "qAnterior") {
-    const prevStart = new Date(start);
-    if (periodo === "month")   prevStart.setMonth(prevStart.getMonth() - 1);
-    else if (periodo === "quarter") prevStart.setMonth(prevStart.getMonth() - 3);
-    else                        prevStart.setFullYear(prevStart.getFullYear() - 1);
-    const prevEnd = new Date(start.getTime() - 1);
-    result.push({
-      id:    "prev",
-      label: "Período anterior",
-      desde: prevStart.toISOString().slice(0, 10),
-      hasta: prevEnd.toISOString().slice(0, 10),
-    });
-  }
-  return result;
-}
-
-function startOfBucket(ref: Date, periodo: Periodo): Date {
-  if (periodo === "year") return new Date(Date.UTC(ref.getUTCFullYear(), 0, 1));
-  if (periodo === "quarter") {
-    const m = Math.floor(ref.getUTCMonth() / 3) * 3;
-    return new Date(Date.UTC(ref.getUTCFullYear(), m, 1));
-  }
-  return new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), 1));
-}
-
-// ─── Panel de Análisis IA ──────────────────────────────────────────
-
-const PRIORITY_COLORS: Record<string, string> = {
-  alta:  "bg-rose-50 border-rose-200 text-rose-700 dark:bg-rose-500/10 dark:border-rose-500/30 dark:text-rose-300",
-  media: "bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-500/10 dark:border-amber-500/30 dark:text-amber-300",
-  baja:  "bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-500/10 dark:border-blue-500/30 dark:text-blue-300",
-};
-
-function AIInsightsPanel({
-  companyId, modulo, periodo, fecha, fechaHasta, assetId, driverId,
-}: {
-  companyId: string;
-  modulo: Modulo;
-  periodo: Periodo;
-  fecha: string;
-  fechaHasta: string;
-  assetId: number | null;
-  driverId: number | null;
-}) {
-  const { data, loading, error, regenerar } = useAnalisisIA({
-    companyId, modulo, periodo, fecha, fechaHasta, assetId, driverId,
-  });
-
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.03]">
-      <div className="mb-3 flex items-center gap-2">
-        <span className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300">
-          <Sparkles size={13} />
-        </span>
-        <div className="flex-1">
-          <p className="text-[11px] font-semibold text-gray-800 dark:text-white">Análisis IA · {modulo}</p>
-          <p className="text-[10px] text-gray-400 dark:text-gray-500">
-            {data
-              ? `${data.fromCache ? "Caché" : "Generado"} por ${data.model} · ${data.latencyMs}ms · ${data.inputTokens}+${data.outputTokens} tokens`
-              : "Interpretación ejecutiva de los datos."}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => regenerar()}
-          disabled={loading}
-          className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-        >
-          <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
-          {loading ? "Generando…" : data?.fromCache ? "Regenerar" : "Refrescar"}
-        </button>
-      </div>
-
-      {loading && !data ? (
-        <div className="flex items-center gap-2.5 py-6 text-gray-400">
-          <RefreshCw size={14} className="animate-spin" />
-          <span className="text-[11px]">Analizando con IA…</span>
-        </div>
-      ) : error ? (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
-          {error}
-        </div>
-      ) : data ? (
-        <AIInsightsBody insights={data.insights} />
-      ) : null}
-    </div>
-  );
-}
-
-function AIInsightsBody({ insights }: { insights: AIInsights }) {
-  return (
-    <div className="space-y-3">
-      {insights.resumenEjecutivo && (
-        <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2.5 text-[12px] leading-relaxed text-gray-700 dark:border-white/[0.06] dark:bg-white/[0.04] dark:text-gray-200">
-          {insights.resumenEjecutivo}
-        </div>
-      )}
-
-      {insights.puntosClave.length > 0 && (
-        <div>
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Puntos clave</p>
-          <ul className="space-y-1">
-            {insights.puntosClave.map((p, i) => (
-              <li key={i} className="flex gap-2 text-[11px] text-gray-700 dark:text-gray-300">
-                <span className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-gray-400 dark:bg-gray-500" />
-                {p}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {insights.recomendaciones.length > 0 && (
-        <div>
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Recomendaciones</p>
-          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-            {insights.recomendaciones.map((r, i) => (
-              <div key={i} className={`rounded-md border p-2.5 ${PRIORITY_COLORS[r.prioridad] ?? PRIORITY_COLORS.baja}`}>
-                <div className="flex items-center gap-1.5">
-                  <span className="rounded bg-white/60 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider dark:bg-black/20">
-                    {r.prioridad}
-                  </span>
-                  <p className="text-[11px] font-bold">{r.titulo}</p>
-                </div>
-                <p className="mt-1 text-[11px] leading-relaxed">{r.accion}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {insights.alertas.length > 0 && (
-        <div>
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-400">Alertas</p>
-          <div className="space-y-1">
-            {insights.alertas.map((a, i) => (
-              <div key={i} className={`flex items-start gap-2 rounded-md border p-2 ${PRIORITY_COLORS[a.severidad] ?? PRIORITY_COLORS.baja}`}>
-                <AlertTriangle size={11} className="mt-0.5 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-[11px] font-semibold">{a.titulo}</p>
-                  <p className="mt-0.5 text-[11px]">{a.detalle}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {!insights.resumenEjecutivo && insights.puntosClave.length === 0 && (
-        <p className="py-2 text-center text-[11px] text-gray-400 dark:text-gray-500">
-          La IA no devolvió insights para este período.
-        </p>
-      )}
-    </div>
-  );
-}
-
-// ─── Tablero (vista principal) ──────────────────────────────────────
-
-function Tablero({
-  companyId, modulo, periodo, fecha, fechaHasta, assetId, driverId,
-}: {
-  companyId: string;
-  modulo: Modulo;
-  periodo: Periodo;
-  fecha: string;
-  fechaHasta: string;
-  assetId: number | null;
-  driverId: number | null;
-}) {
-  const { data, loading, error, refetch } = useEstadisticas({ companyId, modulo, periodo, fecha, fechaHasta, assetId, driverId });
-  // Anomalías persistidas por el cron job (no las on-demand del calculator)
-  const { data: anomaliasPersistidas, total: totalAnomalias } = useAnomalias(companyId, modulo);
-  const { exportar, loading: exporting, error: exportError } = useExportarPDF();
-  const moduloCfg = MODULOS.find((m) => m.key === modulo)!;
-
-  // Modo: "unico" (vista actual) o "comparar" (multi-período)
-  const [modo, setModo] = useState<"unico" | "comparar">("unico");
-
-  if (loading && !data) {
-    return (
-      <div className="flex items-center justify-center gap-2.5 py-16 text-gray-400">
-        <RefreshCw size={16} className="animate-spin" />
-        <span className="text-sm">Calculando estadísticas…</span>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
-        <p className="text-xs font-semibold">No se pudieron cargar las estadísticas.</p>
-        <p className="mt-1 text-[11px]">{error}</p>
-        <button onClick={() => refetch()} className="mt-2.5 inline-flex items-center gap-1.5 rounded-md bg-rose-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-rose-600">
-          <RefreshCw size={11} /> Reintentar
-        </button>
-      </div>
-    );
-  }
-
-  if (!data) return null;
-
-  return (
-    <div className="space-y-3">
-      {/* Header plano (sin gradiente) */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 dark:border-white/[0.06] dark:bg-white/[0.03]">
-        <span className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300">
-          {moduloCfg.icon}
-        </span>
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Período</p>
-          <p className="text-sm font-semibold text-gray-800 dark:text-white">{data.bucketActual}</p>
-        </div>
-        <div className="ml-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Anterior</p>
-          <p className="text-sm text-gray-600 dark:text-gray-300">{data.bucketAnterior}</p>
-        </div>
-        <div className="ml-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Rango</p>
-          <p className="text-sm text-gray-600 dark:text-gray-300">
-            {data.fechaRef} → {data.fechaHasta}
-          </p>
-        </div>
-        <div className="ml-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">R²</p>
-          <p className="text-sm tabular-nums text-gray-600 dark:text-gray-300">{fmtNumber(data.lineChart.regresion.r2, 2)}</p>
-        </div>
-        <button
-          onClick={() => refetch()}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-        >
-          <RefreshCw size={11} /> Refrescar
-        </button>
-
-        {/* Toggle único / comparar */}
-        <div className="inline-flex items-center rounded-md border border-gray-200 bg-white p-0.5 dark:border-white/[0.08] dark:bg-white/[0.04]">
-          {([
-            { key: "unico",    label: "Único" },
-            { key: "comparar", label: "Comparar" },
-          ] as const).map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setModo(t.key)}
-              className={`rounded px-2 py-0.5 text-[10px] font-semibold transition ${
-                modo === t.key
-                  ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
-                  : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
-              }`}
-            >
-              {t.label}
-            </button>
           ))}
+        </nav>
+
+        {/* Pin */}
+        <div className={`mt-1 border-t border-gray-100 dark:border-white/[0.05] pt-2 flex ${expanded ? "justify-end px-1" : "justify-center"}`}>
+          <button type="button" onClick={() => setPinned(p => !p)}
+            title={pinned ? "Soltar" : "Fijar"}
+            className={`flex h-7 w-7 items-center justify-center rounded-lg transition ${
+              pinned ? "bg-amber-500 text-white" : "text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.06]"
+            }`}>
+            {pinned ? <PinOff size={12} /> : <Pin size={12} />}
+          </button>
         </div>
-        <button
-          onClick={() => exportar({ companyId, modulo, periodo, fecha, fechaHasta, assetId, driverId })}
-          disabled={exporting || !data}
-          className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-white/[0.12] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
-          title="Exporta el tablero a PDF (incluye análisis IA)"
-        >
-          <FileDown size={11} className={exporting ? "animate-pulse" : ""} />
-          {exporting ? "Generando…" : "Exportar PDF"}
-        </button>
-        {exportError && (
-          <span className="text-[10px] text-rose-600 dark:text-rose-400" title={exportError}>
-            Error PDF
-          </span>
-        )}
       </div>
-
-      {/* Modo comparaciï¿½n multi-perï¿½odo (reemplaza todo lo de abajo) */}
-      {modo === "comparar" ? (
-        <MultiPeriodoPanel
-          companyId={companyId}
-          modulo={modulo}
-          periodo={data.periodo}
-        />
-      ) : (
-        <>
-      {/* Análisis IA */}
-      <AIInsightsPanel
-        companyId={companyId}
-        modulo={modulo}
-        periodo={data.periodo}
-        fecha={data.fechaRef}
-        fechaHasta={data.fechaHasta}
-        assetId={assetId}
-        driverId={driverId}
-      />
-
-      {/* 4 KPIs */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {data.kpis.map((k) => <KpiCard key={k.label} kpi={k} />)}
-      </div>
-
-      {/* 6 charts en grid 2x3 */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <ChartCard title={data.lineChart.title} subtitle="Tendencia + proyección 3 períodos" span={2}>
-          <LineWithProjection data={data.lineChart.data} periodo={data.periodo} unidad={data.lineChart.unidad} />
-        </ChartCard>
-        <ChartCard title={data.barVChart.title}>
-          <BarV data={data.barVChart.data} />
-        </ChartCard>
-        <ChartCard title={data.barHChart.title}>
-          <BarH data={data.barHChart.data} unidad={data.barHChart.unidad} />
-        </ChartCard>
-        <ChartCard title={data.radarChart.title}>
-          <RadarStat data={data.radarChart.data} />
-        </ChartCard>
-        <ChartCard title={data.comparacionChart.title} subtitle="Período actual vs anterior" span={2}>
-          <ComparacionBars data={data.comparacionChart.data} />
-        </ChartCard>
-      </div>
-
-      {/* Salud de flota (solo módulo flotas) */}
-      {modulo === "flotas" && data.salud && (
-        <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.03]">
-          <div className="mb-3 flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300">
-              <Gauge size={13} />
-            </span>
-            <div className="flex-1">
-              <p className="text-[11px] font-semibold text-gray-800 dark:text-white">Salud de flota · últimos 12 meses</p>
-              <p className="text-[10px] text-gray-400 dark:text-gray-500">TCO operativo + scorecard por vehículo (no incluye depreciación).</p>
-            </div>
-          </div>
-          <SaludFlotaPanel salud={data.salud} />
-        </div>
-      )}
-
-      {/* Anomalías persistidas (cron job cada 30 min) */}
-      <div className="rounded-xl border border-gray-200 bg-white p-3.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
-        <div className="mb-2.5 flex items-center gap-2">
-          <p className="text-[11px] font-semibold text-gray-800 dark:text-white">Anomalías activas</p>
-          <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">
-            {totalAnomalias}
-          </span>
-          <span className="text-[10px] text-gray-400 dark:text-gray-500">· actualizadas cada 30 min</span>
-        </div>
-        {anomaliasPersistidas.length === 0 ? (
-          <p className="py-4 text-center text-[11px] text-gray-400 dark:text-gray-500">
-            Sin anomalías activas. Los valores están dentro del rango histórico.
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {anomaliasPersistidas.slice(0, 6).map((a) => <AnomaliaCard key={a.id ?? `${a.dimension}-${a.dimensionLabel}-${a.tipo}`} a={a} />)}
-          </div>
-        )}
-      </div>
-        </>
-      )}
-    </div>
+    </motion.aside>
   );
 }
 
-// ─── Historial ──────────────────────────────────────────────────────
-
-function Historial({ companyId, modulo }: { companyId: string; modulo: Modulo }) {
-  const [severidadFilter, setSeveridadFilter] = useState<"todas" | "alta" | "media" | "baja">("todas");
-  const [incluirResueltas, setIncluirResueltas] = useState(false);
-
-  const { data, total, loading, refetch } = useAnomalias(companyId, modulo, {
-    incluirResueltas,
-    limite: 200,
-  });
-  const { redetectar, loading: redetectando, result: redetectResult, error: redetectError } = useRedetectarAnomalias(companyId);
-
-  const filtered = severidadFilter === "todas"
-    ? data
-    : data.filter((a) => a.severidad === severidadFilter);
-
-  // ─── Acciones ──────────────────────────────────────────────
-  async function handleRedetectar() {
-    await redetectar();
-    // Re-leer la lista
-    setTimeout(() => refetch(), 500);
-  }
-
-  // ─── Resumen por severidad ─────────────────────────────────
-  const counts = {
-    alta:  data.filter((a) => a.severidad === "alta").length,
-    media: data.filter((a) => a.severidad === "media").length,
-    baja:  data.filter((a) => a.severidad === "baja").length,
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center gap-2.5 py-16 text-gray-400">
-        <RefreshCw size={16} className="animate-spin" />
-        <span className="text-sm">Cargando historial…</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      {/* Header del historial */}
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.06] dark:bg-white/[0.03]">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Severidad</span>
-          {([
-            { key: "todas", label: `Todas (${data.length})`, color: "bg-gray-100 text-gray-700 dark:bg-white/5 dark:text-gray-300" },
-            { key: "alta",  label: `Alta (${counts.alta})`,  color: "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300" },
-            { key: "media", label: `Media (${counts.media})`, color: "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300" },
-            { key: "baja",  label: `Baja (${counts.baja})`,  color: "bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300" },
-          ] as const).map((opt) => {
-            const active = severidadFilter === opt.key;
-            return (
-              <button
-                key={opt.key}
-                type="button"
-                onClick={() => setSeveridadFilter(opt.key)}
-                className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
-                  active
-                    ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
-                    : `${opt.color} hover:opacity-80`
-                }`}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-
-        <label className="ml-auto flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
-          <input
-            type="checkbox"
-            checked={incluirResueltas}
-            onChange={(e) => setIncluirResueltas(e.target.checked)}
-            className="h-3.5 w-3.5 rounded border-gray-300 text-gray-900 focus:ring-gray-500 dark:border-white/[0.1] dark:bg-white/[0.04]"
-          />
-          Mostrar resueltas
-        </label>
-
-        <button
-          type="button"
-          onClick={handleRedetectar}
-          disabled={redetectando}
-          className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-        >
-          <RefreshCw size={11} className={redetectando ? "animate-spin" : ""} />
-          {redetectando ? "Redetectando…" : "Redetectar"}
-        </button>
-      </div>
-
-      {/* Mensaje de resultado de redetección */}
-      {redetectResult && !redetectando && (
-        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
-          Sweep completado: {redetectResult.inserted} nuevas, {redetectResult.updated} actualizadas, {redetectResult.resolved} resueltas.
-        </div>
-      )}
-      {redetectError && (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
-          Error: {redetectError}
-        </div>
-      )}
-
-      {/* Lista */}
-      {filtered.length === 0 ? (
-        <div className="rounded-xl border border-gray-200 bg-white p-8 text-center dark:border-white/[0.06] dark:bg-white/[0.03]">
-          <History size={24} className="mx-auto text-gray-300 dark:text-gray-600" />
-          <p className="mt-2 text-xs font-semibold text-gray-500 dark:text-gray-400">Sin anomalías registradas</p>
-          <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
-            {severidadFilter === "todas"
-              ? "A medida que se detecten desviaciones, aparecerán aquí. Click 'Redetectar' para forzar un análisis."
-              : `No hay anomalías con severidad "${severidadFilter}" en este módulo.`}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-1.5">
-          <p className="text-[10px] text-gray-500 dark:text-gray-400">
-            {filtered.length} de {total} para <strong>{modulo}</strong>
-          </p>
-          {filtered.map((a) => <AnomaliaCard key={a.id ?? `${a.dimension}-${a.dimensionLabel}-${a.tipo}`} a={a} />)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Página principal ───────────────────────────────────────────────
-
+// ─── Página principal ─────────────────────────────────────────────────
 export function EstadisticasTab({ companyId }: { companyId: string }) {
-  const [modulo, setModulo]   = useState<Modulo>("mantenimiento");
+  const [moduloKey, setModuloKey] = useState<Modulo>("mantenimiento");
   const [periodo, setPeriodo] = useState<Periodo>("month");
 
-  // Rango de fechas manual. Default: últimos 90 días.
   const today = new Date();
   const ninetyAgo = new Date(); ninetyAgo.setDate(ninetyAgo.getDate() - 90);
-  const [fechaDesde, setFechaDesde]   = useState(ninetyAgo.toISOString().slice(0, 10));
-  const [fechaHasta, setFechaHasta]   = useState(today.toISOString().slice(0, 10));
-  const [fechaAplicadaDesde, setFechaAplicadaDesde] = useState(fechaDesde);
-  const [fechaAplicadaHasta, setFechaAplicadaHasta] = useState(fechaHasta);
+  const [fechaDesde, setFechaDesde] = useState(ninetyAgo.toISOString().slice(0, 10));
+  const [fechaHasta, setFechaHasta] = useState(today.toISOString().slice(0, 10));
+  const [fechaApDesde, setFechaApDesde] = useState(fechaDesde);
+  const [fechaApHasta, setFechaApHasta] = useState(fechaHasta);
+  const [dateOpen, setDateOpen] = useState(false);
 
-  const [assetId, setAssetId]   = useState<number | null>(null);
-  const [driverId, setDriverId] = useState<number | null>(null);
-  const [tab, setTab]         = useState<"tablero" | "historial">("tablero");
+  const [assetId] = useState<number | null>(null);
+  const [driverId] = useState<number | null>(null);
 
-  const { assets }   = useAssets();
-  const { drivers }  = useDrivers();
+  const modulo = useMemo(() => MODULOS.find(m => m.key === moduloKey)!, [moduloKey]);
+  const { exportar, loading: exporting } = useExportarPDF();
 
-  const moduloCfg = MODULOS.find((m) => m.key === modulo)!;
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  // Mostrar el selector de conductor solo para módulos que lo usan.
-  const showDriverFilter = modulo === "combustible" || modulo === "mantenimiento" || modulo === "peajes" || modulo === "conductores";
+  const { data, loading, error, refetch } = useEstadisticas({
+    companyId, modulo: moduloKey, periodo,
+    fecha: fechaApDesde, fechaHasta: fechaApHasta,
+    assetId, driverId,
+  });
+
+  function applyDates() {
+    setFechaApDesde(fechaDesde);
+    setFechaApHasta(fechaHasta);
+    setDateOpen(false);
+  }
 
   return (
-    <div className="space-y-3">
-      {/* Header con toggle Tablero / Historial */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200">
-            {moduloCfg.icon}
-          </span>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Estadísticas</p>
-            <h2 className="text-sm font-bold text-gray-800 dark:text-white">{moduloCfg.label}</h2>
-          </div>
-        </div>
+    <div className="flex items-start gap-4 space-y-0">
+      <Sidebar activeKey={moduloKey} onSelect={(k) => { setModuloKey(k); setRefreshKey(n => n + 1); }} />
 
-        <div className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-0.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
-          {([
-            { key: "tablero",   label: "Tablero",   icon: <BarChart3 size={11} /> },
-            { key: "historial", label: "Historial", icon: <History size={11} /> },
-          ] as const).map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setTab(t.key)}
-              className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-semibold transition ${
-                tab === t.key
-                  ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
-                  : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
-              }`}
-            >
-              {t.icon}{t.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <AnimatePresence mode="wait">
+        <motion.div key={moduloKey}
+          initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.16, ease: "easeOut" }}
+          className="flex-1 min-w-0 space-y-4">
 
-      {/* Filtros (plano, sin gradientes) */}
-      <div className="rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.06] dark:bg-white/[0.03]">
-        {/* Fila 1: Módulo + Período */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-            <Filter size={10} /> Módulo
-          </span>
-          {MODULOS.map((m) => {
-            const active = modulo === m.key;
-            return (
-              <button
-                key={m.key}
-                type="button"
-                onClick={() => setModulo(m.key)}
-                className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold transition ${
-                  active
+          {/* Header */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-black tracking-tight text-gray-900 dark:text-white">{modulo.label}</h1>
+              <p className="mt-0.5 text-[12px] text-gray-400">
+                {periodo === "month" ? "Este mes" : periodo === "quarter" ? "Trimestre" : "Año"} ·{" "}
+                {fechaApDesde} → {fechaApHasta}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Período pills */}
+              <div className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white p-1 dark:border-white/[0.06] dark:bg-white/[0.02]">
+                {PERIODS.map(p => (
+                  <button key={p.key} type="button" onClick={() => setPeriodo(p.key)}
+                    className={`rounded-full px-3 py-1 text-[11.5px] font-semibold transition ${
+                      periodo === p.key
+                        ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
+                        : "text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+                    }`}>{p.label}</button>
+                ))}
+              </div>
+              {/* Fechas */}
+              <button type="button" onClick={() => setDateOpen(o => !o)}
+                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[12px] font-semibold transition ${
+                  dateOpen
                     ? "border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900"
-                    : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.02] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-                }`}
-              >
-                {m.icon}{m.label}
+                    : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 dark:border-white/[0.06] dark:bg-white/[0.02] dark:text-gray-200"
+                }`}>
+                <Clock size={11} />
+                Rango
               </button>
-            );
-          })}
-
-          <span className="ml-2 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-            <Calendar size={10} /> Período
-          </span>
-          {PERIODOS.map((p) => {
-            const active = periodo === p.key;
-            return (
-              <button
-                key={p.key}
-                type="button"
-                onClick={() => setPeriodo(p.key)}
-                className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
-                  active
-                    ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
-                    : "bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-white/[0.04] dark:text-gray-400 dark:hover:bg-white/[0.08]"
-                }`}
-              >
-                {p.label}
+              {dateOpen && (
+                <div className="flex items-center gap-2">
+                  <DatePicker label="Desde" value={fechaDesde} onChange={setFechaDesde} maxDate={fechaHasta} />
+                  <span className="text-xs text-gray-400">—</span>
+                  <DatePicker label="Hasta" value={fechaHasta} onChange={setFechaApHasta} minDate={fechaDesde} />
+                  <button type="button" onClick={applyDates}
+                    className="rounded-xl bg-gray-900 hover:bg-gray-800 dark:bg-white dark:text-gray-900 px-3 py-1.5 text-[12px] font-bold text-white">
+                    Aplicar
+                  </button>
+                </div>
+              )}
+              {/* Refrescar */}
+              <button type="button" onClick={() => refetch()}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-gray-700 hover:bg-gray-50 dark:border-white/[0.06] dark:bg-white/[0.02] dark:text-gray-200">
+                <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
+                Refrescar
               </button>
-            );
-          })}
-        </div>
+              {/* Exportar */}
+              <button type="button" disabled={exporting} onClick={() => exportar({ companyId, modulo: moduloKey, periodo, fecha: fechaApDesde, fechaHasta: fechaApHasta, assetId, driverId })}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 dark:text-gray-900 px-3.5 py-1.5 text-[12px] font-semibold text-white shadow-sm disabled:opacity-50">
+                <FileDown size={11} className={exporting ? "animate-pulse" : ""} />
+                {exporting ? "Generando…" : "PDF"}
+              </button>
+            </div>
+          </div>
 
-        {/* Fila 2: Rango Desde / Hasta + filtros entidad */}
-        <div className="mt-2 flex flex-wrap items-end gap-2">
-          <DatePicker
-            label="Desde"
-            value={fechaDesde}
-            onChange={(v) => setFechaDesde(v)}
-            maxDate={fechaHasta || undefined}
-          />
-          <DatePicker
-            label="Hasta"
-            value={fechaHasta}
-            onChange={(v) => setFechaHasta(v)}
-            minDate={fechaDesde || undefined}
-          />
-          <button
-            type="button"
-            onClick={() => {
-              setFechaAplicadaDesde(fechaDesde);
-              setFechaAplicadaHasta(fechaHasta);
-            }}
-            className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-gray-900 px-3 text-[11px] font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-100"
-          >
-            Aplicar rango
-          </button>
-          {(fechaAplicadaDesde !== ninetyAgo.toISOString().slice(0, 10) || fechaAplicadaHasta !== today.toISOString().slice(0, 10)) && (
-            <button
-              type="button"
-              onClick={() => {
-                const d = ninetyAgo.toISOString().slice(0, 10);
-                const h = today.toISOString().slice(0, 10);
-                setFechaDesde(d); setFechaHasta(h);
-                setFechaAplicadaDesde(d); setFechaAplicadaHasta(h);
-              }}
-              className="inline-flex h-10 items-center gap-1 rounded-md px-2 text-[11px] font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
-            >
-              <X size={11} /> Reset
-            </button>
+          {/* Loading */}
+          {loading && !data && (
+            <div className="flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white p-16 dark:border-white/[0.06] dark:bg-white/[0.02]">
+              <RefreshCw size={16} className="animate-spin text-gray-400" />
+              <p className="text-[13px] text-gray-500">Calculando estadísticas…</p>
+            </div>
           )}
 
-          <div className="ml-auto flex flex-wrap items-end gap-2">
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[9px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Activo</span>
-              <select
-                value={assetId ?? ""}
-                onChange={(e) => setAssetId(e.target.value ? Number(e.target.value) : null)}
-                className="h-8 rounded-md border border-gray-200 bg-white px-2 text-[11px] text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200"
-              >
-                <option value="">Todos</option>
-                {assets.map((a) => (
-                  <option key={a.id} value={a.id}>{a.plate || a.name}</option>
-                ))}
-              </select>
+          {/* Error */}
+          {error && !data && (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50/40 p-5 dark:border-rose-500/20">
+              <p className="text-[13px] font-semibold text-rose-700 dark:text-rose-300">No se pudieron cargar las estadísticas</p>
+              <p className="mt-1 text-[12px] text-rose-600/80">{error}</p>
+              <button onClick={() => refetch()}
+                className="mt-2 inline-flex items-center gap-1 rounded-lg bg-rose-500 hover:bg-rose-600 px-3 py-1.5 text-[12px] font-semibold text-white">
+                <RefreshCw size={11} /> Reintentar
+              </button>
             </div>
-            {showDriverFilter && (
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[9px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Conductor</span>
-                <select
-                  value={driverId ?? ""}
-                  onChange={(e) => setDriverId(e.target.value ? Number(e.target.value) : null)}
-                  className="h-8 rounded-md border border-gray-200 bg-white px-2 text-[11px] text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200"
-                >
-                  <option value="">Todos</option>
-                  {drivers.map((d) => (
-                    <option key={d.id} value={d.id}>{d.firstName} {d.lastName}</option>
-                  ))}
-                </select>
+          )}
+
+          {data && (
+            <>
+              {/* KPIs */}
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                {data.kpis.map((k, i) => (
+                  <KpiCard key={k.label} kpi={k} color={modulo.color} />
+                ))}
               </div>
-            )}
-          </div>
-        </div>
-      </div>
 
-      {/* Contenido */}
-      {tab === "tablero" ? (
-        <Tablero
-          companyId={companyId}
-          modulo={modulo}
-          periodo={periodo}
-          fecha={fechaAplicadaDesde}
-          fechaHasta={fechaAplicadaHasta}
-          assetId={assetId}
-          driverId={driverId}
-        />
-      ) : (
-        <Historial companyId={companyId} modulo={modulo} />
-      )}
+              {/* Gráficas por módulo */}
+              <ModuleCharts modulo={modulo} data={data} />
 
-      <p className="text-center text-[10px] text-gray-400 dark:text-gray-500">
-        <ChevronRight size={10} className="inline" /> Capa matemática: regresión lineal, variación %, z-score vs histórico 3-6 meses. Análisis IA disponible en una próxima fase.
-      </p>
+              {/* Panel IA — al fondo, colapsable */}
+              <AIPanel
+                companyId={companyId} modulo={modulo} periodo={periodo}
+                fecha={fechaApDesde} fechaHasta={fechaApHasta}
+                assetId={assetId} driverId={driverId}
+              />
+            </>
+          )}
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }

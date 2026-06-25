@@ -7,6 +7,9 @@ export type ExitAuthEvent =
   | { type: "exit-authorization:created"; data: { id: string; status: string } & Record<string, unknown> }
   | { type: "exit-authorization:decided"; data: { id: string; status: string; decidedBy?: string } & Record<string, unknown> }
   | { type: "exit-authorization:deleted"; data: { id: string } }
+  | { type: "exit-authorization:corrections-sent"; data: { exitAuthorizationId: string; correctionsCount: number; round: number; sentBy?: string } }
+  | { type: "exit-authorization:corrections-resubmitted"; data: { exitAuthorizationId: string; reanalyzedItems: string[]; decision: string } }
+  | { type: "exit-authorization:analysis-failed"; data: { exitAuthorizationId: string; userMessage: string; errorCode: string } }
   | { type: "hello"; data: { companyId: number; userId: number | undefined } }
   | { type: "pong"; data: { t: number } };
 
@@ -14,6 +17,24 @@ export type ExitAuthHandlers = {
   onCreated?: (data: { id: string; status: string } & Record<string, unknown>) => void;
   onDecided?: (data: { id: string; status: string; decidedBy?: string } & Record<string, unknown>) => void;
   onDeleted?: (data: { id: string }) => void;
+  /**
+   * Notificación de que la autorización fue devuelta al conductor
+   * con correcciones (por IA o por supervisor). El frontend debe
+   * refrescar la lista de autorizaciones para que el card amarillo
+   * "Corregir ahora" aparezca en la app del conductor.
+   */
+  onCorrectionsSent?: (data: { exitAuthorizationId: string; correctionsCount: number; round: number; sentBy?: string }) => void;
+  /**
+   * Notificación de que el conductor subió las correcciones y se
+   * disparó el re-análisis. Sirve para refrescar el drawer del
+   * supervisor y ver el nuevo status.
+   */
+  onCorrectionsResubmitted?: (data: { exitAuthorizationId: string; reanalyzedItems: string[]; decision: string }) => void;
+  /**
+   * Notificación de que el análisis IA falló (ej: video muy grande).
+   * El conductor debe ver el mensaje de error.
+   */
+  onAnalysisFailed?: (data: { exitAuthorizationId: string; userMessage: string; errorCode: string }) => void;
 };
 
 /**
@@ -38,6 +59,15 @@ export function useExitAuthorizationsSocket(
   const handlersRef = useRef<ExitAuthHandlers>(handlers);
   handlersRef.current = handlers;
 
+  // ── URL memoizada — ya no se reconstruye en cada render ─────────────────────
+  //
+  // Estrategia de URL del WS:
+  //   - En dev (Vite): el proxy de `vite.config.ts` ya redirige `/ws` al
+  //     backend (puerto 5000), así que usamos `window.location.host` y
+  //     dejamos que el proxy haga su trabajo. No usar VITE_API_URL porque
+  //     eso saltea el proxy y rompe la convención de dev.
+  //   - En prod: si VITE_WS_URL está definido, se usa tal cual. Si no,
+  //     se deriva de VITE_API_URL. Si ninguno está, fallback a wss.
   // ── URL memoizada — ya no se reconstruye en cada render ─────────────────────
   const wsUrl = useMemo(() => {
     if (import.meta.env.DEV) {
@@ -116,6 +146,20 @@ export function useExitAuthorizationsSocket(
             handlersRef.current.onDecided?.(msg.data);
           } else if (msg.type === "exit-authorization:deleted") {
             handlersRef.current.onDeleted?.(msg.data);
+          } else if (msg.type === "exit-authorization:corrections-sent") {
+            // El conductor recibe este evento cuando se le devuelven
+            // correcciones (las manda la IA o el supervisor). Refresca
+            // la lista para que aparezca el card "Corregir ahora".
+            handlersRef.current.onCorrectionsSent?.(msg.data);
+          } else if (msg.type === "exit-authorization:corrections-resubmitted") {
+            handlersRef.current.onCorrectionsResubmitted?.(msg.data);
+          } else if (msg.type === "exit-authorization:analysis-failed") {
+            // El análisis IA falló (ej: video muy grande). El
+            // frontend debe refrescar la lista y mostrar el card
+            // con el mensaje de error al conductor.
+            handlersRef.current.onAnalysisFailed?.(msg.data);
+          } else if (msg.type === "exit-authorization:analysis-completed") {
+            handlersRef.current.onAnalysisCompleted?.(msg.data);
           }
         } catch {
           /* noop */

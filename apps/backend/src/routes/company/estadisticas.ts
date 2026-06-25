@@ -47,7 +47,6 @@ import { calculateFlotas } from "./stats/flotas";
 import { calculateConductores } from "./stats/conductores";
 import { calculateChecklists } from "./stats/checklists";
 import { calculateAlertas } from "./stats/alertas";
-import { calculateInventario } from "./stats/inventario";
 import { calculateAc } from "./stats/ac";
 import { calculateSeguros } from "./stats/seguros";
 import { calculatePeajes } from "./stats/peajes";
@@ -62,7 +61,6 @@ const MODULOS_VALIDOS = [
   "conductores",
   "checklists",
   "alertas",
-  "inventario",
   "ac",
   "seguros",
   "peajes",
@@ -112,7 +110,7 @@ router.get(
       const modulo = parseModulo(req.params.modulo);
       if (!modulo) {
         return res.status(400).json({
-          error: "Módulo inválido. Usa: mantenimiento | combustible | flotas | conductores | checklists | alertas | inventario | ac | seguros | peajes | asignaciones",
+          error: "Módulo inválido. Usa: mantenimiento | combustible | flotas | conductores | checklists | alertas | ac | seguros | peajes | asignaciones",
         });
       }
 
@@ -137,8 +135,6 @@ router.get(
                   ? await calculateChecklists({ companyId, periodo, refDate, endDate, assetId })
                   : modulo === "alertas"
                     ? await calculateAlertas({ companyId, periodo, refDate, endDate, assetId })
-                    : modulo === "inventario"
-                      ? await calculateInventario({ companyId, periodo, refDate, endDate })
                       : modulo === "ac"
                         ? await calculateAc({ companyId, periodo, refDate, endDate })
                         : modulo === "seguros"
@@ -399,7 +395,6 @@ const MODULO_LABELS: Record<ModuloKey, string> = {
   conductores:    "Conductores",
   checklists:     "Checklists",
   alertas:        "Alertas",
-  inventario:     "Inventario",
   ac:             "Aires Acondicionados",
   seguros:        "Seguros",
   peajes:         "Peajes",
@@ -449,8 +444,6 @@ router.post(
                   ? await calculateChecklists({ companyId, periodo, refDate, endDate, assetId })
                   : modulo === "alertas"
                     ? await calculateAlertas({ companyId, periodo, refDate, endDate, assetId })
-                    : modulo === "inventario"
-                      ? await calculateInventario({ companyId, periodo, refDate, endDate })
                       : modulo === "ac"
                         ? await calculateAc({ companyId, periodo, refDate, endDate })
                         : modulo === "seguros"
@@ -602,8 +595,6 @@ router.post(
                   ? await calculateChecklists({ companyId, periodo, refDate, endDate, assetId })
                   : modulo === "alertas"
                     ? await calculateAlertas({ companyId, periodo, refDate, endDate, assetId })
-                    : modulo === "inventario"
-                      ? await calculateInventario({ companyId, periodo, refDate, endDate })
                       : modulo === "ac"
                         ? await calculateAc({ companyId, periodo, refDate, endDate })
                         : modulo === "seguros"

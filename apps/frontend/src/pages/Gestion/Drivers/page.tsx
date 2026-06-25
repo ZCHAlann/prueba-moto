@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { useDrivers, type ApiDriver, type AssignmentActa } from "../../../hooks/useDrivers";
 import { useAssignments } from "../../../hooks/useAssignments";
@@ -1286,6 +1287,7 @@ function ReportDrawer({ report, onClose, onDeleted }: {
 export default function DriversPage() {
   const { drivers, loading, createDriver, updateDriver, deleteDriver } = useDrivers();
   const { can } = usePermissions();
+  const navigate = useNavigate();
 
   const canCreate = can("gestion", "conductores", "crear");
   const canEdit   = can("gestion", "conductores", "editar");
@@ -1309,7 +1311,17 @@ export default function DriversPage() {
   const { allReports, loadingAll, fetchAll } = useDriverReports(null);
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  const openCreateModal = () => { setDriverModalTarget(null); setDriverModalOpen(true); };
+  const openCreateModal = () => {
+    // Los conductores se crean desde /accesos/usuarios con el rol
+    // "conductor" pre-seleccionado. La razón: el usuario con ese rol
+    // también es un usuario del sistema (con login), y la ficha del
+    // conductor (licencia, puntos, etc.) se llena en el mismo form.
+    // Crearlos desde acá duplicaba trabajo y dejaba el user sin login.
+    // La página de Usuarios lee el query param `?rol=conductor&nuevo=1`
+    // y abre su modal automáticamente con el rol pre-set.
+    toast.info("Los conductores se crean desde Accesos / Usuarios");
+    navigate("/accesos/usuarios?rol=conductor&nuevo=1");
+  };
   const openEditModal   = (driver: ApiDriver) => { setDriverModalTarget(driver); setDriverModalOpen(true); setDrawerDriver(null); };
   const openReport      = (driver: ApiDriver) => setReportDriver(driver);
 
@@ -1357,7 +1369,7 @@ export default function DriversPage() {
       <ModulePageHeader
         badge="Gestión operativa"
         title="Conductores"
-        subtitle="Control del personal asignable — licencias, contacto, vehículo activo y reportes en un solo lugar."
+        subtitle="Control del personal asignable — licencias, contacto, vehículo activo y reportes en un solo lugar. Los conductores nuevos se crean desde Accesos / Usuarios (necesitan login)."
         accent="cyan"
         action={
           canCreate ? (

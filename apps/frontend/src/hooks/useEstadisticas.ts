@@ -14,7 +14,6 @@ export type Modulo  =
   | "conductores"
   | "checklists"
   | "alertas"
-  | "inventario"
   | "ac"
   | "seguros"
   | "peajes"

@@ -641,6 +641,49 @@ export const exitAuthorizationStatusEnum = pgEnum('exit_authorization_status_enu
   'Rechazada',
 ]);
 
+export const exitAuthAiAnalysisStatusEnum = pgEnum('exit_auth_ai_analysis_status', [
+  'pendiente',
+  'en_proceso',
+  'aprobado_ia',
+  'requiere_correccion',
+  'requiere_revision_humana',
+]);
+
+export const exitAuthItemTypeEnum = pgEnum('exit_auth_item_type', [
+  'refrigerante',
+  'frenos',
+  'tablero_luces',
+  'bateria',
+  'bayoneta_aceite',
+]);
+
+export const exitAuthNivelEnum = pgEnum('exit_auth_nivel', [
+  'ok',
+  'bajo',
+  'critico',
+  'no_visible',
+]);
+
+export const exitAuthEstadoEnum = pgEnum('exit_auth_estado', [
+  'bueno',
+  'degradado',
+  'contaminado',
+  'no_visible',
+]);
+
+export const exitAuthColorAceiteEnum = pgEnum('exit_auth_color_aceite', [
+  'miel',
+  'oscuro',
+  'negro',
+  'no_visible',
+]);
+
+export const exitAuthConfianzaEnum = pgEnum('exit_auth_confianza', [
+  'alta',
+  'media',
+  'baja',
+]);
+
 export const companyExitAuthorizations = pgTable(
   'company_exit_authorizations',
   {
@@ -653,6 +696,30 @@ export const companyExitAuthorizations = pgTable(
       .references(() => companyDrivers.id, { onDelete: 'restrict' }),
 
     status: exitAuthorizationStatusEnum('status').notNull().default('Pendiente'),
+
+    // Estado del análisis IA (5 ítems: refrigerante, frenos, tablero/luces,
+    // batería, bayoneta). Se actualiza por el servicio de exit-analysis.
+    //   - 'pendiente'              : aún no se analizó
+    //   - 'en_proceso'             : request a Gemini en curso
+    //   - 'aprobado_ia'            : los 5 ítems pasaron
+    //   - 'requiere_correccion'    : al menos un ítem no pasó → conductor rehace
+    //   - 'requiere_revision_humana' : confianza baja o no se pudo analizar
+    aiAnalysisStatus:        exitAuthAiAnalysisStatusEnum('ai_analysis_status').notNull().default('pendiente'),
+    aiAnalysisDecisionAt:    timestamp('ai_analysis_decision_at'),
+
+    // ── Correcciones: cuando el supervisor devuelve la solicitud al
+    //    conductor para que rehaga una o más fotos ──
+    // Snapshot consolidado de los items a corregir. Lo lee el wizard
+    // del conductor para saber qué rehacer. Se reemplaza cada vez que
+    // el supervisor hace un nuevo "Devolver al conductor".
+    correctionsSnapshot:       jsonb('corrections_snapshot'),
+    // Cuándo se le devolvió al conductor.
+    correctionsSentAt:          timestamp('corrections_sent_at'),
+    // Cuándo el conductor subió las correcciones.
+    correctionsResubmittedAt:   timestamp('corrections_resubmitted_at'),
+    // Rondas de corrección (1, 2, 3...). Para que el supervisor sepa
+    // cuántas veces el conductor ha reenviado.
+    correctionsRound:           integer('corrections_round').notNull().default(0),
 
     // Evidencias (URLs en /uploads/...).
     // El video de la bayoneta se guarda junto con un thumbnail generado client-side.
@@ -1039,5 +1106,87 @@ export const companyStatsInsightsCache = pgTable('company_stats_insights_cache',
   createdAt:         timestamp('created_at').notNull().defaultNow(),
   expiresAt:         timestamp('expires_at').notNull(),
   inputHash:         varchar('input_hash', { length: 64 }).notNull(),
+});
+
+// ─────────────────────────────────────────────
+// Análisis IA de autorización de salida
+// ─────────────────────────────────────────────
+// Una fila por ítem analizado de cada autorización. Los 5 ítems son:
+// refrigerante, frenos, tablero_luces, bateria, bayoneta_aceite.
+//
+// Permite re-análisis parciales: si el conductor sube una nueva foto solo
+// del refrigerante, se borra la fila vieja de ese ítem y se inserta una
+// nueva, manteniendo intactas las filas de los 4 ítems restantes.
+
+export const exitAuthorizationAnalyses = pgTable('exit_authorization_analyses', {
+  id:                   serial('id').primaryKey(),
+  exitAuthorizationId:  integer('exit_authorization_id')
+    .notNull()
+    .references(() => companyExitAuthorizations.id, { onDelete: 'cascade' }),
+  companyId:            integer('company_id').notNull(),
+  itemType:             exitAuthItemTypeEnum('item_type').notNull(),
+  // Algunos items usan nivel (fluidos), otros no (batería siempre es null).
+  nivel:                exitAuthNivelEnum('nivel'),
+  // Estado del componente. Bayoneta usa `color` en lugar de `estado`.
+  estado:               exitAuthEstadoEnum('estado'),
+  color:                exitAuthColorAceiteEnum('color_aceite'),
+  confianza:            exitAuthConfianzaEnum('confianza').notNull(),
+  puedeSalir:           boolean('puede_salir').notNull(),
+  observaciones:        text('observaciones').notNull(),
+  accionRecomendada:    text('accion_recomendada').notNull(),
+  // Chain-of-thought del modelo. No se muestra al usuario final pero se
+  // guarda para auditoría y para depurar prompts.
+  razonamiento:         text('razonamiento').notNull(),
+  // Guía específica para el conductor cuando el ítem falla (qué mejorar
+  // en la próxima foto). Vacía cuando el ítem aprueba.
+  aiGuidance:           text('ai_guidance').notNull().default(''),
+  geminiModel:          varchar('gemini_model', { length: 100 }).notNull(),
+  latencyMs:            integer('latency_ms').notNull(),
+  inputTokens:          integer('input_tokens'),
+  outputTokens:         integer('output_tokens'),
+  totalTokens:          integer('total_tokens'),
+  // NUEVO: JSON crudo de respuesta de Gemini para esa llamada (compartido
+  // entre los 5 ítems del mismo request). Para trazabilidad — antes esto
+  // solo vivía en logs de consola que se pierden al reiniciar el proceso.
+  rawResponseText:      text('raw_response_text'),
+  photoUrl:             text('photo_url'),
+  createdAt:            timestamp('created_at').notNull().defaultNow(),
+});
+
+// ─────────────────────────────────────────────
+// Decisiones manuales del supervisor sobre un análisis IA
+// ─────────────────────────────────────────────
+// Una fila por cada decisión que el supervisor toma sobre un ítem:
+//   - 'request_recapture'  → la foto está mal (borrosa, no muestra lo que
+//                             debe). El conductor tiene que rehacer SOLO
+//                             esta foto, no toda la autorización.
+//   - 'override_approve'   → el supervisor aprueba manualmente aunque la
+//                             IA haya marcado como fallo.
+//   - 'confirm_fail'       → el supervisor confirma el fallo de la IA y
+//                             rechaza la salida (no requiere reenvío).
+//
+// El "rechazo manual con razón" es lo que pediste: el supervisor puede
+// decir "esta foto está borrosa" o "no se ve el nivel" y el sistema le
+// muestra al conductor específicamente qué rehacer.
+
+export const exitAnalysisRejections = pgTable('exit_analysis_rejections', {
+  id:                     serial('id').primaryKey(),
+  exitAuthorizationId:    integer('exit_authorization_id')
+    .notNull()
+    .references(() => companyExitAuthorizations.id, { onDelete: 'cascade' }),
+  companyId:              integer('company_id').notNull(),
+  itemType:               exitAuthItemTypeEnum('item_type').notNull(),
+  // varchar en vez de enum porque las acciones pueden crecer.
+  action:                 varchar('action', { length: 40 }).notNull(),
+  // Quién y cuándo decidió.
+  decidedByUserId:        integer('decided_by_user_id'),
+  decidedByName:          varchar('decided_by_name', { length: 160 }),
+  decidedAt:              timestamp('decided_at').notNull().defaultNow(),
+  // Razón: obligatoria para request_recapture y override_approve.
+  reason:                 text('reason').notNull(),
+  // Si la foto fue reemplazada y se generó un nuevo análisis, esta fila
+  // queda como histórico. superseded_at != null marca que ya no aplica.
+  supersededAt:           timestamp('superseded_at'),
+  createdAt:              timestamp('created_at').notNull().defaultNow(),
 });
 

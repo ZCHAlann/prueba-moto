@@ -379,11 +379,6 @@ export function MaintenanceDetailDrawer({
 
   const currentAssignedId = item?.assignedUserId ?? "";
   const partsCost = (item?.totalCost ?? 0) - (item?.laborCost ?? 0);
-  // IVA%: usar el valor del draft si cambió, si no el del item
-  const ivaPct = ivaPercentDraft ?? item?.ivaPercent ?? 15;
-  const subtotalNoIva = (item?.laborCost ?? 0) + partsCost;
-  const ivaAmount = subtotalNoIva * (ivaPct / 100);
-  const totalFromIva = subtotalNoIva + ivaAmount;
   // Para lavada: el "Total" del servicio = carwashTotal. Los "Repuestos /
   // Extras" no aplican como tal — lo que sí hay son los adicionales que el
   // operador agregó al servicio (carwashExtras).
@@ -645,23 +640,6 @@ export function MaintenanceDetailDrawer({
                       )}
                       <Kpi label="Total" value={fmtMoney(item.totalCost)} accent="emerald" />
                     </div>
-                    {/* Desglose IVA (informativo, sin afectar el Total del Kpi) */}
-                    {!isLavada && (
-                      <div className="border-t border-gray-100 dark:border-white/[0.06] mt-2 pt-2 px-3 space-y-1">
-                        <div className="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
-                          <span>Subtotal (sin IVA)</span>
-                          <span>{fmtMoney(subtotalNoIva)}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
-                          <span>IVA {ivaPct}% (informativo)</span>
-                          <span>{fmtMoney(ivaAmount)}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500 pt-1">
-                          <span>Total con IVA</span>
-                          <span>{fmtMoney(totalFromIva)}</span>
-                        </div>
-                      </div>
-                    )}
                   </Section>
 
                   {/* ── Lavada: campos específicos ── */}

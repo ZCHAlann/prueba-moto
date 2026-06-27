@@ -49,7 +49,10 @@ export type WizardData = {
   vehicleModel:  string;
   vehicleColor:  string;
   vehicleYear:   string;
+  /** Km al devolver (entrega) en modo alta. En modo finalize es el km de regreso (usuario lo ingresa). */
   vehicleOdometer:  string;
+  /** Km originales al momento de la entrega — se muestra como referencia en finalize. */
+  vehicleOdometerDelivery: string;
   vehicleFuelLevel: string;
   vehicleCondition: string;
   // Step 4
@@ -68,6 +71,11 @@ export type WizardData = {
   signatureRespUrl:     string | null;
   // PDF
   pdfUrl: string | null;
+  // ── Campos específicos del acta de DEVOLUCIÓN (solo finalize) ─────────────
+  returnOdometerPhotoUrl: string | null;
+  /** File local del odómetro al regreso, antes de subir. */
+  returnOdometerPhoto:    File | null;
+  multasText:            string;
 };
 
 // Datos que vienen del acta existente (edit mode)
@@ -90,6 +98,9 @@ export type ExistingHandoverData = {
   signatureRespUrl?: string | null;
   vehiclePhotoUrls?: string[];
   handoverUrl?:      string | null;
+  // Datos del acta de devolución (si la asignación ya fue finalizada).
+  returnOdometerPhotoUrl?: string | null;
+  multasText?:            string | null;
 };
 
 const DEFAULT_NOVEDADES: NovedadesState = {
@@ -130,7 +141,8 @@ function buildInitialData(
   },
   companyName: string,
   assignmentCount: number,
-  existing?: ExistingHandoverData | null,  // ← NUEVO
+  existing?: ExistingHandoverData | null,
+  finalizeMode = false,
 ): WizardData {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -155,7 +167,10 @@ function buildInitialData(
     vehicleModel:  asset.model  ?? "",
     vehicleColor:  asset.color  ?? "",
     vehicleYear:   asset.year   ?? "",
-    vehicleOdometer:  existing?.vehicleOdometer  ?? "",
+    // En finalizeMode: guardamos el km original en vehicleOdometerDelivery
+    // y dejamos vehicleOdometer vacío para que el usuario ingrese el de regreso.
+    vehicleOdometer: finalizeMode ? "" : (existing?.vehicleOdometer ?? ""),
+    vehicleOdometerDelivery: existing?.vehicleOdometer ?? "",
     vehicleFuelLevel: existing?.vehicleFuelLevel ?? "",
     vehicleCondition: existing?.vehicleCondition ?? "",
     novedades:     (existing?.novedades as NovedadesState) ?? { ...DEFAULT_NOVEDADES },
@@ -169,6 +184,9 @@ function buildInitialData(
     signatureRespDataUrl: existing?.signatureRespUrl ?? null,
     signatureRespUrl:     existing?.signatureRespUrl ?? null,
     pdfUrl: existing?.handoverUrl ?? null,
+    returnOdometerPhotoUrl: existing?.returnOdometerPhotoUrl ?? null,
+    returnOdometerPhoto:    null,
+    multasText:            existing?.multasText ?? "",
   };
 }
 
@@ -184,7 +202,8 @@ export function useHandoverWizard(
     year?: string | null;
   } | null,
   assignmentCount: number,
-  existing?: ExistingHandoverData | null,  // ← NUEVO
+  existing?: ExistingHandoverData | null,
+  finalizeMode = false,
 ) {
   const { session } = useAuth();
   const companyName = (session as Record<string, unknown>)?.companyName as string ?? "";
@@ -197,21 +216,23 @@ export function useHandoverWizard(
       companyName,
       assignmentCount,
       existing,
+      finalizeMode,
     )
   );
   const [uploading, setUploading] = useState(false);
   const [error, setError]         = useState<string | null>(null);
 
-  const reinitialize = useCallback((existingOverride?: ExistingHandoverData | null) => {
+  const reinitialize = useCallback((existingOverride?: ExistingHandoverData | null, isFinalize?: boolean) => {
     setData(buildInitialData(
       driver ?? { firstName: "", lastName: "" },
       asset  ?? {},
       companyName,
       assignmentCount,
       existingOverride ?? existing,
+      isFinalize ?? finalizeMode,
     ));
     setError(null);
-  }, [driver, asset, companyName, assignmentCount, existing]);
+  }, [driver, asset, companyName, assignmentCount, existing, finalizeMode]);
 
   const setField = useCallback(<K extends keyof WizardData>(key: K, value: WizardData[K]) => {
     setData((prev) => ({ ...prev, [key]: value }));
@@ -279,9 +300,33 @@ export function useHandoverWizard(
     }
   }, [companyId]);
 
-  const reset = useCallback((existingOverride?: ExistingHandoverData | null) => {
-    reinitialize(existingOverride);
+  /**
+   * Sube la foto del odómetro al regreso y devuelve la URL persistida.
+   * Devuelve string vacío si no hay foto (sin upload).
+   */
+  const uploadOdometerPhoto = useCallback(async (file: File | null): Promise<string | null> => {
+    if (!file) return null;
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("photos", file);
+      const res = await fetch(
+        `/api/upload/assignment-photos?companyId=${companyId}`,
+        { method: "POST", body: form },
+      );
+      if (!res.ok) throw new Error("Error al subir foto del odómetro");
+      const { urls } = await res.json();
+      const url = urls[0] as string;
+      setData((prev) => ({ ...prev, returnOdometerPhotoUrl: url }));
+      return url;
+    } finally {
+      setUploading(false);
+    }
+  }, [companyId]);
+
+  const reset = useCallback((existingOverride?: ExistingHandoverData | null, isFinalize?: boolean) => {
+    reinitialize(existingOverride, isFinalize);
   }, [reinitialize]);
 
-  return { data, setField, uploading, error, setError, uploadPhotos, uploadSignature, uploadPdf, reset };
+  return { data, setField, uploading, error, setError, uploadPhotos, uploadSignature, uploadPdf, uploadOdometerPhoto, reset };
 }

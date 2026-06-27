@@ -14,6 +14,7 @@ import type { ApexOptions } from "apexcharts";
 import { useAuth } from "../../../context/AuthContext";
 import { usePlatformLeads }   from "../../../hooks/usePlatformLeads";
 import { usePlatformStats }   from "../../../hooks/usePlatformStats";
+import { fmtDateShortEc } from "@/lib/datetime";
 import {
   PlatformKpiCard, PlatformModal, ModalActions,
   InputField, SelectField, TextareaField,
@@ -74,8 +75,7 @@ const EMPTY_FORM: PlatformLeadInput = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtDate(d: string | null | undefined) {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" });
+  return fmtDateShortEc(d);
 }
 
 function fmtCurrency(v: string | number | null | undefined) {

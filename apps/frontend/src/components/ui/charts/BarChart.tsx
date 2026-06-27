@@ -15,7 +15,7 @@ type Props = {
   assets: Asset[];
 };
 
-type Mode = "liters" | "cost" | "entries";
+type Mode = "gallons" | "cost" | "entries";
 
 const COLS = ["#4F6EF7", "#00D084", "#F5A623", "#9B6DFF", "#00C8D7", "#F24E4E"];
 
@@ -30,7 +30,7 @@ function ChartTooltip({ active, payload, label, mode }: any) {
   const val   = payload[0].value as number;
   const color = payload[0].fill  as string;
   const display =
-    mode === "liters"  ? `${fmt(val, 0)} L`  :
+    mode === "gallons" ? `${fmt(val, 2)} gal` :
     mode === "cost"    ? `$${fmt(val)}` :
     `${val} cargas`;
   return (
@@ -50,15 +50,15 @@ function ChartTooltip({ active, payload, label, mode }: any) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export function BarChartExp({ fuelEntries, assets }: Props) {
-  const [mode, setMode] = useState<Mode>("liters");
+  const [mode, setMode] = useState<Mode>("gallons");
   const [hovIdx, setHovIdx] = useState<number | null>(null);
 
   const data = useMemo(() => {
-    const map = new Map<string, { liters: number; cost: number; entries: number }>();
+    const map = new Map<string, { gallons: number; cost: number; entries: number }>();
     fuelEntries.forEach((e) => {
-      const cur = map.get(e.assetId) ?? { liters: 0, cost: 0, entries: 0 };
+      const cur = map.get(e.assetId) ?? { gallons: 0, cost: 0, entries: 0 };
       map.set(e.assetId, {
-        liters:  cur.liters  + e.liters,
+        gallons: cur.gallons + e.gallons,
         cost:    cur.cost    + e.cost,
         entries: cur.entries + 1,
       });
@@ -73,12 +73,12 @@ export function BarChartExp({ fuelEntries, assets }: Props) {
       .filter(Boolean)
       .sort((a: any, b: any) => b[mode] - a[mode]) as {
         id: string; plate: string; unit: string;
-        liters: number; cost: number; entries: number;
+        gallons: number; cost: number; entries: number;
       }[];
   }, [fuelEntries, assets, mode]);
 
   const MODES: { key: Mode; label: string }[] = [
-    { key: "liters",  label: "Litros"  },
+    { key: "gallons", label: "Galones" },
     { key: "cost",    label: "Costo"   },
     { key: "entries", label: "Cargas"  },
   ];
@@ -164,7 +164,7 @@ export function BarChartExp({ fuelEntries, assets }: Props) {
         {data.map((d, i) => {
           const col   = COLS[i % COLS.length];
           const isHov = hovIdx === i;
-          const val   = mode === "liters" ? `${fmt(d.liters, 0)} L` : mode === "cost" ? `$${fmt(d.cost)}` : `${d.entries}`;
+          const val   = mode === "gallons" ? `${fmt(d.gallons, 2)} gal` : mode === "cost" ? `$${fmt(d.cost)}` : `${d.entries}`;
           return (
             <div key={d.id} onMouseEnter={() => setHovIdx(i)} onMouseLeave={() => setHovIdx(null)}
               style={{

@@ -4,6 +4,7 @@ import { useAcUnits } from "../../hooks/useAcUnits";
 import { useCompanyUsers, type CompanyUser } from "../../hooks/useCompanyUsers";
 import { DatePicker } from "../ui/date-picker/DatePicker";
 import type { AirConditioningUnit, AcServiceKind } from "../../types/fleet";
+import { todayEcuador } from "@/lib/datetime";
 
 type Props = {
   unit: AirConditioningUnit;
@@ -50,7 +51,7 @@ export function AcServiceModal({ unit, onClose, onCreated }: Props) {
   const { users } = useCompanyUsers();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [date, setDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState<string>(todayEcuador());
   const [kind, setKind] = useState<AcServiceKind>("Limpieza");
   const [technician, setTechnician] = useState<string>("");
   const [cost, setCost] = useState<string>("");

@@ -18,6 +18,7 @@
 //   7. SECCIÓN 6 — Atención (alertas + actividad reciente)
 
 import { useMemo, lazy, Suspense, useState, useEffect } from "react";
+import { useNavigate } from "react-router";
 import { useAuth } from "../../context/AuthContext";
 import { usePermissions } from "../../hooks/usePermissions";
 import { KpiCard } from "../../components/dashboard/kpi-card";
@@ -159,11 +160,11 @@ const BASE_AXIS_STYLE = { fontSize: "12px", colors: "#e5e7eb" as string | string
 const BASE_YAXIS_STYLE = { fontSize: "12px", colors: ["#6B7280"] };
 const GRID_BORDER = "rgba(156,163,175,0.12)";
 
-function makeAreaOptions(categories: string[], theme: "dark" | "light"): ApexOptions {
+function makeAreaOptions(categories: string[], theme: "dark" | "light", onClick?: () => void): ApexOptions {
   return {
     legend: { show: false },
     colors: ["#465FFF", "#10b981"],
-    chart: { fontFamily: "Outfit, sans-serif", height: 280, type: "line", toolbar: { show: false }, background: "transparent" },
+    chart: { fontFamily: "Outfit, sans-serif", height: 280, type: "line", toolbar: { show: false }, background: "transparent", events: { click: onClick ? () => onClick() : undefined } },
     stroke: { curve: "smooth", width: [2.5, 2.5] },
     fill: { type: "gradient", gradient: { opacityFrom: 0.5, opacityTo: 0 } },
     markers: { size: 0, strokeColors: "#fff", strokeWidth: 2, hover: { size: 5 } },
@@ -175,10 +176,10 @@ function makeAreaOptions(categories: string[], theme: "dark" | "light"): ApexOpt
   };
 }
 
-function makeBarOptions(categories: string[], theme: "dark" | "light", height = 220): ApexOptions {
+function makeBarOptions(categories: string[], theme: "dark" | "light", height = 220, onClick?: () => void): ApexOptions {
   return {
     colors: ["#465fff"],
-    chart: { fontFamily: "Outfit, sans-serif", type: "bar", height, toolbar: { show: false }, background: "transparent" },
+    chart: { fontFamily: "Outfit, sans-serif", type: "bar", height, toolbar: { show: false }, background: "transparent", events: { click: onClick ? () => onClick() : undefined } },
     plotOptions: { bar: { horizontal: false, columnWidth: "50%", borderRadius: 5, borderRadiusApplication: "end" } },
     dataLabels: { enabled: false },
     stroke: { show: true, width: 3, colors: ["transparent"] },
@@ -190,9 +191,9 @@ function makeBarOptions(categories: string[], theme: "dark" | "light", height = 
   };
 }
 
-function makeDonutOptions(labels: string[], theme: "dark" | "light", height = 240): ApexOptions {
+function makeDonutOptions(labels: string[], theme: "dark" | "light", height = 240, onClick?: () => void): ApexOptions {
   return {
-    chart: { type: "donut", background: "transparent", fontFamily: "Outfit, sans-serif", height },
+    chart: { type: "donut", background: "transparent", fontFamily: "Outfit, sans-serif", height, events: { click: onClick ? () => onClick() : undefined } },
     colors: ["#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#8b5cf6", "#9ca3af"],
     labels,
     legend: { position: "bottom", fontSize: "11px", labels: { colors: "#9ca3af" }, markers: { size: 6 } },
@@ -203,10 +204,10 @@ function makeDonutOptions(labels: string[], theme: "dark" | "light", height = 24
   };
 }
 
-function makeHBarOptions(categories: string[], colors: string[], theme: "dark" | "light", height = 240): ApexOptions {
+function makeHBarOptions(categories: string[], colors: string[], theme: "dark" | "light", height = 240, onClick?: () => void): ApexOptions {
   return {
     colors,
-    chart: { fontFamily: "Outfit, sans-serif", type: "bar", height, toolbar: { show: false }, background: "transparent" },
+    chart: { fontFamily: "Outfit, sans-serif", type: "bar", height, toolbar: { show: false }, background: "transparent", events: { click: onClick ? () => onClick() : undefined } },
     plotOptions: { bar: { horizontal: true, borderRadius: 4, barHeight: "55%", distributed: true } },
     dataLabels: { enabled: true, style: { fontSize: "11px", colors: ["#fff"] } },
     xaxis: { categories, axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: BASE_YAXIS_STYLE } },
@@ -318,6 +319,7 @@ export function DashboardOverview() {
   const { alerts } = useAlerts();
   const vis = useDashboardVisibility();
   const period = usePeriod();
+  const navigate = useNavigate();
 
   // ── Tema ──
   const [isDark, setIsDark] = useState(
@@ -342,10 +344,10 @@ export function DashboardOverview() {
     if (!k) return [];
     const pctAssets = k.totalAssets > 0 ? `+${Math.round((k.operativeAssets / k.totalAssets) * 100)}%` : undefined;
     return [
-      { key: "kpis_flotas",        label: "Vehículos",       value: k.totalAssets.toString(),                  badge: pctAssets,  tone: "success" as const, icon: <IconTruck />,  href: "/flotas"        },
-      { key: "kpis_mantenimiento", label: "Mantenimientos",  value: k.openMaintenances.toString(),             badge: undefined,  tone: "warning" as const, icon: <IconWrench />, href: "/mantenimiento" },
-      { key: "kpis_alertas",       label: "Alertas activas", value: k.openAlerts.toString(),                   badge: k.criticalAlerts > 0 ? `-${k.criticalAlerts} críticas` : undefined, tone: "error" as const, icon: <IconBell />, href: "/alertas" },
-      { key: "kpis_combustible",   label: "Combustible (L)", value: k.totalFuelLiters.toLocaleString("es-EC"), badge: undefined,  tone: "brand" as const,   icon: <IconFuel />,   href: "/combustible"   },
+      { key: "kpis_flotas",        label: "Vehículos",       value: k.totalAssets.toString(),                  badge: pctAssets,  tone: "success" as const, icon: <IconTruck />,  href: "/flotas?kpi=Veh%C3%ADculos"        },
+      { key: "kpis_mantenimiento", label: "Mantenimientos",  value: k.openMaintenances.toString(),             badge: undefined,  tone: "warning" as const, icon: <IconWrench />, href: "/mantenimiento?kpi=Mantenimientos" },
+      { key: "kpis_alertas",       label: "Alertas activas", value: k.openAlerts.toString(),                   badge: k.criticalAlerts > 0 ? `-${k.criticalAlerts} críticas` : undefined, tone: "error" as const, icon: <IconBell />, href: "/alertas?kpi=Alertas" },
+      { key: "kpis_combustible",   label: "Combustible (gal)", value: k.totalFuelGallons.toLocaleString("es-EC"), badge: undefined,  tone: "brand" as const,   icon: <IconFuel />,   href: "/combustible?kpi=Combustible"   },
     ].filter((c) => {
       if (c.key === "kpis_flotas")        return vis.kpis.flotas;
       if (c.key === "kpis_mantenimiento") return vis.kpis.mantenimiento;
@@ -358,19 +360,19 @@ export function DashboardOverview() {
 
   // ── Charts base ──
   const c = an?.charts;
-  const areaOptions = useMemo(() => makeAreaOptions(c?.fuelOverTime.categories ?? [], theme),  [c?.fuelOverTime.categories, theme]);
-  const barOptions  = useMemo(() => makeBarOptions(c?.maintenancesByMonth.categories ?? [], theme), [c?.maintenancesByMonth.categories, theme]);
+  const areaOptions = useMemo(() => makeAreaOptions(c?.fuelOverTime.categories ?? [], theme, () => navigate("/combustible")),  [c?.fuelOverTime.categories, theme, navigate]);
+  const barOptions  = useMemo(() => makeBarOptions(c?.maintenancesByMonth.categories ?? [], theme, 220, () => navigate("/mantenimiento")), [c?.maintenancesByMonth.categories, theme, navigate]);
   const donutOptions = useMemo(
-    () => makeDonutOptions(c?.assetsByStatus.filter(d => d.value > 0).map(d => d.name) ?? [], theme),
-    [c?.assetsByStatus, theme]
+    () => makeDonutOptions(c?.assetsByStatus.filter(d => d.value > 0).map(d => d.name) ?? [], theme, 280, () => navigate("/flotas")),
+    [c?.assetsByStatus, theme, navigate]
   );
   const hBarOptions = useMemo(
-    () => makeHBarOptions(c?.driversByLicense.map(d => d.name) ?? [], ["#465fff"], theme),
-    [c?.driversByLicense, theme]
+    () => makeHBarOptions(c?.driversByLicense.map(d => d.name) ?? [], ["#465fff"], theme, 240, () => navigate("/conductores")),
+    [c?.driversByLicense, theme, navigate]
   );
   const catBarOptions = useMemo(
-    () => makeBarOptions(c?.assetsByCategory.map(d => d.name) ?? [], theme, 220),
-    [c?.assetsByCategory, theme]
+    () => makeBarOptions(c?.assetsByCategory.map(d => d.name) ?? [], theme, 220, () => navigate("/flotas")),
+    [c?.assetsByCategory, theme, navigate]
   );
 
   // ── Alertas ──
@@ -487,7 +489,7 @@ export function DashboardOverview() {
                                 <ReactApexChart
                                   options={areaOptions}
                                   series={[
-                                    { name: "Litros",    data: c.fuelOverTime.liters },
+                                    { name: "Galones",   data: c.fuelOverTime.galones },
                                     { name: "Costo USD", data: c.fuelOverTime.cost   },
                                   ]}
                                   type="area" height={280}
@@ -505,7 +507,7 @@ export function DashboardOverview() {
                     {loading || !c
                       ? <ChartSkeleton height="h-[280px]" />
                       : (
-                        <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
+                        <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5 cursor-pointer hover:border-sky-300 dark:hover:border-sky-500/30 transition-colors" onClick={() => navigate("/flotas")}>
                           <div className="mb-4 flex items-center gap-2.5">
                             <div className="grid h-9 w-9 place-items-center rounded-xl bg-sky-500/10 text-sky-400">
                               <IconTruck />
@@ -539,7 +541,7 @@ export function DashboardOverview() {
                         loading || !c
                           ? <ChartSkeleton height="h-[220px]" />
                           : (
-                            <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
+                        <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5 cursor-pointer hover:border-violet-300 dark:hover:border-violet-500/30 transition-colors" onClick={() => navigate("/mantenimiento")}>
                               <div className="mb-4 flex items-center gap-2.5">
                                 <div className="grid h-9 w-9 place-items-center rounded-xl bg-violet-500/10 text-violet-400">
                                   <IconWrench />
@@ -567,7 +569,7 @@ export function DashboardOverview() {
                       {loading || !c
                         ? <ChartSkeleton height="h-[220px]" />
                         : (
-                          <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
+                          <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5 cursor-pointer hover:border-amber-300 dark:hover:border-amber-500/30 transition-colors" onClick={() => navigate("/conductores")}>
                             <div className="mb-4 flex items-center gap-2.5">
                               <div className="grid h-9 w-9 place-items-center rounded-xl bg-amber-500/10 text-amber-400">
                                 <IconUser />
@@ -594,7 +596,7 @@ export function DashboardOverview() {
                       {loading || !c
                         ? <ChartSkeleton height="h-[220px]" />
                         : (
-                          <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
+                          <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5 cursor-pointer hover:border-emerald-300 dark:hover:border-emerald-500/30 transition-colors" onClick={() => navigate("/flotas")}>
                             <div className="mb-4 flex items-center gap-2.5">
                               <div className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-500/10 text-emerald-400">
                                 <IconTruck />

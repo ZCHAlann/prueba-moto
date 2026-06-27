@@ -81,6 +81,8 @@ export interface Maintenance {
   odometerKm:    number | null;
   // v3.1: mano de obra
   laborCost:     number;
+  /** IVA porcentual aplicado (default 15 para Ecuador) */
+  ivaPercent:    number;
   cadenceKind:   CadenceKind;
   cadenceValue:  number | null;
   nextTriggerKm: number | null;
@@ -176,6 +178,8 @@ export interface MaintenanceInput {
   odometerKm?:    number | null;
   // v3.1: mano de obra
   laborCost?:      number;
+  /** IVA porcentual aplicado (default 15 para Ecuador) */
+  ivaPercent?:     number;
   cadenceKind?:   CadenceKind;
   cadenceValue?:  number | null;
   nextTriggerKm?: number | null;

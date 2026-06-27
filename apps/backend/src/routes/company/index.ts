@@ -29,6 +29,7 @@ import odometerRouter from './odometer';
 import notificationsRouter from './notifications';
 import reportsRouter from './reports';
 import estadisticasRouter from './estadisticas';
+import jarvisRouter from './jarvis';
 
 const router = Router({ mergeParams: true });
 
@@ -63,6 +64,7 @@ router.use('/odometer', odometerRouter);
 router.use('/notifications', notificationsRouter);
 router.use('/reports', reportsRouter);
 router.use('/estadisticas', estadisticasRouter);
+router.use('/ai', jarvisRouter);
 
 
 export default router;

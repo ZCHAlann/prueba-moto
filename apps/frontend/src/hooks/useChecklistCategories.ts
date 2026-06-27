@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { fmtDateTimeEc } from "@/lib/datetime";
 
 export type CadenceKind = "none" | "weekly" | "days";
 export type ScopeKind = "pick" | "site_assets" | "asset_type";
@@ -69,8 +70,8 @@ export function useChecklistCategories() {
           scopeKind: (String(c.scope_kind ?? "pick") as ScopeKind),
           scopeAssetType: c.scope_asset_type == null ? null : String(c.scope_asset_type),
           scopeSiteId: c.scope_site_id == null ? null : Number(c.scope_site_id),
-          createdAt: String(c.created_at ?? "").slice(0, 16).replace("T", " "),
-          updatedAt: String(c.updated_at ?? "").slice(0, 16).replace("T", " "),
+          createdAt: fmtDateTimeEc(c.created_at as string | null | undefined),
+          updatedAt: fmtDateTimeEc(c.updated_at as string | null | undefined),
         }))
       );
     } catch (err) {

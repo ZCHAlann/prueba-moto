@@ -23,6 +23,7 @@ import { usePlatformUsers }    from "../../../hooks/usePlatformUsers";
 import type { PlatformSettings } from "../../../hooks/usePlatformSettings";
 import type { CreatePlatformUserInput } from "../../../hooks/usePlatformUsers";
 import { SettingsPage } from "@/pages/Settings/page";
+import { fmtDateShortEc } from "@/lib/datetime";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -739,7 +740,7 @@ export function PlatformSettingsPage() {
                             </span>
                           </td>
                           <td className="px-5 py-3 text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">
-                            {new Date(user.createdAt).toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" })}
+                            {fmtDateShortEc(user.createdAt)}
                           </td>
                           <td className="px-5 py-3">
                             <div className="flex items-center justify-end gap-1">

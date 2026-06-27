@@ -16,6 +16,7 @@ import type {
 import { usePlatformCompanies } from "../../../hooks/usePlatformCompanies";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import { ExportToolbar } from "../../../components/ui/export-toolbar/ExportToolbar";
+import { fmtDateShortEc, todayEcuador } from "@/lib/datetime";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -24,9 +25,7 @@ function fmt(val: string | number) {
 }
 
 function fmtDate(iso: string) {
-  return new Date(iso + "T00:00:00").toLocaleDateString("es-EC", {
-    day: "2-digit", month: "short", year: "numeric",
-  });
+  return fmtDateShortEc(iso);
 }
 
 function monthLabel(ym: string) {
@@ -161,7 +160,7 @@ function InvoiceModal({ open, onClose, onSubmit, initial, loading, companies }: 
     cycle:     (initial?.cycle    ?? "monthly") as "monthly" | "annual",
     amount:    initial ? String(Number(initial.amount)) : "",
     tax:       initial ? String(Number(initial.tax))    : "0",
-    issuedAt:  initial?.issuedAt  ?? new Date().toISOString().slice(0, 10),
+    issuedAt:  initial?.issuedAt  ?? todayEcuador(),
     dueAt:     initial?.dueAt     ?? "",
     notes:     initial?.notes     ?? "",
     status:    initial?.status    ?? "draft" as BillingInvoice["status"],

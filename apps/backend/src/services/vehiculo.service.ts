@@ -148,7 +148,7 @@ export async function getVehicleCockpit(assetId: string, companyId: string) {
   }
 
   // Combustible
-  const totalLiters  = lastFuels.reduce((s, f) => s + Number(f.liters), 0);
+  const totalGallons = lastFuels.reduce((s, f) => s + Number(f.gallons), 0);
   const totalCost    = lastFuels.reduce((s, f) => s + Number(f.cost ?? 0), 0);
   const lastOdometer = lastFuels[0]?.odometer ? Number(lastFuels[0].odometer) : null;
 
@@ -213,9 +213,9 @@ export async function getVehicleCockpit(assetId: string, companyId: string) {
     asset:            formatAssetRow(asset),
     driver,
     fuel: {
-      entries:     lastFuels,
-      totalLiters: +totalLiters.toFixed(1),
-      totalCost:   +totalCost.toFixed(2),
+      entries:      lastFuels,
+      totalGallons: +totalGallons.toFixed(2),
+      totalCost:    +totalCost.toFixed(2),
       lastOdometer,
     },
     oilCheck:  lastOilCheck[0] ?? null,
@@ -343,8 +343,8 @@ export async function getStatsFuel(assetId: string, companyId: string) {
   const since = monthsAgoIso(12);
 
   const rows = await db.select({
-    date:   companyFuelEntries.date,
-    liters: companyFuelEntries.liters,
+    date:    companyFuelEntries.date,
+    gallons: companyFuelEntries.gallons,
   }).from(companyFuelEntries)
     .where(and(eq(companyFuelEntries.assetId, assetNum),
                eq(companyFuelEntries.companyId, companyNum),
@@ -354,7 +354,7 @@ export async function getStatsFuel(assetId: string, companyId: string) {
   for (const r of rows) {
     const d = (r.date as any) instanceof Date ? (r.date as unknown as Date) : new Date(r.date as any);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    buckets.set(key, (buckets.get(key) ?? 0) + Number(r.liters));
+    buckets.set(key, (buckets.get(key) ?? 0) + Number(r.gallons));
   }
 
   return Array.from(buckets.entries())

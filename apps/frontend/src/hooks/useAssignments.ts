@@ -11,6 +11,8 @@ export type ApiAssignment = {
   status: "Activa" | "Inactiva" | "Finalizada";
   notes: string;
   handoverUrl: string | null;
+  /** URL del PDF del acta de DEVOLUCIÓN (solo presente si status="Finalizada"). */
+  returnHandoverUrl: string | null;
   // ── Acta de entrega ──────────────────
   actaNumber:       string | null;
   actaDate:         string | null;
@@ -60,6 +62,9 @@ export type HandoverPayload = {
   signatureRespUrl?: string | null;
   vehiclePhotoUrls?: string[];
   handoverUrl?:      string | null;
+  // Campos específicos del acta de DEVOLUCIÓN (solo finalize).
+  returnOdometerPhotoUrl?: string | null;
+  multasText?:            string | null;
 };
 
 type CreateAssignmentPayload = {
@@ -81,6 +86,7 @@ function mapApi(raw: Record<string, unknown>): ApiAssignment {
     status:           (raw.status as ApiAssignment["status"]) ?? "Activa",
     notes:            (raw.notes as string) ?? "",
     handoverUrl: (raw.handoverUrl ?? raw.handover_url ?? null) as string | null,
+    returnHandoverUrl: (raw.returnHandoverUrl ?? raw.return_handover_url ?? null) as string | null,
     actaNumber:       (raw.actaNumber as string | null) ?? null,
     actaDate:         (raw.actaDate as string | null) ?? null,
     actaTime:         (raw.actaTime as string | null) ?? null,
@@ -182,11 +188,20 @@ export function useAssignments() {
   );
 
   const finalizeAssignment = useCallback(
-    async (id: string, endDate: string): Promise<ApiAssignment> => {
+    async (
+      id: string,
+      endDate: string,
+      handoverData?: Partial<HandoverPayload>,
+    ): Promise<ApiAssignment> => {
       const res = await fetch(`/api/company/${companyId}/assignments/${id}/finalize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ end_date: endDate }),
+        body: JSON.stringify({
+          end_date: endDate,
+          // Si vienen datos del acta de devolución, se mezclan en el body.
+          // Si no, el backend finaliza sin tocar el acta.
+          ...(handoverData ?? {}),
+        }),
       });
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const updated = mapApi(await res.json());

@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   Search, ChevronLeft, ChevronRight, ChevronDown, Plus, Download, Pencil, Trash2, X,
   Wrench, Package, User as UserIcon, FileDown,
-  ClipboardList, Truck, Check,
+  ClipboardList, Truck, Check, Calendar,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -23,6 +23,7 @@ import {
   type MaintenanceType,
 } from "../../../hooks/useMaintenancesV2";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
+import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
 import { MaintenanceFormModal } from "./MaintenanceFormModal";
 import { MaintenanceDetailDrawer } from "./MaintenanceDetailDrawer";
 import { ReprogramDialog } from "./ReprogramDialog";
@@ -44,16 +45,14 @@ const TYPE_CFG: Record<string, { label: string; cls: string; rowAccent: string }
 };
 
 function fmtDate(iso?: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
+  return fmtDateShortEc(iso);
 }
 function fmtDateTime(iso?: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return fmtDateTimeEc(iso);
 }
 function fmtMoney(n: number | string | null | undefined) {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
-  return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(v);
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(v);
 }
 
 function userIdFromSession(sub: string | undefined): number | null {
@@ -92,8 +91,29 @@ export function MaintenanceListTab({ title }: Props) {
 
   const [from, setFrom] = useState<string>("");
   const [to,   setTo]   = useState<string>("");
+
   const [searchParams, setSearchParams] = useSearchParams();
   const assetIdFromUrl = searchParams.get("assetId") || "";
+
+  // KPI click from EstadisticasTab: read ?from=&to=&kpi= params
+  useEffect(() => {
+    const f = searchParams.get("from");
+    const t = searchParams.get("to");
+    const kpi = searchParams.get("kpi");
+    if (f && /^\d{4}-\d{2}-\d{2}$/.test(f)) setFrom(f);
+    if (t && /^\d{4}-\d{2}-\d{2}$/.test(t)) setTo(t);
+    if (kpi) {
+      const statusMap: Record<string, typeof subTab> = {
+        "Programado": "Programado",
+        "En proceso": "En proceso",
+        "Completado": "Completado",
+        "Corrección": "Correccion",
+        "En curso": "En proceso",
+      };
+      const resolved = statusMap[kpi];
+      if (resolved) setSubTab(resolved);
+    }
+  }, []); // run once on mount
 
   const filters = useMemo(() => {
     const f: Record<string, string> = {};
@@ -118,6 +138,58 @@ export function MaintenanceListTab({ title }: Props) {
   const rows = useMemo(() => allRows, [allRows]);
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pageRows   = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // ── KPIs por estado ─────────────────────────────────────────────────
+  // Para que el conteo por estado NO esté sesgado por el filtro de
+  // status activo, hacemos una segunda query paralela con los mismos
+  // filtros MENOS status. Así un usuario que filtra "Completado"
+  // sigue viendo cuántos hay en cada estado.
+  const kpiFilters = useMemo(() => {
+    const f: Record<string, string> = { ...filters };
+    delete f.status;
+    return f;
+  }, [filters]);
+  const { data: kpiData } = useMaintenancesList(kpiFilters);
+  const kpiRows = kpiData?.data ?? [];
+
+  // Conteo por estado. "En curso" se mapea a "En proceso" para que
+  // coincida con el chip que el usuario ve.
+  const statusCounts = useMemo(() => {
+    const acc: Record<MaintenanceStatus, number> = {
+      Programado: 0,
+      "En proceso": 0,
+      Completado: 0,
+      Correccion: 0,
+    };
+    for (const m of kpiRows) {
+      const s = (m.status === "En curso" ? "En proceso" : m.status) as MaintenanceStatus;
+      if (s in acc) acc[s] += 1;
+    }
+    return acc;
+  }, [kpiRows]);
+
+  // Sparkline: serie de los últimos 14 buckets diarios con el conteo
+  // de mantenimientos en cada estado. Sirve para la mini-línea del KPI.
+  const sparkByStatus = useMemo(() => {
+    const buckets: Record<MaintenanceStatus, number[]> = {
+      Programado:  new Array(14).fill(0),
+      "En proceso": new Array(14).fill(0),
+      Completado:  new Array(14).fill(0),
+      Correccion:  new Array(14).fill(0),
+    };
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    for (const m of kpiRows) {
+      const d = new Date(m.scheduledFor);
+      if (isNaN(d.getTime())) continue;
+      const diffDays = Math.floor((today.getTime() - d.getTime()) / 86_400_000);
+      if (diffDays < 0 || diffDays > 13) continue;
+      const idx = 13 - diffDays; // 0 = más viejo, 13 = hoy
+      const s = (m.status === "En curso" ? "En proceso" : m.status) as MaintenanceStatus;
+      if (s in buckets) buckets[s][idx] += 1;
+    }
+    return buckets;
+  }, [kpiRows]);
 
   const { data: customCats = [] } = useMaintenanceCategories();
   const allCategories = useMemo(() => {
@@ -252,6 +324,45 @@ export function MaintenanceListTab({ title }: Props) {
       transition={{ duration: 0.22, ease: "easeOut" }}
       className="flex flex-col gap-4"
     >
+      {/* ── KPIs por estado (clickeables) ──────────────────────────────
+          Cards estilo "CRÍTICAS / OPERATIVAS / UNIDADES" pero aplicadas
+          a los estados de mantenimiento. Click → setea subTab al
+          estado correspondiente (toggle off si ya estaba activo). */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatusKpiCard
+          label="Programado"
+          count={statusCounts.Programado}
+          spark={sparkByStatus.Programado}
+          color="violet"
+          active={subTab === "Programado"}
+          onClick={() => { setSubTab(subTab === "Programado" ? "all" : "Programado"); setPage(1); }}
+        />
+        <StatusKpiCard
+          label="En proceso"
+          count={statusCounts["En proceso"]}
+          spark={sparkByStatus["En proceso"]}
+          color="sky"
+          active={subTab === "En proceso"}
+          onClick={() => { setSubTab(subTab === "En proceso" ? "all" : "En proceso"); setPage(1); }}
+        />
+        <StatusKpiCard
+          label="Completado"
+          count={statusCounts.Completado}
+          spark={sparkByStatus.Completado}
+          color="emerald"
+          active={subTab === "Completado"}
+          onClick={() => { setSubTab(subTab === "Completado" ? "all" : "Completado"); setPage(1); }}
+        />
+        <StatusKpiCard
+          label="Corrección"
+          count={statusCounts.Correccion}
+          spark={sparkByStatus.Correccion}
+          color="rose"
+          active={subTab === "Correccion"}
+          onClick={() => { setSubTab(subTab === "Correccion" ? "all" : "Correccion"); setPage(1); }}
+        />
+      </div>
+
       {/* ── Filtro por vehículo activo (vino del cockpit) ── */}
       {assetIdFromUrl && (
         <div className="flex items-center gap-2 rounded-xl border border-indigo-200/60 bg-indigo-50/80 px-3 py-2 text-xs text-indigo-700 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-200">
@@ -322,15 +433,17 @@ export function MaintenanceListTab({ title }: Props) {
           <div className="relative flex-1 sm:flex-none">
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
             <input
-              placeholder="Buscar…"
+              placeholder="Buscar por título, placa o vehículo…"
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-              className="w-full sm:w-56 h-9 pl-7 pr-2.5 rounded-lg bg-white dark:bg-white/[0.04] border border-gray-200 dark:border-white/[0.06] text-sm text-gray-800 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20 dark:focus:ring-violet-500/20 transition"
+              className="w-full sm:w-72 h-9 pl-7 pr-2.5 rounded-lg bg-white dark:bg-white/[0.04] border border-gray-200 dark:border-white/[0.06] text-sm text-gray-800 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20 dark:focus:ring-violet-500/20 transition"
             />
           </div>
           <button
             onClick={async () => {
               const { generateMaintenanceListPdf } = await import("../../../components/features/pdf/MaintenanceListPdf");
+              // El módulo Mantenimientos NO incluye sección de desglose
+              // de costos (eso vive solo en Reportes).
               const blob = await generateMaintenanceListPdf(
                 rows,
                 { from: from || new Date().toISOString().slice(0, 10), to: to || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10) },
@@ -448,7 +561,7 @@ export function MaintenanceListTab({ title }: Props) {
                                 <Pencil size={13} />
                               </button>
                             )}
-                            {canDelete && m.status !== "Completado" && (
+                            {(canDelete || isFullAccess) && m.status !== "Completado" && (
                               <button
                                 onClick={() => onDelete(m)}
                                 className="p-1.5 rounded-md text-rose-500 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition"
@@ -457,13 +570,14 @@ export function MaintenanceListTab({ title }: Props) {
                                 <Trash2 size={13} />
                               </button>
                             )}
-                            {canDelete && m.status === "Completado" && (
-                              <span
-                                className="p-1.5 text-gray-300 dark:text-gray-600 cursor-not-allowed"
-                                title="Los mantenimientos completados no se pueden eliminar"
+                            {(canDelete || isFullAccess) && m.status === "Completado" && (
+                              <button
+                                onClick={() => onDelete(m)}
+                                className="p-1.5 rounded-md text-rose-500 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition"
+                                title="Eliminar mantenimiento completado"
                               >
                                 <Trash2 size={13} />
-                              </span>
+                              </button>
                             )}
                           </div>
                         </td>
@@ -646,5 +760,98 @@ function FilterDropdown({
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+// ─── StatusKpiCard ──────────────────────────────────────────────────────────
+// Card KPI clickeable con conteo por estado + sparkline mínima.
+// Click → togglea el filtro de estado en la tabla.
+//
+// Diseño editorial: jerarquía tipográfica, mucho whitespace, una sola
+// línea minimalista para la tendencia. Sin animaciones rebotonas, sin
+// glow, sin dots, sin áreas rellenas. El color hace el trabajo pesado.
+const KPI_COLOR = {
+  violet:  { dot: "bg-violet-500",  num: "text-violet-600 dark:text-violet-300"  },
+  sky:     { dot: "bg-sky-500",     num: "text-sky-600 dark:text-sky-300"        },
+  emerald: { dot: "bg-emerald-500", num: "text-emerald-600 dark:text-emerald-300"},
+  rose:    { dot: "bg-rose-500",    num: "text-rose-600 dark:text-rose-300"      },
+} as const;
+
+function StatusKpiCard({
+  label, count, spark, color, active, onClick,
+}: {
+  label: string;
+  count: number;
+  spark: number[];
+  color: keyof typeof KPI_COLOR;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const palette = KPI_COLOR[color];
+
+  // Línea minimal: solo el path, sin área ni dot.
+  const linePath = useMemo(() => {
+    const w = 100;
+    const h = 24;
+    if (spark.every((v) => v === 0)) return "";
+    const max = Math.max(1, ...spark);
+    const step = w / Math.max(1, spark.length - 1);
+    return spark
+      .map((v, i) => {
+        const x = i * step;
+        const y = h - (v / max) * (h - 4) - 2;
+        return `${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+      })
+      .join(" ");
+  }, [spark]);
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`group relative flex flex-col gap-2 rounded-xl border px-4 py-3.5 text-left transition-colors ${
+        active
+          ? "border-gray-900/15 bg-gray-50 dark:border-white/[0.14] dark:bg-white/[0.05]"
+          : "border-gray-200/70 bg-white hover:bg-gray-50/60 dark:border-white/[0.06] dark:bg-white/[0.015] dark:hover:bg-white/[0.03]"
+      }`}
+    >
+      {/* Cabecera: dot + label */}
+      <div className="flex items-center gap-1.5">
+        <span className={`h-1.5 w-1.5 rounded-full ${palette.dot} ${active ? "" : "opacity-60 group-hover:opacity-100"} transition-opacity`} />
+        <span className={`text-[11px] font-semibold uppercase tracking-[0.08em] ${
+          active ? "text-gray-700 dark:text-gray-200" : "text-gray-500 dark:text-gray-400"
+        }`}>
+          {label}
+        </span>
+      </div>
+
+      {/* Número grande */}
+      <span className={`text-[28px] font-semibold leading-none tabular-nums tracking-tight ${
+        active ? palette.num : "text-gray-900 dark:text-white"
+      }`}>
+        {count.toLocaleString("es-CO")}
+      </span>
+
+      {/* Sparkline minimal */}
+      {linePath && (
+        <svg
+          viewBox="0 0 100 24"
+          preserveAspectRatio="none"
+          className="h-5 w-full"
+          aria-hidden="true"
+        >
+          <path
+            d={linePath}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.25"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={active ? palette.num : "text-gray-300 dark:text-gray-600"}
+          />
+        </svg>
+      )}
+    </button>
   );
 }

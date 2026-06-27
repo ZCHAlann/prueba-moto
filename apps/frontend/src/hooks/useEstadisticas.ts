@@ -1,8 +1,4 @@
 // hooks/useEstadisticas.ts
-// ─────────────────────────────────────────────────────────────────────
-// Hook para consumir el submódulo "reportes > estadisticas" del backend.
-// Devuelve: 4 KPIs + 6 shapes de chart + anomalías detectadas.
-// ─────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -242,12 +238,49 @@ export function useRedetectarAnomalias(companyId: string | null) {
 }
 
 // ─── Análisis IA ─────────────────────────────────────────────────
+//
+// V2: el análisis ahora cruza datos entre módulos (mantenimiento +
+// alertas + combustible + checklists + asignaciones — ver
+// lib/cross-module-signals.ts en el backend) en vez de solo resumir
+// los charts del módulo activo. El shape de salida cambió para
+// soportar el panel "briefing" (resumen narrativo + métricas de
+// soporte + una acción principal + hallazgos secundarios plegables).
+
+export type AIMetrica = { label: string; valor: string };
+
+export type ChartRef =
+  | "comparacionChart"
+  | "lineChart"
+  | "barHChart"
+  | "barVChart"
+  | "radarChart"
+  | "exponencialChart"
+  | "kpis"
+  | "general";
+
+export type AIAccionPrincipal = {
+  titulo: string;
+  justificacion: string;
+  refAssetPlate?: string;
+  refDriverName?: string;
+  chartRef?: ChartRef;
+};
+
+export type AIHallazgo = {
+  titulo: string;
+  detalle: string;
+  severidad: "alta" | "media" | "baja";
+  chartRef?: ChartRef;
+  tags?: string[];
+  recomendacion?: string;
+};
 
 export type AIInsights = {
-  resumenEjecutivo: string;
-  puntosClave: string[];
-  recomendaciones: Array<{ titulo: string; accion: string; prioridad: "alta" | "media" | "baja" }>;
-  alertas: Array<{ titulo: string; detalle: string; severidad: "alta" | "media" | "baja" }>;
+  resumenNarrativo: string;
+  nivelAtencion: "ok" | "media" | "alta";
+  metricas: AIMetrica[];
+  accionPrincipal: AIAccionPrincipal | null;
+  hallazgosSecundarios: AIHallazgo[];
 };
 
 export type AnalisisIAResult = {
@@ -466,12 +499,10 @@ export function useExportarPDF() {
         const txt = await res.text();
         throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
       }
-      // Extraer filename del header
       const dispo = res.headers.get("Content-Disposition") ?? "";
       const match = /filename="([^"]+)"/.exec(dispo);
       const filename = match?.[1] ?? `estadisticas-${params.modulo}.pdf`;
 
-      // Disparar descarga en el navegador
       const blob = await res.blob();
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement("a");

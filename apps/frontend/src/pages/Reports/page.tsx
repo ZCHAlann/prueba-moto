@@ -13,6 +13,7 @@ import { useExitAuthorizations } from "../../hooks/useExitAuthorizations";
 import { useWorkshops } from "../../hooks/useWorkshops";
 import { useSuppliers } from "../../hooks/useSuppliers";
 import { useCostBreakdown } from "../../hooks/useCostBreakdown";
+import { CostBreakdownFilters, CostBreakdownPanel } from "../Mantenimientos/components/CostBreakdown";
 import {
   FileBarChart2,
   CalendarRange,
@@ -38,12 +39,16 @@ import {
   Sparkles,
   Pin,
   PinOff,
+  FileText,
+  Sheet,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ExportToolbar } from "../../components/ui/export-toolbar/ExportToolbar";
+import { GroupedExportButton } from "./GroupedExportButton";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import { EstadisticasTab } from "./EstadisticasTab";
 import { useAuth } from "../../context/AuthContext";
+import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -232,6 +237,91 @@ const PALETTE: Record<ModuleDef["palette"], {
     wave:     "#14b8a6",
   },
 };
+
+// ─── Agrupación por placa (acordeón colapsable) ───────────────────────────────
+// Módulos que muestran sus filas agrupadas por placa/equipo en lugar de una
+// tabla plana. Cada módulo tiene su propio campo de agrupación y su propio
+// set de columnas numéricas a sumar como subtotal/gran total.
+
+const GROUPED_MODULES = new Set(["rep-003", "rep-004", "rep-005", "rep-008", "rep-009"]);
+
+/** Campo de ReportRow que actúa como clave de agrupación (placa / equipo). */
+const GROUP_KEY: Record<string, string> = {
+  "rep-003": "plate",
+  "rep-004": "equipment",
+  "rep-005": "plate",
+  "rep-008": "assetPlate",
+  "rep-009": "assetPlate",
+};
+
+/**
+ * Columnas numéricas a sumar para el subtotal/total de cada módulo.
+ * El valor de estas columnas en ReportRow puede ser number o string
+ * con número (e.g. "10.00 USD"); parseNum se encarga de normalizar.
+ */
+const NUMERIC_COLS: Record<string, string[]> = {
+  "rep-003": ["amount"],                // Gastos
+  "rep-004": [],                         // Checklist no tiene columna de dinero
+  "rep-005": ["total"],                 // Combustible
+  "rep-008": [],                         // Autorizaciones no tiene columna de dinero
+  "rep-009": ["labor", "parts", "cost"], // Mantenimiento
+};
+
+/** Parsea un valor numérico, ya sea number o string con formato moneda. */
+function parseNum(v: unknown): number {
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v === "string") {
+    const cleaned = v.replace(/[^\d.-]/g, "");
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+/**
+ * Agrupa un array de ReportRow por el valor de `groupKey`.
+ * Preserva el orden de primera aparición de cada grupo.
+ * Filas con valor vacío o "—" caen bajo "Sin placa".
+ */
+function groupRowsByKey(
+  rows: ReportRow[],
+  groupKey: string,
+): Array<{ groupValue: string; rows: ReportRow[] }> {
+  const map = new Map<string, ReportRow[]>();
+  for (const row of rows) {
+    const raw = String(row[groupKey] ?? "").trim();
+    const key = raw === "" || raw === "—" ? "Sin placa" : raw;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(row);
+  }
+  return Array.from(map.entries()).map(([groupValue, rows]) => ({ groupValue, rows }));
+}
+
+/** Suma las columnas numéricas de un array de rows. */
+function sumNumericCols(
+  rows: ReportRow[],
+  cols: string[],
+): Record<string, number> {
+  const acc: Record<string, number> = {};
+  for (const col of cols) acc[col] = 0;
+  for (const row of rows) {
+    for (const col of cols) {
+      acc[col] += parseNum(row[col]);
+    }
+  }
+  return acc;
+}
+
+/** Formatea un valor numérico de subtotal como moneda USD o entero. */
+const MONEY_COLS = new Set(["amount", "total", "cost", "labor", "parts"]);
+function fmtSubtotal(value: number, col: string): string {
+  if (MONEY_COLS.has(col)) {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency", currency: "USD", maximumFractionDigits: 2,
+    }).format(value);
+  }
+  return value.toLocaleString("es-CO");
+}
 
 // ─── Wave chart inline (SVG, sin libs externas) ──────────────────────────────
 
@@ -477,6 +567,279 @@ function Pagination({
   );
 }
 
+// ─── GroupedReportTable ──────────────────────────────────────────────────────
+// Tabla con acordeón agrupado por placa/equipo. Reemplaza la tabla plana
+// para los módulos en GROUPED_MODULES.
+//
+// Cada grupo es colapsable; cuando se abre muestra las filas del grupo y
+// (si hay columnas numéricas) una fila de subtotal al final. Al pie de
+// todos los grupos se muestra una fila de gran total.
+//
+// Comportamiento:
+//  • Un solo grupo abierto a la vez (click en otro cierra el anterior).
+//  • Al cambiar las filas (filtros), se cierran todos los grupos.
+//  • El header de la tabla (nombres de columna) siempre está visible arriba.
+
+function GroupedReportTable({
+  columns,
+  rows,
+  groupKey,
+  numericCols,
+  moduleId,
+  palette,
+  moduleTitle,
+  moduleSubtitle,
+  moduleFilename,
+}: {
+  columns: ReportColumn[];
+  rows: ReportRow[];
+  groupKey: string;
+  numericCols: string[];
+  moduleId: string;
+  palette: ModuleDef["palette"];
+  moduleTitle: string;
+  moduleSubtitle: string;
+  moduleFilename: string;
+}) {
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const p = PALETTE[palette];
+
+  const groups = useMemo(() => groupRowsByKey(rows, groupKey), [rows, groupKey]);
+  const grandTotal = useMemo(
+    () => sumNumericCols(rows, numericCols),
+    [rows, numericCols],
+  );
+
+  // Al cambiar los filtros (las filas cambian), cerramos todos los grupos.
+  useEffect(() => {
+    setOpenGroup(null);
+  }, [rows]);
+
+  function toggle(g: string) {
+    setOpenGroup((cur) => (cur === g ? null : g));
+  }
+
+  // Exporta solo este grupo a PDF/Excel. Título del PDF identifica
+  // el grupo para que el archivo se entienda de un vistazo.
+  const handleExportPdf = (groupValue: string, groupRows: ReportRow[]) => {
+    void import("./groupedExport").then(({ exportGroupedToPdf }) => {
+      void exportGroupedToPdf({
+        title: `${moduleTitle} — ${groupValue}`,
+        subtitle: moduleSubtitle,
+        filename: `${moduleFilename}-${groupValue.replace(/\s+/g, "_").toLowerCase()}.pdf`,
+        columns,
+        groups: [{ groupValue, rows: groupRows }],
+        numericCols,
+        palette,
+      });
+    });
+  };
+
+  const handleExportExcel = (groupValue: string, groupRows: ReportRow[]) => {
+    void import("./groupedExport").then(({ exportGroupedToExcel }) => {
+      void exportGroupedToExcel({
+        title: `${moduleTitle} — ${groupValue}`,
+        filename: `${moduleFilename}-${groupValue.replace(/\s+/g, "_").toLowerCase()}.xlsx`,
+        columns,
+        groups: [{ groupValue, rows: groupRows }],
+        numericCols,
+        palette,
+      });
+    });
+  };
+
+  if (groups.length === 0) return null;
+
+  return (
+    <div>
+      {/* ── Header de la tabla (siempre visible) ── */}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[840px] text-sm table-fixed">
+          <thead>
+            <tr className="border-b border-gray-100 dark:border-white/[0.06]">
+              {columns.map((col) => (
+                <th
+                  key={col.key}
+                  className="px-4 py-3.5 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500"
+                >
+                  {col.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+        </table>
+      </div>
+
+      {/* ── Lista de grupos ── */}
+      <div>
+        {groups.map(({ groupValue, rows: groupRows }) => {
+          const isOpen = openGroup === groupValue;
+          const subtotals = sumNumericCols(groupRows, numericCols);
+          const groupId = `group-${moduleId}-${groupValue.replace(/\s+/g, "_")}`;
+          return (
+            <div
+              key={groupValue}
+              className="border-b border-gray-100 dark:border-white/[0.06]"
+            >
+              <button
+                type="button"
+                onClick={() => toggle(groupValue)}
+                aria-expanded={isOpen}
+                aria-controls={groupId}
+                className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors cursor-pointer ${
+                  isOpen
+                    ? `${p.bg} border-l-4 ${p.border}`
+                    : "bg-gray-50/40 dark:bg-white/[0.02] hover:bg-gray-100 dark:hover:bg-white/[0.04]"
+                }`}
+              >
+                <ChevronRight
+                  size={14}
+                  className={`shrink-0 text-gray-400 dark:text-gray-500 transition-transform ${
+                    isOpen ? "rotate-90" : ""
+                  }`}
+                />
+                <span className={`h-1.5 w-1.5 rounded-full ${p.dot} shrink-0`} />
+                <span className="font-semibold text-sm text-gray-800 dark:text-white truncate">
+                  {groupValue}
+                </span>
+                <span className="rounded-md bg-gray-200/60 dark:bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 dark:text-gray-400 tabular-nums">
+                  {groupRows.length} registro{groupRows.length !== 1 ? "s" : ""}
+                </span>
+                <span className="flex-1" />
+                {numericCols.map((col) => {
+                  const colDef = columns.find((c) => c.key === col);
+                  return (
+                    <span
+                      key={col}
+                      className="hidden sm:inline-flex flex-col items-end text-right"
+                    >
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                        {colDef?.label ?? col}
+                      </span>
+                      <span className="text-sm font-bold tabular-nums text-gray-800 dark:text-white">
+                        {fmtSubtotal(subtotals[col] ?? 0, col)}
+                      </span>
+                    </span>
+                  );
+                })}
+
+                {/* ── Botones de exportar (solo este grupo) ── */}
+                <span
+                  className="inline-flex items-center gap-1.5 ml-2 shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    onClick={() => handleExportPdf(groupValue, groupRows)}
+                    className="inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1 text-[11px] font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.08] transition"
+                    title={`Exportar ${groupValue} a PDF`}
+                  >
+                    <FileText size={11} /> PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleExportExcel(groupValue, groupRows)}
+                    className="inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1 text-[11px] font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.08] transition"
+                    title={`Exportar ${groupValue} a Excel`}
+                  >
+                    <Sheet size={11} /> Excel
+                  </button>
+                </span>
+              </button>
+
+              <AnimatePresence initial={false}>
+                {isOpen && (
+                  <motion.div
+                    id={groupId}
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.22, ease: "easeInOut" }}
+                    className="overflow-hidden"
+                  >
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[840px] text-sm">
+                        <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
+                          {groupRows.map((row, i) => (
+                            <tr
+                              key={i}
+                              className="hover:bg-gray-50/80 dark:hover:bg-white/[0.02]"
+                            >
+                              {columns.map((col) => (
+                                <td
+                                  key={col.key}
+                                  className="px-4 py-3 text-gray-600 dark:text-gray-300"
+                                >
+                                  {String(row[col.key] ?? "—")}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                          {numericCols.length > 0 && (
+                            <tr className="bg-gray-50/60 dark:bg-white/[0.03]">
+                              {columns.map((col, i) => (
+                                <td
+                                  key={col.key}
+                                  className={`px-4 py-3 ${
+                                    i === 0
+                                      ? "text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400"
+                                      : numericCols.includes(col.key)
+                                        ? "text-right text-[11px] font-bold tabular-nums text-gray-800 dark:text-white"
+                                        : ""
+                                  }`}
+                                >
+                                  {i === 0
+                                    ? `Subtotal ${groupValue}`
+                                    : numericCols.includes(col.key)
+                                      ? fmtSubtotal(subtotals[col.key] ?? 0, col.key)
+                                      : ""}
+                                </td>
+                              ))}
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
+
+        {/* ── Gran total ── */}
+        {numericCols.length > 0 && (
+          <div className="flex items-center gap-3 px-4 py-3 border-t-2 border-gray-200 dark:border-white/[0.1] bg-gray-100/60 dark:bg-white/[0.04]">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-gray-700 dark:text-gray-200">
+              TOTAL GENERAL
+            </span>
+            <span className="rounded-md bg-gray-200/60 dark:bg-white/[0.08] px-1.5 py-0.5 text-[10px] font-semibold text-gray-600 dark:text-gray-300 tabular-nums">
+              {rows.length} registros
+            </span>
+            <span className="flex-1" />
+            {numericCols.map((col) => {
+              const colDef = columns.find((c) => c.key === col);
+              return (
+                <span
+                  key={col}
+                  className="hidden sm:inline-flex flex-col items-end text-right"
+                >
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    {colDef?.label ?? col}
+                  </span>
+                  <span className="text-sm font-black tabular-nums text-gray-900 dark:text-white">
+                    {fmtSubtotal(grandTotal[col] ?? 0, col)}
+                  </span>
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export function ReportsPage() {
@@ -635,7 +998,10 @@ export function ReportsPage() {
       });
       const maintRows: ReportRow[] = maintenances.map((e) => {
         const asset = assets.find((a) => a.id === e.assetId);
-        const cost = (e.laborCost ?? 0) + (e.partsCost ?? 0);
+        // Usamos totalCost (que ya viene recalculado del backend) para
+        // evitar inconsistencias con repuestos que aún no se reflejen en
+        // un campo partsCost separado.
+        const cost = e.totalCost ?? ((e.laborCost ?? 0) + (e.partsCost ?? 0));
         return {
           plate: asset?.plate ?? "—", type: asset?.category ?? "—", brand: asset?.brand ?? "—",
           expenseType: `Mantenimiento ${e.kind}`,
@@ -714,7 +1080,7 @@ export function ReportsPage() {
           plate:     asset?.plate ?? "—",
           kmStart:   Math.max(e.odometer - 420, 0),
           kmEnd:     e.odometer,
-          unitPrice: `${(e.cost / e.liters).toFixed(2)} USD`,
+          unitPrice: `${(e.cost / e.gallons).toFixed(2)} USD`,
           total:     formatCurrency(e.cost),
           date:      e.date,
           station:   e.station,
@@ -727,8 +1093,8 @@ export function ReportsPage() {
         columns,
         rows,
         summary: [
-          { label: "Cargas",  value: fuelEntries.length.toString(),                               detail: "Registros emitidos", tone: "info"    },
-          { label: "Litros",  value: fuelEntries.reduce((t, e) => t + e.liters, 0).toFixed(0),    detail: "Volumen total",      tone: "warning" },
+          { label: "Cargas",  value: fuelEntries.length.toString(),                                  detail: "Registros emitidos", tone: "info"    },
+          { label: "Galones", value: fuelEntries.reduce((t, e) => t + e.gallons, 0).toFixed(2),    detail: "Volumen total",      tone: "warning" },
           { label: "Costo",   value: formatCurrency(fuelEntries.reduce((t, e) => t + e.cost, 0)), detail: "Acumulado",          tone: "success" },
         ],
       };
@@ -819,8 +1185,8 @@ export function ReportsPage() {
           assetPlate:    plate,
           driverName:    driverNm,
           status:        a.status,
-          requestedAt:   a.requestedAt ? a.requestedAt.slice(0, 16).replace("T", " ") : "—",
-          decidedAt:     a.decidedAt   ? a.decidedAt.slice(0, 16).replace("T", " ")   : "—",
+          requestedAt:   fmtDateTimeEc(a.requestedAt),
+          decidedAt:     fmtDateTimeEc(a.decidedAt),
           decidedBy:     a.decidedByName ?? (decider ? `${decider.firstName} ${decider.lastName}`.trim() : "—"),
           decisionNotes: a.decisionNotes ?? "—",
           __date:        a.requestedAt,
@@ -858,7 +1224,11 @@ export function ReportsPage() {
       const rows: ReportRow[] = maintenances.map((m) => {
         const plate = m.assetPlate ?? m.assetName ?? assets.find((x) => x.id === m.assetId)?.plate ?? "—";
         const labor = m.laborCost ?? 0;
-        const parts = m.partsCost ?? 0;
+        // El backend recalcula totalCost = laborCost + items, así que
+        // partimos de ahí para evitar inconsistencias entre la tabla
+        // del módulo de mantenimientos y este reporte.
+        const total = m.totalCost ?? labor;
+        const parts = Math.max(0, total - labor);
         const workshop = workshops.find((w) => w.id === (m as any).workshopId);
         return {
           title:         m.title ?? "—",
@@ -872,7 +1242,7 @@ export function ReportsPage() {
           technician:    m.technician || "—",
           labor,
           parts,
-          cost:          labor + parts,
+          cost:          total,
           __status:      m.status,
           __date:        m.scheduledDate,
           __workshopId:  (m as any).workshopId ?? null,
@@ -1136,10 +1506,10 @@ export function ReportsPage() {
                     </div>
                     <p className="text-[10px] text-gray-400 dark:text-gray-500">
                       {applied.from
-                        ? new Date(applied.from + "T00:00:00").toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" })
+                        ? fmtDateShortEc(applied.from)
                         : "Inicio abierto"
                       } — {applied.to
-                        ? new Date(applied.to + "T00:00:00").toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" })
+                        ? fmtDateShortEc(applied.to)
                         : "Fin abierto"
                       }
                     </p>
@@ -1151,6 +1521,8 @@ export function ReportsPage() {
                       companyId={session?.companyId ?? null}
                       workshopId={maintWorkshopId}
                       supplierId={maintSupplierId}
+                      from={applied.from || undefined}
+                      to={applied.to || undefined}
                       onClear={() => { setMaintWorkshopId(null); setMaintSupplierId(null); }}
                     />
                   )}
@@ -1171,13 +1543,26 @@ export function ReportsPage() {
                           className="h-9 w-full rounded-xl border border-gray-200 bg-transparent pl-9 pr-4 text-sm text-gray-700 placeholder:text-gray-400 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:text-gray-300 dark:placeholder:text-gray-500"
                         />
                       </div>
-                      <ExportToolbar
-                        title={preview.title}
-                        columns={preview.columns}
-                        rows={visibleRows}
-                        subtitle={`Rango: ${applied.from || "inicio abierto"} — ${applied.to || "fin abierto"}`}
-                        filename={`reporte-${activeId}`}
-                      />
+                      {GROUPED_MODULES.has(activeId) ? (
+                        <GroupedExportButton
+                          title={preview.title}
+                          subtitle={`Rango: ${applied.from || "inicio abierto"} — ${applied.to || "fin abierto"}`}
+                          filename={`reporte-${activeId}`}
+                          columns={preview.columns}
+                          rows={visibleRows}
+                          groupKey={GROUP_KEY[activeId] ?? "plate"}
+                          numericCols={NUMERIC_COLS[activeId] ?? []}
+                          palette={activeModule.palette}
+                        />
+                      ) : (
+                        <ExportToolbar
+                          title={preview.title}
+                          columns={preview.columns}
+                          rows={visibleRows}
+                          subtitle={`Rango: ${applied.from || "inicio abierto"} — ${applied.to || "fin abierto"}`}
+                          filename={`reporte-${activeId}`}
+                        />
+                      )}
                     </div>
                   </div>
 
@@ -1195,6 +1580,19 @@ export function ReportsPage() {
                         Ninguna fila coincide con el rango o filtro actual.
                       </p>
                     </div>
+                  ) : GROUPED_MODULES.has(activeId) ? (
+                    // ── Módulos agrupados: acordeón por placa (sin paginación) ──
+                    <GroupedReportTable
+                      columns={preview.columns}
+                      rows={visibleRows}
+                      groupKey={GROUP_KEY[activeId] ?? "plate"}
+                      numericCols={NUMERIC_COLS[activeId] ?? []}
+                      moduleId={activeId}
+                      palette={activeModule.palette}
+                      moduleTitle={preview.title}
+                      moduleSubtitle={`Rango: ${applied.from || "inicio abierto"} — ${applied.to || "fin abierto"}`}
+                      moduleFilename={`reporte-${activeId}`}
+                    />
                   ) : (
                     <>
                       <div className="overflow-x-auto">
@@ -1255,177 +1653,6 @@ export function ReportsPage() {
 }
 
 
-// ─── Sub-componentes del desglose de costos (taller + proveedor) ──
-
-function CostBreakdownFilters({
-  workshops, suppliers, workshopId, supplierId,
-  onWorkshopChange, onSupplierChange,
-}: {
-  workshops: Array<{ id: string; name: string }>;
-  suppliers: Array<{ id: string; name: string }>;
-  workshopId: number | null;
-  supplierId: number | null;
-  onWorkshopChange: (id: number | null) => void;
-  onSupplierChange: (id: number | null) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3 dark:border-white/[0.06]">
-      <div className="flex flex-col gap-0.5">
-        <span className="text-[9px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Taller</span>
-        <select
-          value={workshopId ?? ""}
-          onChange={(e) => onWorkshopChange(e.target.value ? Number(e.target.value) : null)}
-          className="h-8 rounded-md border border-gray-200 bg-white px-2 text-[11px] text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200"
-        >
-          <option value="">Todos los talleres</option>
-          {workshops.map((w) => (
-            <option key={w.id} value={w.id}>{w.name}</option>
-          ))}
-        </select>
-      </div>
-
-      <div className="flex flex-col gap-0.5">
-        <span className="text-[9px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Proveedor (repuestos)</span>
-        <select
-          value={supplierId ?? ""}
-          onChange={(e) => onSupplierChange(e.target.value ? Number(e.target.value) : null)}
-          className="h-8 rounded-md border border-gray-200 bg-white px-2 text-[11px] text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200"
-        >
-          <option value="">Todos los proveedores</option>
-          {suppliers.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
-          ))}
-        </select>
-      </div>
-
-      {(workshopId || supplierId) && (
-        <button
-          type="button"
-          onClick={() => { onWorkshopChange(null); onSupplierChange(null); }}
-          className="inline-flex h-8 items-center gap-1 rounded-md border border-gray-200 bg-white px-2 text-[11px] font-medium text-gray-500 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300"
-        >
-          Limpiar filtros
-        </button>
-      )}
-
-      <p className="ml-auto text-[10px] text-gray-400 dark:text-gray-500">
-        La mano de obra se atribuye al <strong className="text-gray-600 dark:text-gray-300">taller</strong>; los repuestos al <strong className="text-gray-600 dark:text-gray-300">proveedor</strong>.
-      </p>
-    </div>
-  );
-}
-
-function CostBreakdownPanel({
-  companyId, workshopId, supplierId, onClear,
-}: {
-  companyId: string | null;
-  workshopId: number | null;
-  supplierId: number | null;
-  onClear: () => void;
-}) {
-  const enabled = companyId != null && (workshopId != null || supplierId != null);
-  const { data, loading, error } = useCostBreakdown(companyId, {
-    workshopId, supplierId,
-  });
-
-  if (!enabled) {
-    return (
-      <div className="border-b border-gray-100 px-4 py-2.5 dark:border-white/[0.06]">
-        <p className="text-[11px] text-gray-400 dark:text-gray-500">
-          Selecciona un <strong className="text-gray-600 dark:text-gray-300">taller</strong> o un <strong className="text-gray-600 dark:text-gray-300">proveedor</strong> arriba para ver el desglose de mano de obra y repuestos.
-        </p>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-3 text-gray-400 dark:border-white/[0.06]">
-        <span className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
-        <span className="text-[11px]">Cargando desglose…</span>
-      </div>
-    );
-  }
-
-  if (error || !data) {
-    return (
-      <div className="border-b border-rose-200 bg-rose-50 px-4 py-2.5 text-[11px] text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
-        Error al cargar el desglose: {error ?? "sin datos"}
-      </div>
-    );
-  }
-
-  return (
-    <div className="border-b border-gray-100 bg-gray-50/40 px-4 py-3 dark:border-white/[0.06] dark:bg-white/[0.02]">
-      <div className="mb-2.5 flex items-center justify-between">
-        <p className="text-[11px] font-semibold text-gray-800 dark:text-white">
-          Desglose de costos
-          {supplierId != null && <span className="ml-2 text-[10px] font-normal text-gray-500">· repuestos solo del proveedor seleccionado</span>}
-          {workshopId != null && !supplierId && <span className="ml-2 text-[10px] font-normal text-gray-500">· taller seleccionado</span>}
-        </p>
-        <button
-          type="button"
-          onClick={onClear}
-          className="text-[10px] font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"
-        >
-          Limpiar
-        </button>
-      </div>
-
-      <div className="mb-3 grid grid-cols-3 gap-2">
-        <div className="rounded-md border border-gray-200 bg-white px-3 py-2 dark:border-white/[0.06] dark:bg-white/[0.03]">
-          <p className="text-[9px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Mano de obra</p>
-          <p className="mt-0.5 text-sm font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(data.totals.manoObra)}</p>
-        </div>
-        <div className="rounded-md border border-gray-200 bg-white px-3 py-2 dark:border-white/[0.06] dark:bg-white/[0.03]">
-          <p className="text-[9px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Repuestos</p>
-          <p className="mt-0.5 text-sm font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(data.totals.repuestos)}</p>
-        </div>
-        <div className="rounded-md border border-gray-200 bg-white px-3 py-2 dark:border-white/[0.06] dark:bg-white/[0.03]">
-          <p className="text-[9px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Total</p>
-          <p className="mt-0.5 text-sm font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(data.totals.total)}</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {data.byWorkshop.length > 0 && (
-          <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Por taller</p>
-            <div className="space-y-1">
-              {data.byWorkshop.map((w) => (
-                <div key={w.workshopId} className="flex items-center justify-between rounded-md border border-gray-200 bg-white px-2.5 py-1.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
-                  <div>
-                    <p className="text-[11px] font-medium text-gray-700 dark:text-gray-200">{w.workshopName}</p>
-                    <p className="text-[9px] text-gray-400">{w.count} OT</p>
-                  </div>
-                  <p className="text-[11px] font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(w.total)}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {data.bySupplier.length > 0 && (
-          <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Por proveedor</p>
-            <div className="space-y-1">
-              {data.bySupplier.map((s) => (
-                <div key={s.supplierId} className="flex items-center justify-between rounded-md border border-gray-200 bg-white px-2.5 py-1.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
-                  <div>
-                    <p className="text-[11px] font-medium text-gray-700 dark:text-gray-200">{s.supplierName}</p>
-                    <p className="text-[9px] text-gray-400">{s.count} repuestos</p>
-                  </div>
-                  <p className="text-[11px] font-bold tabular-nums text-gray-800 dark:text-white">{fmtMoney(s.total)}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function fmtMoney(n: number) {
-  return `${n.toFixed(2)} USD`;
-}
+// ─── Sub-componentes del desglose de costos (taller + proveedor) ───
+// Movidos a apps/frontend/src/pages/Mantenimientos/components/CostBreakdown.tsx
+// para reusarse desde el módulo Mantenimientos además de Reports.

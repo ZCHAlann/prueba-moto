@@ -12,9 +12,8 @@
 //   1. requireModule('reportes', 'estadisticas')  → bypass solo owner/admin/superadmin
 //   2. requirePermission('reportes', 'estadisticas', 'ver')  → refuerza
 //
-// Fase 1 (MVP, sin IA):
-//   - GET /:modulo          → datos del módulo
-//   - GET /:modulo/anomalias  → lista de anomalías (vacía hasta fase 4)
+// V2: generateInsights ahora recibe `currentStart` y `endDate` para
+// construir las señales cruzadas entre módulos (cross-module-signals).
 // ─────────────────────────────────────────────────────────────────────
 
 import { Router } from "express";
@@ -98,6 +97,15 @@ function parseDriverId(raw: string | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+function startOfBucket(ref: Date, periodo: "month" | "quarter" | "year"): Date {
+  if (periodo === "year") return new Date(Date.UTC(ref.getUTCFullYear(), 0, 1));
+  if (periodo === "quarter") {
+    const m = Math.floor(ref.getUTCMonth() / 3) * 3;
+    return new Date(Date.UTC(ref.getUTCFullYear(), m, 1));
+  }
+  return new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), 1));
+}
+
 // ─── GET /company/:id/estadisticas/:modulo ───────────────────────────
 
 router.get(
@@ -135,13 +143,13 @@ router.get(
                   ? await calculateChecklists({ companyId, periodo, refDate, endDate, assetId })
                   : modulo === "alertas"
                     ? await calculateAlertas({ companyId, periodo, refDate, endDate, assetId })
-                      : modulo === "ac"
-                        ? await calculateAc({ companyId, periodo, refDate, endDate })
-                        : modulo === "seguros"
-                          ? await calculateSeguros({ companyId, periodo, refDate, endDate, assetId })
-                          : modulo === "peajes"
-                            ? await calculatePeajes({ companyId, periodo, refDate, endDate, assetId, driverId })
-                            : await calculateAsignaciones({ companyId, periodo, refDate, endDate, assetId, driverId });
+                    : modulo === "ac"
+                      ? await calculateAc({ companyId, periodo, refDate, endDate })
+                      : modulo === "seguros"
+                        ? await calculateSeguros({ companyId, periodo, refDate, endDate, assetId })
+                        : modulo === "peajes"
+                          ? await calculatePeajes({ companyId, periodo, refDate, endDate, assetId, driverId })
+                          : await calculateAsignaciones({ companyId, periodo, refDate, endDate, assetId, driverId });
 
       return res.json({
         modulo,
@@ -159,20 +167,6 @@ router.get(
 );
 
 // ─── GET /company/:id/estadisticas/:modulo/multi ─────────────────────
-// Compara N rangos en el mismo chart. Útil para ver tendencias entre
-// períodos (Q1 vs Q2 vs Q3, año actual vs año pasado, etc).
-//
-// Query params:
-//   - rangos:  Array<YYYY-MM-DD..YYYY-MM-DD>  (separados por coma)
-//              ej. ?rangos=2025-01-01..2025-03-31,2025-04-01..2025-06-30
-//   - comparar: shortcut para casos comunes:
-//                "anterior"    → período anterior (mes/trimestre/año)
-//                "yoy"         → mismo período año pasado
-//                "qAnterior"   → trimestre anterior
-//              si se usa `comparar`, `rangos` se ignora.
-//   - periodo, assetId, driverId: igual que el endpoint normal
-//
-// Devuelve: MultiResponse con series paralelas, una por rango.
 
 router.get(
   "/:modulo/multi",
@@ -190,7 +184,6 @@ router.get(
       const assetId  = parseAssetId(req.query.assetId as string | undefined);
       const driverId = parseDriverId(req.query.driverId as string | undefined);
 
-      // ── Resolver lista de rangos ────────────────────────────
       const { calculateMulti } = await import("../../lib/stats-multi");
       let rangos: Array<{ id: string; label: string; desde: string; hasta: string }> = [];
 
@@ -198,8 +191,6 @@ router.get(
       const refDate = new Date(req.query.fecha as string ?? new Date().toISOString().slice(0, 10));
 
       if (comparar === "anterior" || comparar === "yoy" || comparar === "qAnterior") {
-        // Para 'anterior' y 'qAnterior' generamos 1 rango extra.
-        // Para 'yoy' generamos mismo rango año pasado.
         if (comparar === "yoy") {
           const yoyDate = new Date(refDate);
           yoyDate.setFullYear(yoyDate.getFullYear() - 1);
@@ -213,20 +204,20 @@ router.get(
           });
         } else if (comparar === "qAnterior") {
           const prev = new Date(refDate);
-          if (periodo === "month")   prev.setMonth(prev.getMonth() - 3);
+          if (periodo === "month")        prev.setMonth(prev.getMonth() - 3);
           else if (periodo === "quarter") prev.setMonth(prev.getMonth() - 3);
-          else                        prev.setFullYear(prev.getFullYear() - 1);
+          else                            prev.setFullYear(prev.getFullYear() - 1);
           rangos.push({
             id:    `prevq-${prev.toISOString().slice(0,7)}`,
-            label: comparar === "anterior" ? "Período anterior" : "Trimestre anterior",
+            label: "Trimestre anterior",
             desde: startOfBucket(prev, periodo).toISOString().slice(0, 10),
             hasta: new Date(startOfBucket(refDate, periodo).getTime() - 1).toISOString().slice(0, 10),
           });
         } else {
           const prev = new Date(refDate);
-          if (periodo === "month") prev.setMonth(prev.getMonth() - 1);
+          if (periodo === "month")        prev.setMonth(prev.getMonth() - 1);
           else if (periodo === "quarter") prev.setMonth(prev.getMonth() - 3);
-          else prev.setFullYear(prev.getFullYear() - 1);
+          else                            prev.setFullYear(prev.getFullYear() - 1);
           rangos.push({
             id:    `prev-${prev.toISOString().slice(0,7)}`,
             label: "Período anterior",
@@ -235,7 +226,6 @@ router.get(
           });
         }
       } else {
-        // Parseamos el param `rangos`: "2025-01-01..2025-03-31,2025-04-01..2025-06-30"
         const raw = (req.query.rangos as string | undefined) ?? "";
         const pairs = raw.split(",").map((s) => s.trim()).filter(Boolean);
         for (const p of pairs) {
@@ -267,19 +257,7 @@ router.get(
   },
 );
 
-function startOfBucket(ref: Date, periodo: "month" | "quarter" | "year"): Date {
-  if (periodo === "year") return new Date(Date.UTC(ref.getUTCFullYear(), 0, 1));
-  if (periodo === "quarter") {
-    const m = Math.floor(ref.getUTCMonth() / 3) * 3;
-    return new Date(Date.UTC(ref.getUTCFullYear(), m, 1));
-  }
-  return new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), 1));
-}
-
 // ─── GET /company/:id/estadisticas/:modulo/anomalias ─────────────────
-// Devuelve las anomalías registradas en `company_stats_anomalias` para
-// el módulo solicitado. En Fase 1 simplemente las lista; en Fase 4 el
-// detector se ejecuta en background y persiste aquí.
 
 router.get(
   "/:modulo/anomalias",
@@ -293,9 +271,6 @@ router.get(
         return res.status(400).json({ error: "Módulo inválido" });
       }
 
-      // Query params opcionales:
-      //   ?incluirResueltas=true   → incluye las que tienen metadata.resolvedAt
-      //   ?limite=200               → hasta 200 (default 100)
       const incluirResueltas = (req.query.incluirResueltas as string) === "true";
       const limite = Math.min(Number(req.query.limite ?? 100) || 100, 500);
 
@@ -340,8 +315,6 @@ router.get(
 );
 
 // ─── POST /company/:id/estadisticas/redetectar ─────────────────────
-// Fuerza la ejecución del detector para esta empresa.
-// Útil cuando el admin quiere refrescar las anomalías sin esperar al cron.
 
 router.post(
   "/redetectar",
@@ -364,8 +337,6 @@ router.post(
 );
 
 // ─── POST /company/:id/estadisticas/cleanup ──────────────────────
-// Ejecuta la limpieza de insights_cache >7d y anomalías resueltas >90d.
-// Lo usa el cron de mantenimiento; expuesto aquí para forzar manualmente.
 
 router.post(
   "/cleanup",
@@ -383,10 +354,7 @@ router.post(
 );
 
 // ─── POST /company/:id/estadisticas/:modulo/exportar-pdf ───────────
-// Genera un PDF con KPIs, charts, anomalías e insights IA del módulo.
-// Body: { periodo?, fecha?, fechaHasta?, assetId?, driverId? }
-//
-// Devuelve: application/pdf (stream).
+// V2: generateInsights recibe currentStart + endDate para cross-module-signals.
 
 const MODULO_LABELS: Record<ModuloKey, string> = {
   mantenimiento:  "Mantenimiento",
@@ -421,16 +389,18 @@ router.post(
         driverId?: number | null;
       };
 
-      const periodo    = body.periodo ?? "month";
-      const fechaRef   = body.fecha   ?? new Date().toISOString().slice(0, 10);
+      const periodo    = body.periodo    ?? "month";
+      const fechaRef   = body.fecha      ?? new Date().toISOString().slice(0, 10);
       const fechaHasta = body.fechaHasta ?? fechaRef;
-      const assetId    = body.assetId  ?? null;
-      const driverId   = body.driverId ?? null;
+      const assetId    = body.assetId    ?? null;
+      const driverId   = body.driverId   ?? null;
 
-      const refDate = new Date(fechaRef);
-      const endDate = new Date(fechaHasta);
+      const refDate     = new Date(fechaRef);
+      const endDate     = new Date(fechaHasta);
+      // V2: currentStart necesario para cross-module-signals
+      const currentStart = startOfBucket(refDate, periodo);
 
-      // 1) Reutiliza el calculator para obtener el JSON agregado.
+      // 1) Calcular JSON agregado
       const data =
         modulo === "mantenimiento"
           ? await calculateMantenimiento({ companyId, periodo, refDate, endDate, assetId, driverId })
@@ -444,15 +414,15 @@ router.post(
                   ? await calculateChecklists({ companyId, periodo, refDate, endDate, assetId })
                   : modulo === "alertas"
                     ? await calculateAlertas({ companyId, periodo, refDate, endDate, assetId })
-                      : modulo === "ac"
-                        ? await calculateAc({ companyId, periodo, refDate, endDate })
-                        : modulo === "seguros"
-                          ? await calculateSeguros({ companyId, periodo, refDate, endDate, assetId })
-                          : modulo === "peajes"
-                            ? await calculatePeajes({ companyId, periodo, refDate, endDate, assetId, driverId })
-                            : await calculateAsignaciones({ companyId, periodo, refDate, endDate, assetId, driverId });
+                    : modulo === "ac"
+                      ? await calculateAc({ companyId, periodo, refDate, endDate })
+                      : modulo === "seguros"
+                        ? await calculateSeguros({ companyId, periodo, refDate, endDate, assetId })
+                        : modulo === "peajes"
+                          ? await calculatePeajes({ companyId, periodo, refDate, endDate, assetId, driverId })
+                          : await calculateAsignaciones({ companyId, periodo, refDate, endDate, assetId, driverId });
 
-      // 2) Anomalías persistidas (cron) — para que el PDF refleje el estado actual.
+      // 2) Anomalías persistidas
       const persistedAnoms = await db
         .select()
         .from(companyStatsAnomalies)
@@ -475,24 +445,32 @@ router.post(
 
       // 3) Insights del cache (sin generar nuevos para el PDF)
       const { generateInsights } = await import("../../lib/ai-insights");
-      const { isAiEnabled }     = await import("../../lib/ai-client");
-      let insights: any = null;
+      const { isAiEnabled }      = await import("../../lib/ai-client");
+      let insights: any    = null;
       let insightsMeta: any = null;
       if (isAiEnabled()) {
         try {
           const ins = await generateInsights({
-            companyId, modulo, periodo, fechaRef, fechaHasta, assetId, driverId,
-            payload:        data,
+            companyId,
+            modulo,
+            periodo,
+            fechaRef,
+            fechaHasta,
+            assetId,
+            driverId,
+            payload:         data,
+            // V2: necesarios para cross-module-signals
+            currentStart,
+            endDate,
             forzarRegenerar: false,
           });
-          insights    = ins.insights;
+          insights     = ins.insights;
           insightsMeta = {
             fromCache: ins.fromCache,
             model:     ins.model,
             latencyMs: ins.latencyMs,
           };
         } catch (err) {
-          // Si falla la IA, el PDF se genera sin insights.
           console.warn("[exportar-pdf] sin insights IA:", (err as Error)?.message);
         }
       }
@@ -508,27 +486,27 @@ router.post(
       // 5) Generar PDF
       const { buildStatsPDF } = await import("../../lib/stats-pdf");
       const buffer = buildStatsPDF({
-        companyName:     c?.name ?? `Empresa ${companyId}`,
+        companyName:      c?.name ?? `Empresa ${companyId}`,
         modulo,
-        moduloLabel:     MODULO_LABELS[modulo],
+        moduloLabel:      MODULO_LABELS[modulo],
         periodo,
         fechaRef,
         fechaHasta,
-        bucketActual:    bucketByPeriod(refDate, periodo),
+        bucketActual:     bucketByPeriod(refDate, periodo),
         bucketAnterior:   previousBucket(periodo, refDate),
-        kpis:            data.kpis,
-        lineChart:       data.lineChart,
-        barVChart:       data.barVChart,
-        barHChart:       data.barHChart,
-        radarChart:      data.radarChart,
-        exponencialChart:data.exponencialChart,
-        comparacionChart:data.comparacionChart,
-        anomalias:       anomaliasParaPDF,
+        kpis:             data.kpis,
+        lineChart:        data.lineChart,
+        barVChart:        data.barVChart,
+        barHChart:        data.barHChart,
+        radarChart:       data.radarChart,
+        exponencialChart: data.exponencialChart,
+        comparacionChart: data.comparacionChart,
+        anomalias:        anomaliasParaPDF,
         insights,
         insightsMeta,
       });
 
-      // 6) Headers de respuesta (Content-Disposition con filename)
+      // 6) Respuesta
       const filename = `estadisticas-${modulo}-${fechaRef}.pdf`
         .replace(/[^a-z0-9.\-]/gi, "_");
       res.setHeader("Content-Type", "application/pdf");
@@ -542,10 +520,7 @@ router.post(
 );
 
 // ─── POST /company/:id/estadisticas/:modulo/analisis-ia ────────────
-// Análisis IA del módulo. Usa cache (TTL 6h) por (inputHash).
-// Body: { periodo?, fecha?, fechaHasta?, assetId?, driverId?, forzarRegenerar? }
-//
-// Devuelve: { insights, fromCache, model, provider, latencyMs, tokens, ... }
+// V2: generateInsights recibe currentStart + endDate para cross-module-signals.
 
 router.post(
   "/:modulo/analisis-ia",
@@ -570,18 +545,18 @@ router.post(
         forzarRegenerar?: boolean;
       };
 
-      const periodo    = body.periodo ?? "month";
-      const fechaRef   = body.fecha   ?? new Date().toISOString().slice(0, 10);
+      const periodo    = body.periodo    ?? "month";
+      const fechaRef   = body.fecha      ?? new Date().toISOString().slice(0, 10);
       const fechaHasta = body.fechaHasta ?? fechaRef;
-      const assetId    = body.assetId  ?? null;
-      const driverId   = body.driverId ?? null;
+      const assetId    = body.assetId    ?? null;
+      const driverId   = body.driverId   ?? null;
 
-      const refDate = new Date(fechaRef);
-      const endDate = new Date(fechaHasta);
+      const refDate      = new Date(fechaRef);
+      const endDate      = new Date(fechaHasta);
+      // V2: currentStart necesario para cross-module-signals
+      const currentStart = startOfBucket(refDate, periodo);
 
-      // 1) Calcular el JSON agregado con el calculator del módulo.
-      //    Es el MISMO cálculo que usa GET /:modulo, así que el cache de
-      //    insights es coherente con la pantalla del Tablero.
+      // 1) Calcular JSON agregado (mismo cálculo que GET /:modulo)
       const data =
         modulo === "mantenimiento"
           ? await calculateMantenimiento({ companyId, periodo, refDate, endDate, assetId, driverId })
@@ -595,17 +570,18 @@ router.post(
                   ? await calculateChecklists({ companyId, periodo, refDate, endDate, assetId })
                   : modulo === "alertas"
                     ? await calculateAlertas({ companyId, periodo, refDate, endDate, assetId })
-                      : modulo === "ac"
-                        ? await calculateAc({ companyId, periodo, refDate, endDate })
-                        : modulo === "seguros"
-                          ? await calculateSeguros({ companyId, periodo, refDate, endDate, assetId })
-                          : modulo === "peajes"
-                            ? await calculatePeajes({ companyId, periodo, refDate, endDate, assetId, driverId })
-                            : await calculateAsignaciones({ companyId, periodo, refDate, endDate, assetId, driverId });
+                    : modulo === "ac"
+                      ? await calculateAc({ companyId, periodo, refDate, endDate })
+                      : modulo === "seguros"
+                        ? await calculateSeguros({ companyId, periodo, refDate, endDate, assetId })
+                        : modulo === "peajes"
+                          ? await calculatePeajes({ companyId, periodo, refDate, endDate, assetId, driverId })
+                          : await calculateAsignaciones({ companyId, periodo, refDate, endDate, assetId, driverId });
 
-      // 2) Llamar al generador de insights (con cache automático).
+      // 2) Generar / recuperar insights (con cache automático)
       const { generateInsights } = await import("../../lib/ai-insights");
-      const { isAiEnabled }     = await import("../../lib/ai-client");
+      const { isAiEnabled }      = await import("../../lib/ai-client");
+
       if (!isAiEnabled()) {
         return res.status(503).json({
           error: "Análisis IA no disponible: GROQ_API_KEY no configurada en el backend.",
@@ -622,7 +598,10 @@ router.post(
           fechaHasta,
           assetId,
           driverId,
-          payload:        data,
+          payload:         data,
+          // V2: necesarios para cross-module-signals
+          currentStart,
+          endDate,
           forzarRegenerar: body.forzarRegenerar ?? false,
         });
 
@@ -643,11 +622,9 @@ router.post(
         if (err?.code === "AI_DISABLED") {
           return res.status(503).json({ error: err.message, code: "AI_DISABLED" });
         }
-        // Cualquier otro error de la IA: devolvemos 502 para que el frontend
-        // muestre "no se pudo generar el análisis" sin romper la página.
         console.error("[analisis-ia] error:", err);
         return res.status(502).json({
-          error:  "No se pudo generar el análisis IA.",
+          error:   "No se pudo generar el análisis IA.",
           detalle: err?.message ?? String(err),
         });
       }

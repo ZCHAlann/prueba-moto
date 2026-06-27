@@ -4,14 +4,12 @@ import {
   Plus, Pencil, Trash2, CheckCheck, RefreshCw, Info,
 } from "lucide-react";
 import type { AuditEntry } from "../../hooks/useAudit";
+import { fmtDateTimeEc } from "@/lib/datetime";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("es-EC", {
-    day: "2-digit", month: "short", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
+  return fmtDateTimeEc(iso);
 }
 
 // ─── Action config ────────────────────────────────────────────────────────────

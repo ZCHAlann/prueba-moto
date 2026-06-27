@@ -144,8 +144,22 @@ function SigBlock({ title, dataUrl }: { title: string; dataUrl: string | null })
 
 // ─── Documento completo ───────────────────────────────────────────────────────
 
-function ActaPdfDocument({ data, photoDataUrls }: { data: WizardData; photoDataUrls: string[] }) {
+function ActaPdfDocument({
+  data,
+  photoDataUrls,
+  /** Modo del PDF: "alta" (entrega) o "finalizacion" (devolución). */
+  mode = "alta",
+  /** Datos del alta original. Cuando mode="finalizacion", se muestran al lado
+   *  de los datos al regreso para comparación (km inicial vs final, etc.). */
+  initialData,
+}: {
+  data: WizardData;
+  photoDataUrls: string[];
+  mode?: "alta" | "finalizacion";
+  initialData?: Partial<WizardData> | null;
+}) {
   const { novedades: nov, accesorios: acc } = data;
+  const isFinalizacion = mode === "finalizacion";
 
   return (
     <Document>
@@ -153,8 +167,14 @@ function ActaPdfDocument({ data, photoDataUrls }: { data: WizardData; photoDataU
       <Page size="A4" style={s.page}>
 
         <View style={s.titleBlock}>
-          <Text style={s.titleH1}>ACTA DE ENTREGA DE VEHÍCULO</Text>
-          <Text style={s.titleSub}>Entrega del vehículo por parte del departamento logístico de transporte</Text>
+          <Text style={s.titleH1}>
+            {isFinalizacion ? "ACTA DE FINALIZACIÓN DE ASIGNACIÓN" : "ACTA DE ENTREGA DE VEHÍCULO"}
+          </Text>
+          <Text style={s.titleSub}>
+            {isFinalizacion
+              ? "Devolución del vehículo al departamento logístico de transporte"
+              : "Entrega del vehículo por parte del departamento logístico de transporte"}
+          </Text>
         </View>
 
         {/* Info general */}
@@ -201,12 +221,28 @@ function ActaPdfDocument({ data, photoDataUrls }: { data: WizardData; photoDataU
           </View>
           <View style={s.row}>
             <Text style={s.cellLabel}>Año</Text><Text style={s.cell}>{data.vehicleYear}</Text>
-            <Text style={s.cellLabel}>Km al devolver</Text><Text style={s.cell}>{data.vehicleOdometer}</Text>
+            <Text style={s.cellLabel}>{isFinalizacion ? "Km al regresar" : "Km al devolver"}</Text><Text style={s.cell}>{data.vehicleOdometer}</Text>
           </View>
           <View style={s.row}>
             <Text style={s.cellLabel}>Combustible</Text><Text style={s.cell}>{data.vehicleFuelLevel}</Text>
             <Text style={s.cellLabel}>Estado general</Text><Text style={s.cell}>{data.vehicleCondition}</Text>
           </View>
+          {isFinalizacion && initialData?.vehicleOdometer && (
+            <View style={s.row}>
+              <Text style={s.cellLabel}>Km al entregar (ref.)</Text>
+              <Text style={s.cell}>{initialData.vehicleOdometer}</Text>
+              <Text style={s.cellLabel}>Diferencia</Text>
+              <Text style={s.cell}>
+                {(() => {
+                  const init = Number(initialData.vehicleOdometer);
+                  const fin  = Number(data.vehicleOdometer);
+                  if (!Number.isFinite(init) || !Number.isFinite(fin)) return "—";
+                  const diff = fin - init;
+                  return `${diff >= 0 ? "+" : ""}${diff.toLocaleString("es-EC")} km`;
+                })()}
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Novedades */}
@@ -321,7 +357,11 @@ function ActaPdfDocument({ data, photoDataUrls }: { data: WizardData; photoDataU
 
 // ─── Export ───────────────────────────────────────────────────────────────────
 
-export async function generateActaPdf(data: WizardData, photoFiles: File[]): Promise<Blob> {
+export async function generateActaPdf(
+  data: WizardData,
+  photoFiles: File[],
+  options?: { mode?: "alta" | "finalizacion"; initialData?: Partial<WizardData> | null },
+): Promise<Blob> {
   const photoDataUrls = await Promise.all(
     photoFiles.map(
       (file) => new Promise<string>((resolve) => {
@@ -331,5 +371,12 @@ export async function generateActaPdf(data: WizardData, photoFiles: File[]): Pro
       }),
     ),
   );
-  return pdf(<ActaPdfDocument data={data} photoDataUrls={photoDataUrls} />).toBlob();
+  return pdf(
+    <ActaPdfDocument
+      data={data}
+      photoDataUrls={photoDataUrls}
+      mode={options?.mode ?? "alta"}
+      initialData={options?.initialData ?? null}
+    />,
+  ).toBlob();
 }

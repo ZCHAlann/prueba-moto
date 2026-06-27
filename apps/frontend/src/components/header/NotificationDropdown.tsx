@@ -5,6 +5,7 @@ import { DropdownItem } from "../ui/dropdown/DropdownItem";
 import { useAlertsBell } from "../../context/AlertsBellContext";
 import type { ApiAlert, AlertSeverity } from "../../hooks/useAlerts";
 import { Bell, AlertTriangle, CalendarClock, Wrench, FileEdit, CheckCircle2, X } from "lucide-react";
+import { fmtDateShortEc } from "@/lib/datetime";
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 
@@ -37,7 +38,7 @@ function fmtRelative(iso: string): string {
   if (hr  < 24)   return `hace ${hr} h`;
   const days = Math.round(hr / 24);
   if (days < 7)   return `hace ${days} d`;
-  return d.toLocaleDateString("es-EC", { day: "2-digit", month: "short" });
+  return fmtDateShortEc(iso);
 }
 
 /* ── Componente ───────────────────────────────────────────────────────── */

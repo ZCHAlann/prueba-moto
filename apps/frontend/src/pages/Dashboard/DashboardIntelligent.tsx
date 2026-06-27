@@ -39,6 +39,7 @@ import {
 } from "../../hooks/useDashboardAnalytics";
 import { useAuth } from "../../context/AuthContext";
 import { getEntityLabel, getEntityMeta, getActionLabel } from "./entityLabels";
+import { fmtDateShortEc } from "@/lib/datetime";
 
 function IconTruck({ size = 20, className }: { size?: number; className?: string }) {
   return <Truck size={size} strokeWidth={1.8} className={className} />;
@@ -67,6 +68,7 @@ type ChartCardProps = {
   badge?: string | number;
   children: React.ReactNode;
   className?: string;
+  onClick?: () => void;
 };
 const ACCENT_BG: Record<NonNullable<ChartCardProps["accent"]>, string> = {
   violet:  "bg-violet-500/10 text-violet-400",
@@ -77,9 +79,12 @@ const ACCENT_BG: Record<NonNullable<ChartCardProps["accent"]>, string> = {
   cyan:    "bg-cyan-500/10 text-cyan-400",
   slate:   "bg-slate-500/10 text-slate-400",
 };
-function ChartCard({ title, subtitle, icon, accent = "slate", href, badge, children, className = "" }: ChartCardProps) {
+function ChartCard({ title, subtitle, icon, accent = "slate", href, badge, children, className = "", onClick }: ChartCardProps) {
   return (
-    <div className={`rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5 flex flex-col ${className}`}>
+    <div
+      className={`rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5 flex flex-col ${onClick || href ? "cursor-pointer hover:border-violet-300 dark:hover:border-violet-500/30 transition-colors" : ""} ${className}`}
+      onClick={onClick ?? (href ? () => { window.location.href = href; } : undefined)}
+    >
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="flex items-start gap-2.5 min-w-0">
           {icon && (
@@ -98,8 +103,8 @@ function ChartCard({ title, subtitle, icon, accent = "slate", href, badge, child
               {badge}
             </span>
           )}
-          {href && (
-            <a href={href} className="text-[10px] font-semibold text-violet-400 hover:text-violet-300 transition-colors whitespace-nowrap">
+          {href && !onClick && (
+            <a href={href} onClick={e => e.stopPropagation()} className="text-[10px] font-semibold text-violet-400 hover:text-violet-300 transition-colors whitespace-nowrap">
               Ver más →
             </a>
           )}
@@ -249,7 +254,7 @@ function Table({ headers, rows }: { headers: string[]; rows: TableCell[][] }) {
 export function FlotaPorSedeCard({ data, loading }: { data: FlotaPorSede[]; loading: boolean }) {
   const theme = useTheme();
   return (
-    <ChartCard title="Flota por sede" subtitle="Vehículos asignados a cada sede">
+    <ChartCard title="Flota por sede" subtitle="Vehículos asignados a cada sede" href="/flotas">
       {loading || data.length === 0
         ? <ChartSkeleton height="h-[220px]" />
         : <Suspense fallback={<ChartSkeleton height="h-[220px]" />}>
@@ -272,7 +277,7 @@ export function FlotaPorSedeCard({ data, loading }: { data: FlotaPorSede[]; load
 // ────────────────────────────────────────────────────────────────────────
 export function KpisPorSedeCard({ data, loading }: { data: KpisPorSede[]; loading: boolean }) {
   return (
-    <ChartCard title="KPIs por sede" subtitle="Disponibilidad operativa">
+    <ChartCard title="KPIs por sede" subtitle="Disponibilidad operativa" href="/flotas">
       {loading
         ? <ChartSkeleton height="h-[220px]" />
         : data.length === 0
@@ -292,7 +297,7 @@ export function KpisPorSedeCard({ data, loading }: { data: KpisPorSede[]; loadin
 export function FlotaPorGarajeCard({ data, loading }: { data: FlotaPorGaraje[]; loading: boolean }) {
   const theme = useTheme();
   return (
-    <ChartCard title="Flota por garaje" subtitle="Vehículos asignados por garaje">
+    <ChartCard title="Flota por garaje" subtitle="Vehículos asignados por garaje" href="/flotas">
       {loading || data.length === 0
         ? <ChartSkeleton height="h-[220px]" />
         : <Suspense fallback={<ChartSkeleton height="h-[220px]" />}>
@@ -314,7 +319,7 @@ export function OcupacionGarajesCard({ data, loading }: { data: OcupacionGaraje[
   const theme = useTheme();
   const colorOf = (occ: number) => occ >= 90 ? "#ef4444" : occ >= 65 ? "#f59e0b" : "#10b981";
   return (
-    <ChartCard title="Ocupación de garajes" subtitle="% usado vs capacidad">
+    <ChartCard title="Ocupación de garajes" subtitle="% usado vs capacidad" href="/flotas">
       {loading || data.length === 0
         ? <ChartSkeleton height="h-[220px]" />
         : <Suspense fallback={<ChartSkeleton height="h-[220px]" />}>
@@ -338,14 +343,14 @@ export function OcupacionGarajesCard({ data, loading }: { data: OcupacionGaraje[
 // ────────────────────────────────────────────────────────────────────────
 export function ConsumoPorVehiculoCard({ data, loading }: { data: CombustiblePorVehiculo[]; loading: boolean }) {
   return (
-    <ChartCard title="Consumo por vehículo" subtitle="Top 10 por litros cargados">
+    <ChartCard title="Consumo por vehículo" subtitle="Top 10 por galones cargados" href="/combustible">
       {loading
         ? <ChartSkeleton height="h-[220px]" />
         : data.length === 0
           ? <p className="text-xs text-gray-400 py-8 text-center">Sin datos de consumo</p>
           : <Table
-              headers={["Placa", "Vehículo", "Litros", "Costo"]}
-              rows={data.map(d => [d.plate, d.name, `${d.liters.toLocaleString()} L`, `$${d.cost.toLocaleString()}`])}
+              headers={["Placa", "Vehículo", "Galones", "Costo"]}
+              rows={data.map(d => [d.plate, d.name, `${d.gallons.toLocaleString()} gal`, `$${d.cost.toLocaleString()}`])}
             />
       }
     </ChartCard>
@@ -357,14 +362,14 @@ export function ConsumoPorVehiculoCard({ data, loading }: { data: CombustiblePor
 // ────────────────────────────────────────────────────────────────────────
 export function CostoPorVehiculoCard({ data, loading }: { data: CombustiblePorVehiculo[]; loading: boolean }) {
   return (
-    <ChartCard title="Costo por vehículo" subtitle="Top 10 por costo de combustible">
+    <ChartCard title="Costo por vehículo" subtitle="Top 10 por costo de combustible" href="/combustible">
       {loading
         ? <ChartSkeleton height="h-[220px]" />
         : data.length === 0
           ? <p className="text-xs text-gray-400 py-8 text-center">Sin datos de costo</p>
           : <Table
-              headers={["Placa", "Vehículo", "Costo", "Litros"]}
-              rows={data.map(d => [d.plate, d.name, `$${d.cost.toLocaleString()}`, `${d.liters.toLocaleString()} L`])}
+              headers={["Placa", "Vehículo", "Costo", "Galones"]}
+              rows={data.map(d => [d.plate, d.name, `$${d.cost.toLocaleString()}`, `${d.gallons.toLocaleString()} gal`])}
             />
       }
     </ChartCard>
@@ -381,7 +386,7 @@ export function ConsumoPorConductorCard() {
   const theme = useTheme();
 
   return (
-    <ChartCard title="Consumo por conductor" subtitle="Top 10 por litros cargados">
+    <ChartCard title="Consumo por conductor" subtitle="Top 10 por galones cargados" href="/combustible">
       {loading
         ? <ChartSkeleton height="h-[220px]" />
         : data.length === 0
@@ -389,7 +394,7 @@ export function ConsumoPorConductorCard() {
           : <Suspense fallback={<ChartSkeleton height="h-[220px]" />}>
               <ReactApexChart
                 options={makeHBarOptions(data.map(d => d.name), ["#465fff"], theme)}
-                series={[{ name: "Litros", data: data.map(d => d.liters) }]}
+                series={[{ name: "Galones", data: data.map(d => d.gallons) }]}
                 type="bar" height={220}
               />
             </Suspense>
@@ -408,7 +413,7 @@ export function EstadoAsignacionesCard() {
   const theme = useTheme();
 
   return (
-    <ChartCard title="Estado de asignaciones" subtitle={`${data?.total ?? 0} asignaciones totales`}>
+    <ChartCard title="Estado de asignaciones" subtitle={`${data?.total ?? 0} asignaciones totales`} href="/operaciones/asignaciones">
       {loading || !data
         ? <ChartSkeleton height="h-[220px]" />
         : data.items.length === 0
@@ -435,7 +440,7 @@ export function DisponibilidadConductoresCard() {
   const theme = useTheme();
 
   return (
-    <ChartCard title="Disponibilidad de conductores" subtitle={`${data?.total ?? 0} conductores`}>
+    <ChartCard title="Disponibilidad de conductores" subtitle={`${data?.total ?? 0} conductores`} href="/operaciones/conductores">
       {loading || !data
         ? <ChartSkeleton height="h-[220px]" />
         : data.items.length === 0
@@ -475,7 +480,7 @@ export function KpisMisVehiculosCard() {
 
   const a = data?.assignment;
   const veh = a?.asset;
-  const startDate = a?.startDate ? new Date(a.startDate).toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+  const startDate = a?.startDate ? fmtDateShortEc(a.startDate) : "—";
 
   return (
     <ChartCard
@@ -527,7 +532,7 @@ export function PolizasPorVencerCard() {
   const { data, loading } = usePolizasPorVencer(companyId);
   const theme = useTheme();
   return (
-    <ChartCard title="Pólizas por vencer" subtitle={`${data?.total ?? 0} pólizas en total`}>
+    <ChartCard title="Pólizas por vencer" subtitle={`${data?.total ?? 0} pólizas en total`} href="/gestion/seguros">
       {loading || !data
         ? <ChartSkeleton height="h-[220px]" />
         : data.data.length === 0
@@ -565,7 +570,7 @@ export function CoberturaActivosCard() {
   const { data, loading } = useCoberturaActivos(companyId);
   const theme = useTheme();
   return (
-    <ChartCard title="Cobertura de seguros" subtitle={`${data?.coveragePercent ?? 0}% de la flota asegurada`}>
+    <ChartCard title="Cobertura de seguros" subtitle={`${data?.coveragePercent ?? 0}% de la flota asegurada`} href="/gestion/seguros">
       {loading || !data
         ? <ChartSkeleton height="h-[220px]" />
         : data.data.length === 0
@@ -589,7 +594,7 @@ export function KpisChecklistsCard() {
   const { data, loading } = useKpisChecklists(companyId);
   const theme = useTheme();
   return (
-    <ChartCard title="KPIs de inspecciones" subtitle={`${data?.total ?? 0} inspecciones totales`}>
+    <ChartCard title="KPIs de inspecciones" subtitle={`${data?.total ?? 0} inspecciones totales`} href="/checklist">
       {loading || !data
         ? <ChartSkeleton height="h-[220px]" />
         : data.data.length === 0
@@ -612,7 +617,7 @@ export function ChecklistsPendientesCard() {
   const companyId = session?.companyId ?? null;
   const { data, loading } = useChecklistsPendientes(companyId);
   return (
-    <ChartCard title="Inspecciones pendientes" subtitle={`${data?.total ?? 0} por completar`}>
+    <ChartCard title="Inspecciones pendientes" subtitle={`${data?.total ?? 0} por completar`} href="/checklist">
       {loading || !data
         ? <ChartSkeleton height="h-[220px]" />
         : data.data.length === 0
@@ -637,7 +642,7 @@ export function InventarioBajoCard() {
   const companyId = session?.companyId ?? null;
   const { data, loading } = useInventarioBajo(companyId);
   return (
-    <ChartCard title="Inventario bajo mínimo" subtitle={`${data?.total ?? 0} items por reponer`}>
+    <ChartCard title="Inventario bajo mínimo" subtitle={`${data?.total ?? 0} items por reponer`} href="/mantenimiento">
       {loading || !data
         ? <ChartSkeleton height="h-[220px]" />
         : data.data.length === 0
@@ -664,7 +669,7 @@ export function KpisAcCard() {
   const { data, loading } = useKpisAc(companyId);
   const theme = useTheme();
   return (
-    <ChartCard title="KPIs de aires acondicionados" subtitle={`${data?.total ?? 0} unidades`}>
+    <ChartCard title="KPIs de aires acondicionados" subtitle={`${data?.total ?? 0} unidades`} href="/aires-acondicionados">
       {loading || !data
         ? <ChartSkeleton height="h-[220px]" />
         : data.data.length === 0
@@ -687,7 +692,7 @@ export function ServiciosAcPendientesCard() {
   const companyId = session?.companyId ?? null;
   const { data, loading } = useServiciosAcPendientes(companyId);
   return (
-    <ChartCard title="Servicios de A/C pendientes" subtitle={`${data?.total ?? 0} unidades con servicio próximo`}>
+    <ChartCard title="Servicios de A/C pendientes" subtitle={`${data?.total ?? 0} unidades con servicio próximo`} href="/aires-acondicionados">
       {loading || !data
         ? <ChartSkeleton height="h-[220px]" />
         : data.data.length === 0
@@ -716,7 +721,7 @@ export function ActividadPorUsuarioCard() {
   const total = data?.total ?? 0;
   const max = items.reduce((m, x) => Math.max(m, x.count), 0);
   return (
-    <ChartCard title="Actividad por usuario" subtitle={`${total} acciones en el sistema`}>
+    <ChartCard title="Actividad por usuario" subtitle={`${total} acciones en el sistema`} href="/reportes">
       {loading
         ? <ChartSkeleton height="h-[220px]" />
         : items.length === 0
@@ -743,7 +748,7 @@ export function ActividadPorEntidadCard() {
   const total = data?.total ?? 0;
   const max = items.reduce((m, x) => Math.max(m, x.count), 0);
   return (
-    <ChartCard title="Actividad por entidad" subtitle={`${total} acciones en el sistema`}>
+    <ChartCard title="Actividad por entidad" subtitle={`${total} acciones en el sistema`} href="/reportes">
       {loading
         ? <ChartSkeleton height="h-[220px]" />
         : items.length === 0

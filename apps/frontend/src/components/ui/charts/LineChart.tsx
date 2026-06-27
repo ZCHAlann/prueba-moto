@@ -13,8 +13,8 @@ import type { Asset } from "../../../types/activo";
 type Props = {
   fuelEntries: ApiFuelEntry[];
   assets: Asset[];
-  /** "liters" | "cost" */
-  mode?: "liters" | "cost";
+  /** "gallons" | "cost" */
+  mode?: "gallons" | "cost";
 };
 
 type Point = { label: string; value: number; raw: string };
@@ -47,7 +47,7 @@ function ChartTooltip({ active, payload, label, mode }: any) {
     }}>
       <p style={{ fontSize: 10, color: "var(--text3, #5A5A7A)", fontFamily: "'JetBrains Mono',monospace", marginBottom: 6 }}>{label}</p>
       <p style={{ fontSize: 14, fontWeight: 700, color, fontFamily: "'JetBrains Mono',monospace" }}>
-        {mode === "cost" ? `$${fmt(val)}` : `${fmt(val, 0)} L`}
+        {mode === "cost" ? `$${fmt(val)}` : `${fmt(val, 2)} gal`}
       </p>
     </div>
   );
@@ -55,7 +55,7 @@ function ChartTooltip({ active, payload, label, mode }: any) {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-export function LineChartExp({ fuelEntries, assets: _assets, mode = "liters" }: Props) {
+export function LineChartExp({ fuelEntries, assets: _assets, mode = "gallons" }: Props) {
   const [zoom, setZoom] = useState(1);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -64,7 +64,7 @@ export function LineChartExp({ fuelEntries, assets: _assets, mode = "liters" }: 
     const map = new Map<string, number>();
     fuelEntries.forEach((e) => {
       const key = e.date.slice(0, 7); // "YYYY-MM"
-      const val  = mode === "cost" ? e.cost : e.liters;
+      const val  = mode === "cost" ? e.cost : e.gallons;
       map.set(key, (map.get(key) ?? 0) + val);
     });
     return Array.from(map.entries())
@@ -104,7 +104,7 @@ export function LineChartExp({ fuelEntries, assets: _assets, mode = "liters" }: 
       {/* Summary pills */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         {[
-          { label: mode === "cost" ? "Total" : "Total litros", value: mode === "cost" ? `$${fmt(total)}` : `${fmt(total, 0)} L` },
+          { label: mode === "cost" ? "Total" : "Total galones", value: mode === "cost" ? `$${fmt(total)}` : `${fmt(total, 2)} gal` },
           { label: "Promedio/mes",                             value: mode === "cost" ? `$${fmt(avg)}` : `${fmt(avg, 0)} L` },
           { label: "Período visible",                          value: `${visible.length} meses` },
         ].map((p) => (

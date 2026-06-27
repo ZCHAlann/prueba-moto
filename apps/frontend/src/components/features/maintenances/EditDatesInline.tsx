@@ -7,15 +7,16 @@
 // `px-3 py-2` que usa el resto de las <Row> de esa sección.
 //
 // Solo se debe RENDERIZAR si el caller ya confirmó que el usuario es
-// owner_empresa o admin_empresa (ver canEditDates en el drawer) — este
-// componente no vuelve a chequear el rol, el backend es la barrera real
-// vía PATCH /:id/dates. Si igual se renderiza para otro rol, el guardado
-// falla con 403 y se muestra el toast de error.
+// owner_empresa, admin_empresa u operador (ver canEditDates en el drawer) —
+// este componente no vuelve a chequear el rol, el backend es la barrera
+// real vía PATCH /:id/dates. Si igual se renderiza para otro rol, el
+// guardado falla con 403 y se muestra el toast de error.
 
 import { useState } from "react";
 import { Pencil, Check, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useUpdateMaintenanceDates } from "../../../hooks/useMaintenancesV2";
+import { fmtDateTimeEc } from "@/lib/datetime";
 
 function toLocalInputValue(iso: string | null): string {
   if (!iso) return "";
@@ -40,12 +41,7 @@ export function EditDatesInline({ maintenanceId, label, value, field, onSaved }:
   const [draft, setDraft] = useState(() => toLocalInputValue(value));
   const mut = useUpdateMaintenanceDates();
 
-  const fmt = (iso: string | null) =>
-    iso
-      ? new Date(iso).toLocaleString("es-CO", {
-          day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
-        })
-      : "—";
+  const fmt = (iso: string | null) => fmtDateTimeEc(iso);
 
   const save = async () => {
     try {

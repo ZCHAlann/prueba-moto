@@ -15,10 +15,10 @@ type VehicleStat = {
   id: string;
   plate: string;
   unit: string;
-  liters: number;
+  gallons: number;
   cost: number;
   entries: number;
-  costPerLiter: number;
+  costPerGal: number;
   avgOdometer: number;
 };
 
@@ -27,11 +27,11 @@ type VehicleStat = {
 const COLS = ["#4F6EF7", "#00D084", "#F5A623", "#9B6DFF", "#00C8D7", "#F24E4E"];
 
 const AXES = [
-  { key: "liters",      label: "Litros"      },
-  { key: "cost",        label: "Costo"       },
-  { key: "entries",     label: "Cargas"      },
-  { key: "costPerLiter",label: "Costo/L"     },
-  { key: "avgOdometer", label: "Odómetro"    },
+  { key: "gallons",      label: "Galones"    },
+  { key: "cost",         label: "Costo"      },
+  { key: "entries",      label: "Cargas"     },
+  { key: "costPerGal",   label: "Costo/gal"  },
+  { key: "avgOdometer",  label: "Odómetro"   },
 ] as const;
 
 type AxisKey = typeof AXES[number]["key"];
@@ -46,12 +46,12 @@ export function RadarChart({ fuelEntries, assets }: Props) {
   const [hovIdx, setHovIdx] = useState<number | null>(null);
 
   // Build per-vehicle stats
-  const stats: VehicleStat[] = useMemo(() => {
-    const map = new Map<string, { liters: number; cost: number; entries: number; odometerSum: number }>();
+const stats: VehicleStat[] = useMemo(() => {
+    const map = new Map<string, { gallons: number; cost: number; entries: number; odometerSum: number }>();
     fuelEntries.forEach((e) => {
-      const cur = map.get(e.assetId) ?? { liters: 0, cost: 0, entries: 0, odometerSum: 0 };
+      const cur = map.get(e.assetId) ?? { gallons: 0, cost: 0, entries: 0, odometerSum: 0 };
       map.set(e.assetId, {
-        liters:      cur.liters      + e.liters,
+        gallons:     cur.gallons     + e.gallons,
         cost:        cur.cost        + e.cost,
         entries:     cur.entries     + 1,
         odometerSum: cur.odometerSum + (e.odometer ?? 0),
@@ -63,14 +63,14 @@ export function RadarChart({ fuelEntries, assets }: Props) {
         const d = map.get(a.id);
         if (!d || d.entries === 0) return null;
         return {
-          id:          a.id,
-          plate:       a.plate,
-          unit:        `${a.brand} ${a.model}`,
-          liters:      d.liters,
-          cost:        d.cost,
-          entries:     d.entries,
-          costPerLiter: d.liters > 0 ? d.cost / d.liters : 0,
-          avgOdometer: d.odometerSum / d.entries,
+          id:           a.id,
+          plate:        a.plate,
+          unit:         `${a.brand} ${a.model}`,
+          gallons:      d.gallons,
+          cost:         d.cost,
+          entries:      d.entries,
+          costPerGal:   d.gallons > 0 ? d.cost / d.gallons : 0,
+          avgOdometer:  d.odometerSum / d.entries,
         };
       })
       .filter(Boolean)
@@ -79,9 +79,13 @@ export function RadarChart({ fuelEntries, assets }: Props) {
 
   // Max per axis for normalization
   const maxima = useMemo(() => {
-    const m: Record<AxisKey, number> = { liters: 0, cost: 0, entries: 0, costPerLiter: 0, avgOdometer: 0 };
+    const m: Record<AxisKey, number> = { gallons: 0, cost: 0, entries: 0, costPerGal: 0, avgOdometer: 0 };
     stats.forEach((s) => {
-      AXES.forEach(({ key }) => { if (s[key] > m[key]) m[key] = s[key]; });
+      if (s.gallons      > m.gallons)      m.gallons      = s.gallons;
+      if (s.cost         > m.cost)         m.cost         = s.cost;
+      if (s.entries      > m.entries)      m.entries      = s.entries;
+      if (s.costPerGal   > m.costPerGal)   m.costPerGal   = s.costPerGal;
+      if (s.avgOdometer  > m.avgOdometer)  m.avgOdometer  = s.avgOdometer;
     });
     return m;
   }, [stats]);
@@ -227,10 +231,10 @@ export function RadarChart({ fuelEntries, assets }: Props) {
             const stat = stats[hovIdx!];
             const val  = stat[key];
             const display =
-              key === "liters"       ? `${fmt(val, 0)} L`  :
-              key === "cost"         ? `$${fmt(val)}`       :
-              key === "costPerLiter" ? `$${fmt(val)}/L`    :
-              key === "avgOdometer"  ? `${fmt(val, 0)} km` :
+              key === "gallons"      ? `${fmt(val, 2)} gal` :
+              key === "cost"         ? `$${fmt(val)}`        :
+              key === "costPerGal"   ? `$${fmt(val)}/gal`    :
+              key === "avgOdometer"  ? `${fmt(val, 0)} km`   :
               String(Math.round(val));
             return (
               <div key={key} style={{ textAlign: "center" }}>

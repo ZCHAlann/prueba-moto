@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import { useSearchParams } from "react-router";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { useAlerts, type ApiAlert, type AlertSeverity, type AlertStatus, type AlertType } from "../../hooks/useAlerts";
 import { useAssets } from "../../hooks/useAssets";
 import { usePermissions } from "../../hooks/usePermissions";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
+import { todayEcuador } from "@/lib/datetime";
 
 const PAGE_SIZE = 7;
 
@@ -299,7 +301,7 @@ const emptyForm = (): FormState => ({
   title: "",
   type: "Vencimiento",
   severity: "Media",
-  dueDate: new Date().toISOString().slice(0, 10),
+  dueDate: todayEcuador(),
   notes: "",
 });
 
@@ -484,6 +486,22 @@ export function AlertsPage() {
   const [search, setSearch]       = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [page, setPage]           = useState(1);
+
+  // KPI click: map ?kpi= URL param (from EstadisticasTab KPI card) to filter
+  const [searchParams] = useSearchParams();
+  useEffect(() => {
+    const kpiLabel = searchParams.get("kpi");
+    if (!kpiLabel) return;
+    const map: Record<string, FilterValue> = {
+      "Abiertas":    "Abierta",
+      "Cerradas":    "Cerrada",
+      "En seguimiento": "En seguimiento",
+      "Críticas":    "Abierta",
+      "Total":       "Todas",
+    };
+    const mapped = map[kpiLabel];
+    if (mapped) setFilter(mapped);
+  }, []);
 
   const assetLabel = (alert: ApiAlert) => {
     if (!alert.assetName && !alert.assetPlate) return "";

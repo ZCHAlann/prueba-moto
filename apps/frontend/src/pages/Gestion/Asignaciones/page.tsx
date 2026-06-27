@@ -218,11 +218,30 @@ export function AssignmentsPage() {
   const [editWizardDriverId,    setEditWizardDriverId]    = useState<string | null>(null);
   const [editWizardAssetId,     setEditWizardAssetId]     = useState<string | null>(null);
 
+  // ── wizard — finalize mode ─────────────────────────────────────────────────
+  // Cuando el supervisor click "Finalizar" en una asignación Activa, en vez
+  // de cerrar inmediatamente, abrimos el wizard en finalizeMode para
+  // capturar fotos, odómetro final, condición, etc. y generar el acta
+  // de devolución. Los datos del conductor se heredan de la asignación.
+  const [finalizeWizardOpen,    setFinalizeWizardOpen]    = useState(false);
+  const [finalizeAssignmentId,  setFinalizeAssignmentId]  = useState<string | null>(null);
+  const [finalizeExistingData,  setFinalizeExistingData]  = useState<ExistingHandoverData | null>(null);
+  const [finalizeWizardDriverId,setFinalizeWizardDriverId]= useState<string | null>(null);
+  const [finalizeWizardAssetId, setFinalizeWizardAssetId] = useState<string | null>(null);
+
   // ── detail drawer ─────────────────────────────────────────────────────────
   const [drawerAssignmentId, setDrawerAssignmentId] = useState<string | null>(null);
 
   // ── table search ──────────────────────────────────────────────────────────
   const [query, setQuery] = useState("");
+
+  // ── table status filter (tabla / historial) ─────────────────────────────
+  // "all"       → muestra Activas y Finalizadas juntas.
+  // "Activa"    → solo Activas.
+  // "Finalizada"→ solo Finalizadas.
+  // El search por conductor/placa se aplica DENTRO del subset seleccionado.
+  type HistoryFilter = "all" | "Activa" | "Finalizada";
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
 
   // ── pagination ────────────────────────────────────────────────────────────
   const [activePage,  setActivePage]  = useState(1);
@@ -258,16 +277,22 @@ export function AssignmentsPage() {
   );
 
   const filteredRows = useMemo(() => {
+    // 1) Filtro de status (Activa / Finalizada / todas).
+    let base = rows;
+    if (historyFilter !== "all") {
+      base = base.filter((r) => r.status === historyFilter);
+    }
+    // 2) Filtro de búsqueda por texto (dentro del subset).
     const v = query.trim().toLowerCase();
-    if (!v) return rows;
-    return rows.filter(
+    if (!v) return base;
+    return base.filter(
       (r) =>
         r.driverCode.toLowerCase().includes(v) ||
         r.driverName.toLowerCase().includes(v) ||
         r.plate.toLowerCase().includes(v) ||
         r.unit.toLowerCase().includes(v),
     );
-  }, [rows, query]);
+  }, [rows, query, historyFilter]);
 
   const drawerAssignment = useMemo(
     () => (drawerAssignmentId ? rows.find((r) => r.id === drawerAssignmentId) : null),
@@ -372,15 +397,78 @@ export function AssignmentsPage() {
 
   // ── finalize ──────────────────────────────────────────────────────────────
 
-  async function handleFinalize(id: string, plate: string) {
+  /**
+   * Abre el wizard en finalizeMode para capturar las fotos y datos del
+   * estado del vehículo al regreso, generar el acta de devolución y
+   * marcar la asignación como Finalizada, todo en una sola operación.
+   *
+   * Si no hay driverId/assetId en la asignación (caso raro), finaliza
+   * directo como fallback de compat.
+   */
+  function handleFinalize(id: string, plate: string) {
     if (!canFinalize) return;
-    try {
-      await finalizeAssignment(id, new Date().toISOString().slice(0, 10));
-      toast.success(`Asignación de ${plate} finalizada`);
-      if (drawerAssignmentId === id) setDrawerAssignmentId(null);
-    } catch {
-      toast.error("No se pudo finalizar la asignación");
+    const assignment = assignments.find((a) => a.id === id);
+    if (!assignment) {
+      // Fallback: finalizar sin acta.
+      finalizeAssignment(id, new Date().toISOString().slice(0, 10))
+        .then(() => toast.success(`Asignación de ${plate} finalizada`))
+        .catch(() => toast.error("No se pudo finalizar la asignación"));
+      return;
     }
+
+    // Resolver driver y asset para precargar el wizard.
+    const driver = drivers.find((d) => d.id === assignment.driverId) ?? null;
+    const asset  = assets.find((a) => a.id === assignment.assetId)  ?? null;
+
+    if (!driver || !asset) {
+      toast.error("No se encontraron los datos del conductor o vehículo para esta asignación.");
+      return;
+    }
+
+    // Pre-cargar datos existentes del acta (si los hay) como base.
+    // En finalizeMode esos datos se usan como punto de partida: el usuario
+    // los puede confirmar o ajustar.
+    const existingData: ExistingHandoverData = {
+      actaNumber:       assignment.actaNumber,
+      actaDate:         assignment.actaDate,
+      actaTime:         assignment.actaTime,
+      actaPlace:        assignment.actaPlace,
+      actaArea:         assignment.actaArea,
+      driverDni:        assignment.driverDni,
+      driverPhone:      assignment.driverPhone,
+      driverRole:       assignment.driverRole,
+      vehicleOdometer:  assignment.vehicleOdometer,
+      vehicleFuelLevel: assignment.vehicleFuelLevel,
+      vehicleCondition: assignment.vehicleCondition,
+      novedades:        (assignment as unknown as { novedades?: Record<string, unknown> | null }).novedades ?? null,
+      accesorios:       (assignment as unknown as { accesorios?: Record<string, unknown> | null }).accesorios ?? null,
+      novedadesText:    assignment.novedadesText,
+      signatureLogUrl:  assignment.signatureLogUrl,
+      signatureRespUrl: assignment.signatureRespUrl,
+      vehiclePhotoUrls: assignment.vehiclePhotoUrls,
+      handoverUrl:      assignment.handoverUrl,
+    };
+
+    setFinalizeAssignmentId(id);
+    setFinalizeExistingData(existingData);
+    setFinalizeWizardDriverId(driver.id);
+    setFinalizeWizardAssetId(asset.id);
+    setFinalizeWizardOpen(true);
+    if (drawerAssignmentId === id) setDrawerAssignmentId(null);
+  }
+
+  function handleFinalizeWizardClose() {
+    setFinalizeWizardOpen(false);
+    setFinalizeAssignmentId(null);
+    setFinalizeExistingData(null);
+    setFinalizeWizardDriverId(null);
+    setFinalizeWizardAssetId(null);
+  }
+
+  function handleFinalizeWizardComplete(assignment: { id: string } & Record<string, unknown>) {
+    const plate = assignment.assetPlate as string | undefined;
+    handleFinalizeWizardClose();
+    toast.success(`Asignación de ${plate ?? "vehículo"} finalizada con acta de devolución`);
   }
 
   // ── loading ───────────────────────────────────────────────────────────────
@@ -603,26 +691,62 @@ export function AssignmentsPage() {
       {/* ── TABLE / HISTORY VIEW ── */}
       {viewMode === "table" && (
         <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] overflow-hidden">
-          <div className="flex flex-col gap-3 border-b border-gray-200 dark:border-white/[0.06] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-base font-semibold text-gray-800 dark:text-white">Historial de asignaciones</h2>
-              <p className="mt-0.5 text-sm text-gray-400">
-                {assignments.length} registros en total
-                {totalHistoryPages > 1 && (
-                  <span className="ml-2 text-gray-400 dark:text-gray-500">· Pág. {historyPage} / {totalHistoryPages}</span>
-                )}
-              </p>
+          <div className="flex flex-col gap-3 border-b border-gray-200 dark:border-white/[0.06] px-5 py-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-gray-800 dark:text-white">Historial de asignaciones</h2>
+                <p className="mt-0.5 text-sm text-gray-400">
+                  {filteredRows.length} de {assignments.length} registros
+                  {totalHistoryPages > 1 && (
+                    <span className="ml-2 text-gray-400 dark:text-gray-500">· Pág. {historyPage} / {totalHistoryPages}</span>
+                  )}
+                </p>
+              </div>
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setHistoryPage(1); // reset to first page on new search
+                }}
+                placeholder="Buscar por conductor, placa…"
+                className="w-full rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-brand-400 dark:focus:border-brand-500 transition-colors sm:w-64"
+              />
             </div>
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setHistoryPage(1); // reset to first page on new search
-              }}
-              placeholder="Buscar por conductor, placa…"
-              className="w-full rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-brand-400 dark:focus:border-brand-500 transition-colors sm:w-64"
-            />
+            {/* ── Filtro Activas / Finalizadas ──────────────────────────────── */}
+            {/* El search de arriba se aplica DENTRO del subset seleccionado. */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {([
+                { id: "all",        label: "Todas",       dot: "bg-gray-400" },
+                { id: "Activa",     label: "Activas",     dot: "bg-emerald-500" },
+                { id: "Finalizada", label: "Finalizadas", dot: "bg-rose-500" },
+              ] as { id: HistoryFilter; label: string; dot: string }[]).map((opt) => {
+                const count = opt.id === "all"
+                  ? assignments.length
+                  : assignments.filter((a) => a.status === opt.id).length;
+                const active = historyFilter === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => { setHistoryFilter(opt.id); setHistoryPage(1); }}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                      active
+                        ? "border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900"
+                        : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 dark:border-white/[0.08] dark:bg-white/[0.02] dark:text-gray-300 dark:hover:border-white/[0.16]"
+                    }`}
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full ${opt.dot}`} />
+                    {opt.label}
+                    <span className={`rounded-full px-1.5 text-[10px] font-black tabular-nums ${
+                      active ? "bg-white/20 dark:bg-black/10" : "bg-gray-100 dark:bg-white/[0.06]"
+                    }`}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {filteredRows.length === 0 ? (
@@ -758,6 +882,31 @@ export function AssignmentsPage() {
         />
       )}
 
+      {/* ── HANDOVER WIZARD — finalize mode ── */}
+      {finalizeWizardOpen && finalizeAssignmentId && finalizeWizardDriverId && finalizeWizardAssetId && (() => {
+        const driver = drivers.find((d) => d.id === finalizeWizardDriverId);
+        const asset  = assets.find((a) => a.id === finalizeWizardAssetId);
+        if (!driver || !asset) return null;
+        return (
+          <HandoverWizard
+            open={finalizeWizardOpen}
+            driverId={finalizeWizardDriverId}
+            assetId={finalizeWizardAssetId}
+            driver={driver}
+            asset={asset}
+            assignmentCount={assignments.length}
+            onClose={handleFinalizeWizardClose}
+            onComplete={handleFinalizeWizardComplete}
+            createAssignment={createAssignment}
+            updateHandover={updateHandover}
+            finalizeAssignment={finalizeAssignment}
+            finalizeMode
+            existingAssignmentId={finalizeAssignmentId}
+            existingData={finalizeExistingData}
+          />
+        );
+      })()}
+
       {/* ── DETAIL DRAWER ── */}
       <AnimatePresence>
         {drawerAssignment && (
@@ -865,6 +1014,46 @@ export function AssignmentsPage() {
                     </button>
                   )}
                 </div>
+
+                {/* ── Acta de DEVOLUCIÓN ─────────────────────────────────────────
+                    Solo aparece si la asignación está Finalizada. Muestra el
+                    PDF generado al cerrar la asignación. Independiente del
+                    acta de entrega (que NO se sobrescribe al finalizar). */}
+                {drawerAssignment.status === "Finalizada" && (
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Acta de devolución</p>
+                    {drawerAssignment.returnHandoverUrl ? (
+                      <a
+                        href={drawerAssignment.returnHandoverUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 text-sm font-medium text-amber-700 dark:text-amber-300 hover:opacity-80 transition-opacity"
+                      >
+                        <DocumentIcon className="h-4 w-4 shrink-0" /> Ver acta de devolución
+                      </a>
+                    ) : (
+                      <p className="rounded-xl border border-dashed border-gray-200 dark:border-white/[0.06] px-4 py-3 text-sm text-gray-400 text-center">
+                        Finalizada sin acta de devolución
+                      </p>
+                    )}
+                    {/* Botón para regenerar el acta de devolución. Reabre el
+                        wizard en finalizeMode con los datos existentes como
+                        punto de partida. */}
+                    {canFinalize && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDrawerAssignmentId(null);
+                          handleFinalize(drawerAssignment.id, drawerAssignment.plate);
+                        }}
+                        className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 dark:border-white/[0.06] px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04] transition-colors"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                        Regenerar acta de devolución
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* finalize */}
                 {canFinalize && drawerAssignment.status === "Activa" && (

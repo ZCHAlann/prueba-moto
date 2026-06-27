@@ -5,6 +5,7 @@
 
 import { pdf, Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
 import type { Checklist, ChecklistInspectionItem } from "../../../../hooks/useChecklists";
+import { fmtDateTimeEc } from "@/lib/datetime";
 
 const s = StyleSheet.create({
   page: {
@@ -89,8 +90,7 @@ function SiNo({ si }: { si: boolean }) {
 }
 
 function fmtDate(iso: string | null | undefined) {
-  if (!iso) return "—";
-  return String(iso).slice(0, 16).replace("T", " ");
+  return fmtDateTimeEc(iso);
 }
 
 function evidenceForItem(it: ChecklistInspectionItem): string | null {

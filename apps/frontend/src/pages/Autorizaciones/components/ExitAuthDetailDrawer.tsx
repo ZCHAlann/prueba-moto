@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import type { ExitAuthorization, ExitAuthStatus } from "../../../hooks/useExitAuthorizations";
 import { ExitAnalysisPanel } from "../../../components/exit-authorizations/ExitAnalysisPanel";
 import { useExitAuthorizationAnalysis } from "../../../hooks/useExitAuthorizationAnalysis";
+import { fmtDateTimeEc } from "@/lib/datetime";
 
 type Props = {
   authorization: ExitAuthorization | null;
@@ -21,8 +22,7 @@ type Props = {
 };
 
 function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  return String(iso).slice(0, 16).replace("T", " ");
+  return fmtDateTimeEc(iso);
 }
 
 function StatusPill({ status }: { status: ExitAuthStatus }) {
@@ -404,34 +404,33 @@ export function ExitAuthDetailDrawer({ authorization, role, onClose, onDecide, o
 
             {/* FOOTER */}
             <footer className="border-t border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 shrink-0">
-              <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-2 sm:px-5 sm:py-3.5">
+              <div className="flex flex-col gap-3 px-4 py-3 sm:px-5 sm:py-3.5">
                 {canDelete ? (
                   <button type="button" onClick={handleDelete} disabled={!!busy}
-                    className="rounded-lg border border-rose-200 dark:border-rose-500/30 px-3 py-2 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 disabled:opacity-40 transition">
+                    className="self-start rounded-lg border border-rose-200 dark:border-rose-500/30 px-3 py-2 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 disabled:opacity-40 transition">
                     Eliminar
                   </button>
                 ) : null}
 
-                {rejectNotes.length > 0 && canDecide ? (
-                  <button type="button" onClick={() => setRejectNotes("")}
-                    className="self-start text-xs text-gray-500 dark:text-gray-400 underline sm:self-auto">
-                    Limpiar nota de rechazo
-                  </button>
+                {canDecide ? (
+                  <div className="w-full">
+                    <textarea
+                      placeholder={aiSummaryForReject || "Nota de rechazo (opcional)…"}
+                      value={rejectNotes}
+                      onChange={(e) => setRejectNotes(e.target.value)}
+                      rows={3}
+                      className="w-full px-3.5 py-2.5 text-sm rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-500/10 resize-none" />
+                    {rejectNotes.length > 0 && (
+                      <button type="button" onClick={() => setRejectNotes("")}
+                        className="mt-1 text-xs text-gray-500 dark:text-gray-400 underline">
+                        Limpiar nota de rechazo
+                      </button>
+                    )}
+                  </div>
                 ) : null}
 
-                <div className="hidden flex-1 sm:block" />
-
                 {canDecide ? (
-                  <textarea
-                    placeholder={aiSummaryForReject || "Nota de rechazo (opcional)…"}
-                    value={rejectNotes}
-                    onChange={(e) => setRejectNotes(e.target.value)}
-                    rows={1}
-                    className="w-full px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-500/10 resize-none sm:flex-1 sm:max-w-xs" />
-                ) : null}
-
-                {canDecide ? (
-                  <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap sm:justify-end">
                     <button
                       type="button"
                       onClick={handleReturnToDriver}

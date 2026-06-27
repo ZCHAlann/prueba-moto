@@ -9,6 +9,7 @@ import { KpiCard } from "@/components/dashboard/kpi-card";
 import ReactApexChart from "react-apexcharts";
 import type { ApexOptions } from "apexcharts";
 import { ArrowUpRight, ArrowDownRight, Clock, TrendingUp } from "lucide-react";
+import { fmtDateShortEc } from "@/lib/datetime";
 
 // ============= CHART CARD COMPONENT =============
 interface ChartCardProps {
@@ -491,7 +492,7 @@ export default function PlatformDashboard() {
                         {company.name}
                       </p>
                       <p className="text-xs text-gray-500 dark:text-gray-500">
-                        {new Date(company.createdAt).toLocaleDateString()}
+                        {fmtDateShortEc(company.createdAt)}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">

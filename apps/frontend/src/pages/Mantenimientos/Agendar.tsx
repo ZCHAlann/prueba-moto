@@ -16,6 +16,7 @@ import { usePermissions } from "../../hooks/usePermissions";
 import { MaintenanceFormModal } from "./components/MaintenanceFormModal";
 import type { Maintenance } from "../../hooks/useMaintenancesV2";
 import type { EventClickArg, EventInput, DateSelectArg } from "@fullcalendar/core";
+import { fmtTimeEc } from "@/lib/datetime";
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -46,9 +47,7 @@ function fmtHumanDate(iso: string): string {
 }
 
 function fmtTime(isoOrDate: string | Date): string {
-  const d = typeof isoOrDate === "string" ? new Date(isoOrDate) : isoOrDate;
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return fmtTimeEc(isoOrDate);
 }
 
 function toLocalIso(d: Date): string {

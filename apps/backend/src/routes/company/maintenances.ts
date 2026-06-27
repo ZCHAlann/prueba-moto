@@ -86,6 +86,8 @@ const createMaintenanceSchema = z.object({
   odometerKm:     z.number().int().nonnegative().max(10_000_000).optional().nullable(),
   // v3.1: mano de obra (separada de los items)
   laborCost:      z.number().nonnegative().max(1_000_000_000).default(0),
+  // IVA: porcentaje aplicado (default 15 para Ecuador)
+  ivaPercent:     z.number().nonnegative().max(100).default(15),
   cadenceKind:    z.enum(CADENCE_KINDS).default('none'),
   cadenceValue:   z.number().int().positive().max(1_000_000).optional().nullable(),
   nextTriggerKm:  z.number().int().nonnegative().max(10_000_000).optional().nullable(),
@@ -117,6 +119,8 @@ const updateMaintenanceSchema = z.object({
   odometerKm:     z.number().int().nonnegative().max(10_000_000).optional().nullable(),
   // v3.1: mano de obra
   laborCost:      z.number().nonnegative().max(1_000_000_000).optional(),
+  // IVA: porcentaje aplicado
+  ivaPercent:     z.number().nonnegative().max(100).optional(),
   cadenceKind:    z.enum(CADENCE_KINDS).optional(),
   cadenceValue:   z.number().int().positive().max(1_000_000).optional().nullable(),
   nextTriggerKm:  z.number().int().nonnegative().max(10_000_000).optional().nullable(),
@@ -356,6 +360,7 @@ function serializeMaintenance(m: any, items: any[], events: any[] = []) {
     odometerKm:    m.odometerKm,
     // v3.1: mano de obra
     laborCost:     m.laborCost != null ? Number(m.laborCost) : 0,
+    ivaPercent:    m.ivaPercent != null ? Number(m.ivaPercent) : 15,
     cadenceKind:   m.cadenceKind,
     cadenceValue:  m.cadenceValue,
     nextTriggerKm: m.nextTriggerKm,
@@ -499,6 +504,10 @@ router.get(
                 ilike(companyMaintenanceRecords.title,       `%${q}%`),
                 ilike(companyMaintenanceRecords.description, `%${q}%`),
                 ilike(companyMaintenanceRecords.notes,       `%${q}%`),
+                // La búsqueda libre también matchea por placa y por
+                // nombre del vehículo, así un solo input cubre todo.
+                ilike(companyAssets.plate,                  `%${q}%`),
+                ilike(companyAssets.name,                   `%${q}%`),
               )!,
             ),
           )
@@ -615,6 +624,219 @@ router.get(
           icon:      c.icon,
           isSystem:  c.isSystem,
         })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── GET /cost-breakdown ───────────────────────────────────────────────────────
+// IMPORTANTE: esta ruta está ANTES de /:id. Si se pone después, Express
+// matchea "cost-breakdown" como id numérico y devuelve 404.
+//
+// Devuelve el desglose por mantenimiento: mano de obra (taller) +
+// repuestos agrupados por proveedor.
+//
+// Query params opcionales:
+//   from, to       → rango de fechas (default: últimos 12 meses)
+//   workshopId     → filtra por taller
+//   supplierId     → filtra por proveedor (solo repuestos de ese proveedor)
+//   assetId        → filtra por vehículo
+//
+// Devuelve:
+//   {
+//     rango: { desde, hasta },
+//     filtros: { workshopId, supplierId, assetId },
+//     totals: { manoObra, repuestos, total },
+//     byWorkshop: [{ workshopId, workshopName, total, count }],
+//     bySupplier: [{ supplierId, supplierName, total, itemsCount }],
+//     mantenances: [{ id, title, ... }]
+//   }
+router.get(
+  "/cost-breakdown",
+  requireModule("mantenimiento"),
+  requirePermission("mantenimiento", "records", "ver"),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const from = (req.query.from as string | undefined)
+        ? new Date(req.query.from as string)
+        : (() => { const d = new Date(); d.setMonth(d.getMonth() - 12); return d; })();
+      const to = (req.query.to as string | undefined)
+        ? new Date(req.query.to as string)
+        : new Date();
+      const workshopId = req.query.workshopId ? Number(req.query.workshopId) : null;
+      const supplierId = req.query.supplierId ? Number(req.query.supplierId) : null;
+      const assetId    = req.query.assetId    ? Number(req.query.assetId)    : null;
+
+      // 1) Traer los mantenimientos del rango
+      const whereMant: any[] = [
+        eq(companyMaintenanceRecords.companyId, companyId),
+        gte(companyMaintenanceRecords.createdAt, from),
+        lte(companyMaintenanceRecords.createdAt, to),
+      ];
+      if (assetId)    whereMant.push(eq(companyMaintenanceRecords.assetId, assetId));
+      if (workshopId) whereMant.push(eq(companyMaintenanceRecords.workshopId, workshopId));
+
+      const mantenances = await db
+        .select({
+          id:             companyMaintenanceRecords.id,
+          title:          companyMaintenanceRecords.title,
+          assetId:        companyMaintenanceRecords.assetId,
+          workshopId:     companyMaintenanceRecords.workshopId,
+          status:         companyMaintenanceRecords.status,
+          totalCost:      companyMaintenanceRecords.totalCost,
+          laborCost:      companyMaintenanceRecords.laborCost,
+          scheduledFor:   companyMaintenanceRecords.scheduledFor,
+          completedAt:    companyMaintenanceRecords.completedAt,
+        })
+        .from(companyMaintenanceRecords)
+        .where(and(...whereMant))
+        .orderBy(desc(companyMaintenanceRecords.scheduledFor));
+
+      // 2) Traer los items de esos mantenimientos (con supplier)
+      const mantenimientoIds = mantenances.map((m) => m.id);
+      let items: Array<{
+        id: number; mantenimientoId: number; supplierId: number | null;
+        name: string; quantity: string; unitCost: string; subtotal: string;
+      }> = [];
+      if (mantenimientoIds.length) {
+        const whereItems: any[] = [inArray(companyMaintenanceItems.maintenanceId, mantenimientoIds)];
+        if (supplierId) whereItems.push(eq(companyMaintenanceItems.supplierId, supplierId));
+        items = await db
+          .select({
+            id:             companyMaintenanceItems.id,
+            mantenimientoId: companyMaintenanceItems.maintenanceId,
+            supplierId:     companyMaintenanceItems.supplierId,
+            name:           companyMaintenanceItems.name,
+            quantity:       companyMaintenanceItems.quantity,
+            unitCost:       companyMaintenanceItems.unitCost,
+            subtotal:       companyMaintenanceItems.subtotal,
+          })
+          .from(companyMaintenanceItems)
+          .where(and(...whereItems));
+      }
+
+      // 3) Traer talleres y proveedores (para mapear id → nombre)
+      const [workshops, suppliers, assetRows] = await Promise.all([
+        db.select().from(companyWorkshops).where(eq(companyWorkshops.companyId, companyId)),
+        db.select().from(companySuppliers).where(eq(companySuppliers.companyId, companyId)),
+        mantenances.length
+          ? db
+              .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate })
+              .from(companyAssets)
+              .where(and(
+                eq(companyAssets.companyId, companyId),
+                inArray(companyAssets.id, mantenances.map((m) => m.assetId).filter((id): id is number => id != null)),
+              ))
+          : Promise.resolve([] as Array<{ id: number; name: string; plate: string | null }>),
+      ]);
+
+      const workshopMap  = new Map(workshops.map((w)  => [w.id,  { name: w.name,  nit: w.nit  }]));
+      const supplierMap  = new Map(suppliers.map((s)  => [s.id,  { name: s.name,  nit: s.nit  }]));
+      const assetMap     = new Map(assetRows.map((a)   => [a.id,  { name: a.name,  plate: a.plate }]));
+
+      // 4) Por mantenimiento: agrupar items por supplier
+      const itemsByMant = new Map<number, typeof items>();
+      for (const it of items) {
+        if (!itemsByMant.has(it.mantenimientoId)) itemsByMant.set(it.mantenimientoId, []);
+        itemsByMant.get(it.mantenimientoId)!.push(it);
+      }
+
+      // 5) Construir la respuesta
+      const mantenancesOut = mantenances.map((m) => {
+        const myItems = itemsByMant.get(m.id) ?? [];
+        const repuestos = myItems.reduce((acc, it) => acc + Number(it.subtotal ?? 0), 0);
+        const labor     = Number(m.laborCost ?? 0);
+        const total     = Number(m.totalCost ?? 0);
+        return {
+          id:             m.id,
+          title:          m.title ?? "—",
+          assetPlate:     assetMap.get(m.assetId)?.plate || assetMap.get(m.assetId)?.name || "—",
+          assetName:      assetMap.get(m.assetId)?.name ?? null,
+          scheduledDate:  m.scheduledFor,
+          completedAt:    m.completedAt,
+          status:         m.status,
+          workshop:       m.workshopId ? {
+            id:    m.workshopId,
+            name:  workshopMap.get(m.workshopId)?.name ?? "—",
+            nit:   workshopMap.get(m.workshopId)?.nit  ?? null,
+          } : null,
+          manoObra:       round2(labor),
+          repuestos:      round2(repuestos),
+          total:          round2(total),
+          repuestosPorProveedor: supplierId
+            ? null
+            : (() => {
+                const map: Record<number, { supplierId: number; supplierName: string; total: number; count: number }> = {};
+                for (const it of myItems) {
+                  if (!it.supplierId) continue;
+                  if (!map[it.supplierId]) {
+                    map[it.supplierId] = {
+                      supplierId: it.supplierId,
+                      supplierName: supplierMap.get(it.supplierId)?.name ?? "Sin proveedor",
+                      total: 0,
+                      count: 0,
+                    };
+                  }
+                  map[it.supplierId].total += Number(it.subtotal ?? 0);
+                  map[it.supplierId].count += 1;
+                }
+                return Object.values(map).map((r) => ({
+                  supplierId:   r.supplierId,
+                  supplierName: r.supplierName,
+                  total:        round2(r.total),
+                  itemsCount:   r.count,
+                }));
+              })(),
+        };
+      });
+
+      // 6) Totales por taller y por proveedor
+      const byWorkshop: Record<number, { workshopId: number; workshopName: string; total: number; count: number }> = {};
+      for (const m of mantenances) {
+        if (!m.workshopId) continue;
+        if (!byWorkshop[m.workshopId]) {
+          byWorkshop[m.workshopId] = {
+            workshopId:   m.workshopId,
+            workshopName: workshopMap.get(m.workshopId)?.name ?? "—",
+            total:        0,
+            count:        0,
+          };
+        }
+        byWorkshop[m.workshopId].total += Number(m.totalCost ?? 0);
+        byWorkshop[m.workshopId].count += 1;
+      }
+
+      const bySupplier: Record<number, { supplierId: number; supplierName: string; total: number; itemsCount: number }> = {};
+      for (const it of items) {
+        if (!it.supplierId) continue;
+        if (!bySupplier[it.supplierId]) {
+          bySupplier[it.supplierId] = {
+            supplierId:   it.supplierId,
+            supplierName: supplierMap.get(it.supplierId)?.name ?? "Sin proveedor",
+            total:        0,
+            itemsCount:   0,
+          };
+        }
+        bySupplier[it.supplierId].total += Number(it.subtotal ?? 0);
+        bySupplier[it.supplierId].itemsCount += 1;
+      }
+
+      const totals = {
+        manoObra:  round2(mantenances.reduce((a, m) => a + Number(m.laborCost ?? 0), 0)),
+        repuestos: round2(items.reduce((a, it) => a + Number(it.subtotal ?? 0), 0)),
+        total:     round2(mantenances.reduce((a, m) => a + Number(m.totalCost ?? 0), 0)),
+      };
+
+      return res.json({
+        rango:        { desde: from.toISOString().slice(0, 10), hasta: to.toISOString().slice(0, 10) },
+        filtros:      { workshopId, supplierId, assetId },
+        totals,
+        byWorkshop:   Object.values(byWorkshop).sort((a, b) => b.total - a.total),
+        bySupplier:   Object.values(bySupplier).sort((a, b) => b.total - a.total),
+        mantenances:  mantenancesOut,
       });
     } catch (err) {
       next(err);
@@ -769,6 +991,7 @@ router.post(
           odometerKm:     body.odometerKm ?? null,
           // v3.1: mano de obra
           laborCost:      String(body.laborCost ?? 0),
+          ivaPercent:     String(body.ivaPercent ?? 15),
           cadenceKind:    body.cadenceKind,
           cadenceValue:   body.cadenceValue ?? null,
           nextTriggerKm:  body.nextTriggerKm ?? null,
@@ -878,6 +1101,7 @@ router.put(
       if (body.odometerKm !== undefined) updateData.odometerKm = body.odometerKm;
       // v3.1: mano de obra
       if (body.laborCost !== undefined) updateData.laborCost = String(body.laborCost);
+      if (body.ivaPercent !== undefined) updateData.ivaPercent = String(body.ivaPercent);
       if (body.cadenceKind !== undefined) updateData.cadenceKind = body.cadenceKind;
       if (body.cadenceValue !== undefined) updateData.cadenceValue = body.cadenceValue;
       if (body.nextTriggerKm !== undefined) updateData.nextTriggerKm = body.nextTriggerKm;
@@ -1199,8 +1423,8 @@ router.patch(
       const id = parseId('maintenance', req.params.id);
       const meRole = req.user!.role;
 
-      if (meRole !== 'owner_empresa' && meRole !== 'admin_empresa') {
-        throw new ForbiddenError('Solo administradores o propietarios pueden editar estas fechas.');
+      if (meRole !== 'owner_empresa' && meRole !== 'admin_empresa' && meRole !== 'operador') {
+        throw new ForbiddenError('Solo administradores, propietarios u operadores pueden editar estas fechas.');
       }
 
       const body = req.body as z.infer<typeof updateDatesSchema>;
@@ -1747,9 +1971,9 @@ router.delete(
         .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
         .limit(1);
       if (!existing) throw new NotFoundError('Mantenimiento', req.params.id);
-      if (existing.status === 'Completado') {
-        throw new ForbiddenError('Los mantenimientos completados no se pueden eliminar.');
-      }
+      // Los administradores (owner_empresa / admin_empresa) pueden
+      // eliminar mantenimientos en cualquier estado, incluidos los
+      // completados. El check de rol admin ya se hizo arriba.
 
       await db.delete(companyMaintenanceItems).where(eq(companyMaintenanceItems.maintenanceId, id));
       await db.delete(companyMaintenanceCarwashExtras).where(eq(companyMaintenanceCarwashExtras.maintenanceId, id));
@@ -1760,218 +1984,6 @@ router.delete(
         .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)));
 
       res.json({ ok: true });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-// ─── GET /company/:id/maintenances/cost-breakdown ─────────────────
-// Devuelve el desglose por mantenimiento: mano de obra (taller) +
-// repuestos agrupados por proveedor.
-//
-// Query params opcionales:
-//   from, to       → rango de fechas (default: últimos 12 meses)
-//   workshopId     → filtra por taller
-//   supplierId     → filtra por proveedor (solo repuestos de ese proveedor)
-//   assetId        → filtra por vehículo
-//
-// Devuelve:
-//   {
-//     totals: { manoObra, repuestos, total },
-//     byWorkshop: [{ workshopId, workshopName, total, count }],
-//     bySupplier: [{ supplierId, supplierName, total, count }],
-//     mantenances: [{ id, title, assetPlate, scheduledDate, completedDate,
-//                    workshop, manoObra, repuestos, total }]
-//   }
-router.get(
-  "/cost-breakdown",
-  requireModule("mantenimiento"),
-  requirePermission("mantenimiento", "records", "ver"),
-  async (req, res, next) => {
-    try {
-      const companyId = req.companyId!;
-      const from = (req.query.from as string | undefined)
-        ? new Date(req.query.from as string)
-        : (() => { const d = new Date(); d.setMonth(d.getMonth() - 12); return d; })();
-      const to = (req.query.to as string | undefined)
-        ? new Date(req.query.to as string)
-        : new Date();
-      const workshopId = req.query.workshopId ? Number(req.query.workshopId) : null;
-      const supplierId = req.query.supplierId ? Number(req.query.supplierId) : null;
-      const assetId    = req.query.assetId    ? Number(req.query.assetId)    : null;
-
-      // 1) Traer los mantenimientos del rango
-      const whereMant: any[] = [
-        eq(companyMaintenanceRecords.companyId, companyId),
-        gte(companyMaintenanceRecords.createdAt, from),
-        lte(companyMaintenanceRecords.createdAt, to),
-      ];
-      if (assetId)    whereMant.push(eq(companyMaintenanceRecords.assetId, assetId));
-      if (workshopId) whereMant.push(eq(companyMaintenanceRecords.workshopId, workshopId));
-
-      const mantenances = await db
-        .select({
-          id:             companyMaintenanceRecords.id,
-          title:          companyMaintenanceRecords.title,
-          assetId:        companyMaintenanceRecords.assetId,
-          workshopId:     companyMaintenanceRecords.workshopId,
-          status:         companyMaintenanceRecords.status,
-          totalCost:      companyMaintenanceRecords.totalCost,
-          laborCost:      companyMaintenanceRecords.laborCost,
-          scheduledFor:   companyMaintenanceRecords.scheduledFor,
-          completedAt:    companyMaintenanceRecords.completedAt,
-        })
-        .from(companyMaintenanceRecords)
-        .where(and(...whereMant))
-        .orderBy(desc(companyMaintenanceRecords.scheduledFor));
-
-      // 2) Traer los items de esos mantenimientos (con supplier)
-      const mantenimientoIds = mantenances.map((m) => m.id);
-      let items: Array<{
-        id: number; mantenimientoId: number; supplierId: number | null;
-        name: string; quantity: string; unitCost: string; subtotal: string;
-      }> = [];
-      if (mantenimientoIds.length) {
-        const whereItems: any[] = [inArray(companyMaintenanceItems.maintenanceId, mantenimientoIds)];
-        if (supplierId) whereItems.push(eq(companyMaintenanceItems.supplierId, supplierId));
-        items = await db
-          .select({
-            id:             companyMaintenanceItems.id,
-            mantenimientoId: companyMaintenanceItems.maintenanceId,
-            supplierId:     companyMaintenanceItems.supplierId,
-            name:           companyMaintenanceItems.name,
-            quantity:       companyMaintenanceItems.quantity,
-            unitCost:       companyMaintenanceItems.unitCost,
-            subtotal:       companyMaintenanceItems.subtotal,
-          })
-          .from(companyMaintenanceItems)
-          .where(and(...whereItems));
-      }
-
-      // 3) Traer talleres y proveedores (para mapear id → nombre)
-      const [workshops, suppliers, assetRows] = await Promise.all([
-        db.select().from(companyWorkshops).where(eq(companyWorkshops.companyId, companyId)),
-        db.select().from(companySuppliers).where(eq(companySuppliers.companyId, companyId)),
-        mantenances.length
-          ? db
-              .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate })
-              .from(companyAssets)
-              .where(and(
-                eq(companyAssets.companyId, companyId),
-                inArray(companyAssets.id, mantenances.map((m) => m.assetId).filter((id): id is number => id != null)),
-              ))
-          : Promise.resolve([] as Array<{ id: number; name: string; plate: string | null }>),
-      ]);
-
-      const workshopMap  = new Map(workshops.map((w)  => [w.id,  { name: w.name,  nit: w.nit  }]));
-      const supplierMap  = new Map(suppliers.map((s)  => [s.id,  { name: s.name,  nit: s.nit  }]));
-      const assetMap     = new Map(assetRows.map((a)   => [a.id,  { name: a.name,  plate: a.plate }]));
-
-      // 4) Por mantenimiento: agrupar items por supplier
-      const itemsByMant = new Map<number, typeof items>();
-      for (const it of items) {
-        if (!itemsByMant.has(it.mantenimientoId)) itemsByMant.set(it.mantenimientoId, []);
-        itemsByMant.get(it.mantenimientoId)!.push(it);
-      }
-
-      // 5) Construir la respuesta
-      const mantenancesOut = mantenances.map((m) => {
-        const myItems = itemsByMant.get(m.id) ?? [];
-        const repuestos = myItems.reduce((acc, it) => acc + Number(it.subtotal ?? 0), 0);
-        const labor     = Number(m.laborCost ?? 0);
-        const total     = Number(m.totalCost ?? 0);
-        // Si hay supplierId en el filtro, repuestos refleja solo ese proveedor
-        return {
-          id:             m.id,
-          title:          m.title ?? "—",
-          assetPlate:     assetMap.get(m.assetId)?.plate || assetMap.get(m.assetId)?.name || "—",
-          assetName:      assetMap.get(m.assetId)?.name ?? null,
-          scheduledDate:  m.scheduledFor,
-          completedAt:    m.completedAt,
-          status:         m.status,
-          workshop:       m.workshopId ? {
-            id:    m.workshopId,
-            name:  workshopMap.get(m.workshopId)?.name ?? "—",
-            nit:   workshopMap.get(m.workshopId)?.nit  ?? null,
-          } : null,
-          manoObra:       round2(labor),
-          repuestos:      round2(repuestos),
-          total:          round2(total),
-          // Cuando NO se filtra por supplierId, mostramos el desglose por proveedor
-          // dentro de la misma OT.
-          repuestosPorProveedor: supplierId
-            ? null
-            : (() => {
-                const map: Record<number, { supplierId: number; supplierName: string; total: number; count: number }> = {};
-                for (const it of myItems) {
-                  if (!it.supplierId) continue;
-                  if (!map[it.supplierId]) {
-                    map[it.supplierId] = {
-                      supplierId: it.supplierId,
-                      supplierName: supplierMap.get(it.supplierId)?.name ?? "Sin proveedor",
-                      total: 0,
-                      count: 0,
-                    };
-                  }
-                  map[it.supplierId].total += Number(it.subtotal ?? 0);
-                  map[it.supplierId].count += 1;
-                }
-                return Object.values(map).map((r) => ({
-                  supplierId:   r.supplierId,
-                  supplierName: r.supplierName,
-                  total:        round2(r.total),
-                  itemsCount:   r.count,
-                }));
-              })(),
-        };
-      });
-
-      // 6) Totales por taller y por proveedor (sobre TODO el rango, sin filtros de asset)
-      const byWorkshop: Record<number, { workshopId: number; workshopName: string; total: number; count: number }> = {};
-      for (const m of mantenances) {
-        if (!m.workshopId) continue;
-        if (!byWorkshop[m.workshopId]) {
-          byWorkshop[m.workshopId] = {
-            workshopId:   m.workshopId,
-            workshopName: workshopMap.get(m.workshopId)?.name ?? "—",
-            total:        0,
-            count:        0,
-          };
-        }
-        byWorkshop[m.workshopId].total += Number(m.totalCost ?? 0);
-        byWorkshop[m.workshopId].count += 1;
-      }
-
-      const bySupplier: Record<number, { supplierId: number; supplierName: string; total: number; itemsCount: number }> = {};
-      for (const it of items) {
-        if (!it.supplierId) continue;
-        if (!bySupplier[it.supplierId]) {
-          bySupplier[it.supplierId] = {
-            supplierId:   it.supplierId,
-            supplierName: supplierMap.get(it.supplierId)?.name ?? "Sin proveedor",
-            total:        0,
-            itemsCount:   0,
-          };
-        }
-        bySupplier[it.supplierId].total += Number(it.subtotal ?? 0);
-        bySupplier[it.supplierId].itemsCount += 1;
-      }
-
-      const totals = {
-        manoObra:  round2(mantenances.reduce((a, m) => a + Number(m.laborCost ?? 0), 0)),
-        repuestos: round2(items.reduce((a, it) => a + Number(it.subtotal ?? 0), 0)),
-        total:     round2(mantenances.reduce((a, m) => a + Number(m.totalCost ?? 0), 0)),
-      };
-
-      return res.json({
-        rango:        { desde: from.toISOString().slice(0, 10), hasta: to.toISOString().slice(0, 10) },
-        filtros:      { workshopId, supplierId, assetId },
-        totals,
-        byWorkshop:   Object.values(byWorkshop).sort((a, b) => b.total - a.total),
-        bySupplier:   Object.values(bySupplier).sort((a, b) => b.total - a.total),
-        mantenances:  mantenancesOut,
-      });
     } catch (err) {
       next(err);
     }

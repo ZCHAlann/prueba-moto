@@ -70,6 +70,11 @@ const handoverSchema = z.object({
   signatureUrl:     z.string().max(2_000_000).optional().nullable(),
   signatureDriverUrl: z.string().max(2_000_000).optional().nullable(),
   handoverUrl:      z.string().max(2_000_000).optional().nullable(),
+  // ── Campos específicos del acta de DEVOLUCIÓN (finalize) ──────────────
+  // El acta de devolución puede capturar información adicional que el alta
+  // no requiere (multas del período, foto del odómetro al regreso, etc.).
+  returnOdometerPhotoUrl: z.string().max(2_000_000).optional().nullable(),
+  multasText:            validators.longTextOptional,
   // Otros
   observations: validators.longTextOptional,
 });
@@ -269,11 +274,20 @@ router.put(
 );
 
 // ─── POST /company/:id/assignments/:assignId/finalize ─────────────────────────
+//
+// Body opcional: datos del acta de devolución (mismo formato que el alta).
+// Si vienen, se persisten junto con el cambio de status a "Finalizada".
+// Si no vienen, finaliza sin acta (compatibilidad con callers viejos).
+//
+// Decisión: el acta final REEMPLAZA al acta inicial — es el documento
+// vigente al regreso del vehículo. Los campos del acta (odómetro, condición,
+// fotos, firmas) describen el estado al regreso, no al alta.
 
 router.post(
   '/:assignId/finalize',
   requireModule('gestion', 'asignaciones'),
   requireSupervisor,
+  validate(handoverSchema.partial()),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -298,9 +312,22 @@ router.post(
 
       const today = new Date().toISOString().split('T')[0];
 
+      // Mezcla los datos del acta de devolución (si los hay) con el cambio
+      // de status. Si el body viene vacío, solo finaliza.
+      //
+      // IMPORTANTE: el campo `handoverUrl` que viene en el body es la URL
+      // del PDF de DEVOLUCIÓN, NO del alta. Lo renombramos a
+      // `returnHandoverUrl` para preservar el acta original intacta.
+      const handoverData = (req.body ?? {}) as Partial<z.infer<typeof handoverSchema>> & {
+        handoverUrl?: string | null;
+      };
+      const { handoverUrl: returnPdfUrl, ...restHandoverData } = handoverData;
+
       const [updated] = await db
         .update(companyAssignments)
         .set({
+          ...restHandoverData,
+          ...(returnPdfUrl != null ? { returnHandoverUrl: returnPdfUrl } : {}),
           status: 'Finalizada',
           endDate: existing[0].endDate ?? today,
           updatedAt: new Date(),
@@ -352,6 +379,9 @@ function serializeAssignment(
     status: a.status,
     notes: a.notes,
     handoverUrl: a.handoverUrl,
+    returnHandoverUrl: a.returnHandoverUrl,
+    returnOdometerPhotoUrl: a.returnOdometerPhotoUrl,
+    multasText:            a.multasText,
     // ── Enrichment: nombres para display sin hooks externos ──────────────────
     assetName:  assetInfo?.name  ?? null,
     assetPlate: assetInfo?.plate ?? null,

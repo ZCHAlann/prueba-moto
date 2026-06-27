@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { useDrivers, type ApiDriver, type AssignmentActa } from "../../../hooks/useDrivers";
 import { useAssignments } from "../../../hooks/useAssignments";
@@ -21,6 +21,7 @@ import type { Asset } from "../../../types/activo";
 import { FileCheck, Paperclip } from "lucide-react";
 import { useAuth } from "../../../context/AuthContext";
 import { useDriverReports, type ApiDriverReport, type DriverReportInvoice } from "../../../hooks/useDriverReports";
+import { fmtDateShortEc, fmtDateTimeEc, fmtTimeEc } from "@/lib/datetime";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -76,8 +77,7 @@ const PAGE_SIZE = 7;
 const REPORT_KEY = "aplismart-driver-reports-v1";
 
 function fmtDate(d: string) {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" });
+  return fmtDateShortEc(d);
 }
 
 function daysUntil(dateStr: string): number {
@@ -206,16 +206,24 @@ function KpiRow({ drivers }: { drivers: ApiDriver[] }) {
   const vencidos  = drivers.filter(d => daysUntil(d.licenseExpiry) <= 0).length;
 
   const cards = [
-    { label: "Total conductores", value: drivers.length, sub: "base de la empresa",  cls: "border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]",                        valCls: "text-gray-800 dark:text-white"          },
-    { label: "Activos",           value: activos,         sub: "disponibles",          cls: "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/5",          valCls: "text-emerald-700 dark:text-emerald-300" },
-    { label: "Inactivos",         value: inactivos,       sub: "fuera de operación",   cls: "border-gray-200 bg-gray-50 dark:border-white/[0.06] dark:bg-white/[0.03]",                     valCls: "text-gray-500 dark:text-gray-400"       },
-    { label: "Licencias vencidas",value: vencidos,        sub: "requieren atención",   cls: "border-rose-200 bg-rose-50/60 dark:border-rose-500/20 dark:bg-rose-500/5",                     valCls: "text-rose-700 dark:text-rose-300"       },
+    { label: "Total conductores", value: drivers.length, sub: "base de la empresa",  cls: "border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]",                        valCls: "text-gray-800 dark:text-white",          kpi: null },
+    { label: "Activos",           value: activos,         sub: "disponibles",          cls: "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/5",          valCls: "text-emerald-700 dark:text-emerald-300", kpi: "Activos" },
+    { label: "Inactivos",         value: inactivos,       sub: "fuera de operación",   cls: "border-gray-200 bg-gray-50 dark:border-white/[0.06] dark:bg-white/[0.03]",                     valCls: "text-gray-500 dark:text-gray-400",       kpi: "Inactivos" },
+    { label: "Licencias vencidas",value: vencidos,        sub: "requieren atención",   cls: "border-rose-200 bg-rose-50/60 dark:border-rose-500/20 dark:bg-rose-500/5",                     valCls: "text-rose-700 dark:text-rose-300",       kpi: "Licencias vencidas" },
   ];
 
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       {cards.map(c => (
-        <div key={c.label} className={`rounded-2xl border p-4 ${c.cls}`}>
+        <div
+          key={c.label}
+          className={`rounded-2xl border p-4 transition-all ${c.kpi ? "cursor-pointer hover:scale-[1.02] hover:shadow-md" : ""} ${c.cls}`}
+          onClick={() => {
+            if (!c.kpi) return;
+            const params = new URLSearchParams({ kpi: c.kpi });
+            window.location.href = `/conductores?${params.toString()}`;
+          }}
+        >
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{c.label}</p>
           <p className={`mt-1.5 text-3xl font-black tabular-nums ${c.valCls}`}>{c.value}</p>
           <p className="mt-0.5 text-xs text-gray-400">{c.sub}</p>
@@ -1138,7 +1146,7 @@ function ReportDrawer({ report, onClose, onDeleted }: {
             <p className="text-[10px] font-bold uppercase tracking-widest text-cyan-500">Reporte operativo</p>
             <p className="mt-0.5 text-base font-black text-gray-800 dark:text-white">{report.driverName ?? "—"}</p>
             <p className="text-xs text-gray-400">
-              {new Date(report.createdAt).toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+              {fmtDateTimeEc(report.createdAt)}
             </p>
           </div>
           <button onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.08]">
@@ -1274,7 +1282,7 @@ function ReportDrawer({ report, onClose, onDeleted }: {
             </div>
           )}
           <span className="text-xs text-gray-400">
-            {new Date(report.createdAt).toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" })}
+            {fmtDateShortEc(report.createdAt)}
           </span>
         </div>
       </div>
@@ -1298,6 +1306,21 @@ export default function DriversPage() {
   const [search, setSearch]             = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [page, setPage]                 = useState(1);
+  const [searchParams] = useSearchParams();
+
+  // KPI click from EstadisticasTab: read ?kpi= param
+  useEffect(() => {
+    const kpi = searchParams.get("kpi");
+    if (kpi) {
+      const statusMap: Record<string, string> = {
+        "Activos":          "Activo",
+        "Inactivos":        "Inactivo",
+        "Licencias vencidas": "Activo", // filter to show active ones ( vencidas handled separately )
+      };
+      const status = statusMap[kpi] ?? kpi;
+      setFilterStatus(status);
+    }
+  }, []);
 
   const [drawerDriver, setDrawerDriver]           = useState<ApiDriver | null>(null);
   const [deleteTarget, setDeleteTarget]           = useState<ApiDriver | null>(null);
@@ -1564,10 +1587,10 @@ export default function DriversPage() {
                         </td>
                         <td className="px-4 py-3">
                           <p className="text-xs text-gray-500 dark:text-gray-400">
-                            {new Date(r.createdAt).toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" })}
+                            {fmtDateShortEc(r.createdAt)}
                           </p>
                           <p className="text-[11px] text-gray-400">
-                            {new Date(r.createdAt).toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" })}
+                            {fmtTimeEc(r.createdAt)}
                           </p>
                         </td>
                         <td className="px-4 py-3" onClick={e => e.stopPropagation()}>

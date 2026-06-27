@@ -6,6 +6,7 @@ import { useAssignments } from "../../hooks/useAssignments";
 import { X, ChevronRight, ChevronLeft, Loader2 } from "lucide-react";
 import { DatePicker } from "../ui/date-picker/DatePicker";
 import type { AssetFuelType, AssetStatus } from "../../types/activo";
+import { todayEcuador } from "@/lib/datetime";
 
 type VehicleFormValues = {
   code: string; name: string; serial: string; brand: string; model: string;
@@ -22,7 +23,7 @@ function getInitialValues(): VehicleFormValues {
     code: "", name: "", serial: "", brand: "", model: "", year: "", plate: "",
     color: "", maxLoad: "", fuelType: "Diesel", oilType: "", oilCapacity: "",
     status: "Operativo", location: "", driverId: "", observations: "",
-    nextMaintenance: new Date().toISOString().slice(0, 10),
+    nextMaintenance: todayEcuador(),
   };
 }
 
@@ -115,7 +116,7 @@ export function MotorCreateModal({ onClose }: Props) {
         try {
           await createAssignment({
             assetId, driverId: values.driverId,
-            startDate: new Date().toISOString().slice(0, 10),
+            startDate: todayEcuador(),
             endDate: null, status: "Activa", notes: "", handoverFileName: "",
           });
         } catch { /* asignación falló pero vehículo creado */ }

@@ -50,6 +50,7 @@ export type ApiFuelEntry = {
   assetId: string;
   driverId: string | null;
   date: string;
+  gallons: number;
   liters: number;
   cost: number;
   odometer: number;
@@ -68,7 +69,7 @@ export type ApiFuelEntry = {
 export type CreateFuelPayload = {
   assetId: string;
   date: string;
-  liters: number;
+  gallons: number;
   cost: number;
   odometer: number;
   station: string;
@@ -86,6 +87,7 @@ function mapApi(raw: Record<string, unknown>): ApiFuelEntry {
     assetId: String(raw.assetId ?? ""),
     driverId: raw.driverId ? String(raw.driverId) : null,
     date: (raw.date as string) ?? "",
+    gallons: Number(raw.gallons ?? 0),
     liters: Number(raw.liters ?? 0),
     cost: Number(raw.cost ?? 0),
     odometer: Number(raw.odometer ?? 0),
@@ -175,7 +177,7 @@ export function useFuel() {
       body: JSON.stringify({
         assetId:          payload.assetId,
         date:             payload.date,
-        liters:           payload.liters,
+        gallons:          payload.gallons,
         cost:             payload.cost,
         odometer:         payload.odometer,
         station:          payload.station,
@@ -198,7 +200,7 @@ export function useFuel() {
       body: JSON.stringify({
         ...(payload.assetId          !== undefined && { assetId:          payload.assetId          }),
         ...(payload.date             !== undefined && { date:             payload.date             }),
-        ...(payload.liters           !== undefined && { liters:           payload.liters           }),
+        ...(payload.gallons          !== undefined && { gallons:          payload.gallons          }),
         ...(payload.cost             !== undefined && { cost:             payload.cost             }),
         ...(payload.odometer         !== undefined && { odometer:         payload.odometer         }),
         ...(payload.station          !== undefined && { station:          payload.station          }),
@@ -238,9 +240,9 @@ export type FuelPeak = {
   plate: string | null;
   name: string | null;
   date: string;
-  liters: number;
+  gallons: number;
   cost: number | null;
-  avgLiters: number;
+  avgGallons: number;
   zScore: number;
   severity: "high" | "extreme";
 };
@@ -249,7 +251,7 @@ export type FuelVehicleSummary = {
   assetId: string;
   plate: string | null;
   name: string | null;
-  totalLiters: number;
+  totalGallons: number;
   totalCost: number;
   records: number;
 };

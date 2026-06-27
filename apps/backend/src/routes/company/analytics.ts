@@ -95,7 +95,7 @@ router.get('/dashboard', requireModule('dashboard'), async (req, res, next) => {
     const totalMaintenances = maintenancesRows.length;
     const openAlerts        = alertsRows.filter(a => a.status === 'Abierta' || a.status === 'En revisión').length;
     const criticalAlerts    = alertsRows.filter(a => a.status === 'Abierta' && a.severity === 'Alta').length;
-    const totalFuelLiters   = fuelRows.reduce((acc, f) => acc + Number(f.liters), 0);
+const totalFuelGallons  = fuelRows.reduce((acc, f) => acc + Number(f.gallons), 0);
     const totalFuelCost     = fuelRows.filter(f => f.cost !== null).reduce((acc, f) => acc + Number(f.cost), 0);
     const activeAssignments = assignmentsRows.filter(a => a.status === 'Activa').length;
     const totalChecklists   = checklistsRows.length;
@@ -103,19 +103,19 @@ router.get('/dashboard', requireModule('dashboard'), async (req, res, next) => {
     /* ── Charts ─────────────────────────────────────────────────────────── */
     const months = lastNMonths(12);
 
-    /* Combustible por mes (litros + costo) */
-    const fuelByMonth: Record<string, { liters: number; cost: number }> = {};
+    /* Combustible por mes (galones + costo) */
+    const fuelByMonth: Record<string, { gallons: number; cost: number }> = {};
     for (const f of fuelRows) {
       const m = toYearMonth(f.date);
       if (!m) continue;
-      if (!fuelByMonth[m]) fuelByMonth[m] = { liters: 0, cost: 0 };
-      fuelByMonth[m].liters += Number(f.liters);
+      if (!fuelByMonth[m]) fuelByMonth[m] = { gallons: 0, cost: 0 };
+      fuelByMonth[m].gallons += Number(f.gallons);
       fuelByMonth[m].cost   += f.cost ? Number(f.cost) : 0;
     }
 
     const fuelOverTime = {
       categories: months.map(monthLabel),
-      liters:     months.map(m => Math.round((fuelByMonth[m]?.liters ?? 0) * 100) / 100),
+      galones:    months.map(m => Math.round((fuelByMonth[m]?.gallons ?? 0) * 100) / 100),
       cost:       months.map(m => Math.round((fuelByMonth[m]?.cost   ?? 0) * 100) / 100),
     };
 
@@ -261,17 +261,17 @@ router.get('/dashboard', requireModule('dashboard'), async (req, res, next) => {
       .sort((a, b) => b.occupancy - a.occupancy);
 
     /* 5. Consumo de combustible por vehículo (top 10) */
-    const consumoByAsset = new Map<number, { liters: number; cost: number; plate: string; name: string }>();
+    const consumoByAsset = new Map<number, { gallons: number; cost: number; plate: string; name: string }>();
     for (const f of fuelRows) {
       const a = assetsRows.find(x => x.id === f.assetId);
-      const entry = consumoByAsset.get(f.assetId) ?? { liters: 0, cost: 0, plate: a?.plate ?? '—', name: a?.name ?? '—' };
-      entry.liters += Number(f.liters);
+      const entry = consumoByAsset.get(f.assetId) ?? { gallons: 0, cost: 0, plate: a?.plate ?? '—', name: a?.name ?? '—' };
+      entry.gallons += Number(f.gallons);
       entry.cost    += f.cost ? Number(f.cost) : 0;
       consumoByAsset.set(f.assetId, entry);
     }
     const consumoPorVehiculo = Array.from(consumoByAsset.entries())
-      .map(([id, v]) => ({ id, plate: v.plate, name: v.name, liters: Math.round(v.liters * 100) / 100, cost: Math.round(v.cost * 100) / 100 }))
-      .sort((a, b) => b.liters - a.liters)
+      .map(([id, v]) => ({ id, plate: v.plate, name: v.name, gallons: Math.round(v.gallons * 100) / 100, cost: Math.round(v.cost * 100) / 100 }))
+      .sort((a, b) => b.gallons - a.gallons)
       .slice(0, 10);
 
     /* 6. Costo de combustible por vehículo (top 10) */
@@ -301,7 +301,7 @@ router.get('/dashboard', requireModule('dashboard'), async (req, res, next) => {
         totalMaintenances,
         openAlerts,
         criticalAlerts,
-        totalFuelLiters:  Math.round(totalFuelLiters  * 100) / 100,
+        totalFuelGallons: Math.round(totalFuelGallons * 100) / 100,
         totalFuelCost:    Math.round(totalFuelCost     * 100) / 100,
         activeAssignments,
         totalChecklists,
@@ -431,45 +431,45 @@ router.get('/fuel', requireModule('combustible'), async (req, res, next) => {
       .from(companyFuelEntries)
       .where(eq(companyFuelEntries.companyId, companyId));
 
-    const byMonth: Record<string, { liters: number; cost: number; entries: number }> = {};
+const byMonth: Record<string, { gallons: number; cost: number; entries: number }> = {};
     const byFuelType: Record<string, number> = {};
-    const byAsset: Record<number, { liters: number; cost: number }> = {};
+    const byAsset: Record<number, { gallons: number; cost: number }> = {};
 
     for (const f of rows) {
       const month = f.date.slice(0, 7);
-      if (!byMonth[month]) byMonth[month] = { liters: 0, cost: 0, entries: 0 };
-      byMonth[month].liters += Number(f.liters);
+      if (!byMonth[month]) byMonth[month] = { gallons: 0, cost: 0, entries: 0 };
+      byMonth[month].gallons += Number(f.gallons);
       byMonth[month].cost += f.cost ? Number(f.cost) : 0;
       byMonth[month].entries += 1;
 
       const fuelType = f.fuelType ?? 'Sin tipo';
-      byFuelType[fuelType] = (byFuelType[fuelType] ?? 0) + Number(f.liters);
+      byFuelType[fuelType] = (byFuelType[fuelType] ?? 0) + Number(f.gallons);
 
-      if (!byAsset[f.assetId]) byAsset[f.assetId] = { liters: 0, cost: 0 };
-      byAsset[f.assetId].liters += Number(f.liters);
+      if (!byAsset[f.assetId]) byAsset[f.assetId] = { gallons: 0, cost: 0 };
+      byAsset[f.assetId].gallons += Number(f.gallons);
       byAsset[f.assetId].cost += f.cost ? Number(f.cost) : 0;
     }
 
-    const totalLiters = rows.reduce((acc, f) => acc + Number(f.liters), 0);
+    const totalGallons = rows.reduce((acc, f) => acc + Number(f.gallons), 0);
     const totalCost = rows
       .filter((f) => f.cost !== null)
       .reduce((acc, f) => acc + Number(f.cost), 0);
 
     res.json({
       total: rows.length,
-      totalLiters: Math.round(totalLiters * 100) / 100,
+      totalGallons: Math.round(totalGallons * 100) / 100,
       totalCost: Math.round(totalCost * 100) / 100,
       byMonth: Object.entries(byMonth)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([month, v]) => ({
           month,
-          liters: Math.round(v.liters * 100) / 100,
+          gallons: Math.round(v.gallons * 100) / 100,
           cost: Math.round(v.cost * 100) / 100,
           entries: v.entries,
         })),
-      byFuelType: Object.entries(byFuelType).map(([label, liters]) => ({
+      byFuelType: Object.entries(byFuelType).map(([label, gallons]) => ({
         label,
-        liters: Math.round(liters * 100) / 100,
+        gallons: Math.round(gallons * 100) / 100,
       })),
     });
   } catch (err) {
@@ -494,11 +494,11 @@ router.get('/dashboard-extended/consumo-por-conductor', requireModule('dashboard
       db.select().from(companyDrivers).where(eq(companyDrivers.companyId, companyId)),
     ]);
 
-    const byDriver = new Map<number, { liters: number; cost: number }>();
+    const byDriver = new Map<number, { gallons: number; cost: number }>();
     for (const f of fuelRows) {
       if (f.driverId == null) continue;
-      const entry = byDriver.get(f.driverId) ?? { liters: 0, cost: 0 };
-      entry.liters += Number(f.liters);
+      const entry = byDriver.get(f.driverId) ?? { gallons: 0, cost: 0 };
+      entry.gallons += Number(f.gallons);
       entry.cost    += f.cost ? Number(f.cost) : 0;
       byDriver.set(f.driverId, entry);
     }
@@ -506,14 +506,14 @@ router.get('/dashboard-extended/consumo-por-conductor', requireModule('dashboard
     const result = Array.from(byDriver.entries()).map(([driverId, v]) => {
       const d = driversRows.find(x => x.id === driverId);
       return {
-        id:     driverId,
-        name:   d ? `${d.firstName ?? ''} ${d.lastName ?? ''}`.trim() || d.code : `Conductor ${driverId}`,
-        code:   d?.code ?? null,
-        liters: Math.round(v.liters * 100) / 100,
-        cost:   Math.round(v.cost * 100) / 100,
+        id:      driverId,
+        name:    d ? `${d.firstName ?? ''} ${d.lastName ?? ''}`.trim() || d.code : `Conductor ${driverId}`,
+        code:    d?.code ?? null,
+        gallons: Math.round(v.gallons * 100) / 100,
+        cost:    Math.round(v.cost * 100) / 100,
       };
     })
-    .sort((a, b) => b.liters - a.liters)
+    .sort((a, b) => b.gallons - a.gallons)
     .slice(0, limit);
 
     res.json({ data: result });

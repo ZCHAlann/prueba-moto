@@ -11,20 +11,16 @@ import { usePlatformAudit }      from "../../../hooks/usePlatformAudit";
 import { usePlatformAuditStats } from "../../../hooks/usePlatformAuditStats";
 import { ExportToolbar }         from "../../../components/ui/export-toolbar/ExportToolbar";
 import type { PlatformAuditEntry } from "../../../types/platform";
+import { fmtDateTimeEc } from "@/lib/datetime";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleString("es-EC", {
-    day: "2-digit", month: "short", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
+  return fmtDateTimeEc(iso);
 }
 
 function formatDay(iso: string) {
-  return new Date(iso + "T00:00:00").toLocaleDateString("es-EC", {
-    day: "2-digit", month: "short",
-  });
+  return fmtDateShortEc(iso);
 }
 
 const ENTITY_COLORS: Record<string, string> = {

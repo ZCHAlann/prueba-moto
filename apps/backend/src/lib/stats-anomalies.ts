@@ -202,15 +202,15 @@ async function detectCombustible(companyId: number, periodo: Periodo, refDate: D
     }
   }
 
-  // Asset: litros por encima de 2σ
-  const litrosByAsset: Record<number, number> = {};
-  for (const r of rows) litrosByAsset[r.assetId] = (litrosByAsset[r.assetId] ?? 0) + Number(r.liters ?? 0);
-  const ids = Object.keys(litrosByAsset).map(Number);
+  // Asset: galones por encima de 2σ
+  const galonesByAsset: Record<number, number> = {};
+  for (const r of rows) galonesByAsset[r.assetId] = (galonesByAsset[r.assetId] ?? 0) + Number(r.gallons ?? 0);
+  const ids = Object.keys(galonesByAsset).map(Number);
   if (ids.length >= 3) {
     const assetMap = await loadAssets(companyId, ids);
-    const values = Object.values(litrosByAsset) as number[];
+    const values = Object.values(galonesByAsset) as number[];
     const { mean, std } = meanStd(values);
-    for (const [id, v] of Object.entries(litrosByAsset)) {
+    for (const [id, v] of Object.entries(galonesByAsset)) {
       const z = std > 0 ? ((v as number) - mean) / std : 0;
       const sev = classifySeverity(z);
       if (sev && z > 0) {
@@ -222,7 +222,7 @@ async function detectCombustible(companyId: number, periodo: Periodo, refDate: D
           dimensionId: Number(id),
           dimensionLabel: a?.plate || a?.name || `Activo ${id}`,
           severidad: sev,
-          descripcion: `${a?.plate || a?.name} consumió ${round2(v as number)} L, ${z.toFixed(1)}σ por encima del resto.`,
+          descripcion: `${a?.plate || a?.name} consumió ${round2(v as number)} gal, ${z.toFixed(1)}σ por encima del resto.`,
           metadata: { z, mean, std, value: v },
         });
       }

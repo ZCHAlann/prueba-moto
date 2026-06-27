@@ -53,9 +53,9 @@ export function DeleteConfirm({ entry, assets, onConfirm, onCancel }: Props) {
           {/* Mini resumen */}
           <div className="mt-4 grid grid-cols-3 divide-x divide-gray-100 rounded-xl border border-gray-100 bg-gray-50 dark:divide-white/[0.06] dark:border-white/[0.06] dark:bg-white/[0.03]">
             <div className="px-3 py-2.5">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Litros</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Galones</p>
               <p className="mt-0.5 text-sm font-black text-gray-700 dark:text-white">
-                {entry.liters.toLocaleString("es-EC", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} L
+                {entry.gallons.toLocaleString("es-EC", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} gal
               </p>
             </div>
             <div className="px-3 py-2.5">

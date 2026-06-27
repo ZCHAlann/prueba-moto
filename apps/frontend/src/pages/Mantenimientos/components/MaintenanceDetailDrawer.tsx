@@ -41,22 +41,22 @@ import {
   type MaintenanceAttachment,
 } from "../../../hooks/useMaintenancesV2";
 import { useCompanyUsers } from "../../../hooks/useCompanyUsers";
+import { useSuppliers } from "../../../hooks/useSuppliers";
 import { useAuth } from "../../../context/AuthContext";
 import { EditDatesInline } from "../../../components/features/maintenances/EditDatesInline";
+import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function fmtDate(iso?: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
+  return fmtDateShortEc(iso);
 }
 function fmtDateTime(iso?: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return fmtDateTimeEc(iso);
 }
 function fmtMoney(n: number | string | null | undefined) {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
-  return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(v);
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(v);
 }
 
 // ─── Upload de foto de repuesto (quick-add desde el drawer) ────────────────
@@ -274,9 +274,14 @@ export function MaintenanceDetailDrawer({
   );
 
   const [newNote, setNewNote] = useState("");
-  const [newItem, setNewItem] = useState<{ name: string; quantity: number; unitCost: number; photoUrl: string | null; uploading: boolean }>({
-    name: "", quantity: 1, unitCost: 0, photoUrl: null, uploading: false,
+  const [newItem, setNewItem] = useState<{ name: string; quantity: string; unitCost: string; photoUrl: string | null; uploading: boolean; supplierId: string | null }>({
+    name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null,
   });
+  // Batch de repuestos pendientes por agregar
+  const [pendingItems, setPendingItems] = useState<{ name: string; quantity: string; unitCost: string; photoUrl: string | null; uploading: boolean; supplierId: string | null }[]>([]);
+  // IVA% editable (default 15 para Ecuador)
+  const [ivaPercentDraft, setIvaPercentDraft] = useState<number>(15);
+  const { suppliers } = useSuppliers();
   const [assignTo, setAssignTo] = useState("");
   // Estado local para nuevos adicionales / fotos de lavada
   const [newExtra, setNewExtra] = useState<{ name: string; quantity: number; unitCost: number; photoUrl: string }>({
@@ -303,7 +308,9 @@ export function MaintenanceDetailDrawer({
 
   useEffect(() => {
     setNewNote("");
-    setNewItem({ name: "", quantity: 1, unitCost: 0, photoUrl: null, uploading: false });
+    setNewItem({ name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null });
+    setPendingItems([]);
+    setIvaPercentDraft(item?.ivaPercent ?? 15);
     setNewExtra({ name: "", quantity: 1, unitCost: 0, photoUrl: "" });
     setNewPhotoCaption("");
     setAssignTo("");
@@ -319,6 +326,11 @@ export function MaintenanceDetailDrawer({
 
   const item: Maintenance | null = m ?? null;
   const events = (item?.events ?? []) as EventNode[];
+
+  // Sync IVA% con el valor guardado cuando llegan los datos
+  useEffect(() => {
+    if (item?.ivaPercent != null) setIvaPercentDraft(item.ivaPercent);
+  }, [item?.ivaPercent]);
 
   // IMPORTANTE: este useMemo debe ir ANTES de cualquier `return null` para
   // no violar las Rules of Hooks. Si el componente re-renderiza con un
@@ -349,7 +361,8 @@ export function MaintenanceDetailDrawer({
   // como "Corrección". isFullAccess ya cubre exactamente esos 3 roles
   // (ver MaintenanceListTab: isFullAccess = owner_empresa || admin_empresa || supervisor).
   const canManageCorrection = isFullAccess;
-  const canEditDates = meRole === "owner_empresa" || meRole === "admin_empresa";
+  const canEditDates =
+    meRole === "owner_empresa" || meRole === "admin_empresa" || meRole === "operador";
 
   const isProgramado = item?.status === "Programado";
   const isProceso    = item?.status === "En proceso";
@@ -366,6 +379,11 @@ export function MaintenanceDetailDrawer({
 
   const currentAssignedId = item?.assignedUserId ?? "";
   const partsCost = (item?.totalCost ?? 0) - (item?.laborCost ?? 0);
+  // IVA%: usar el valor del draft si cambió, si no el del item
+  const ivaPct = ivaPercentDraft ?? item?.ivaPercent ?? 15;
+  const subtotalNoIva = (item?.laborCost ?? 0) + partsCost;
+  const ivaAmount = subtotalNoIva * (ivaPct / 100);
+  const totalFromIva = subtotalNoIva + ivaAmount;
   // Para lavada: el "Total" del servicio = carwashTotal. Los "Repuestos /
   // Extras" no aplican como tal — lo que sí hay son los adicionales que el
   // operador agregó al servicio (carwashExtras).
@@ -627,6 +645,23 @@ export function MaintenanceDetailDrawer({
                       )}
                       <Kpi label="Total" value={fmtMoney(item.totalCost)} accent="emerald" />
                     </div>
+                    {/* Desglose IVA (informativo, sin afectar el Total del Kpi) */}
+                    {!isLavada && (
+                      <div className="border-t border-gray-100 dark:border-white/[0.06] mt-2 pt-2 px-3 space-y-1">
+                        <div className="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
+                          <span>Subtotal (sin IVA)</span>
+                          <span>{fmtMoney(subtotalNoIva)}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
+                          <span>IVA {ivaPct}% (informativo)</span>
+                          <span>{fmtMoney(ivaAmount)}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500 pt-1">
+                          <span>Total con IVA</span>
+                          <span>{fmtMoney(totalFromIva)}</span>
+                        </div>
+                      </div>
+                    )}
                   </Section>
 
                   {/* ── Lavada: campos específicos ── */}
@@ -751,94 +786,216 @@ export function MaintenanceDetailDrawer({
                         <div className="space-y-2 px-3 py-2.5">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">Acciones</p>
 
-                          {/* Agregar repuesto */}
-                          <details className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-2.5" open>
-                            <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300 inline-flex items-center gap-1.5">
-                              <Plus size={12} /> Agregar repuesto
-                            </summary>
-                            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                              <input
-                                placeholder="Nombre"
-                                value={newItem.name}
-                                onChange={(e) => setNewItem((p) => ({ ...p, name: e.target.value }))}
-                                className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-3 py-2 col-span-2"
-                              />
-                              <input
-                                type="number" min={0} placeholder="Cant." value={newItem.quantity}
-                                onChange={(e) => setNewItem((p) => ({ ...p, quantity: Number(e.target.value) }))}
-                                className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-3 py-2"
-                              />
-                              <input
-                                type="number" min={0} placeholder="Costo unit." value={newItem.unitCost}
-                                onChange={(e) => setNewItem((p) => ({ ...p, unitCost: Number(e.target.value) }))}
-                                className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-3 py-2"
-                              />
+                          {/* ── Batch: lista de repuestos pendientes + formulario de nuevo repuesto ── */}
+                          <div className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] overflow-hidden">
 
-                              {/* ── Foto del repuesto (nuevo) ── */}
-                              <div className="col-span-2 flex items-center gap-2">
-                                {newItem.photoUrl ? (
-                                  <div className="relative h-10 w-10 rounded-md overflow-hidden border border-gray-200 dark:border-white/[0.08]">
-                                    <img src={newItem.photoUrl} alt="" className="h-full w-full object-cover" />
-                                    <button
-                                      type="button"
-                                      onClick={() => setNewItem((p) => ({ ...p, photoUrl: null }))}
-                                      className="absolute top-0 right-0 bg-black/60 text-white p-0.5"
-                                      title="Quitar foto"
-                                    >
-                                      <X size={10} />
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <label className="inline-flex items-center gap-1.5 cursor-pointer rounded-md border border-dashed border-gray-300 dark:border-white/[0.08] px-2.5 py-1 text-xs text-gray-500 dark:text-gray-400 hover:border-violet-400 dark:hover:border-violet-500/50 transition">
-                                    <Camera size={12} /> {newItem.uploading ? "Subiendo…" : "Foto (opcional)"}
-                                    <input
-                                      type="file"
-                                      accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,application/pdf"
-                                      disabled={newItem.uploading}
-                                      className="hidden"
-                                      onChange={async (e) => {
-                                        const f = e.target.files?.[0];
-                                        if (!f) return;
-                                        setNewItem((p) => ({ ...p, uploading: true }));
-                                        try {
-                                          const url = await uploadPartPhoto(f, session?.companyId ?? undefined);
-                                          setNewItem((p) => ({ ...p, photoUrl: url }));
-                                          toast.success("Foto subida");
-                                        } catch (err) {
-                                          toast.error((err as Error).message);
-                                        } finally {
-                                          setNewItem((p) => ({ ...p, uploading: false }));
-                                        }
-                                      }}
-                                    />
+                            {/* Encabezado con botón guardar (visible solo si hay pendientes) */}
+                            {pendingItems.length > 0 && (
+                              <div className="flex items-center justify-between gap-3 border-b border-gray-100 dark:border-white/[0.06] bg-sky-50 dark:bg-sky-500/10 px-3 py-2">
+                                <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-700 dark:text-sky-300">
+                                  <Package size={12} />
+                                  <span>{pendingItems.length} repuesto{pendingItems.length !== 1 ? "s" : ""} pendiente{pendingItems.length !== 1 ? "s" : ""}</span>
+                                </div>
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      // Guardar IVA% primero (si cambió)
+                                      if (ivaPercentDraft !== (item?.ivaPercent ?? 15)) {
+                                        await updateMut.mutateAsync({ id: item.id, body: { ivaPercent: ivaPercentDraft } });
+                                      }
+                                      // Guardar los repuestos
+                                      await addItemsMut.mutateAsync({
+                                        id: item.id,
+                                        items: pendingItems.map((it) => ({
+                                          name: it.name,
+                                          quantity: Number(it.quantity) || 0,
+                                          unitCost: Number(it.unitCost) || 0,
+                                          photoUrl: it.photoUrl,
+                                          supplierId: it.supplierId,
+                                        })),
+                                      });
+                                      setPendingItems([]);
+                                      setNewItem({ name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null });
+                                      toast.success(`${pendingItems.length} repuesto${pendingItems.length !== 1 ? "s" : ""} agregado${pendingItems.length !== 1 ? "s" : ""}`);
+                                      refetch();
+                                    } catch (e) { toast.error((e as Error).message); }
+                                  }}
+                                  className="inline-flex items-center gap-1.5 rounded-md bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-semibold text-white transition shadow-sm"
+                                >
+                                  <CheckCircle2 size={12} />
+                                  Guardar todos
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Formulario: agregar nuevo repuesto */}
+                            <div className="px-3 py-2.5 space-y-2">
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                                  {pendingItems.length === 0 ? "Agregar repuestos" : "Agregar más"}
+                                </p>
+                                <div className="flex items-center gap-1.5">
+                                  <label className="text-[10px] font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                                    IVA %
                                   </label>
-                                )}
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={ivaPercentDraft}
+                                    onChange={(e) => {
+                                      const raw = e.target.value.replace(/[^0-9.]/g, "");
+                                      setIvaPercentDraft(Number(raw) || 0);
+                                    }}
+                                    className="w-14 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2 py-1 text-[11px] text-gray-700 dark:text-white text-center focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                                  />
+                                </div>
                               </div>
 
-                              <button
-                                onClick={async () => {
-                                  if (!newItem.name.trim()) { toast.error("Nombre requerido"); return; }
-                                  try {
-                                    await addItemsMut.mutateAsync({
-                                      id: item.id,
-                                      items: [{
-                                        name: newItem.name,
-                                        quantity: newItem.quantity,
-                                        unitCost: newItem.unitCost,
-                                        photoUrl: newItem.photoUrl,
-                                      }],
-                                    });
-                                    setNewItem({ name: "", quantity: 1, unitCost: 0, photoUrl: null, uploading: false });
-                                    toast.success("Repuesto agregado");
-                                    refetch();
-                                  } catch (e) { toast.error((e as Error).message); }
-                                }}
-                                className="col-span-2 rounded-md bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-medium text-white transition"
-                              >
-                                Guardar repuesto
-                              </button>
+                              {/* Campos: foto | nombre | proveedor */}
+                              <div className="flex items-end gap-2 text-xs overflow-x-auto">
+                                {/* Foto */}
+                                <div className="shrink-0">
+                                  {newItem.photoUrl ? (
+                                    <div className="relative h-9 w-9 rounded-md overflow-hidden border border-gray-200 dark:border-white/[0.08]">
+                                      <img src={newItem.photoUrl} alt="" className="h-full w-full object-cover" />
+                                      <button
+                                        type="button"
+                                        onClick={() => setNewItem((p) => ({ ...p, photoUrl: null }))}
+                                        className="absolute top-0 right-0 bg-black/60 text-white p-0.5"
+                                        title="Quitar foto"
+                                      >
+                                        <X size={9} />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <label className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-dashed border-gray-300 dark:border-white/[0.08] text-gray-400 hover:border-sky-400 hover:text-sky-500 transition">
+                                      {newItem.uploading ? (
+                                        <Loader2 size={13} className="animate-spin" />
+                                      ) : (
+                                        <Camera size={13} />
+                                      )}
+                                      <input
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif"
+                                        disabled={newItem.uploading}
+                                        className="hidden"
+                                        onChange={async (e) => {
+                                          const f = e.target.files?.[0];
+                                          if (!f) return;
+                                          setNewItem((p) => ({ ...p, uploading: true }));
+                                          try {
+                                            const url = await uploadPartPhoto(f, session?.companyId ?? undefined);
+                                            setNewItem((p) => ({ ...p, photoUrl: url }));
+                                            toast.success("Foto subida");
+                                          } catch (err) {
+                                            toast.error((err as Error).message);
+                                          } finally {
+                                            setNewItem((p) => ({ ...p, uploading: false }));
+                                          }
+                                        }}
+                                      />
+                                    </label>
+                                  )}
+                                </div>
+
+                                {/* Nombre */}
+                                <input
+                                  placeholder="Nombre del repuesto"
+                                  value={newItem.name}
+                                  onChange={(e) => setNewItem((p) => ({ ...p, name: e.target.value }))}
+                                  className="min-w-[100px] flex-1 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-1.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                                />
+
+                                {/* Proveedor */}
+                                <select
+                                  value={newItem.supplierId ?? ""}
+                                  onChange={(e) => setNewItem((p) => ({ ...p, supplierId: e.target.value || null }))}
+                                  className="min-w-[100px] rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                                >
+                                  <option value="">Sin prov.</option>
+                                  {suppliers.map((s) => (
+                                    <option key={s.id} value={s.id}>{s.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              {/* Campos: cantidad y precio unitario con labels */}
+                              <div className="flex items-end gap-2">
+                                {/* Cantidad */}
+                                <div className="shrink-0">
+                                  <label className="mb-0.5 block text-[9.5px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                    Cant.
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={newItem.quantity}
+                                    onChange={(e) => setNewItem((p) => ({ ...p, quantity: e.target.value }))}
+                                    className="w-16 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-1.5 text-sm text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                                  />
+                                </div>
+
+                                {/* Precio unitario */}
+                                <div className="shrink-0">
+                                  <label className="mb-0.5 block text-[9.5px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                    Precio unit. (USD)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    placeholder="0.00"
+                                    value={newItem.unitCost}
+                                    onChange={(e) => setNewItem((p) => ({ ...p, unitCost: e.target.value }))}
+                                    className="w-20 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-1.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                                  />
+                                </div>
+
+                                {/* Agregar a la lista */}
+                                <button
+                                  onClick={() => {
+                                    if (!newItem.name.trim()) { toast.error("Nombre requerido"); return; }
+                                    setPendingItems((prev) => [...prev, { ...newItem }]);
+                                    setNewItem({ name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null });
+                                    toast.success("Repuesto agregado a la lista");
+                                  }}
+                                  className="mb-0 shrink-0 rounded-md border border-sky-200 dark:border-sky-500/40 bg-sky-50 dark:bg-sky-500/10 hover:bg-sky-100 dark:hover:bg-sky-500/20 px-3 py-1.5 text-xs font-semibold text-sky-700 dark:text-sky-300 transition"
+                                >
+                                  <Plus size={11} className="inline mr-0.5" />Agregar
+                                </button>
+                              </div>
+
+                              {/* Preview de pendientes */}
+                              {pendingItems.length > 0 && (
+                                <ul className="mt-1 divide-y divide-gray-100 dark:divide-white/[0.05] rounded-md border border-gray-100 dark:border-white/[0.05] overflow-hidden">
+                                  {pendingItems.map((it, idx) => (
+                                    <li key={idx} className="flex items-center gap-2 bg-white dark:bg-white/[0.02] px-2.5 py-2 text-xs">
+                                      {it.photoUrl ? (
+                                        <img src={it.photoUrl} alt="" className="h-7 w-7 rounded object-cover shrink-0" />
+                                      ) : (
+                                        <div className="h-7 w-7 rounded bg-gray-100 dark:bg-white/[0.05] flex items-center justify-center shrink-0">
+                                          <Package size={10} className="text-gray-400" />
+                                        </div>
+                                      )}
+                                      <span className="flex-1 truncate font-medium text-gray-700 dark:text-gray-200">{it.name}</span>
+                                      {it.supplierId && (
+                                        <span className="text-[10px] text-gray-400">{suppliers.find(s => s.id === it.supplierId)?.name}</span>
+                                      )}
+                                      <span className="text-[10px] text-gray-500">{it.quantity} × {fmtMoney(Number(it.unitCost) || 0)}</span>
+                                      <span className="font-semibold text-gray-700 dark:text-gray-200">{fmtMoney(Number(it.quantity) * Number(it.unitCost) || 0)}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setPendingItems((prev) => prev.filter((_, i) => i !== idx))}
+                                        className="shrink-0 rounded p-0.5 text-gray-400 hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-500/10 transition"
+                                        title="Quitar"
+                                      >
+                                        <X size={11} />
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
                             </div>
-                          </details>
+                          </div>
 
                           {/* Agregar nota */}
                           <details className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-2.5">

@@ -12,6 +12,7 @@ import {
   Treemap,
 } from "recharts";
 import { useFleetHealth, type FleetHealthItem, type FleetHealthTier } from "../../../hooks/useFleetHealth";
+import { fmtTimeEc } from "@/lib/datetime";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -670,7 +671,7 @@ export function FleetHealthPage() {
         <div className="flex items-center gap-2 self-start">
           {generatedAt && (
             <span className="text-[11px] text-gray-400">
-              {new Date(generatedAt).toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" })}
+              {fmtTimeEc(generatedAt)}
             </span>
           )}
           <button

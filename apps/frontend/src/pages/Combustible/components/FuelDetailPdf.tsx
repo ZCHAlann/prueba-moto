@@ -24,6 +24,7 @@ import {
   pdf, Font,
 } from "@react-pdf/renderer";
 import { useAuth } from "../../../context/AuthContext";
+import { todayEcuador } from "@/lib/datetime";
 
 export type FuelDetailPdfProps = {
   entry: {
@@ -35,6 +36,7 @@ export type FuelDetailPdfProps = {
     assetModel: string | null;
     driverId: string | null;
     driverName: string | null;
+    gallons: number;
     liters: number;
     cost: number;
     odometer: number;
@@ -155,7 +157,7 @@ function folioFromEntry(id: string, date: string): string {
 export function FuelDetailDocument({
   entry, companyName,
 }: FuelDetailPdfProps & { companyName?: string | null }) {
-  const unitPrice = entry.liters > 0 ? entry.cost / entry.liters : 0;
+  const unitPrice = entry.gallons > 0 ? entry.cost / entry.gallons : 0;
   const folio = folioFromEntry(entry.id, entry.date);
 
   return (
@@ -228,14 +230,14 @@ export function FuelDetailDocument({
         <View style={s.tableWrap}>
           <View style={s.tr}>
             <Text style={[s.th, { width: "20%" }]}>Concepto</Text>
-            <Text style={[s.th, s.thQty]}>Litros</Text>
+            <Text style={[s.th, s.thQty]}>Galones</Text>
             <Text style={[s.th, s.thUnit]}>Precio unitario</Text>
             <Text style={[s.th, s.thTotal]}>Importe</Text>
           </View>
           <View style={s.trLast}>
             <Text style={s.tdLabel}>Carga de combustible</Text>
-            <Text style={[s.td, s.tdQty]}>{fmtNum(entry.liters, 2)} L</Text>
-            <Text style={[s.td, s.tdUnit]}>{fmtMoney(unitPrice)} / L</Text>
+            <Text style={[s.td, s.tdQty]}>{fmtNum(entry.gallons, 2)} gal</Text>
+            <Text style={[s.td, s.tdUnit]}>{fmtMoney(unitPrice)} / gal</Text>
             <Text style={[s.td, s.tdTotal, { fontWeight: 700 }]}>{fmtMoney(entry.cost)}</Text>
           </View>
         </View>
@@ -266,7 +268,7 @@ export function FuelDetailDocument({
           </View>
           <View style={s.stamp}>
             <Text style={s.stampText}>Válido</Text>
-            <Text style={s.stampSub}>Aplismart · {new Date().toLocaleDateString("es")}</Text>
+            <Text style={s.stampSub}>Aplismart · {todayEcuador()}</Text>
           </View>
         </View>
       </Page>

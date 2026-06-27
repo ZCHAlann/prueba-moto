@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { useProfile } from "@/hooks/useProfile";
 import type { UpdateProfileInput, ChangePasswordInput } from "@/hooks/useProfile";
+import { fmtDateLongEc } from "@/lib/datetime";
 
 // ─── Iconos inline ────────────────────────────────────────────────────────────
 
@@ -552,9 +553,7 @@ export function ProfilePage() {
                 <div className="flex flex-col-reverse items-stretch gap-3 pt-4 border-t border-gray-100 dark:border-white/[0.04] sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs text-gray-400 dark:text-gray-500">
                     Última actualización:{" "}
-                    {profile?.updatedAt
-                      ? new Date(profile.updatedAt).toLocaleDateString("es-EC", { day: "numeric", month: "long", year: "numeric" })
-                      : "—"}
+                    {fmtDateLongEc(profile?.updatedAt ?? null)}
                   </p>
                   <button type="submit" disabled={isSaving}
                     className="flex items-center gap-2 px-5 py-2 rounded-xl bg-brand-500 hover:bg-brand-600 text-white text-sm font-semibold transition-colors disabled:opacity-60">

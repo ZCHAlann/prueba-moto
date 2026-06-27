@@ -12,14 +12,12 @@ import { SolicitarSalidaWizard } from "./components/SolicitarSalidaWizard";
 import { useUploadQueue } from "../../hooks/useUploadQueue";
 import { ExitAuthDetailDrawer } from "./components/ExitAuthDetailDrawer";
 import { DatePicker } from "@/components/ui/date-picker/DatePicker";
+import { fmtDateTimeEc } from "@/lib/datetime";
 
 type SubTab = "entrantes" | "historial";
 type HistorialFilter = "Autorizadas" | "Rechazadas";
 
-function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  return String(iso).slice(0, 16).replace("T", " ");
-}
+const fmtDate = fmtDateTimeEc;
 
 function statusTone(s: ExitAuthStatus) {
   if (s === "Autorizada") return "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30";

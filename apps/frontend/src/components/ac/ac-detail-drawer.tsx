@@ -7,6 +7,7 @@ import type {
   AirConditioningUnit,
 } from "../../types/fleet";
 import type { AcService, AcRefrigerantLog, AcUnitDetail } from "../../hooks/useAcUnits";
+import { fmtDateShortEc } from "@/lib/datetime";
 
 type Props = {
   unit: AirConditioningUnit;
@@ -25,10 +26,7 @@ const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "neutral"> 
 };
 
 function fmtDate(d?: string) {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("es-EC", {
-    day: "2-digit", month: "short", year: "numeric",
-  });
+  return fmtDateShortEc(d);
 }
 
 function statusTone(s: string) {

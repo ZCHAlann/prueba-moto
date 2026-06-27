@@ -1,13 +1,8 @@
 "use client";
-// EstadisticasTab.tsx — V11
-// - Colores inline reales (no var(--chart-N))
-// - Empty states dentro de cada chart
-// - radarChart usa shape real { axis, value }
-// - dedupeComp para comparacionChart
-// - Paleta coherente light + dark
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, createContext, useContext } from "react";
 import * as React from "react";
+import { useNavigate } from "react-router";
 import {
   Area, AreaChart, Bar, BarChart, Line, LineChart,
   CartesianGrid, XAxis, YAxis,
@@ -20,16 +15,43 @@ import {
   Wrench, Fuel, Truck, Users, ClipboardList, Bell,
   AirVent, Shield, MapPin, FileText,
   Pin, PinOff, ChevronRight, RefreshCw, FileDown,
-  Sparkles, TrendingUp, TrendingDown,
-  ArrowUp, ArrowDown, Clock, BarChart2,
+  ArrowUp, ArrowDown, Clock, BarChart2, Sparkles,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  useEstadisticas, useAnalisisIA, useExportarPDF,
+  useEstadisticas, useExportarPDF,
   type Modulo, type Periodo, type KpiItem, type EstadisticasData,
   type BarHPoint, type BarCompItem, type LinePoint, type BarPoint, type RadarPoint,
 } from "../../hooks/useEstadisticas";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
+import { AIInsightsProvider } from "../../components/estadisticas/AIInsightsContext";
+import { AIInformeCompleto } from "../../components/estadisticas/AIInformeCompleto";
+import { ChartWithNote } from "../../components/estadisticas/ChartWithNote";
+import { todayEcuador, daysFromNowEcuador } from "@/lib/datetime";
+import { AIInsightsContext } from "@/components/estadisticas/AIInsightsContext";
+import type { ChartRef } from "@/hooks/useEstadisticas";
+
+// ─── Hover Chart Ref Context ─────────────────────────────────────────
+// Passes the current chartRef down to CT (custom tooltip) so it can
+// look up the AI insight from AIInsightsContext.
+const HoverChartRefCtx = createContext<ChartRef | null>(null);
+export function useHoverChartRef() { return useContext(HoverChartRefCtx); }
+function ChartHoverWrapper({ chartRef, children }: { chartRef: ChartRef; children: React.ReactNode }) {
+  return <HoverChartRefCtx.Provider value={chartRef}>{children}</HoverChartRefCtx.Provider>;
+}
+
+// Combines ChartWithNote (sidebar AI note) with ChartHoverWrapper (tooltip insight)
+function ChartWithHoverInsight({ chartRef, side, children, onClick }: {
+  chartRef: ChartRef; side?: boolean; children: React.ReactNode; onClick?: () => void;
+}) {
+  return (
+    <ChartHoverWrapper chartRef={chartRef}>
+      <ChartWithNote chartRef={chartRef} side={side} onClick={onClick}>
+        {children}
+      </ChartWithNote>
+    </ChartHoverWrapper>
+  );
+}
 
 // ─── PALETA ───────────────────────────────────────────────────────
 // Colores fijos, independientes de CSS vars del tema
@@ -67,6 +89,19 @@ type ModuloDef = {
   key: Modulo; label: string;
   icon: React.ComponentType<{ size?: number; className?: string }>;
   color: string; group: "Operación" | "Control";
+};
+
+const MODULE_ROUTES: Record<Modulo, string> = {
+  mantenimiento: "/mantenimiento",
+  combustible:   "/combustible",
+  flotas:         "/flotas",
+  conductores:    "/operaciones/conductores",
+  checklists:      "/checklist",
+  alertas:        "/alertas",
+  ac:             "/aires-acondicionados",
+  seguros:        "/gestion/seguros",
+  peajes:         "/peajes",
+  asignaciones:   "/operaciones/asignaciones",
 };
 
 const MODULOS: ModuloDef[] = [
@@ -123,31 +158,70 @@ function ChartEmpty({ label = "Sin datos para este período" }: { label?: string
 
 // ─── TOOLTIP ──────────────────────────────────────────────────────
 function CT({ active, payload, label: lbl, suffix = "" }: any) {
+  const chartRef = useHoverChartRef();
+  // Use raw context directly to avoid hook-in-try/catch violation;
+  // useContext is always unconditional at the top level.
+  const ctx = useContext(AIInsightsContext);
+  const aiNota = ctx && chartRef ? ctx.notaPara(chartRef) : null;
+
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-gray-900 px-3 py-2.5 shadow-xl text-[12px] min-w-[140px]">
-      {lbl && <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">{lbl}</p>}
-      {payload.map((p: any, i: number) => (
-        <div key={i} className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ background: p.color }} />
-            <span className="text-gray-500 dark:text-gray-400 text-[11px]">{p.name}</span>
-          </div>
-          <span className="font-bold tabular-nums text-gray-900 dark:text-white">
-            {typeof p.value === "number" ? n(p.value, 1) : p.value}{suffix}
-          </span>
+    <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-gray-900 shadow-xl text-[12px] min-w-[160px] max-w-[260px] overflow-hidden">
+      {lbl && (
+        <div className="px-3 pt-2.5 pb-1.5 border-b border-gray-100 dark:border-white/6">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{lbl}</p>
         </div>
-      ))}
+      )}
+      <div className="px-3 py-2 space-y-1">
+        {payload.map((p: any, i: number) => (
+          <div key={i} className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ background: p.color }} />
+              <span className="text-gray-500 dark:text-gray-400 text-[11px]">{p.name}</span>
+            </div>
+            <span className="font-bold tabular-nums text-gray-900 dark:text-white">
+              {typeof p.value === "number" ? n(p.value, 1) : p.value}{suffix}
+            </span>
+          </div>
+        ))}
+      </div>
+      {aiNota && (
+        <div className="px-3 pb-2.5 pt-1.5 border-t border-gray-100 dark:border-white/6">
+          <div className="flex items-center gap-1 mb-1">
+            <Sparkles size={9} className="flex-shrink-0" style={{ color: "#8b5cf6" }} />
+            <p className="text-[10px] font-bold text-violet-600 dark:text-violet-400">{aiNota.titulo}</p>
+          </div>
+          <p className="text-[10.5px] text-gray-500 dark:text-gray-400 leading-relaxed">{aiNota.detalle}</p>
+          {aiNota.tags && aiNota.tags.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {aiNota.tags.slice(0, 3).map((t, i) => (
+                <span key={i} className="rounded-full bg-violet-100 dark:bg-violet-500/20 px-1.5 py-0.5 text-[9px] font-medium text-violet-700 dark:text-violet-300">
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+          {aiNota.recomendacion && (
+            <p className="mt-1.5 text-[10px] text-amber-600 dark:text-amber-400 leading-relaxed italic">
+              💡 {aiNota.recomendacion}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── CHART CARD ───────────────────────────────────────────────────
-function CC({ title, subtitle, children, height = 240 }: {
+function CC({ title, subtitle, children, height = 240, onClick }: {
   title: string; subtitle?: string; children: React.ReactNode; height?: number;
+  onClick?: () => void;
 }) {
   return (
-    <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-4">
+    <div
+      onClick={onClick}
+      className={`rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-4${onClick ? " cursor-pointer hover:border-gray-300 dark:hover:border-white/20 transition-colors" : ""}`}
+    >
       <p className="text-[13px] font-semibold text-gray-900 dark:text-white tracking-tight">{title}</p>
       {subtitle && <p className="mt-0.5 mb-3 text-[11px] text-gray-400">{subtitle}</p>}
       <div style={{ height }}>{children}</div>
@@ -386,26 +460,34 @@ function RadialDist({ data, color }: { data: BarPoint[]; color: string }) {
 // LAYOUTS POR MÓDULO
 // ═══════════════════════════════════════════════════════════════════
 
-function MantenimientoLayout({ d, color }: { d: EstadisticasData; color: string }) {
+function MantenimientoLayout({ d, color, onClick }: { d: EstadisticasData; color: string; onClick?: () => void }) {
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      <CC title={d.comparacionChart.title} subtitle="Período actual vs anterior">
-        <BarMultiple data={d.comparacionChart.data} color={color} />
-      </CC>
-      <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={260}>
-        <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
-      </CC>
-      <CC title={d.lineChart.title} subtitle="Tendencia del período">
-        <AreaTendencia data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} />
-      </CC>
-      <CC title={d.barVChart.title} subtitle="Distribución por estado">
-        <BarVertical data={d.barVChart.data} color={color} />
-      </CC>
+      <ChartWithHoverInsight chartRef="comparacionChart">
+        <CC title={d.comparacionChart.title} subtitle="Período actual vs anterior" onClick={onClick}>
+          <BarMultiple data={d.comparacionChart.data} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barHChart">
+        <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={260} onClick={onClick}>
+          <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="lineChart">
+        <CC title={d.lineChart.title} subtitle="Tendencia del período" onClick={onClick}>
+          <AreaTendencia data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barVChart">
+        <CC title={d.barVChart.title} subtitle="Distribución por estado" onClick={onClick}>
+          <BarVertical data={d.barVChart.data} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
     </div>
   );
 }
 
-function CombustibleLayout({ d, color }: { d: EstadisticasData; color: string }) {
+function CombustibleLayout({ d, color, onClick }: { d: EstadisticasData; color: string; onClick?: () => void }) {
   const areaComp = d.exponencialChart.data.map((p, i) => ({
     x: p.x,
     actual: p.y,
@@ -413,25 +495,33 @@ function CombustibleLayout({ d, color }: { d: EstadisticasData; color: string })
   }));
   return (
     <div className="space-y-3">
-      <CC title="Consumo: período actual vs anterior" subtitle="Comparativa diaria" height={200}>
-        <AreaComparativa data={areaComp} color={color} label1="Período actual" label2="Período anterior" unidad="L" />
-      </CC>
+      <ChartWithHoverInsight chartRef="exponencialChart">
+        <CC title="Consumo: período actual vs anterior" subtitle="Comparativa diaria" height={200} onClick={onClick}>
+          <AreaComparativa data={areaComp} color={color} label1="Período actual" label2="Período anterior" unidad="gal" />
+        </CC>
+      </ChartWithHoverInsight>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-        <CC title={d.lineChart.title} subtitle="Rendimiento km/L" height={220}>
-          <LineDots data={d.lineChart.data} color={color} unidad="km/L" />
-        </CC>
-        <CC title={d.barVChart.title} subtitle="Por tipo de combustible" height={220}>
-          <Donut data={d.barVChart.data} color={color} />
-        </CC>
-        <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={220}>
-          <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
-        </CC>
+        <ChartWithHoverInsight chartRef="lineChart" side={false}>
+          <CC title={d.lineChart.title} subtitle="Rendimiento km/gal" height={220} onClick={onClick}>
+            <LineDots data={d.lineChart.data} color={color} unidad="km/gal" />
+          </CC>
+        </ChartWithHoverInsight>
+        <ChartWithHoverInsight chartRef="barVChart" side={false}>
+          <CC title={d.barVChart.title} subtitle="Por tipo de combustible" height={220} onClick={onClick}>
+            <Donut data={d.barVChart.data} color={color} />
+          </CC>
+        </ChartWithHoverInsight>
+        <ChartWithHoverInsight chartRef="barHChart" side={false}>
+          <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={220} onClick={onClick}>
+            <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+          </CC>
+        </ChartWithHoverInsight>
       </div>
     </div>
   );
 }
 
-function FlotasLayout({ d, color }: { d: EstadisticasData; color: string }) {
+function FlotasLayout({ d, color, onClick }: { d: EstadisticasData; color: string; onClick?: () => void }) {
   const areaComp = d.lineChart.data.map((p, i) => ({
     x: p.x,
     actual: p.y,
@@ -439,128 +529,177 @@ function FlotasLayout({ d, color }: { d: EstadisticasData; color: string }) {
   }));
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      <CC title="Disponibilidad de flota" subtitle="Período actual vs referencia" height={220}>
-        <AreaComparativa data={areaComp} color={color} label1="Operativos" label2="Referencia" unidad="veh." />
-      </CC>
-      <CC title={d.barVChart.title} subtitle="Estado actual">
-        <BarVertical data={d.barVChart.data} color={color} />
-      </CC>
-      <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={260}>
-        <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
-      </CC>
-      <CC title={d.comparacionChart.title} subtitle="Actual vs anterior">
-        <BarMultiple data={d.comparacionChart.data} color={color} />
-      </CC>
+      <ChartWithHoverInsight chartRef="lineChart">
+        <CC title="Disponibilidad de flota" subtitle="Período actual vs referencia" height={220} onClick={onClick}>
+          <AreaComparativa data={areaComp} color={color} label1="Operativos" label2="Referencia" unidad="veh." />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barVChart">
+        <CC title={d.barVChart.title} subtitle="Estado actual" onClick={onClick}>
+          <BarVertical data={d.barVChart.data} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barHChart">
+        <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={260} onClick={onClick}>
+          <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="comparacionChart">
+        <CC title={d.comparacionChart.title} subtitle="Actual vs anterior" onClick={onClick}>
+          <BarMultiple data={d.comparacionChart.data} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
     </div>
   );
 }
 
-function ConductoresLayout({ d, color }: { d: EstadisticasData; color: string }) {
+function ConductoresLayout({ d, color, onClick }: { d: EstadisticasData; color: string; onClick?: () => void }) {
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      <CC title={d.radarChart.title} subtitle="Mayor área = mejor desempeño en esa dimensión">
-        <RadarC data={d.radarChart.data} color={color} />
-      </CC>
-      <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={260}>
-        <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
-      </CC>
-      <CC title={d.lineChart.title} subtitle="Tendencia de asignaciones">
-        <AreaTendencia data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} />
-      </CC>
-      <CC title={d.comparacionChart.title} subtitle="Actual vs período anterior">
-        <BarMultiple data={dedupeComp(d.comparacionChart.data)} color={color} />
-      </CC>
+      <ChartWithHoverInsight chartRef="radarChart">
+        <CC title={d.radarChart.title} subtitle="Mayor área = mejor desempeño en esa dimensión" onClick={onClick}>
+          <RadarC data={d.radarChart.data} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barHChart">
+        <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={260} onClick={onClick}>
+          <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="lineChart">
+        <CC title={d.lineChart.title} subtitle="Tendencia de asignaciones" onClick={onClick}>
+          <AreaTendencia data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="comparacionChart">
+        <CC title={d.comparacionChart.title} subtitle="Actual vs período anterior" onClick={onClick}>
+          <BarMultiple data={dedupeComp(d.comparacionChart.data)} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
     </div>
   );
 }
 
-function ChecklistsLayout({ d, color }: { d: EstadisticasData; color: string }) {
+function ChecklistsLayout({ d, color, onClick }: { d: EstadisticasData; color: string; onClick?: () => void }) {
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      <CC title={d.lineChart.title} subtitle="Inspecciones realizadas">
-        <AreaTendencia data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} />
-      </CC>
-      <CC title={d.barVChart.title} subtitle="Resultado de inspecciones">
-        <Donut data={d.barVChart.data} color={color} />
-      </CC>
-      <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={260}>
-        <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
-      </CC>
-      <CC title={d.comparacionChart.title} subtitle="Actual vs anterior">
-        <BarMultiple data={dedupeComp(d.comparacionChart.data)} color={color} />
-      </CC>
+      <ChartWithHoverInsight chartRef="lineChart">
+        <CC title={d.lineChart.title} subtitle="Inspecciones realizadas" onClick={onClick}>
+          <AreaTendencia data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barVChart">
+        <CC title={d.barVChart.title} subtitle="Resultado de inspecciones" onClick={onClick}>
+          <Donut data={d.barVChart.data} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barHChart">
+        <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={260} onClick={onClick}>
+          <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="comparacionChart">
+        <CC title={d.comparacionChart.title} subtitle="Actual vs anterior" onClick={onClick}>
+          <BarMultiple data={dedupeComp(d.comparacionChart.data)} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
     </div>
   );
 }
 
-function AlertasLayout({ d, color }: { d: EstadisticasData; color: string }) {
+function AlertasLayout({ d, color, onClick }: { d: EstadisticasData; color: string; onClick?: () => void }) {
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      <CC title={d.lineChart.title} subtitle="Evolución de alertas">
-        <AreaTendencia data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} />
-      </CC>
-      <CC title={d.barVChart.title} subtitle="Por tipo de alerta">
-        <Donut data={d.barVChart.data} color={color} />
-      </CC>
-      <CC title={d.barHChart.title} subtitle="Por severidad / vehículo" height={240}>
-        <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
-      </CC>
-      <CC title={d.comparacionChart.title} subtitle="Abierta vs cerrada">
-        <BarMultiple data={dedupeComp(d.comparacionChart.data)} color={color} />
-      </CC>
+      <ChartWithHoverInsight chartRef="lineChart">
+        <CC title={d.lineChart.title} subtitle="Evolución de alertas" onClick={onClick}>
+          <AreaTendencia data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barVChart">
+        <CC title={d.barVChart.title} subtitle="Por tipo de alerta" onClick={onClick}>
+          <Donut data={d.barVChart.data} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barHChart">
+        <CC title={d.barHChart.title} subtitle="Por severidad / vehículo" height={240} onClick={onClick}>
+          <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="comparacionChart">
+        <CC title={d.comparacionChart.title} subtitle="Abierta vs cerrada" onClick={onClick}>
+          <BarMultiple data={dedupeComp(d.comparacionChart.data)} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
     </div>
   );
 }
 
-function SegurosLayout({ d, color }: { d: EstadisticasData; color: string }) {
+function SegurosLayout({ d, color, onClick }: { d: EstadisticasData; color: string; onClick?: () => void }) {
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      <CC title={d.radarChart.title} subtitle="Cobertura por categoría de riesgo">
-        <RadarC data={d.radarChart.data} color={color} />
-      </CC>
-      <CC title={d.barVChart.title} subtitle="Distribución de pólizas">
-        <Donut data={d.barVChart.data} color={color} />
-      </CC>
-      <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={240}>
-        <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
-      </CC>
-      <CC title={d.comparacionChart.title} subtitle="Actual vs anterior">
-        <BarMultiple data={dedupeComp(d.comparacionChart.data)} color={color} />
-      </CC>
+      <ChartWithHoverInsight chartRef="radarChart">
+        <CC title={d.radarChart.title} subtitle="Cobertura por categoría de riesgo" onClick={onClick}>
+          <RadarC data={d.radarChart.data} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barVChart">
+        <CC title={d.barVChart.title} subtitle="Distribución de pólizas" onClick={onClick}>
+          <Donut data={d.barVChart.data} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barHChart">
+        <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={240} onClick={onClick}>
+          <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="comparacionChart">
+        <CC title={d.comparacionChart.title} subtitle="Actual vs anterior" onClick={onClick}>
+          <BarMultiple data={dedupeComp(d.comparacionChart.data)} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
     </div>
   );
 }
 
-function GenericLayout({ d, color }: { d: EstadisticasData; color: string }) {
+function GenericLayout({ d, color, onClick }: { d: EstadisticasData; color: string; onClick?: () => void }) {
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      <CC title={d.lineChart.title} subtitle="Tendencia del período">
-        <AreaTendencia data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} />
-      </CC>
-      <CC title={d.barVChart.title} subtitle="">
-        <Donut data={d.barVChart.data} color={color} />
-      </CC>
-      <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={260}>
-        <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
-      </CC>
-      <CC title={d.comparacionChart.title} subtitle="Actual vs período anterior">
-        <BarMultiple data={dedupeComp(d.comparacionChart.data)} color={color} />
-      </CC>
+      <ChartWithHoverInsight chartRef="lineChart">
+        <CC title={d.lineChart.title} subtitle="Tendencia del período" onClick={onClick}>
+          <AreaTendencia data={d.lineChart.data} color={color} unidad={d.lineChart.unidad} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barVChart">
+        <CC title={d.barVChart.title} subtitle="" onClick={onClick}>
+          <Donut data={d.barVChart.data} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="barHChart">
+        <CC title={d.barHChart.title} subtitle={d.barHChart.unidad} height={260} onClick={onClick}>
+          <BarHorizontal data={d.barHChart.data} color={color} unidad={d.barHChart.unidad} />
+        </CC>
+      </ChartWithHoverInsight>
+      <ChartWithHoverInsight chartRef="comparacionChart">
+        <CC title={d.comparacionChart.title} subtitle="Actual vs período anterior" onClick={onClick}>
+          <BarMultiple data={dedupeComp(d.comparacionChart.data)} color={color} />
+        </CC>
+      </ChartWithHoverInsight>
     </div>
   );
 }
 
-function ModuleCharts({ modulo, data }: { modulo: ModuloDef; data: EstadisticasData }) {
+function ModuleCharts({ modulo, data, navigate }: { modulo: ModuloDef; data: EstadisticasData; navigate: ReturnType<typeof useNavigate> }) {
   const c = modulo.color;
+  const go = () => navigate(MODULE_ROUTES[modulo.key]);
   switch (modulo.key) {
-    case "mantenimiento": return <MantenimientoLayout d={data} color={c} />;
-    case "combustible":   return <CombustibleLayout  d={data} color={c} />;
-    case "flotas":        return <FlotasLayout       d={data} color={c} />;
-    case "conductores":   return <ConductoresLayout  d={data} color={c} />;
-    case "checklists":    return <ChecklistsLayout   d={data} color={c} />;
-    case "alertas":       return <AlertasLayout      d={data} color={c} />;
-    case "seguros":       return <SegurosLayout      d={data} color={c} />;
-    default:              return <GenericLayout      d={data} color={c} />;
+    case "mantenimiento": return <MantenimientoLayout d={data} color={c} onClick={go} />;
+    case "combustible":   return <CombustibleLayout  d={data} color={c} onClick={go} />;
+    case "flotas":        return <FlotasLayout       d={data} color={c} onClick={go} />;
+    case "conductores":   return <ConductoresLayout  d={data} color={c} onClick={go} />;
+    case "checklists":    return <ChecklistsLayout   d={data} color={c} onClick={go} />;
+    case "alertas":       return <AlertasLayout      d={data} color={c} onClick={go} />;
+    case "seguros":       return <SegurosLayout      d={data} color={c} onClick={go} />;
+    default:              return <GenericLayout      d={data} color={c} onClick={go} />;
   }
 }
 
@@ -568,11 +707,13 @@ function ModuleCharts({ modulo, data }: { modulo: ModuloDef; data: EstadisticasD
 // KPI CARD
 // ═══════════════════════════════════════════════════════════════════
 
-function KpiCard({ kpi, color }: { kpi: KpiItem; color: string }) {
+function KpiCard({ kpi, color, onClick }: { kpi: KpiItem; color: string; onClick?: () => void }) {
   const val = typeof kpi.valor === "number" ? n(kpi.valor, kpi.unidad === "USD" ? 2 : 0) : kpi.valor;
   const delta = fmtDelta(kpi.variacionPct);
   return (
-    <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-4">
+    <div
+      onClick={onClick}
+      className={`rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-4${onClick ? " cursor-pointer hover:border-gray-300 dark:hover:border-white/20 transition-colors" : ""}`}>
       <div className="flex items-start justify-between gap-2 mb-2">
         <p className="text-[11.5px] font-medium text-gray-500 dark:text-gray-400 leading-snug">{kpi.label}</p>
         {delta && (
@@ -592,110 +733,6 @@ function KpiCard({ kpi, color }: { kpi: KpiItem; color: string }) {
           <span className="ml-1 text-sm font-medium text-gray-400">{kpi.unidad}</span>
         )}
       </p>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// PANEL IA
-// ═══════════════════════════════════════════════════════════════════
-
-function AIPanel({ companyId, modulo, periodo, fecha, fechaHasta, assetId, driverId }: {
-  companyId: string; modulo: ModuloDef; periodo: Periodo;
-  fecha: string; fechaHasta: string; assetId: number | null; driverId: number | null;
-}) {
-  const [open, setOpen] = useState(false);
-  const { data, loading, error, regenerar, ejecutar } = useAnalisisIA({
-    companyId, modulo: modulo.key, periodo, fecha, fechaHasta, assetId, driverId, manual: true,
-  });
-  function handleOpen() { setOpen(true); if (!data && !loading) void ejecutar(); }
-  return (
-    <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02]">
-      <button type="button" onClick={() => open ? setOpen(false) : handleOpen()}
-        className="flex w-full items-center justify-between gap-3 p-4">
-        <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl"
-            style={{ background: `${modulo.color}18`, color: modulo.color }}>
-            <Sparkles size={16} className={loading ? "animate-pulse" : ""} />
-          </span>
-          <div className="text-left">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Análisis IA</p>
-            <p className="text-[13px] font-semibold text-gray-900 dark:text-white">
-              {open ? "Ocultar análisis" : `Analizar ${modulo.label} con IA`}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {data && <span className="hidden sm:block text-[10px] text-gray-400">{data.fromCache ? "caché" : "nuevo"} · {data.latencyMs}ms</span>}
-          <ChevronRight size={14} className={`text-gray-400 transition-transform ${open ? "rotate-90" : ""}`} />
-        </div>
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
-            <div className="border-t border-gray-100 dark:border-white/[0.04] p-4">
-              {loading && (
-                <div className="flex items-center justify-center gap-3 py-6">
-                  <RefreshCw size={15} className="animate-spin" style={{ color: modulo.color }} />
-                  <p className="text-[13px] text-gray-500">Generando análisis…</p>
-                </div>
-              )}
-              {error && <p className="text-[12px] text-rose-600">{error}</p>}
-              {data && !loading && (
-                <div className="grid gap-3 lg:grid-cols-5">
-                  <div className="space-y-3 lg:col-span-3">
-                    {data.insights.resumenEjecutivo && (
-                      <div className="rounded-xl p-3.5" style={{ background: `${modulo.color}0a`, borderLeft: `3px solid ${modulo.color}` }}>
-                        <p className="text-[13px] font-medium leading-relaxed text-gray-800 dark:text-gray-100">{data.insights.resumenEjecutivo}</p>
-                      </div>
-                    )}
-                    {data.insights.puntosClave.length > 0 && (
-                      <ol className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                        {data.insights.puntosClave.map((p: string, i: number) => (
-                          <li key={i} className="flex items-start gap-2 rounded-lg border border-gray-100 dark:border-white/[0.06] bg-white/60 dark:bg-white/[0.02] p-2">
-                            <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-black text-white"
-                              style={{ background: modulo.color }}>{i + 1}</span>
-                            <span className="text-[12px] leading-snug text-gray-700 dark:text-gray-200">{p}</span>
-                          </li>
-                        ))}
-                      </ol>
-                    )}
-                  </div>
-                  {data.insights.recomendaciones.length > 0 && (
-                    <div className="space-y-2 lg:col-span-2 lg:border-l lg:border-gray-100 lg:dark:border-white/[0.04] lg:pl-3">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Recomendaciones</p>
-                      {data.insights.recomendaciones.map((r: any, i: number) => {
-                        const tone = r.prioridad === "alta"
-                          ? { bg: "bg-rose-50 dark:bg-rose-500/[0.04]", border: "border-rose-200 dark:border-rose-500/20", bar: "bg-rose-500", text: "text-rose-700 dark:text-rose-300", pill: "bg-rose-100 text-rose-700" }
-                          : r.prioridad === "media"
-                          ? { bg: "bg-amber-50 dark:bg-amber-500/[0.04]", border: "border-amber-200 dark:border-amber-500/20", bar: "bg-amber-500", text: "text-amber-700 dark:text-amber-300", pill: "bg-amber-100 text-amber-700" }
-                          : { bg: "bg-gray-50 dark:bg-white/[0.02]", border: "border-gray-200 dark:border-white/[0.06]", bar: "bg-gray-400", text: "text-gray-700 dark:text-gray-300", pill: "bg-gray-100 text-gray-600" };
-                        return (
-                          <div key={i} className={`relative overflow-hidden rounded-lg border ${tone.border} ${tone.bg} p-2.5`}>
-                            <div className={`absolute left-0 top-0 h-full w-0.5 ${tone.bar}`} />
-                            <span className={`inline-block rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest ${tone.pill}`}>{r.prioridad}</span>
-                            <p className={`mt-1 text-[12.5px] font-bold leading-snug ${tone.text}`}>{r.titulo}</p>
-                            <p className="mt-0.5 text-[11px] leading-snug text-gray-600 dark:text-gray-400">{r.accion}</p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-              {data && !loading && (
-                <div className="mt-3 flex justify-end">
-                  <button type="button" onClick={() => regenerar()}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 dark:border-white/[0.06] px-3 py-1.5 text-[12px] font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04]">
-                    <RefreshCw size={11} /> Regenerar
-                  </button>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
@@ -765,16 +802,16 @@ function Sidebar({ activeKey, onSelect }: { activeKey: Modulo; onSelect: (k: Mod
 // ═══════════════════════════════════════════════════════════════════
 
 export function EstadisticasTab({ companyId }: { companyId: string }) {
+  const navigate = useNavigate();
   const [moduloKey, setModuloKey] = useState<Modulo>("mantenimiento");
   const [periodo, setPeriodo]     = useState<Periodo>("month");
 
-  const today = new Date();
-  const ninetyAgo = new Date(); ninetyAgo.setDate(ninetyAgo.getDate() - 90);
-  const [fechaDesde, setFechaDesde]     = useState(ninetyAgo.toISOString().slice(0, 10));
-  const [fechaHasta, setFechaHasta]     = useState(today.toISOString().slice(0, 10));
+  const [fechaDesde, setFechaDesde]     = useState(daysFromNowEcuador(-90));
+  const [fechaHasta, setFechaHasta]     = useState(todayEcuador());
   const [fechaApDesde, setFechaApDesde] = useState(fechaDesde);
   const [fechaApHasta, setFechaApHasta] = useState(fechaHasta);
   const [dateOpen, setDateOpen]         = useState(false);
+  const [informeOpen, setInformeOpen]   = useState(false);
   const [assetId]  = useState<number | null>(null);
   const [driverId] = useState<number | null>(null);
 
@@ -835,6 +872,14 @@ export function EstadisticasTab({ companyId }: { companyId: string }) {
                 className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] px-3 py-1.5 text-[12px] font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-white/[0.04]">
                 <RefreshCw size={11} className={loading ? "animate-spin" : ""} /> Refrescar
               </button>
+              <button type="button" onClick={() => setInformeOpen((v) => !v)}
+                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[12px] font-semibold transition ${
+                  informeOpen
+                    ? "border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900"
+                    : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 dark:border-white/[0.06] dark:bg-white/[0.02] dark:text-gray-200"
+                }`}>
+                <Sparkles size={11} /> {informeOpen ? "Ocultar informe" : "Informe completo"}
+              </button>
               <button type="button" disabled={exporting}
                 onClick={() => exportar({ companyId, modulo: moduloKey, periodo, fecha: fechaApDesde, fechaHasta: fechaApHasta, assetId, driverId })}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 dark:text-gray-900 px-3.5 py-1.5 text-[12px] font-semibold text-white shadow-sm disabled:opacity-50">
@@ -865,14 +910,16 @@ export function EstadisticasTab({ companyId }: { companyId: string }) {
           )}
 
           {data && (
-            <>
+            <AIInsightsProvider companyId={companyId} modulo={modulo} periodo={periodo}
+              fecha={fechaApDesde} fechaHasta={fechaApHasta} assetId={assetId} driverId={driverId}>
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                {data.kpis.map(k => <KpiCard key={k.label} kpi={k} color={modulo.color} />)}
+                {data.kpis.map(k => <KpiCard key={k.label} kpi={k} color={modulo.color} onClick={() => navigate(`${MODULE_ROUTES[moduloKey]}?from=${fechaApDesde}&to=${fechaApHasta}&kpi=${encodeURIComponent(k.label)}`)} />)}
               </div>
-              <ModuleCharts modulo={modulo} data={data} />
-              <AIPanel companyId={companyId} modulo={modulo} periodo={periodo}
-                fecha={fechaApDesde} fechaHasta={fechaApHasta} assetId={assetId} driverId={driverId} />
-            </>
+              <ModuleCharts modulo={modulo} data={data} navigate={navigate} />
+              <AIInformeCompleto open={informeOpen}
+                moduloLabel={modulo.label}
+                periodoLabel={periodo === "month" ? "Este mes" : periodo === "quarter" ? "Trimestre" : "Año"} />
+            </AIInsightsProvider>
           )}
         </motion.div>
       </AnimatePresence>

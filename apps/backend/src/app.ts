@@ -41,6 +41,13 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Prometheus-style metrics (texto plano, scrapeable por Prometheus/Grafana).
+import { renderMetrics } from './lib/ai/metrics';
+app.get('/metrics', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain; version=0.0.4');
+  res.send(renderMetrics());
+});
+
 // WebSocket stats (debug) — cuántas conexiones hay, agrupadas por empresa
 app.get('/ws-stats', (_req, res) => {
   // lazy import para evitar ciclo

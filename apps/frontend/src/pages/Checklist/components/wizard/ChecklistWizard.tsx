@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ChevronLeft, ChevronRight, Check, AlertTriangle, Car, User, Wrench, ArrowRight, ClipboardCheck, Lock } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Check, AlertTriangle, Car, User, Wrench, ArrowRight, ClipboardCheck, Lock, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../../../../context/AuthContext";
 import { useAssets, type Asset } from "../../../../hooks/useAssets";
@@ -386,25 +386,59 @@ function StepVehicle({ assets, selected, onSelect, restrictToAssetId }: {
   restrictToAssetId?: string | number | null;
 }) {
   const restricted = restrictToAssetId != null && restrictToAssetId !== "";
-  const filteredAssets = restricted
-    ? assets.filter((a) => String(a.id) === String(restrictToAssetId))
-    : assets;
+  const [search, setSearch] = useState("");
+
+  const filteredAssets = useMemo(() => {
+    const base = restricted
+      ? assets.filter((a) => String(a.id) === String(restrictToAssetId))
+      : assets;
+    if (!search.trim()) return base;
+    const q = search.toLowerCase();
+    return base.filter((a) =>
+      (a.plate ?? "").toLowerCase().includes(q) ||
+      (a.name ?? "").toLowerCase().includes(q) ||
+      (a.code ?? "").toLowerCase().includes(q) ||
+      (a.brand ?? "").toLowerCase().includes(q) ||
+      (a.model ?? "").toLowerCase().includes(q)
+    );
+  }, [assets, restricted, restrictToAssetId, search]);
+
   return (
     <div>
       <h3 className="text-sm font-bold text-gray-800 dark:text-white mb-1">¿A qué vehículo se le hará el checklist?</h3>
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
         El conductor se completará automáticamente desde la asignación activa. Si el vehículo no tiene asignación, se dejará en blanco.
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[420px] overflow-y-auto pr-1">
-        {filteredAssets.length === 0 ? (
-          <div className="col-span-2 flex flex-col items-center justify-center py-10 text-center">
-            <Car size={20} className="text-gray-300 dark:text-gray-600 mb-2" />
-            <p className="text-sm text-gray-500">
-              {restricted
-                ? "No tienes un vehículo con asignación activa. Pide a un supervisor que te asigne uno."
-                : "No hay vehículos registrados."}
-            </p>
-          </div>
+
+      {/* Buscador */}
+      {!restricted && (
+        <div className="relative mb-3">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Buscar por placa, nombre o código…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] pl-8 pr-14 py-2 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/30 transition"
+          />
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-gray-400 pointer-events-none tabular-nums">
+            {filteredAssets.length}/{assets.length}
+          </span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[360px] overflow-y-auto pr-1">
+          {filteredAssets.length === 0 ? (
+            <div className="col-span-2 flex flex-col items-center justify-center py-10 text-center">
+              <Car size={20} className="text-gray-300 dark:text-gray-600 mb-2" />
+              <p className="text-sm text-gray-500">
+                {restricted
+                  ? "No tienes un vehículo con asignación activa. Pide a un supervisor que te asigne uno."
+                  : search
+                    ? `No se encontraron vehículos para "${search}".`
+                    : "No hay vehículos registrados."}
+              </p>
+            </div>
         ) : (
           filteredAssets.map((a) => {
             const isSelected = selected?.id === a.id;

@@ -10,6 +10,7 @@
 
 import { pdf, Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
 import type { ExitAuthorization } from "../../../hooks/useExitAuthorizations";
+import { fmtDateTimeEc } from "@/lib/datetime";
 
 const s = StyleSheet.create({
   page: {
@@ -87,8 +88,7 @@ const PHOTO_LABELS: Array<{ key: keyof ExitAuthorization; label: string; full?: 
 const TIRE_LABELS = ["Delantera izquierda", "Delantera derecha", "Trasera izquierda", "Trasera derecha"];
 
 function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  return String(iso).slice(0, 16).replace("T", " ");
+  return fmtDateTimeEc(iso);
 }
 
 function StatusBox({ status }: { status: ExitAuthorization["status"] }) {

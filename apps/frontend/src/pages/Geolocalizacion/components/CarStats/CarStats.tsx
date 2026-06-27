@@ -35,7 +35,7 @@ export const CarStats = () => {
           label="Combustible"
           value={t.fuel}
           max={t.fuelMax}
-          unit="litros"
+          unit="gal"
           formatValue={(v) => v.toFixed(1)}
           color={fuelColor}
         />

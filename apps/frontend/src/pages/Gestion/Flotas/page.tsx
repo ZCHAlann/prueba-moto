@@ -1,5 +1,6 @@
-import { useMemo, useState, useRef, useEffect } from "react";
+import { lazy, Suspense, useMemo, useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
+import { useSearchParams } from "react-router-dom";
 import { useAssets } from "../../../hooks/useAssets";
 import { useAssignments } from "../../../hooks/useAssignments";
 import { useMaintenances } from "../../../hooks/useMaintenances";
@@ -24,13 +25,18 @@ import {
 } from "lucide-react";
 import { useDrivers } from "@/hooks/useDrivers";
 import { useSites } from "@/hooks/useSites";
+import { fmtDateShortEc } from "@/lib/datetime";
 import { RowActionMenu } from "../../../components/ui/table/RowActionMenu";
+
+// Lazy-load del modal real de mantenimiento (same pattern as dashboard/maintenance-table.tsx)
+const MaintenanceFormModal = lazy(() =>
+  import("../../Mantenimientos/components/MaintenanceFormModal").then((m) => ({ default: m.MaintenanceFormModal ?? m.default }))
+);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtDate(d: string) {
-  if (!d || d === "null" || d === "undefined") return "—";
-  return new Date(d).toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" });
+  return fmtDateShortEc(d);
 }
 
 const PAGE_SIZE = 7;
@@ -53,217 +59,22 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-// ─── Modal primitives ─────────────────────────────────────────────────────────
-
-function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[99999] overflow-y-auto bg-black/70 backdrop-blur-md"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="flex min-h-full items-start justify-center p-4 pt-16 pb-10">
-        {children}
-      </div>
-    </div>,
-    document.body
-  );
-}
-
-interface SelectOption { value: string; label: string; sub?: string; }
-
-function DarkSelect({ options, value, onChange, placeholder }: {
-  options: SelectOption[]; value: string; onChange: (v: string) => void; placeholder?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const selected = options.find((o) => o.value === value);
-
-  useEffect(() => {
-    function h(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); }
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, []);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex h-10 w-full items-center justify-between rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-white transition hover:border-white/20 focus:border-amber-500/50 focus:outline-none"
-      >
-        <span className={selected ? "text-white" : "text-white/30"}>
-          {selected ? selected.label : placeholder ?? "Seleccionar..."}
-        </span>
-        <ChevronDown size={12} className={`shrink-0 text-white/30 transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open && (
-        <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-[100000] overflow-hidden rounded-xl border border-white/[0.08] bg-[#0d1117] shadow-xl">
-          {options.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => { onChange(opt.value); setOpen(false); }}
-              className={`flex w-full flex-col px-3 py-2.5 text-left transition hover:bg-white/[0.05] ${value === opt.value ? "bg-amber-500/10" : ""}`}
-            >
-              <span className={`text-sm font-medium ${value === opt.value ? "text-amber-400" : "text-white"}`}>{opt.label}</span>
-              {opt.sub && <span className="text-xs text-white/35">{opt.sub}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DarkField({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-[10px] font-bold uppercase tracking-widest text-white/30">
-        {label}{required && <span className="ml-1 text-amber-500">*</span>}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-const darkInputCls = "h-10 w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/20 focus:border-amber-500/50 focus:outline-none transition";
-
 // ─── CreateMaintenanceModal ───────────────────────────────────────────────────
+// Wrapper que delega al modal real de mantenimiento (lazy-loaded).
+// Pattern: igual que dashboard/maintenance-table.tsx
 
 function CreateMaintenanceModal({ vehicle, onClose, onCreated }: {
   vehicle: Asset; onClose: () => void; onCreated: () => void;
 }) {
-  const { createMaintenance } = useMaintenances();
-  const { drivers } = useDrivers();
-  const today = new Date().toISOString().slice(0, 10);
-
-  const [form, setForm] = useState<CreateMaintenancePayload>({
-    assetId: vehicle.id,
-    title: "",
-    kind: "Preventivo",
-    priority: "Normal",
-    status: "Pendiente",
-    scheduledDate: today,
-    dueDate: today,
-    completedDate: null,
-    technician: "",
-    laborCost: null,
-    partsCost: null,
-    photoUrls: [],
-    notes: "",
-  });
-  const [saving, setSaving] = useState(false);
-
-  const set = <K extends keyof CreateMaintenancePayload>(k: K, v: CreateMaintenancePayload[K]) =>
-    setForm((f) => ({ ...f, [k]: v }));
-
-  const isValid = form.title.trim() && form.scheduledDate && form.dueDate;
-
-  const handleSubmit = async () => {
-    if (!isValid) return;
-    setSaving(true);
-    try {
-      await createMaintenance(form);
-      toast.success("Mantenimiento agendado", { description: `OT para ${vehicle.plate || vehicle.name} creada.` });
-      onCreated();
-      onClose();
-    } catch {
-      toast.error("No se pudo crear el mantenimiento");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const kindOptions: SelectOption[]     = ["Preventivo","Correctivo","Predictivo","Emergencia"].map(v => ({ value: v, label: v }));
-  const priorityOptions: SelectOption[] = ["Normal","Alta","Programado","Emergente"].map(v => ({ value: v, label: v }));
-  const statusOptions: SelectOption[]   = ["Pendiente","En proceso","Completado"].map(v => ({ value: v, label: v }));
-  const techOptions: SelectOption[]     = [
-    { value: "", label: "Sin asignar" },
-    ...drivers.filter(d => d.status === "Activo").map(d => ({ value: d.name, label: d.name, sub: d.code })),
-  ];
-
   return (
-    <ModalOverlay onClose={onClose}>
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0d1117] shadow-2xl">
-        <div className="h-0.5 w-full bg-amber-500" />
-        <div className="flex items-center justify-between border-b border-white/[0.06] px-6 pb-4 pt-5">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-500">Mantenimiento</p>
-            <h2 className="mt-0.5 text-base font-bold text-white">Agendar orden de trabajo</h2>
-            <p className="mt-0.5 text-xs text-white/30">
-              {vehicle.plate && <span className="font-mono text-white/50">{vehicle.plate} · </span>}
-              {vehicle.brand} {vehicle.model}
-            </p>
-          </div>
-          <button onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white/40 hover:bg-white/[0.06] hover:text-white">
-            <X size={14} />
-          </button>
-        </div>
-
-        <div className="max-h-[65vh] space-y-4 overflow-y-auto px-6 py-5">
-          <DarkField label="Título de la OT" required>
-            <input className={darkInputCls} placeholder="Ej. Cambio de filtros y aceite" value={form.title}
-              onChange={(e) => set("title", e.target.value)} />
-          </DarkField>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <DarkField label="Tipo" required>
-              <DarkSelect options={kindOptions} value={form.kind} onChange={(v) => set("kind", v as MaintenanceKind)} />
-            </DarkField>
-            <DarkField label="Prioridad">
-              <DarkSelect options={priorityOptions} value={form.priority} onChange={(v) => set("priority", v as MaintenancePriority)} />
-            </DarkField>
-          </div>
-          <DarkField label="Estado">
-            <DarkSelect options={statusOptions} value={form.status} onChange={(v) => set("status", v as MaintenanceStatus)} />
-          </DarkField>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <DarkField label="Fecha programada" required>
-              <DatePicker
-                value={form.scheduledDate}
-                onChange={(v) => set("scheduledDate", v)}
-                placeholder="Seleccionar"
-              />
-            </DarkField>
-            <DarkField label="Fecha límite" required>
-              <DatePicker
-                value={form.dueDate}
-                onChange={(v) => set("dueDate", v)}
-                placeholder="Seleccionar"
-              />
-            </DarkField>
-          </div>
-          <DarkField label="Técnico responsable">
-            <DarkSelect options={techOptions} value={form.technician} onChange={(v) => set("technician", v)} placeholder="Seleccionar técnico..." />
-          </DarkField>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <DarkField label="Costo mano de obra">
-              <input className={darkInputCls} type="number" placeholder="0.00" value={form.laborCost ?? ""}
-                onChange={(e) => set("laborCost", e.target.value ? Number(e.target.value) : null)} />
-            </DarkField>
-            <DarkField label="Costo repuestos">
-              <input className={darkInputCls} type="number" placeholder="0.00" value={form.partsCost ?? ""}
-                onChange={(e) => set("partsCost", e.target.value ? Number(e.target.value) : null)} />
-            </DarkField>
-          </div>
-          <DarkField label="Notas">
-            <textarea rows={3}
-              className="w-full resize-none rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2.5 text-sm text-white placeholder:text-white/20 focus:border-amber-500/50 focus:outline-none transition"
-              placeholder="Observaciones, repuestos necesarios..." value={form.notes}
-              onChange={(e) => set("notes", e.target.value)} />
-          </DarkField>
-        </div>
-
-        <div className="flex gap-3 border-t border-white/[0.06] px-6 py-4">
-          <button onClick={onClose} className="flex-1 rounded-xl border border-white/[0.08] py-2.5 text-sm font-semibold text-white/50 transition hover:bg-white/[0.05] hover:text-white">
-            Cancelar
-          </button>
-          <button onClick={handleSubmit} disabled={saving || !isValid}
-            className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 py-2.5 text-sm font-bold text-black transition hover:bg-amber-400 active:scale-95 disabled:opacity-40">
-            {saving ? <><Loader2 size={13} className="animate-spin" />Guardando...</> : <><Wrench size={13} />Agendar OT</>}
-          </button>
-        </div>
-      </div>
-    </ModalOverlay>
+    <Suspense fallback={null}>
+      <MaintenanceFormModal
+        open
+        prefill={{ assetId: vehicle.id }}
+        hideTypeSelector={false}
+        onClose={onClose}
+      />
+    </Suspense>
   );
 }
 
@@ -590,30 +401,39 @@ function EditVehicleModal({ vehicle, onClose, onUpdated }: {
 
 // ─── KPI Row ──────────────────────────────────────────────────────────────────
 
-function KpiRow({ vehicles }: { vehicles: Asset[] }) {
+function KpiRow({ vehicles, activeKpi, onKpiClick }: {
+  vehicles: Asset[]; activeKpi: string | null; onKpiClick: (label: string | null) => void;
+}) {
   const operativos    = vehicles.filter(v => v.status === "Operativo").length;
   const mantenimiento = vehicles.filter(v => v.status === "En mantenimiento").length;
-  // Aptos para salir pero sin chofer asignado: operativos + sin asignación
-  // activa. El campo `currentDriver` viene del endpoint de lista (no
-  // depende de hooks extra en el frontend).
   const disponiblesSinAsignacion = vehicles.filter(
     (v) => v.status === "Operativo" && !v.currentDriver
   ).length;
   const cards = [
-    { label: "Total flota",       value: vehicles.length,            sub: "unidades registradas",    cls: "border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]",                valCls: "text-gray-800 dark:text-white"          },
-    { label: "Operativos",        value: operativos,                 sub: "listos para despacho",    cls: "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/5", valCls: "text-emerald-700 dark:text-emerald-300" },
-    { label: "En mantenimiento",  value: mantenimiento,              sub: "con restricción técnica", cls: "border-amber-200 bg-amber-50/60 dark:border-amber-500/20 dark:bg-amber-500/5",         valCls: "text-amber-700 dark:text-amber-300"     },
-    { label: "Listo para asignar", value: disponiblesSinAsignacion, sub: "operativos sin chofer",   cls: "border-sky-200 bg-sky-50/60 dark:border-sky-500/20 dark:bg-sky-500/5",                valCls: "text-sky-700 dark:text-sky-300"          },
+    { label: "Total flota",       value: vehicles.length,            sub: "unidades registradas",    cls: "border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]",                valCls: "text-gray-800 dark:text-white",          kpi: null as string | null   },
+    { label: "Operativos",        value: operativos,                 sub: "listos para despacho",    cls: "border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-emerald-500/5", valCls: "text-emerald-700 dark:text-emerald-300", kpi: "Operativo" as string | null },
+    { label: "En mantenimiento",  value: mantenimiento,              sub: "con restricción técnica", cls: "border-amber-200 bg-amber-50/60 dark:border-amber-500/20 dark:bg-amber-500/5",         valCls: "text-amber-700 dark:text-amber-300",     kpi: "En mantenimiento" as string | null },
+    { label: "Listo para asignar", value: disponiblesSinAsignacion, sub: "operativos sin chofer",   cls: "border-sky-200 bg-sky-50/60 dark:border-sky-500/20 dark:bg-sky-500/5",                valCls: "text-sky-700 dark:text-sky-300",          kpi: null },
   ];
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-      {cards.map(c => (
-        <div key={c.label} className={`rounded-2xl border p-4 ${c.cls}`}>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{c.label}</p>
-          <p className={`mt-1.5 text-3xl font-black tabular-nums ${c.valCls}`}>{c.value}</p>
-          <p className="mt-0.5 text-xs text-gray-400">{c.sub}</p>
-        </div>
-      ))}
+      {cards.map(c => {
+        const isActive = activeKpi === c.label;
+        return (
+          <button
+            key={c.label}
+            type="button"
+            onClick={() => onKpiClick(c.kpi === null ? null : c.label)}
+            className={`rounded-2xl border p-4 text-left transition-all cursor-pointer
+              ${c.cls}
+              ${isActive ? "ring-2 ring-sky-400 dark:ring-sky-500 ring-offset-1" : "hover:shadow-md dark:hover:shadow-white/5"}`}
+          >
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{c.label}</p>
+            <p className={`mt-1.5 text-3xl font-black tabular-nums ${c.valCls}`}>{c.value}</p>
+            <p className="mt-0.5 text-xs text-gray-400">{c.sub}</p>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1058,6 +878,8 @@ export default function FlotasPage() {
   const canDelete      = can("gestion", "flotas", "eliminar");
   const canMaintenance = can("mantenimiento", "ordenes", "crear");
 
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const vehicles = useMemo(() => assets.filter(a => a.assetType === "Vehiculo"), [assets]);
 
   // Mapa id → nombre para lookup O(1)
@@ -1077,6 +899,43 @@ export default function FlotasPage() {
   const [showCreateModal, setShowCreateModal]     = useState(false);
   const [editTarget, setEditTarget]               = useState<Asset | null>(null);
   const [maintenanceTarget, setMaintenanceTarget] = useState<Asset | null>(null);
+
+  // ── KPI click → URL param ──────────────────────────────────────────────────
+  const activeKpi = searchParams.get("kpi");
+
+  // Read ?kpi= from URL on mount (set by EstadisticasTab KPI card)
+  useEffect(() => {
+    const kpi = searchParams.get("kpi");
+    if (kpi) {
+      const statusMap: Record<string, string> = {
+        "Operativos":          "Operativo",
+        "En mantenimiento":     "En mantenimiento",
+        "Inactivos":           "Inactivo",
+        "En taller":           "En taller",
+        " Disponible":          "Disponible",
+        "Asignado":            "Asignado",
+        "Fuera de servicio":   "Fuera de servicio",
+      };
+      const status = statusMap[kpi] ?? kpi;
+      setFilterStatus(status);
+    }
+  }, []); // run once on mount
+  const handleKpiClick = (label: string | null) => {
+    if (label === null) {
+      setSearchParams((prev) => { const n = new URLSearchParams(prev); n.delete("kpi"); return n; });
+      setFilterStatus("");
+    } else {
+      // Map KPI label → status filter value
+      const statusMap: Record<string, string> = {
+        "Operativos":        "Operativo",
+        "En mantenimiento":  "En mantenimiento",
+      };
+      const status = statusMap[label] ?? label;
+      setFilterStatus(status);
+      setSearchParams((prev) => { const n = new URLSearchParams(prev); n.set("kpi", label); return n; });
+    }
+    setPage(1);
+  };
 
   const setFilter = (fn: () => void) => { fn(); setPage(1); };
 
@@ -1124,7 +983,7 @@ export default function FlotasPage() {
         }
       />
 
-      <KpiRow vehicles={vehicles} />
+      <KpiRow vehicles={vehicles} activeKpi={activeKpi} onKpiClick={handleKpiClick} />
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2.5 rounded-2xl border border-gray-200 bg-white px-4 py-3 dark:border-white/[0.06] dark:bg-white/[0.03]">
@@ -1138,7 +997,16 @@ export default function FlotasPage() {
           <Filter size={13} className="text-gray-400" />
           {/* Estado */}
           <div className="relative">
-            <select value={filterStatus} onChange={e => setFilter(() => setFilterStatus(e.target.value))}
+            <select value={filterStatus} onChange={e => {
+              const v = e.target.value;
+              setFilterStatus(v);
+              setSearchParams((prev) => {
+                const n = new URLSearchParams(prev);
+                v ? n.set("kpi", v) : n.delete("kpi");
+                return n;
+              });
+              setPage(1);
+            }}
               className="h-9 appearance-none rounded-xl border border-gray-200 bg-white pl-3 pr-7 text-sm text-gray-700 focus:border-sky-400 focus:outline-none dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-300">
               <option value="">Estado</option>
               <option value="Operativo">Operativo</option>

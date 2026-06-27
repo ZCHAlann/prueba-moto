@@ -49,7 +49,7 @@ export type ScorecardOpts = {
   /** Ventana de evaluación. Default: 12 meses. */
   meses?: number;
   /** Para combinar con TCO y comparar eficiencia vs flota. */
-  fleetAvgKmL?: number;
+  fleetAvgKmGal?: number;
 };
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -104,7 +104,7 @@ export async function calculateScorecard(opts: ScorecardOpts): Promise<VehicleSc
     correctivos: number;
     pendientes: number;
     vencidas: number;
-    litros: number;
+    galones: number;
     km: number;
     alertasAbiertas: number;
     alertasCriticas: number;
@@ -114,7 +114,7 @@ export async function calculateScorecard(opts: ScorecardOpts): Promise<VehicleSc
     if (!statsByAsset[id]) {
       statsByAsset[id] = {
         ots: 0, correctivos: 0, pendientes: 0, vencidas: 0,
-        litros: 0, km: 0, alertasAbiertas: 0, alertasCriticas: 0,
+        galones: 0, km: 0, alertasAbiertas: 0, alertasCriticas: 0,
       };
     }
     return statsByAsset[id]!;
@@ -129,8 +129,8 @@ export async function calculateScorecard(opts: ScorecardOpts): Promise<VehicleSc
   }
   for (const r of fuelRows) {
     const s = ensure(r.assetId);
-    s.litros += Number(r.liters ?? 0);
-    s.km     += Number(r.odometer ?? 0); // aproximado; mejor con readings
+    s.galones += Number(r.gallons ?? 0);
+    s.km      += Number(r.odometer ?? 0); // aproximado; mejor con readings
   }
   for (const a of alertRows) {
     if (!a.assetId) continue;
@@ -139,11 +139,11 @@ export async function calculateScorecard(opts: ScorecardOpts): Promise<VehicleSc
     if (a.severity === "alta" || a.severity === "critica") s.alertasCriticas++;
   }
 
-  // 4) Calcular km/L flota promedio
-  const fleetTotalLitros = Object.values(statsByAsset).reduce((a, s) => a + s.litros, 0);
-  const fleetTotalKm     = Object.values(statsByAsset).reduce((a, s) => a + s.km, 0);
-  const fleetAvgKmL      = fleetTotalLitros > 0 ? fleetTotalKm / fleetTotalLitros : 0;
-  const avgKmL           = opts.fleetAvgKmL ?? fleetAvgKmL;
+  // 4) Calcular km/gal flota promedio
+  const fleetTotalGalones = Object.values(statsByAsset).reduce((a, s) => a + s.galones, 0);
+  const fleetTotalKm      = Object.values(statsByAsset).reduce((a, s) => a + s.km, 0);
+  const fleetAvgKmGal     = fleetTotalGalones > 0 ? fleetTotalKm / fleetTotalGalones : 0;
+  const avgKmGal          = opts.fleetAvgKmGal ?? fleetAvgKmGal;
 
   // 5) Score por asset
   const result: VehicleScorecard[] = [];
@@ -179,10 +179,10 @@ export async function calculateScorecard(opts: ScorecardOpts): Promise<VehicleSc
     });
 
     // 3) Combustible (0-20)
-    const kmL = s.litros > 0 ? s.km / s.litros : 0;
+    const kmGal = s.galones > 0 ? s.km / s.galones : 0;
     let scoreCombustible = 10; // neutral si no hay datos
-    if (s.litros > 0 && avgKmL > 0) {
-      const ratio = kmL / avgKmL;
+    if (s.galones > 0 && avgKmGal > 0) {
+      const ratio = kmGal / avgKmGal;
       // ratio >= 1.2 → 20, ratio <= 0.5 → 0
       scoreCombustible = Math.max(0, Math.min(20, Math.round((ratio - 0.5) * 40)));
     }
@@ -190,8 +190,8 @@ export async function calculateScorecard(opts: ScorecardOpts): Promise<VehicleSc
       key: "combustible",
       label: "Eficiencia combustible",
       score: scoreCombustible,
-      detalle: s.litros > 0
-        ? `${kmL.toFixed(2)} km/L (flota: ${avgKmL.toFixed(2)})`
+      detalle: s.galones > 0
+        ? `${kmGal.toFixed(2)} km/gal (flota: ${avgKmGal.toFixed(2)})`
         : "Sin datos de combustible",
     });
 

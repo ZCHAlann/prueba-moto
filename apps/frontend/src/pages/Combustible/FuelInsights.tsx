@@ -170,7 +170,7 @@ export function FuelInsights({ from, to }: Props) {
                       {p.plate ?? p.name ?? "—"}
                     </p>
                     <p className="text-[10px] text-gray-500 dark:text-gray-400">
-                      {p.date} · {p.liters} L (media {p.avgLiters} L)
+                      {p.date} · {p.gallons} gal (media {p.avgGallons} gal)
                     </p>
                   </div>
                   <span className={`shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold ${
@@ -209,7 +209,7 @@ export function FuelInsights({ from, to }: Props) {
                     {c.plate ?? c.name ?? "—"}
                   </span>
                   <span className="text-right text-[11px] tabular-nums">
-                    <span className="font-semibold text-rose-700 dark:text-rose-300">{c.totalLiters} L</span>
+                    <span className="font-semibold text-rose-700 dark:text-rose-300">{c.totalGallons} gal</span>
                     <span className="ml-1 text-gray-400 dark:text-gray-500">{fmtMoney(c.totalCost)}</span>
                   </span>
                 </li>
@@ -239,7 +239,7 @@ export function FuelInsights({ from, to }: Props) {
                     {c.plate ?? c.name ?? "—"}
                   </span>
                   <span className="text-right text-[11px] tabular-nums">
-                    <span className="font-semibold text-emerald-700 dark:text-emerald-300">{c.totalLiters} L</span>
+                    <span className="font-semibold text-emerald-700 dark:text-emerald-300">{c.totalGallons} gal</span>
                     <span className="ml-1 text-gray-400 dark:text-gray-500">{fmtMoney(c.totalCost)}</span>
                   </span>
                 </li>

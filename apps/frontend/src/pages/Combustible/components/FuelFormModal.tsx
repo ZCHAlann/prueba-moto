@@ -4,12 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   X, Fuel, Droplets, DollarSign, Gauge, MapPin,
-  FileText, Camera, Loader2, AlertCircle,
+  FileText, Camera, Loader2, AlertCircle, ArrowLeftRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ApiFuelEntry, CreateFuelPayload } from "../../../hooks/useFuel";
 import { uploadFuelPhoto, uploadOdometerPhoto } from "../../../hooks/useFuel";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
+import { todayEcuador } from "@/lib/datetime";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -37,7 +38,7 @@ type FuelFormProps = {
 type FormState = {
   assetId:  string;
   date:     string;
-  liters:   string;
+  gallons:  string;
   cost:     string;
   odometer: string;
   station:  string;
@@ -48,8 +49,8 @@ type FormErrors = Partial<Record<keyof FormState, string>>;
 
 const EMPTY: FormState = {
   assetId:  "",
-  date:     new Date().toISOString().slice(0, 10),
-  liters:   "",
+  date:     todayEcuador(),
+  gallons:  "",
   cost:     "",
   odometer: "",
   station:  "",
@@ -60,7 +61,7 @@ function toForm(e: ApiFuelEntry): FormState {
   return {
     assetId:  e.assetId,
     date:     e.date,
-    liters:   String(e.liters),
+    gallons:  String(e.gallons),
     cost:     String(e.cost),
     odometer: String(e.odometer),
     station:  e.station,
@@ -72,7 +73,7 @@ function validate(f: FormState): FormErrors {
   const errs: FormErrors = {};
   if (!f.assetId)                            errs.assetId  = "Selecciona un vehículo.";
   if (!f.date)                               errs.date     = "La fecha es requerida.";
-  if (!f.liters || Number(f.liters) <= 0)    errs.liters   = "Ingresa los litros cargados.";
+  if (!f.gallons || Number(f.gallons) <= 0)  errs.gallons  = "Ingresa los galones cargados.";
   if (!f.cost   || Number(f.cost)   <= 0)    errs.cost     = "Ingresa el costo total.";
   if (!f.odometer || Number(f.odometer) < 0) errs.odometer = "Ingresa el odómetro.";
   if (!f.station.trim())                     errs.station  = "Ingresa la estación/gasolinera.";
@@ -95,6 +96,14 @@ export function FuelFormModal({ open, entry, assets, assetsLoading, companyId, o
   const [uploadingOdoPhoto,    setUploadingOdoPhoto]    = useState(false);
   const fileRef          = useRef<HTMLInputElement>(null);
   const odometerFileRef  = useRef<HTMLInputElement>(null);
+
+  // Convertidor litros → galones US
+  const [litrosInput, setLitrosInput] = useState("");
+
+  // 1 galón US = 3.785411784 litros
+  const GALON_A_LITROS = 3.785411784;
+  const litrosNum = parseFloat(litrosInput);
+  const galonesEquiv = isNaN(litrosNum) || litrosNum <= 0 ? null : litrosNum / GALON_A_LITROS;
 
   // Reinicializar cuando se abre
   useEffect(() => {
@@ -176,7 +185,7 @@ export function FuelFormModal({ open, entry, assets, assetsLoading, companyId, o
       const payload: CreateFuelPayload = {
         assetId:          form.assetId,
         date:             form.date,
-        liters:           Number(form.liters),
+        gallons:          Number(form.gallons),
         cost:             Number(form.cost),
         odometer:         Number(form.odometer),
         station:          form.station.trim(),
@@ -270,24 +279,24 @@ export function FuelFormModal({ open, entry, assets, assetsLoading, companyId, o
                   )}
                 </div>
 
-                {/* Litros + Costo */}
+                {/* Galones + Costo */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className={labelCls}>
                       <Droplets size={10} className="inline mr-1" />
-                      Litros
+                      Galones
                     </label>
                     <input
                       type="number"
                       min="0"
                       step="0.01"
                       placeholder="0.00"
-                      value={form.liters}
-                      onChange={(e) => set("liters", e.target.value)}
-                      className={`${inputCls} ${errors.liters ? "border-error-400" : ""}`}
+                      value={form.gallons}
+                      onChange={(e) => set("gallons", e.target.value)}
+                      className={`${inputCls} ${errors.gallons ? "border-error-400" : ""}`}
                     />
-                    {errors.liters && (
-                      <p className={errorCls}><AlertCircle size={10} />{errors.liters}</p>
+                    {errors.gallons && (
+                      <p className={errorCls}><AlertCircle size={10} />{errors.gallons}</p>
                     )}
                   </div>
                   <div>
@@ -308,6 +317,37 @@ export function FuelFormModal({ open, entry, assets, assetsLoading, companyId, o
                       <p className={errorCls}><AlertCircle size={10} />{errors.cost}</p>
                     )}
                   </div>
+                </div>
+
+                {/* Convertidor litros → galones (compacto, turquesa) */}
+                <div className="inline-flex items-center gap-1.5 rounded-md border border-cyan-200 dark:border-cyan-500/30 bg-cyan-50 dark:bg-cyan-500/10 px-2 py-1 text-[11px]">
+                  <ArrowLeftRight size={11} className="shrink-0 text-cyan-500" />
+                  <span className="whitespace-nowrap text-cyan-700 dark:text-cyan-300 font-medium">
+                    ¿Tiene litros?
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Litros"
+                    value={litrosInput}
+                    onChange={(e) => setLitrosInput(e.target.value)}
+                    className="w-16 h-6 rounded border border-cyan-200 dark:border-cyan-500/40 bg-white dark:bg-cyan-500/10 px-1.5 text-[11px] text-gray-700 dark:text-cyan-100 placeholder:text-cyan-300 outline-none focus:border-cyan-400 transition"
+                  />
+                  <span className="whitespace-nowrap tabular-nums text-cyan-600 dark:text-cyan-300">
+                    = {galonesEquiv != null ? `${galonesEquiv.toFixed(3)} gal` : "— gal"}
+                  </span>
+                  {galonesEquiv != null && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        set("gallons", galonesEquiv.toFixed(3));
+                        setLitrosInput("");
+                      }}
+                      className="rounded bg-cyan-600 hover:bg-cyan-700 px-1.5 py-0.5 text-[10px] font-semibold text-white transition"
+                    >
+                      Usar
+                    </button>
+                  )}
                 </div>
 
                 {/* Odómetro (km) + foto */}

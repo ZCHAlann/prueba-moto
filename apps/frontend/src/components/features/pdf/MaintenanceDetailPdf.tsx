@@ -17,6 +17,7 @@
 
 import { pdf, Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
 import type { Maintenance } from "../../../hooks/useMaintenancesV2";
+import { fmtDateTimeEc } from "@/lib/datetime";
 
 // ─── Paleta ───────────────────────────────────────────────────────────────────
 // Un solo acento (slate oscuro casi negro) para títulos/cifras importantes,
@@ -230,12 +231,9 @@ const TYPE_LABEL: Record<string, string> = {
   Lavada:     "Lavada",
 };
 
-const fmtDateTime = (iso?: string | null) => {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-};
+const fmtDateTime = (iso?: string | null) => fmtDateTimeEc(iso);
 const fmtMoney = (n: number) =>
-  new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
+  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 
 // Devuelve true si la URL parece ser una imagen (no un PDF u otro
 // archivo); @react-pdf/renderer solo puede incrustar imágenes.
@@ -272,7 +270,10 @@ function MaintenanceDetailDocument({ m }: { m: Maintenance }) {
   // usando el totalCost que manda el backend.
   const itemsTotal = (m.items ?? []).reduce((acc, it) => acc + Number(it.subtotal ?? (it.quantity * it.unitCost) ?? 0), 0);
   const laborCost = Number(m.laborCost ?? 0);
-  const computedTotal = laborCost + itemsTotal;
+  const ivaPct = Number(m.ivaPercent ?? 15);
+  const subtotalNoIva = laborCost + itemsTotal;
+  const ivaAmount = subtotalNoIva * (ivaPct / 100);
+  const computedTotal = subtotalNoIva + ivaAmount;
   const total = isLavada ? Number(m.totalCost ?? 0) : computedTotal;
   const partsCost = isLavada ? Math.max(0, total - laborCost) : itemsTotal;
 
@@ -438,10 +439,24 @@ function MaintenanceDetailDocument({ m }: { m: Maintenance }) {
                 <Text style={s.totalsLabel}>{isLavada ? "Subtotal adicionales" : "Subtotal repuestos"}</Text>
                 <Text style={s.totalsValue}>{fmtMoney(itemsTotal)}</Text>
               </View>
-              <View style={[s.totalsRow, s.totalsRowFinal]}>
-                <Text style={s.totalsLabelFinal}>Total</Text>
-                <Text style={s.totalsValueFinal}>{fmtMoney(total)}</Text>
-              </View>
+              {!isLavada && (
+                <>
+                  <View style={s.totalsRow}>
+                    <Text style={s.totalsLabel}>IVA {ivaPct}%</Text>
+                    <Text style={s.totalsValue}>{fmtMoney(ivaAmount)}</Text>
+                  </View>
+                  <View style={[s.totalsRow, s.totalsRowFinal]}>
+                    <Text style={s.totalsLabelFinal}>Total ({ivaPct}% IVA)</Text>
+                    <Text style={s.totalsValueFinal}>{fmtMoney(total)}</Text>
+                  </View>
+                </>
+              )}
+              {isLavada && (
+                <View style={[s.totalsRow, s.totalsRowFinal]}>
+                  <Text style={s.totalsLabelFinal}>Total</Text>
+                  <Text style={s.totalsValueFinal}>{fmtMoney(total)}</Text>
+                </View>
+              )}
             </View>
           </>
         )}

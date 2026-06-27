@@ -3,6 +3,7 @@ import type { InventoryItem, OilType, Asset } from "./types";
 import type { ApiDriver } from "../../../hooks/useDrivers";
 import { createPortal } from "react-dom";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
+import { todayEcuador } from "@/lib/datetime";
 
 // ─── Shared ───────────────────────────────────────────────────────────────────
 
@@ -260,7 +261,7 @@ export function OilChangeModal({ oilTypes, assets, drivers, preselectedOil, onCl
   const [form, setForm] = useState<OilChangeForm>({
     assetId: assets[0]?.id ?? "",
     oilTypeId: preselectedOil?.id ?? oilTypes[0]?.id ?? "",
-    date: new Date().toISOString().slice(0, 10),
+    date: todayEcuador(),
     reading: "",
     nextReading: "",
     quantity: "",

@@ -100,22 +100,22 @@ export async function calculateCombustible(input: StatInput): Promise<StatResult
   const inPrevious = rows.filter((r) => r.date >= previousStart && r.date <= previousEnd);
 
   // ─── KPIs ───────────────────────────────────────────────────────
-  const totalCostoA   = inCurrent.reduce((a, r) => a + num(r.cost), 0);
-  const totalCostoP   = inPrevious.reduce((a, r) => a + num(r.cost), 0);
-  const totalLitrosA  = inCurrent.reduce((a, r) => a + num(r.liters), 0);
-  const totalLitrosP  = inPrevious.reduce((a, r) => a + num(r.liters), 0);
-  const cargasA       = inCurrent.length;
-  const cargasP       = inPrevious.length;
-  const kmRecorridosA = computeKmRecorridos(inCurrent, odoReadings, currentStart, end);
-  const kmRecorridosP = computeKmRecorridos(inPrevious, odoReadings, previousStart, previousEnd);
-  const costoPorKmA   = kmRecorridosA > 0 ? totalCostoA / kmRecorridosA : 0;
-  const costoPorKmP   = kmRecorridosP > 0 ? totalCostoP / kmRecorridosP : 0;
+  const totalCostoA    = inCurrent.reduce((a, r) => a + num(r.cost), 0);
+  const totalCostoP    = inPrevious.reduce((a, r) => a + num(r.cost), 0);
+  const totalGalA      = inCurrent.reduce((a, r) => a + num(r.gallons ?? 0), 0);
+  const totalGalP      = inPrevious.reduce((a, r) => a + num(r.gallons ?? 0), 0);
+  const cargasA        = inCurrent.length;
+  const cargasP        = inPrevious.length;
+  const kmRecorridosA  = computeKmRecorridos(inCurrent, odoReadings, currentStart, end);
+  const kmRecorridosP  = computeKmRecorridos(inPrevious, odoReadings, previousStart, previousEnd);
+  const costoPorKmA    = kmRecorridosA > 0 ? totalCostoA / kmRecorridosA : 0;
+  const costoPorKmP    = kmRecorridosP > 0 ? totalCostoP / kmRecorridosP : 0;
 
   const kpis: KpiItem[] = [
-    { label: "Cargas",      valor: cargasA,                       variacionPct: variationPct(cargasA, cargasP),            icono: "fuel" },
-    { label: "Litros",      valor: round2(totalLitrosA), unidad: "L",  variacionPct: variationPct(totalLitrosA, totalLitrosP), icono: "droplet" },
-    { label: "Costo total", valor: round2(totalCostoA), unidad: "USD", variacionPct: variationPct(totalCostoA, totalCostoP), icono: "dollar-sign" },
-    { label: "Costo por km",valor: round2(costoPorKmA), unidad: "USD/km", variacionPct: variationPct(costoPorKmA, costoPorKmP), icono: "trending-up" },
+    { label: "Cargas",       valor: cargasA,                       variacionPct: variationPct(cargasA, cargasP),           icono: "fuel" },
+    { label: "Galones",      valor: round2(totalGalA), unidad: "gal", variacionPct: variationPct(totalGalA, totalGalP), icono: "droplet" },
+    { label: "Costo total",  valor: round2(totalCostoA), unidad: "USD", variacionPct: variationPct(totalCostoA, totalCostoP), icono: "dollar-sign" },
+    { label: "Costo por km", valor: round2(costoPorKmA), unidad: "USD/km", variacionPct: variationPct(costoPorKmA, costoPorKmP), icono: "trending-up" },
   ];
 
   // ─── 1. Line: costo por período (con proyección) ────────────────
@@ -136,32 +136,32 @@ export async function calculateCombustible(input: StatInput): Promise<StatResult
     linePoints.push({ x: nextBucket, y: round2(Math.max(0, reg.project(tail.length - 1 + i))), proyectado: true });
   }
 
-  // ─── 2. Bar V: litros por tipo de combustible ──────────────────
-  const litrosByType: Record<string, number> = {};
+  // ─── 2. Bar V: galones por tipo de combustible ─────────────────
+  const galonesByType: Record<string, number> = {};
   for (const r of inCurrent) {
     const t = r.fuelType || "Desconocido";
-    litrosByType[t] = (litrosByType[t] ?? 0) + num(r.liters);
+    galonesByType[t] = (galonesByType[t] ?? 0) + num(r.gallons ?? 0);
   }
-  const barV: BarPoint[] = Object.entries(litrosByType).map(([k, v]) => ({ x: k, y: round2(v) }));
+  const barV: BarPoint[] = Object.entries(galonesByType).map(([k, v]) => ({ x: k, y: round2(v) }));
 
-  // ─── 3. Bar H: top 10 vehículos por EFICIENCIA (km/L) ──────────
-  // Eficiencia = kmRecorridos / litros por asset en el período actual
-  const litrosByAsset: Record<number, number> = {};
+  // ─── 3. Bar H: top 10 vehículos por EFICIENCIA (km/gal) ────────
+  // Eficiencia = kmRecorridos / galones por asset en el período actual
+  const galonesByAsset: Record<number, number> = {};
   for (const r of inCurrent) {
-    litrosByAsset[r.assetId] = (litrosByAsset[r.assetId] ?? 0) + num(r.liters);
+    galonesByAsset[r.assetId] = (galonesByAsset[r.assetId] ?? 0) + num(r.gallons ?? 0);
   }
-  const efficiency: Array<{ id: number; km: number; litros: number; kmL: number }> = [];
-  for (const [id, litros] of Object.entries(litrosByAsset)) {
-    if (litros <= 0) continue;
+  const efficiency: Array<{ id: number; km: number; galones: number; kmGal: number }> = [];
+  for (const [id, galones] of Object.entries(galonesByAsset)) {
+    if (galones <= 0) continue;
     const km = kmRecorridosPorAsset.get(Number(id)) ?? 0;
     if (km <= 0) continue;
-    efficiency.push({ id: Number(id), km, litros, kmL: km / litros });
+    efficiency.push({ id: Number(id), km, galones, kmGal: km / galones });
   }
-  efficiency.sort((a, b) => b.kmL - a.kmL);
+  efficiency.sort((a, b) => b.kmGal - a.kmGal);
   const top10Eff = efficiency.slice(0, 10);
   const barH: BarHPoint[] = top10Eff.map((e) => {
     const a = assetMap.get(e.id);
-    return { label: a?.plate || a?.name || `Activo ${e.id}`, value: round2(e.kmL), meta: `${e.km} km / ${round2(e.litros)} L` };
+    return { label: a?.plate || a?.name || `Activo ${e.id}`, value: round2(e.kmGal), meta: `${e.km} km / ${round2(e.galones)} gal` };
   });
 
   // ─── 4. Radar: costo por estación (top 8) ─────────────────────
@@ -217,18 +217,18 @@ export async function calculateCombustible(input: StatInput): Promise<StatResult
   const anomalias: AnomaliaItem[] = detectAnomalias({
     serieCostoFull,
     currentBucket: bucketByPeriod(end, periodo),
-    costByAsset: Object.fromEntries(Object.entries(litrosByAsset).map(([k, v]) => [k, v])),
+    costByAsset: Object.fromEntries(Object.entries(galonesByAsset).map(([k, v]) => [k, v])),
     assetMap,
   });
 
   return {
     kpis,
-    lineChart:        { title: "Costo de combustible por período",  unidad: "USD", data: linePoints, regresion: { slope: round2(reg.slope), r2: round2(reg.r2) } },
-    barVChart:        { title: "Litros por tipo de combustible",    unidad: "L",   data: barV },
-    barHChart:        { title: "Top 10 vehículos por eficiencia (km/L)", unidad: "km/L", data: barH },
-    radarChart:       { title: "Costo por estación (top 8)",         data: radar },
-    exponencialChart: { title: "Costo diario (últimos 30 días)",    unidad: "USD", data: exponencial },
-    comparacionChart: { title: "Costo actual vs período anterior",   data: comparacion },
+    lineChart:        { title: "Costo de combustible por período",        unidad: "USD", data: linePoints, regresion: { slope: round2(reg.slope), r2: round2(reg.r2) } },
+    barVChart:        { title: "Galones por tipo de combustible",         unidad: "gal", data: barV },
+    barHChart:        { title: "Top 10 vehículos por eficiencia (km/gal)", unidad: "km/gal", data: barH },
+    radarChart:       { title: "Costo por estación (top 8)",              data: radar },
+    exponencialChart: { title: "Costo diario (últimos 30 días)",          unidad: "USD", data: exponencial },
+    comparacionChart: { title: "Costo actual vs período anterior",        data: comparacion },
     anomalias,
   };
 }

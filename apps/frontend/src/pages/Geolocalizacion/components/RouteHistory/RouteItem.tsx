@@ -1,6 +1,7 @@
 import { Calendar, Clock, X, Eye, ArrowRight } from 'lucide-react';
 import type { Route } from '../../types/route';
 import { formatDistance, formatDuration } from '../../utils/formatters';
+import { fmtDateEc, fmtTimeEc } from '@/lib/datetime';
 
 interface Props {
   route: Route;
@@ -10,9 +11,8 @@ interface Props {
 }
 
 export const RouteItem = ({ route, isSelected, onSelect, onClose }: Props) => {
-  const d = new Date(route.startedAt);
-  const dateStr = d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
-  const timeStr = d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  const dateStr = fmtDateEc(route.startedAt);
+  const timeStr = fmtTimeEc(route.startedAt);
 
   return (
     <div

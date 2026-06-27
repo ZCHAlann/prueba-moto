@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, RefreshCw, Calendar, AlertCircle } from "lucide-react";
 import type { Maintenance } from "../../../hooks/useMaintenancesV2";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
+import { daysFromNowEcuador } from "@/lib/datetime";
 
 export function ReprogramDialog({
   open, target, saving, onClose, onConfirm, mode = "reschedule",
@@ -29,11 +30,9 @@ export function ReprogramDialog({
   useEffect(() => {
     if (open) {
       // Por defecto: mañana a las 08:00 (o lo que estuviera antes).
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
       const baseDate = target?.scheduledFor
         ? target.scheduledFor.slice(0, 10)
-        : tomorrow.toISOString().slice(0, 10);
+        : daysFromNowEcuador(1);
       const baseTime = target?.scheduledFor
         ? target.scheduledFor.slice(11, 16)
         : "08:00";

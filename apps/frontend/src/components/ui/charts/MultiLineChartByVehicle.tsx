@@ -13,8 +13,8 @@ import type { Asset } from "../../../types/activo";
 type Props = {
   fuelEntries: ApiFuelEntry[];
   assets:      Asset[];
-  /** "liters" | "cost" */
-  mode?: "liters" | "cost";
+  /** "gallons" | "cost" */
+  mode?: "gallons" | "cost";
 };
 
 type SeriesPoint = {
@@ -63,7 +63,7 @@ function ChartTooltip({ active, payload, label, mode }: any) {
         <p key={p.dataKey} style={{ fontSize: 12, fontWeight: 600, color: p.color, fontFamily: "'JetBrains Mono',monospace", display: "flex", justifyContent: "space-between", gap: 16 }}>
           <span>{p.dataKey}</span>
           <span style={{ fontWeight: 700 }}>
-            {mode === "cost" ? `$${fmt(Number(p.value))}` : `${fmt(Number(p.value), 0)} L`}
+            {mode === "cost" ? `$${fmt(Number(p.value))}` : `${fmt(Number(p.value), 2)} gal`}
           </span>
         </p>
       ))}
@@ -73,7 +73,7 @@ function ChartTooltip({ active, payload, label, mode }: any) {
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
-export function MultiLineChartByVehicle({ fuelEntries, assets, mode = "liters" }: Props) {
+export function MultiLineChartByVehicle({ fuelEntries, assets, mode = "gallons" }: Props) {
   const [zoom, setZoom] = useState(1);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
@@ -98,7 +98,7 @@ export function MultiLineChartByVehicle({ fuelEntries, assets, mode = "liters" }
       monthSet.add(month);
       if (!buckets.has(month)) buckets.set(month, new Map());
       const m = buckets.get(month)!;
-      const v = mode === "cost" ? e.cost : e.liters;
+      const v = mode === "cost" ? e.cost : e.gallons;
       m.set(e.assetId, (m.get(e.assetId) ?? 0) + v);
     }
 
@@ -161,10 +161,10 @@ export function MultiLineChartByVehicle({ fuelEntries, assets, mode = "liters" }
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 6, alignItems: "baseline", padding: "4px 12px", borderRadius: 20, border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.03)" }}>
           <span style={{ fontSize: 10, color: "var(--text3, #5A5A7A)", fontFamily: "'JetBrains Mono',monospace" }}>
-            {mode === "cost" ? "Costo total" : "Litros total"}
-          </span>
-          <span style={{ fontSize: 12, fontWeight: 700, color: "#FFFFFF", fontFamily: "'JetBrains Mono',monospace" }}>
-            {mode === "cost" ? `$${fmt(grandTotal)}` : `${fmt(grandTotal, 0)} L`}
+{mode === "cost" ? "Costo total" : "Total galones"}
+              </p>
+              <p style={{ fontSize: 20, fontWeight: 700, color: "#4F6EF7", fontFamily: "'JetBrains Mono',monospace" }}>
+                {mode === "cost" ? `$${fmt(grandTotal)}` : `${fmt(grandTotal, 2)} gal`}
           </span>
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "baseline", padding: "4px 12px", borderRadius: 20, border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.03)" }}>
@@ -279,7 +279,7 @@ export function MultiLineChartByVehicle({ fuelEntries, assets, mode = "liters" }
                 {t.plate}
               </span>
               <span style={{ fontSize: 10, color: "var(--text2, #9090B0)", fontFamily: "'JetBrains Mono',monospace" }}>
-                {mode === "cost" ? `$${fmt(t.total)}` : `${fmt(t.total, 0)} L`}
+                {mode === "cost" ? `$${fmt(t.total)}` : `${fmt(t.total, 2)} gal`}
               </span>
             </div>
           );

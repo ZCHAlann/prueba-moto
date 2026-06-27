@@ -25,7 +25,7 @@ export interface MonthlyData {
 
 export interface FuelData {
   categories: string[];
-  liters: number[];
+  galones: number[];
   cost: number[];
 }
 
@@ -75,7 +75,7 @@ export interface CombustiblePorVehiculo {
   id: number;
   plate: string;
   name: string;
-  liters: number;
+  gallons: number;
   cost: number;
 }
 
@@ -135,7 +135,7 @@ export interface ConsumoPorConductor {
   id: number;
   name: string;
   code: string | null;
-  liters: number;
+  gallons: number;
   cost: number;
 }
 

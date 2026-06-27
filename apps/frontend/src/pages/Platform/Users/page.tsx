@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { useAuth } from "../../../context/AuthContext";
 import { usePlatformUsers }    from "../../../hooks/usePlatformUsers";
 import { usePlatformCompanies } from "../../../hooks/usePlatformCompanies";
+import { fmtDateShortEc } from "@/lib/datetime";
 import {
   PlatformKpiCard, PlatformModal, ModalActions,
   InputField, SelectField,
@@ -71,7 +72,7 @@ function avatarColor(name: string) {
 }
 
 function fmtDate(d: string) {
-  return new Date(d).toLocaleDateString("es-EC", { day: "2-digit", month: "short", year: "numeric" });
+  return fmtDateShortEc(d);
 }
 
 // ─── Role Badge ───────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import { canAccessHref } from "../lib/access-control";
 import AppHeader from "./AppHeader";
 import Backdrop from "./Backdrop";
 import AppSidebar from "./AppSidebar";
+import { FloatingAiAssistant } from "../components/ui/FloatingAiAssistant";
 
 const LayoutContent: React.FC = () => {
   const { isExpanded, isHovered, isMobileOpen } = useSidebar();
@@ -69,6 +70,10 @@ const LayoutContent: React.FC = () => {
           <Outlet />
         </div>
       </div>
+
+      {/* Asistente IA (Jarvis) — solo visible para admin_empresa y
+          owner_empresa. El componente filtra internamente por rol. */}
+      <FloatingAiAssistant />
     </div>
   );
 };

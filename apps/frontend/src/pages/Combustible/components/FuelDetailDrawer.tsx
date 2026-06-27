@@ -119,11 +119,11 @@ export function FuelDetailDrawer({ entry, onClose }: Props) {
                 <Row icon={Calendar} label="Fecha"    value={fmtDate(entry.date)} />
                 <Row icon={MapPin}   label="Estación" value={entry.station || "—"} />
                 <Row icon={Gauge}    label="Odómetro" value={`${Number(entry.odometer || 0).toLocaleString()} km`} />
-                <Row icon={Droplets} label="Litros"   value={`${fmtNum(entry.liters, 2)} L`} />
+                <Row icon={Droplets} label="Galones"  value={`${fmtNum(entry.gallons, 2)} gal`} />
                 <Row
                   icon={Droplets}
                   label="Precio unitario"
-                  value={entry.liters > 0 ? `${fmtMoney(entry.cost / entry.liters)} / L` : "—"}
+                  value={entry.gallons > 0 ? `${fmtMoney(entry.cost / entry.gallons)} / gal` : "—"}
                 />
                 <Row icon={Droplets} label="Costo total" value={fmtMoney(entry.cost)} highlight />
               </div>

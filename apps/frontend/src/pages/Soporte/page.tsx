@@ -8,6 +8,7 @@ import {
   type TicketPriority,
   type CreateTicketInput,
 } from "@/hooks/useCompanyTickets";
+import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
 
 const STATUS_LABELS: Record<TicketStatus, string> = {
   open: "Abierto",
@@ -54,16 +55,11 @@ function PriorityBadge({ priority }: { priority: TicketPriority }) {
 }
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString("es-EC", {
-    day: "2-digit", month: "short", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
+  return fmtDateTimeEc(iso);
 }
 
 function formatDateShort(iso: string) {
-  return new Date(iso).toLocaleDateString("es-EC", {
-    day: "2-digit", month: "short", year: "numeric",
-  });
+  return fmtDateShortEc(iso);
 }
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────

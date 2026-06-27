@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import type { ApiTollEntry, CreateTollPayload } from "../../../hooks/useToll";
 import { uploadTollPhoto } from "../../../hooks/useToll";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
+import { todayEcuador } from "@/lib/datetime";
 
 const inputCls =
   "h-10 w-full rounded-xl border border-gray-200 bg-white px-3.5 text-sm text-gray-700 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/10 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200 dark:placeholder:text-gray-500";
@@ -68,7 +69,7 @@ type FormErrors = Partial<Record<keyof FormState, string>>;
 
 const EMPTY: FormState = {
   assetId:       "",
-  date:          new Date().toISOString().slice(0, 10),
+  date:          todayEcuador(),
   tollName:      "",
   category:      "",
   amount:        "",

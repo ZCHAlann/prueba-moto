@@ -5,6 +5,7 @@ import { usePermissions } from "../../../hooks/usePermissions";
 import { ModulePageHeader } from "../../../components/features/modules/ModulePageHeader";
 import { AcServiceModal } from "../../../components/ac/ac-service-modal";
 import type { AirConditioningUnit, AcServiceKind } from "../../../types/fleet";
+import { fmtDateShortEc } from "@/lib/datetime";
 import {
   Search, Plus, Image as ImageIcon, Wrench, ClipboardList, X, ChevronDown,
   Calendar, User, Tag, DollarSign, FileText,
@@ -12,10 +13,7 @@ import {
 
 /* ── Helper ─────────────────────────────────────────────────────────────── */
 function fmtDate(d?: string) {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("es-EC", {
-    day: "2-digit", month: "short", year: "numeric",
-  });
+  return fmtDateShortEc(d);
 }
 
 const KIND_OPTIONS: AcServiceKind[] = [

@@ -14,6 +14,7 @@ import { useAuth } from "../../../context/AuthContext";
 import { usePlatformCompanies } from "../../../hooks/usePlatformCompanies";
 import { usePlatformPlans }     from "../../../hooks/usePlatformPlans";
 import { usePlatformStats }     from "../../../hooks/usePlatformStats";
+import { fmtDateShortEc } from "@/lib/datetime";
 import {
   PlatformKpiCard, PlatformModal, ModalActions,
   InputField, SelectField, TextareaField,
@@ -64,8 +65,7 @@ function getInitials(name: string) {
 }
 
 function fmtDate(d: string | null) {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("es-EC",{ day:"2-digit", month:"short", year:"numeric" });
+  return fmtDateShortEc(d);
 }
 
 function slugify(name: string) {

@@ -6,14 +6,14 @@ import {
   CreditCard, Pencil, FileText, Loader2,
 } from "lucide-react";
 import type { ApiTollEntry } from "../../../hooks/useToll";
+import { fmtDateTimeEc } from "@/lib/datetime";
 
 function fmtMoney(n: number) {
   return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
 }
 
 function fmtDateTime(ymd: string) {
-  if (!ymd) return "—";
-  return new Date(ymd).toLocaleString("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return fmtDateTimeEc(ymd);
 }
 
 function fmtDate(ymd: string) {

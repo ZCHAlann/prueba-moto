@@ -5,6 +5,7 @@ import {
   ArrowRight, Flame, CheckCircle2, XCircle,
 } from "lucide-react";
 import type { CRMDeal, LeadStatus } from "../../../types/platform";
+import { fmtDateShortEc } from "@/lib/datetime";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -24,10 +25,7 @@ const PIPELINE_STEPS: LeadStatus[] = [
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtDate(d: string | null) {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("es-EC", {
-    day: "2-digit", month: "short", year: "numeric",
-  });
+  return fmtDateShortEc(d);
 }
 
 function fmtValue(v: string | null) {

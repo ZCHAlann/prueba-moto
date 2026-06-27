@@ -1,6 +1,7 @@
 "use client";
 
 import { lazy, Suspense, useMemo, useState, useEffect } from "react";
+import { useSearchParams } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Fuel, Plus, X, Droplets, DollarSign, Gauge,
@@ -29,6 +30,7 @@ import { FuelDetailDrawer } from "./components/FuelDetailDrawer";
 import { DeleteConfirm } from "./components/DeleteConfirm";
 import { FuelFormModal } from "./components/FuelFormModal";
 import { FuelInsights } from "./FuelInsights";
+import { FuelCalendarBreakdown } from "./components/FuelCalendarBreakdown";
 
 // ─── Lazy ApexCharts (igual que el dashboard) ──────────────────────────────
 const ReactApexChart = lazy(() => import("react-apexcharts"));
@@ -39,7 +41,7 @@ const EXPORT_COLS: ExportColumn[] = [
   { key: "plate",    label: "Placa"    },
   { key: "unit",     label: "Unidad"   },
   { key: "date",     label: "Fecha"    },
-  { key: "liters",   label: "Litros"   },
+  { key: "gallons",  label: "Galones"  },
   { key: "cost",     label: "Costo"    },
   { key: "station",  label: "Estación" },
   { key: "odometer", label: "Odómetro" },
@@ -93,7 +95,7 @@ function buildMonthBuckets(
     monthSet.add(month);
     if (!raw.has(month)) raw.set(month, new Map());
     const bucket = raw.get(month)!;
-    bucket.set(e.assetId, (bucket.get(e.assetId) ?? 0) + e.liters);
+    bucket.set(e.assetId, (bucket.get(e.assetId) ?? 0) + e.gallons);
   }
 
   const months = [...monthSet].sort();
@@ -314,7 +316,7 @@ function FuelCharts({ fuelEntries, assets }: FuelChartsProps) {
       .sort((a, b) => a.plate.localeCompare(b.plate));
   }, [fuelEntries, assets]);
 
-  const litersBuckets = useMemo(
+  const gallonsBuckets = useMemo(
     () => buildMonthBuckets(fuelEntries, activeAssets),
     [fuelEntries, activeAssets]
   );
@@ -324,12 +326,12 @@ function FuelCharts({ fuelEntries, assets }: FuelChartsProps) {
     [fuelEntries, activeAssets]
   );
 
-  const litersSeries = useMemo(() =>
+  const gallonsSeries = useMemo(() =>
     activeAssets.map((a, i) => ({
       name: a.plate,
-      data: litersBuckets.seriesByAsset.get(a.id) ?? [],
+      data: gallonsBuckets.seriesByAsset.get(a.id) ?? [],
     })),
-    [activeAssets, litersBuckets]
+    [activeAssets, gallonsBuckets]
   );
 
   const costSeries = useMemo(() =>
@@ -347,12 +349,12 @@ function FuelCharts({ fuelEntries, assets }: FuelChartsProps) {
 
   const lineOpts = useMemo(
     () => makeLineOptions(
-      litersBuckets.labels,
+      gallonsBuckets.labels,
       colors,
       theme,
-      (v) => `${fmt(v, 0)} L`
+      (v) => `${fmt(v, 2)} gal`
     ),
-    [litersBuckets.labels, colors, theme]
+    [gallonsBuckets.labels, colors, theme]
   );
 
   const barOpts = useMemo(
@@ -379,7 +381,7 @@ function FuelCharts({ fuelEntries, assets }: FuelChartsProps) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
 
-      {/* Gráfica 1 — Línea suavizada: litros por vehículo */}
+      {/* Gráfica 1 — Línea suavizada: galones por vehículo */}
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-[#0F172A]">
         <div className="border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
           <div className="flex items-center gap-2.5">
@@ -388,7 +390,7 @@ function FuelCharts({ fuelEntries, assets }: FuelChartsProps) {
             </div>
             <div>
               <h3 className="text-sm font-semibold text-gray-800 dark:text-white">
-                Litros por vehículo
+                Galones por vehículo
               </h3>
               <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
                 Consumo mensual · una línea por unidad
@@ -402,7 +404,7 @@ function FuelCharts({ fuelEntries, assets }: FuelChartsProps) {
               <Suspense fallback={<Sk className="h-[260px]" />}>
                 <ReactApexChart
                   options={lineOpts}
-                  series={litersSeries}
+                  series={gallonsSeries}
                   type="line"
                   height={260}
                 />
@@ -489,8 +491,8 @@ function KpiCard({ icon, label, value, sub, trend, trendLabel, accent }: KpiProp
 
 // ─── Table row ─────────────────────────────────────────────────────────────────
 
-function TableRow({ plate, unit, date, liters, cost, station, odometer, onClick, onEdit, onDelete, canEdit, canDelete }: {
-  plate: string; unit: string; date: string; liters: string;
+function TableRow({ plate, unit, date, gallons, cost, station, odometer, onClick, onEdit, onDelete, canEdit, canDelete }: {
+  plate: string; unit: string; date: string; gallons: string;
   cost: string; station: string; odometer: number;
   onClick?: () => void;
   onEdit?: () => void;
@@ -513,7 +515,7 @@ function TableRow({ plate, unit, date, liters, cost, station, odometer, onClick,
       <td className="px-5 py-3.5">
         <span className="inline-flex items-center gap-1.5 rounded-lg bg-warning-50 px-2.5 py-1 text-xs font-bold text-warning-700 dark:bg-warning-500/[0.12] dark:text-warning-400">
           <Droplets size={11} />
-          {liters}
+          {gallons}
         </span>
       </td>
       <td className="px-5 py-3.5 text-sm font-semibold text-gray-700 dark:text-gray-200">{cost}</td>
@@ -833,15 +835,25 @@ export function FuelPage() {
   const [detail,       setDetail]       = useState<ApiFuelEntry | null>(null);
 
   const [formOpen,     setFormOpen]     = useState(false);
+
+  // KPI click: read ?from=&to= params from URL (set by EstadisticasTab KPI card)
+  const [searchParams] = useSearchParams();
+  useEffect(() => {
+    const f = searchParams.get("from");
+    const t = searchParams.get("to");
+    // Only set if valid YYYY-MM-DD format
+    if (f && /^\d{4}-\d{2}-\d{2}$/.test(f)) setDateFrom(f);
+    if (t && /^\d{4}-\d{2}-\d{2}$/.test(t)) setDateTo(t);
+  }, []);
   const [editEntry,    setEditEntry]    = useState<ApiFuelEntry | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ApiFuelEntry | null>(null);
   const [exportOpen,   setExportOpen]   = useState(false);
 
   // ── Stats ──────────────────────────────────────────────────────────────────
 
-  const totalLiters = fuelEntries.reduce((s, e) => s + e.liters, 0);
-  const totalCost   = fuelEntries.reduce((s, e) => s + e.cost,   0);
-  const avgCostPerL = totalLiters > 0 ? totalCost / totalLiters : 0;
+  const totalGallons = fuelEntries.reduce((s, e) => s + e.gallons, 0);
+  const totalCost    = fuelEntries.reduce((s, e) => s + e.cost,   0);
+  const avgCostPerGal = totalGallons > 0 ? totalCost / totalGallons : 0;
 
   // ── Table rows ─────────────────────────────────────────────────────────────
 
@@ -856,7 +868,7 @@ export function FuelPage() {
           plate:    asset?.plate?.trim() || "—",
           unit:     asset ? `${asset.brand ?? ""} ${asset.model ?? ""}`.trim() || "—" : "—",
           date:     e.date,
-          liters:   `${fmt(e.liters, 0)} L`,
+gallons:  `${fmt(e.gallons, 2)} gal`,
           cost:     `${fmt(e.cost)} USD`,
           station:  e.station,
           odometer: e.odometer,
@@ -890,7 +902,7 @@ export function FuelPage() {
         plate:    asset?.plate?.trim() || "—",
         unit:     asset ? `${asset.brand ?? ""} ${asset.model ?? ""}`.trim() || "—" : "—",
         date:     e.date,
-        liters:   `${fmt(e.liters, 0)} L`,
+        gallons:  `${fmt(e.gallons, 2)} gal`,
         cost:     `${fmt(e.cost)} USD`,
         station:  e.station,
         odometer: e.odometer,
@@ -979,8 +991,8 @@ export function FuelPage() {
       {/* ── KPIs ───────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <KpiCard icon={<BarChart3 size={16} />}   label="Registros"   value={fuelEntries.length.toString()} sub="Cargas totales"      accent="bg-brand-500"   />
-        <KpiCard icon={<Droplets  size={16} />}   label="Litros"      value={`${fmt(totalLiters, 0)} L`}    sub="Consumo acumulado"   accent="bg-warning-500" />
-        <KpiCard icon={<DollarSign size={16} />}  label="Costo total" value={`${fmt(totalCost)} USD`}       sub={`Promedio ${fmt(avgCostPerL)} USD/L`} accent="bg-success-500" />
+        <KpiCard icon={<Droplets  size={16} />}   label="Galones"     value={`${fmt(totalGallons, 2)} gal`} sub="Consumo acumulado"   accent="bg-warning-500" />
+        <KpiCard icon={<DollarSign size={16} />}  label="Costo total" value={`${fmt(totalCost)} USD`}        sub={`Promedio ${fmt(avgCostPerGal)} USD/gal`} accent="bg-success-500" />
       </div>
 
       {/* ── Dashboard de gráficas (solo admin/owner) ───────────────────────── */}
@@ -1000,6 +1012,11 @@ export function FuelPage() {
 
           {/* Insights automáticos — usa el mismo rango de fechas del historial */}
           <FuelInsights from={dateFrom} to={dateTo} />
+
+          {/* Calendario con heatmap + timeline del día seleccionado */}
+          <div className="max-w-sm">
+            <FuelCalendarBreakdown entries={fuelEntries} isAdmin={isAdminOrOwner} />
+          </div>
         </div>
       )}
 
@@ -1086,7 +1103,7 @@ export function FuelPage() {
               <table className="w-full min-w-[720px] text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                    {["Vehículo","Fecha","Litros","Costo","Estación","Odómetro", ...(canEdit || canDelete ? [""] : [])].map((h, i, arr) => {
+                    {["Vehículo","Fecha","Galones","Costo","Estación","Odómetro", ...(canEdit || canDelete ? [""] : [])].map((h, i, arr) => {
                       const isLast = i === arr.length - 1 && (canEdit || canDelete);
                       return (
                         <th

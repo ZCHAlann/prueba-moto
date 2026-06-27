@@ -6,14 +6,18 @@ import { companyFuelEntries, companyAssets, companyDrivers } from '../../db/sche
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
-import { requireSupervisor } from '../../middlewares/requireSupervisor';
-import { NotFoundError } from '../../lib/errors';
-import { toId, parseId, parseIdFlexible } from '../../lib/ids';
-import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
-import { requireAdmin } from '../../middlewares/requireAdmin';
+import { toId } from '../../lib/ids';
 
 const router = Router({ mergeParams: true });
+
+// ─── Constante de conversión ────────────────────────────────────────────────
+const GAL_PER_LITER = 0.264172052; // US gallon por litro
+const LITER_PER_GAL = 3.785411784; // litro por US gallon
+
+function galToLiter(gal: number): number {
+  return Number((gal * LITER_PER_GAL).toFixed(4));
+}
 
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
@@ -21,7 +25,8 @@ const createFuelSchema = z.object({
   assetId: z.string().min(1, 'El activo es requerido'),
   driverId: z.string().optional().nullable(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)'),
-  liters: z.number().positive('Los litros deben ser mayores a 0').max(1_000_000),
+  /** Volumen en galones US (enviado desde el frontend). */
+  gallons: z.number().positive('Los galones deben ser mayores a 0').max(10_000_000),
   cost: z.number().nonnegative().max(1_000_000_000).optional().nullable(),
   odometer: z.number().nonnegative().max(100_000_000).optional().nullable(),
   station: safeString({ max: 120, fieldLabel: 'Estación', allowEmpty: true }).nullable().optional(),
@@ -31,7 +36,19 @@ const createFuelSchema = z.object({
   odometerPhotoUrl: z.string().min(1).max(2_000_000).nullable().optional(),
 });
 
-const updateFuelSchema = createFuelSchema.partial();
+const updateFuelSchema = z.object({
+  assetId: z.string().optional(),
+  driverId: z.string().optional().nullable(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional(),
+  gallons: z.number().positive().max(10_000_000).optional(),
+  cost: z.number().nonnegative().max(1_000_000_000).optional().nullable(),
+  odometer: z.number().nonnegative().max(100_000_000).optional().nullable(),
+  station: safeString({ max: 120, fieldLabel: 'Estación', allowEmpty: true }).nullable().optional(),
+  fuelType: z.enum(['Diesel', 'Gasolina', 'Electrico', 'Hibrido']).optional().nullable(),
+  notes: validators.longTextOptional,
+  photoUrl: z.string().min(1).max(2_000_000).nullable().optional(),
+  odometerPhotoUrl: z.string().min(1).max(2_000_000).nullable().optional(),
+});
 
 // ─── GET /company/:id/fuel ────────────────────────────────────────────────────
 // Query: ?assetId=asset-1 &driverId=driver-1 &from=2024-01-01 &to=2024-12-31
@@ -151,13 +168,19 @@ router.post(
       const [created] = await db
         .insert(companyFuelEntries)
         .values({
-          ...body,
           companyId,
           assetId,
           driverId: driverId ?? undefined,
-          liters: String(body.liters),
+          date: body.date,
+          gallons: String(body.gallons.toFixed(4)),
+          liters: String(galToLiter(body.gallons)),
           cost: body.cost !== undefined && body.cost !== null ? String(body.cost) : undefined,
           odometer: body.odometer !== undefined && body.odometer !== null ? String(body.odometer) : undefined,
+          station: body.station ?? null,
+          fuelType: body.fuelType ?? null,
+          notes: body.notes ?? null,
+          photoUrl: body.photoUrl ?? null,
+          odometerPhotoUrl: body.odometerPhotoUrl ?? null,
         })
         .returning();
 
@@ -167,7 +190,7 @@ router.post(
         action: 'create',
         actorId: req.user!.sub,
         actorName: req.user!.name,
-        description: `Carga de combustible registrada: ${body.liters}L para "${asset[0].name}".`,
+        description: `Carga de combustible registrada: ${body.gallons.toFixed(2)} gal para "${asset[0].name}".`,
       });
 
       res.status(201).json(serializeFuel(created, { plate: asset[0].plate, brand: asset[0].brand, model: asset[0].model }));
@@ -198,12 +221,21 @@ router.put(
 
       if (!existing.length) throw new NotFoundError('Registro de combustible', req.params.fuelId);
 
-      const updateData: Record<string, unknown> = { ...body, updatedAt: new Date() };
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
       if (body.assetId !== undefined) updateData.assetId = parseIdFlexible('asset', body.assetId!);
       if (body.driverId !== undefined) updateData.driverId = body.driverId ? parseIdFlexible('driver', body.driverId) : null;
-      if (body.liters !== undefined) updateData.liters = String(body.liters);
+      if (body.date !== undefined) updateData.date = body.date;
+      if (body.gallons !== undefined) {
+        updateData.gallons = String(body.gallons.toFixed(4));
+        updateData.liters = String(galToLiter(body.gallons));
+      }
       if (body.cost !== undefined) updateData.cost = body.cost !== null ? String(body.cost) : null;
       if (body.odometer !== undefined) updateData.odometer = body.odometer !== null ? String(body.odometer) : null;
+      if (body.station !== undefined) updateData.station = body.station;
+      if (body.fuelType !== undefined) updateData.fuelType = body.fuelType;
+      if (body.notes !== undefined) updateData.notes = body.notes;
+      if (body.photoUrl !== undefined) updateData.photoUrl = body.photoUrl;
+      if (body.odometerPhotoUrl !== undefined) updateData.odometerPhotoUrl = body.odometerPhotoUrl;
 
       const [updated] = await db
         .update(companyFuelEntries)
@@ -285,6 +317,7 @@ function serializeFuel(
     assetId: toId('asset', f.assetId),
     driverId: f.driverId ? toId('driver', f.driverId) : null,
     date: f.date,
+    gallons: Number(f.gallons),
     liters: Number(f.liters),
     cost: f.cost !== null ? Number(f.cost) : null,
     odometer: f.odometer !== null ? Number(f.odometer) : null,
@@ -328,7 +361,7 @@ router.get('/analytics/insights', requireModule('combustible'), requireAdmin, as
       .select({
         id:        companyFuelEntries.id,
         date:      companyFuelEntries.date,
-        liters:    companyFuelEntries.liters,
+        gallons:   companyFuelEntries.gallons,
         cost:      companyFuelEntries.cost,
         odometer:  companyFuelEntries.odometer,
         assetId:   companyFuelEntries.assetId,
@@ -366,12 +399,12 @@ router.get('/analytics/insights', requireModule('combustible'), requireAdmin, as
       assetId: number;
       plate: string | null;
       name: string | null;
-      totalLiters: number;
+      totalGallons: number;
       totalCost: number;
       records: number;
-      meanLiters: number;
-      stdLiters: number;
-      // Para eficiencia (km/L): requiere al menos 2 registros con odómetro
+      meanGallons: number;
+      stdGallons: number;
+      // Para eficiencia (km/gal): requiere al menos 2 registros con odómetro
       efficiency: number | null;
       firstHalf: number;
       secondHalf: number;
@@ -382,27 +415,27 @@ router.get('/analytics/insights', requireModule('combustible'), requireAdmin, as
     const assetStats: AssetStats[] = [];
 
     for (const [assetId, assetRows] of byAsset) {
-      const totalLiters = assetRows.reduce((s, r) => s + Number(r.liters), 0);
-      const totalCost   = assetRows.reduce((s, r) => s + Number(r.cost ?? 0), 0);
+      const totalGallons = assetRows.reduce((s, r) => s + Number(r.gallons), 0);
+      const totalCost    = assetRows.reduce((s, r) => s + Number(r.cost ?? 0), 0);
       const n = assetRows.length;
-      const mean = totalLiters / n;
-      const variance = assetRows.reduce((s, r) => s + Math.pow(Number(r.liters) - mean, 2), 0) / n;
+      const mean = totalGallons / n;
+      const variance = assetRows.reduce((s, r) => s + Math.pow(Number(r.gallons) - mean, 2), 0) / n;
       const std = Math.sqrt(variance);
 
-      // Eficiencia: el último odómetro - el primero, sobre los litros entre medio
+      // Eficiencia: el último odómetro - el primero, sobre los galones entre medio
       let efficiency: number | null = null;
       const odoRows = assetRows.filter((r) => r.odometer != null).sort((a, b) => String(a.date).localeCompare(String(b.date)));
       if (odoRows.length >= 2) {
         const odoStart = Number(odoRows[0].odometer);
         const odoEnd   = Number(odoRows[odoRows.length - 1].odometer);
         const km = odoEnd - odoStart;
-        if (km > 0 && totalLiters > 0) efficiency = km / totalLiters;
+        if (km > 0 && totalGallons > 0) efficiency = km / totalGallons;
       }
 
       // Tendencia: comparar 1ra mitad vs 2da mitad
       const half = Math.floor(n / 2);
-      const firstHalf  = half > 0 ? assetRows.slice(0, half).reduce((s, r) => s + Number(r.liters), 0) / half : 0;
-      const secondHalf = n - half > 0 ? assetRows.slice(half).reduce((s, r) => s + Number(r.liters), 0) / (n - half) : 0;
+      const firstHalf  = half > 0 ? assetRows.slice(0, half).reduce((s, r) => s + Number(r.gallons), 0) / half : 0;
+      const secondHalf = n - half > 0 ? assetRows.slice(half).reduce((s, r) => s + Number(r.gallons), 0) / (n - half) : 0;
       let trend: 'up' | 'down' | 'stable' = 'stable';
       if (firstHalf > 0) {
         const ratio = (secondHalf - firstHalf) / firstHalf;
@@ -415,7 +448,7 @@ router.get('/analytics/insights', requireModule('combustible'), requireAdmin, as
       let peakZ = 0;
       if (std > 0) {
         for (const r of assetRows) {
-          const z = Math.abs((Number(r.liters) - mean) / std);
+          const z = Math.abs((Number(r.gallons) - mean) / std);
           if (z > 2 && z > peakZ) {
             peakZ = z;
             peakRow = r;
@@ -427,11 +460,11 @@ router.get('/analytics/insights', requireModule('combustible'), requireAdmin, as
         assetId,
         plate:  assetRows[0]?.assetPlate ?? null,
         name:   assetRows[0]?.assetName ?? null,
-        totalLiters,
+        totalGallons,
         totalCost,
         records: n,
-        meanLiters: mean,
-        stdLiters: std,
+        meanGallons: mean,
+        stdGallons: std,
         efficiency,
         firstHalf,
         secondHalf,
@@ -440,20 +473,20 @@ router.get('/analytics/insights', requireModule('combustible'), requireAdmin, as
       });
     }
 
-    // 3) Top 5 / Bottom 5 por litros
-    const sorted = [...assetStats].sort((a, b) => b.totalLiters - a.totalLiters);
+    // 3) Top 5 / Bottom 5 por galones
+    const sorted = [...assetStats].sort((a, b) => b.totalGallons - a.totalGallons);
     const topConsumers    = sorted.slice(0, 5).map((s) => ({
       assetId: toId('asset', s.assetId),
       plate: s.plate, name: s.name,
-      totalLiters: Math.round(s.totalLiters),
-      totalCost: Math.round(s.totalCost),
+      totalGallons: Math.round(s.totalGallons * 100) / 100,
+      totalCost: Math.round(s.totalCost * 100) / 100,
       records: s.records,
     }));
     const bottomConsumers = sorted.slice(-5).reverse().filter((s) => s.records >= 2).map((s) => ({
       assetId: toId('asset', s.assetId),
       plate: s.plate, name: s.name,
-      totalLiters: Math.round(s.totalLiters),
-      totalCost: Math.round(s.totalCost),
+      totalGallons: Math.round(s.totalGallons * 100) / 100,
+      totalCost: Math.round(s.totalCost * 100) / 100,
       records: s.records,
     }));
 
@@ -475,14 +508,14 @@ router.get('/analytics/insights', requireModule('combustible'), requireAdmin, as
       .filter((s) => s.peakRow != null)
       .map((s) => {
         const r = s.peakRow!;
-        const z = (Number(r.liters) - s.meanLiters) / s.stdLiters;
+        const z = (Number(r.gallons) - s.meanGallons) / s.stdGallons;
         return {
           assetId: toId('asset', s.assetId),
           plate: s.plate, name: s.name,
           date: r.date,
-          liters: Math.round(Number(r.liters)),
-          cost: r.cost != null ? Math.round(Number(r.cost)) : null,
-          avgLiters: Math.round(s.meanLiters),
+          gallons: Math.round(Number(r.gallons) * 100) / 100,
+          cost: r.cost != null ? Math.round(Number(r.cost) * 100) / 100 : null,
+          avgGallons: Math.round(s.meanGallons * 100) / 100,
           zScore: Math.round(z * 100) / 100,
           severity: z > 3 ? 'extreme' : 'high',
         };
@@ -495,8 +528,8 @@ router.get('/analytics/insights', requireModule('combustible'), requireAdmin, as
       assetId: toId('asset', s.assetId),
       plate: s.plate, name: s.name,
       trend: s.trend,
-      firstHalfAvg: Math.round(s.firstHalf * 10) / 10,
-      secondHalfAvg: Math.round(s.secondHalf * 10) / 10,
+      firstHalfAvg: Math.round(s.firstHalf * 100) / 100,
+      secondHalfAvg: Math.round(s.secondHalf * 100) / 100,
       changePct: s.firstHalf > 0 ? Math.round(((s.secondHalf - s.firstHalf) / s.firstHalf) * 100) : 0,
     }));
 
@@ -507,7 +540,7 @@ router.get('/analytics/insights', requireModule('combustible'), requireAdmin, as
       const t = topConsumers[0];
       insights.push({
         kind: 'warning',
-        text: `${t.plate ?? t.name ?? 'Un vehículo'} es el mayor consumidor: ${t.totalLiters} L en el período.`,
+        text: `${t.plate ?? t.name ?? 'Un vehículo'} es el mayor consumidor: ${t.totalGallons} gal en el período.`,
         assetId: t.assetId,
       });
     }
@@ -515,7 +548,7 @@ router.get('/analytics/insights', requireModule('combustible'), requireAdmin, as
       const ratio = p.zScore;
       insights.push({
         kind: ratio > 3 ? 'negative' : 'warning',
-        text: `Pico en ${p.plate ?? p.name} el ${p.date}: ${p.liters} L (${ratio}× su media de ${p.avgLiters} L). Posible causa: ruta larga, carga extra o error de odómetro.`,
+        text: `Pico en ${p.plate ?? p.name} el ${p.date}: ${p.gallons} gal (${ratio}× su media de ${p.avgGallons} gal). Posible causa: ruta larga, carga extra o error de odómetro.`,
         assetId: p.assetId,
       });
     }
@@ -532,7 +565,7 @@ router.get('/analytics/insights', requireModule('combustible'), requireAdmin, as
       const b = bestEff[0];
       insights.push({
         kind: 'positive',
-        text: `${b.plate ?? b.name} tiene el mejor rendimiento: ${b.efficiency} km/L.`,
+        text: `${b.plate ?? b.name} tiene el mejor rendimiento: ${b.efficiency} km/gal.`,
         assetId: b.assetId,
       });
     }
@@ -540,7 +573,7 @@ router.get('/analytics/insights', requireModule('combustible'), requireAdmin, as
       const w = worstEff[0];
       insights.push({
         kind: 'warning',
-        text: `${w.plate ?? w.name} tiene el peor rendimiento: ${w.efficiency} km/L. Revisar presión de llantas, alineación o carga.`,
+        text: `${w.plate ?? w.name} tiene el peor rendimiento: ${w.efficiency} km/gal. Revisar presión de llantas, alineación o carga.`,
         assetId: w.assetId,
       });
     }

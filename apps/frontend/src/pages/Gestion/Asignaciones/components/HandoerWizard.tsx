@@ -35,15 +35,33 @@ type Props = {
   onComplete: (assignment: ApiAssignment) => void;
   createAssignment: (payload: { assetId: string; driverId: string; startDate: string }) => Promise<ApiAssignment>;
   updateHandover: (id: string, payload: HandoverPayload) => Promise<ApiAssignment>;
+  /** Modo edición: salta el step 0 (Confirmación). */
   editMode?: boolean;
+  /** Modo finalización: salta el step 0 + el step 2 (Conductor, heredado).
+   *  Llama a `finalizeAssignment` en vez de `updateHandover`. */
+  finalizeMode?: boolean;
   existingAssignmentId?: string;
   existingData?: ExistingHandoverData | null;
+  finalizeAssignment?: (id: string, endDate: string, handoverData?: Partial<HandoverPayload>) => Promise<ApiAssignment>;
 };
 
-const STEPS = [
+// Steps según modo. En finalizeMode saltamos el step 2 (Conductor)
+// porque los datos del conductor ya están en la asignación original.
+const STEPS_CREATE = [
   "Confirmación",
   "Datos del acta",
   "Conductor",
+  "Vehículo",
+  "Novedades",
+  "Accesorios",
+  "Fotos",
+  "Firma Logística",
+  "Firma Responsable",
+  "Vista previa",
+];
+const STEPS_FINALIZE = [
+  "Confirmación",
+  "Datos del acta",
   "Vehículo",
   "Novedades",
   "Accesorios",
@@ -120,11 +138,16 @@ export function HandoverWizard({
   createAssignment,
   updateHandover,
   editMode = false,
+  finalizeMode = false,
   existingAssignmentId,
   existingData,
+  finalizeAssignment,
 }: Props) {
 
-  const firstStep = editMode ? FIRST_STEP_EDIT : FIRST_STEP_CREATE;
+  // En finalizeMode: arranca en step 1 (Acta info, ya hay datos), saltando
+  // también el step del conductor. El array de steps es distinto.
+  const STEPS = finalizeMode ? STEPS_FINALIZE : STEPS_CREATE;
+  const firstStep = (editMode || finalizeMode) ? FIRST_STEP_EDIT : FIRST_STEP_CREATE;
 
   const [step, setStep]                       = useState(firstStep);
   const [saving, setSaving]                   = useState(false);
@@ -135,12 +158,23 @@ export function HandoverWizard({
 
   const {
     data, setField, uploading, error, setError,
-    uploadPhotos, uploadSignature, uploadPdf, reset,
-  } = useHandoverWizard(driver, asset, assignmentCount, existingData);
+    uploadPhotos, uploadSignature, uploadPdf, uploadOdometerPhoto, reset,
+  } = useHandoverWizard(driver, asset, assignmentCount, existingData, finalizeMode);
+
+  // Validación reactiva del step actual — declarada DESPUÉS de useHandoverWizard
+  // para que siempre tenga acceso al `data` más reciente.
+  const stepError = (() => {
+    switch (step) {
+      case 1: return validateStep1(data);
+      case 2: return validateStep2(data);
+      case 3: return validateStep3(data);
+      default: return null;
+    }
+  })();
 
   useEffect(() => {
     if (open) {
-      reset(existingData);
+      reset(existingData, finalizeMode);
       setStep(firstStep);
       setPdfBlob(null);
       setPdfPreviewUrl(null);
@@ -182,7 +216,10 @@ export function HandoverWizard({
         await uploadSignature("resp", data.signatureRespDataUrl);
       }
       if (step === 8) {
-        const blob = await generateActaPdf(data, data.vehiclePhotos);
+        const blob = await generateActaPdf(data, data.vehiclePhotos, {
+          mode: finalizeMode ? "finalizacion" : "alta",
+          initialData: finalizeMode ? existingData ?? null : null,
+        });
         setPdfBlob(blob);
         const url = URL.createObjectURL(blob);
         setPdfPreviewUrl(url);
@@ -214,7 +251,9 @@ export function HandoverWizard({
     let assignmentId: string | null = null;
 
     try {
-      if (editMode && existingAssignmentId) {
+      if (finalizeMode && existingAssignmentId) {
+        assignmentId = existingAssignmentId;
+      } else if (editMode && existingAssignmentId) {
         assignmentId = existingAssignmentId;
       } else {
         const today = new Date().toISOString().split("T")[0];
@@ -224,13 +263,20 @@ export function HandoverWizard({
 
       const pdfUrl = await uploadPdf(pdfBlob);
 
+      // Subir foto del odómetro al regreso si hay una nueva.
+      // Si el usuario ya tenía una URL persistida y no cambió el file, se
+      // respeta la URL existente.
+      const odometerUrl = data.returnOdometerPhoto
+        ? await uploadOdometerPhoto(data.returnOdometerPhoto)
+        : data.returnOdometerPhotoUrl ?? null;
+
       // Limpiar campos vacíos que podrían fallar validaciones estrictas del backend.
       // Los validators del backend aceptan "" → null gracias a .or(z.literal('').transform(() => null))
       // pero nos aseguramos de mandar null explícito en vez de "" para campos opcionales.
       const clean = (v: string | null | undefined) =>
         v === "" || v === undefined ? null : v;
 
-      const updated = await updateHandover(assignmentId, {
+      const handoverPayload: HandoverPayload = {
         actaNumber:       clean(data.actaNumber),
         actaDate:         clean(data.actaDate),
         actaTime:         clean(data.actaTime),
@@ -249,7 +295,23 @@ export function HandoverWizard({
         signatureRespUrl: clean(data.signatureRespUrl),
         vehiclePhotoUrls: data.vehiclePhotoUrls,
         handoverUrl:      pdfUrl,
-      });
+        // Campos específicos del acta de DEVOLUCIÓN (solo finalize).
+        // Se envían también al backend en el alta por compat, pero el backend
+        // los persiste solo en finalize porque las columnas asociadas son
+        // propias del estado de devolución.
+        returnOdometerPhotoUrl: odometerUrl,
+        multasText:            clean(data.multasText),
+      };
+
+      let updated: ApiAssignment;
+      if (finalizeMode && existingAssignmentId && finalizeAssignment) {
+        const today = new Date().toISOString().split("T")[0];
+        // El backend persiste el acta y marca status=Finalizada en una sola
+        // llamada. El acta de devolución reemplaza la inicial.
+        updated = await finalizeAssignment(existingAssignmentId, today, handoverPayload);
+      } else {
+        updated = await updateHandover(assignmentId, handoverPayload);
+      }
 
       setFinalAssignment(updated);
       setDone(true);
@@ -275,6 +337,59 @@ export function HandoverWizard({
     a.click();
   }
 
+  // ── Helpers locales para steps que se reutilizan en múltiples modos ──────────
+
+  function SignatureStep({
+    variant, data, onChange,
+  }: {
+    variant: "log" | "resp";
+    data: WizardData;
+    onChange: <K extends keyof WizardData>(k: K, v: WizardData[K]) => void;
+  }) {
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          {variant === "log"
+            ? <>Firma del <strong>Departamento Logístico</strong></>
+            : <>Firma del <strong>Responsable</strong> (conductor)</>}
+        </p>
+        <SignatureCanvas
+          existingDataUrl={variant === "log" ? data.signatureLogDataUrl : data.signatureRespDataUrl}
+          onSave={(url) => onChange(variant === "log" ? "signatureLogDataUrl" : "signatureRespDataUrl", url as never)}
+        />
+      </div>
+    );
+  }
+
+  function PreviewStep({
+    pdfPreviewUrl, mode,
+  }: {
+    pdfPreviewUrl: string | null;
+    mode: "edit" | "finalize";
+  }) {
+    return (
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          {mode === "finalize"
+            ? "Revisa el acta de devolución antes de confirmar. Puedes regresar para editar cualquier dato."
+            : "Revisa el acta antes de confirmar. Puedes regresar para editar cualquier dato."}
+        </p>
+        {pdfPreviewUrl ? (
+          <iframe
+            src={pdfPreviewUrl}
+            className="w-full rounded-lg border border-gray-200 dark:border-gray-700"
+            style={{ height: 360 }}
+            title="Preview acta"
+          />
+        ) : (
+          <div className="flex items-center justify-center h-40 rounded-lg bg-gray-50 dark:bg-gray-900">
+            <p className="text-sm text-gray-400">Generando preview…</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function renderStep() {
     if (done && finalAssignment) {
       return (
@@ -286,10 +401,16 @@ export function HandoverWizard({
           </div>
           <div className="text-center">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {editMode ? "¡Acta actualizada!" : "¡Acta generada!"}
+              {finalizeMode
+                ? "¡Asignación finalizada!"
+                : editMode
+                ? "¡Acta actualizada!"
+                : "¡Acta generada!"}
             </h3>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              {editMode
+              {finalizeMode
+                ? "El acta de devolución y la finalización se guardaron correctamente."
+                : editMode
                 ? "El acta ha sido actualizada correctamente."
                 : "La asignación y el acta han sido guardadas correctamente."}
             </p>
@@ -310,64 +431,40 @@ export function HandoverWizard({
     }
 
     switch (step) {
-      case 0: return <Step0Confirm data={data} />;
+      case 0: return <Step0Confirm data={data} mode={finalizeMode ? "finalize" : editMode ? "edit" : "create"} />;
       case 1: return <Step1ActaInfo data={data} onChange={setField} />;
-      case 2: return <Step2DriverData data={data} onChange={setField} />;
-      case 3: return <Step3VehicleData data={data} onChange={setField} />;
-      case 4: return <Step4Novedades data={data} onChange={setField} />;
-      case 5: return <Step5Accesorios data={data} onChange={setField} />;
-      case 6: return <Step6Photos data={data} onChange={setField} />;
+      case 2:
+        // En finalizeMode saltamos el step del conductor: vamos directo a vehículo.
+        if (finalizeMode) return <Step3VehicleData data={data} onChange={setField} mode="finalize" />;
+        return <Step2DriverData data={data} onChange={setField} />;
+      case 3:
+        if (finalizeMode) return <Step4Novedades data={data} onChange={setField} mode="finalizacion" initialData={existingData ?? null} />;
+        return <Step3VehicleData data={data} onChange={setField} />;
+      case 4:
+        if (finalizeMode) return <Step5Accesorios data={data} onChange={setField} />;
+        return <Step4Novedades data={data} onChange={setField} />;
+      case 5:
+        if (finalizeMode) return <Step6Photos data={data} onChange={setField} />;
+        return <Step5Accesorios data={data} onChange={setField} />;
+      case 6:
+        if (finalizeMode) return <SignatureStep variant="log" data={data} onChange={setField} />;
+        return <Step6Photos data={data} onChange={setField} />;
       case 7:
-        return (
-          <div className="flex flex-col gap-3">
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              Firma del <strong>Departamento Logístico</strong>
-            </p>
-            <SignatureCanvas
-              existingDataUrl={data.signatureLogDataUrl}
-              onSave={(url) => setField("signatureLogDataUrl", url)}
-            />
-          </div>
-        );
+        if (finalizeMode) return <SignatureStep variant="resp" data={data} onChange={setField} />;
+        return <SignatureStep variant="log" data={data} onChange={setField} />;
       case 8:
-        return (
-          <div className="flex flex-col gap-3">
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              Firma del <strong>Responsable</strong> (conductor)
-            </p>
-            <SignatureCanvas
-              existingDataUrl={data.signatureRespDataUrl}
-              onSave={(url) => setField("signatureRespDataUrl", url)}
-            />
-          </div>
-        );
+        if (finalizeMode) return <PreviewStep pdfPreviewUrl={pdfPreviewUrl} mode="finalize" />;
+        return <SignatureStep variant="resp" data={data} onChange={setField} />;
       case 9:
-        return (
-          <div className="flex flex-col gap-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              Revisa el acta antes de confirmar. Puedes regresar para editar cualquier dato.
-            </p>
-            {pdfPreviewUrl ? (
-              <iframe
-                src={pdfPreviewUrl}
-                className="w-full rounded-lg border border-gray-200 dark:border-gray-700"
-                style={{ height: 360 }}
-                title="Preview acta"
-              />
-            ) : (
-              <div className="flex items-center justify-center h-40 rounded-lg bg-gray-50 dark:bg-gray-900">
-                <p className="text-sm text-gray-400">Generando preview…</p>
-              </div>
-            )}
-          </div>
-        );
+        return <PreviewStep pdfPreviewUrl={pdfPreviewUrl} mode={finalizeMode ? "finalize" : "edit"} />;
       default: return null;
     }
   }
 
   const isLast    = step === STEPS.length - 1;
   const isBusy    = uploading || saving;
-  const canFinish = isLast && pdfPreviewUrl && !done;
+  const canFinish = isLast && pdfPreviewUrl && !done && !stepError;
+  const canNext   = !stepError && !isLast;
   const stepTitle = done ? "¡Listo!" : STEPS[step];
 
   return (
@@ -472,7 +569,7 @@ export function HandoverWizard({
               <button
                 type="button"
                 onClick={next}
-                disabled={isBusy}
+                disabled={isBusy || !canNext}
                 className="flex items-center gap-1.5 px-5 py-2 rounded-lg text-sm font-medium
                   bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
               >

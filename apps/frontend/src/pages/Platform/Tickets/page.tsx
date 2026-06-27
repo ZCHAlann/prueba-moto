@@ -17,6 +17,7 @@ import {
   type TicketPriority,
   type UpdateTicketInput,
 } from "@/hooks/usePlatformTickets";
+import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
 
 // ─── Badge helpers ─────────────────────────────────────────────────────────────
 
@@ -65,13 +66,7 @@ function PriorityBadge({ priority }: { priority: TicketPriority }) {
 }
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString("es-EC", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return fmtDateTimeEc(iso);
 }
 
 // ─── KPI Card ──────────────────────────────────────────────────────────────────
@@ -476,11 +471,7 @@ export default function PlatformTicketsPage() {
                     {ticket.assignedToName ?? "—"}
                   </td>
                   <td className="px-4 py-3 dark:text-slate-400 text-slate-500 text-xs whitespace-nowrap">
-                    {new Date(ticket.createdAt).toLocaleDateString("es-EC", {
-                      day: "2-digit",
-                      month: "short",
-                      year: "numeric",
-                    })}
+                    {fmtDateShortEc(ticket.createdAt)}
                   </td>
                 </motion.tr>
               ))}

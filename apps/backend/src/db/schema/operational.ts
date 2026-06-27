@@ -204,6 +204,9 @@ export const companyAssignments = pgTable('company_assignments', {
   status:           varchar('status', { length: 40 }).default('Activa'),
   notes:            text('notes'),
   handoverUrl:      text('handover_url'),
+  returnHandoverUrl: text('return_handover_url'),
+  returnOdometerPhotoUrl: text('return_odometer_photo_url'),
+  multasText:            text('multas_text'),
   actaNumber:       varchar('acta_number', { length: 40 }),
   actaDate:         date('acta_date'),
   actaTime:         varchar('acta_time', { length: 10 }),
@@ -331,6 +334,8 @@ export const companyMaintenanceRecords = pgTable('company_maintenance_records', 
   totalCost:       numeric('total_cost', { precision: 12, scale: 2 }).notNull().default('0'),
   // v3.1: mano de obra separada de los repuestos
   laborCost:       numeric('labor_cost', { precision: 12, scale: 2 }).notNull().default('0'),
+  // IVA: porcentaje aplicado (default 15 para Ecuador, configurable)
+  ivaPercent:      numeric('iva_percent', { precision: 5, scale: 2 }).notNull().default('15'),
   // v3.1: campos específicos de Lavada (cuando type='Lavada')
   carwashLocation: varchar('carwash_location', { length: 200 }),
   carwashProvider: varchar('carwash_provider', { length: 200 }),
@@ -459,6 +464,9 @@ export const companyFuelEntries = pgTable('company_fuel_entries', {
     .references(() => companyAssets.id, { onDelete: 'cascade' }),
   driverId: integer('driver_id').references(() => companyDrivers.id, { onDelete: 'set null' }),
   date: date('date').notNull(),
+  /** Volumen en galones US. precision 12, scale 4 para precisión suficiente. */
+  gallons: numeric('gallons', { precision: 12, scale: 4 }).notNull(),
+  /** Litros — mantenido por backwards compat y migraciones. precision 10, scale 2. */
   liters: numeric('liters', { precision: 10, scale: 2 }).notNull(),
   cost: numeric('cost', { precision: 10, scale: 2 }),
   odometer: numeric('odometer', { precision: 12, scale: 2 }),

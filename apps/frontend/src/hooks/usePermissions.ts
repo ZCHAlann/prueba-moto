@@ -3,6 +3,30 @@ import type { ActionKey, PermissionMap } from "../lib/module-tree";
 
 const ADMIN_ROLES = ["owner_empresa", "admin_empresa", "superadmin"];
 
+/**
+ * Compat shim (jun 2026): módulos que vivían como submódulo de otro y se
+ * migraron a top-level. Cuando se consulta el path nuevo y no se encuentra,
+ * se intenta el path viejo como fallback.
+ *
+ *  - `lienzo.lienzo.*` → `reportes.lienzo.*`
+ */
+const LEGACY_FALLBACK: Record<string, Record<string, string>> = {
+  lienzo: { lienzo: "reportes.lienzo" },
+};
+
+function resolveLookup(
+  module: string,
+  submodule: string,
+): Array<{ module: string; submodule: string }> {
+  const primary = [{ module, submodule }];
+  const fallback = LEGACY_FALLBACK[module]?.[submodule];
+  if (fallback) {
+    const [m2, s2] = fallback.split(".");
+    if (m2 && s2) primary.push({ module: m2, submodule: s2 });
+  }
+  return primary;
+}
+
 export function usePermissions() {
   const { session } = useAuth();
 
@@ -18,8 +42,11 @@ export function usePermissions() {
     }
 
     const perms = session.modulePermissions as unknown as PermissionMap;
-    const subPerms = perms[module]?.[submodule] ?? [];
-    return subPerms.includes(action);
+    for (const { module: m, submodule: s } of resolveLookup(module, submodule)) {
+      const subPerms = perms[m]?.[s] ?? [];
+      if (subPerms.includes(action)) return true;
+    }
+    return false;
   }
 
   function canSeeModule(module: string): boolean {
@@ -48,7 +75,11 @@ export function usePermissions() {
     }
 
     const perms = session.modulePermissions as unknown as PermissionMap;
-    return (perms[module]?.[submodule] ?? []) as ActionKey[];
+    for (const { module: m, submodule: s } of resolveLookup(module, submodule)) {
+      const acts = perms[m]?.[s];
+      if (Array.isArray(acts) && acts.length > 0) return acts as ActionKey[];
+    }
+    return [];
   }
 
   return { can, canSeeModule, actionsFor };

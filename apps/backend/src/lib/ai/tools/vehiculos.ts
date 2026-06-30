@@ -4,17 +4,17 @@
 // Lista los vehículos de la empresa con filtros opcionales.
 
 import { z } from 'zod';
-import { and, eq, ilike } from 'drizzle-orm';
+import { and, eq, ilike, inArray } from 'drizzle-orm';
 import { db } from '../../../db/client';
 import { companyAssets } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
-import { tolerantString } from '../schema-helpers';
+import { tolerantString, enumOrList } from '../schema-helpers';
 
 // Nota: el campo `limit` se removió del schema público porque el LLM
 // (llama-3.1-8b-instant) tiende a generar `limit: 0` que Groq rechaza
 // con 400. El backend usa siempre 500 (suficiente para listas de flota).
 const argsSchema = z.object({
-  estado:  z.enum(['Disponible', 'En uso', 'Fuera de servicio', 'En mantenimiento']).optional(),
+  estado:  enumOrList(['Disponible', 'En uso', 'Fuera de servicio', 'En mantenimiento']).optional(),
   placa:   tolerantString().optional(),
   marca:   tolerantString().optional(),
 });
@@ -32,7 +32,11 @@ export const vehiculosTool: ToolDefinition<Args> = {
   async execute(args, ctx): Promise<ToolResult> {
     const where = [eq(companyAssets.companyId, ctx.empresaId)];
 
-    if (args.estado) where.push(eq(companyAssets.status, args.estado));
+    if (args.estado) {
+      Array.isArray(args.estado)
+        ? where.push(inArray(companyAssets.status, args.estado))
+        : where.push(eq(companyAssets.status, args.estado));
+    }
     if (args.placa) where.push(ilike(companyAssets.plate, `%${args.placa}%`));
     if (args.marca) where.push(ilike(companyAssets.brand, `%${args.marca}%`));
 

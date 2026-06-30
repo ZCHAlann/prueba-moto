@@ -22,6 +22,7 @@ import { FileCheck, Paperclip } from "lucide-react";
 import { useAuth } from "../../../context/AuthContext";
 import { useDriverReports, type ApiDriverReport, type DriverReportInvoice } from "../../../hooks/useDriverReports";
 import { fmtDateShortEc, fmtDateTimeEc, fmtTimeEc } from "@/lib/datetime";
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../../../lib/mediaCompress";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -889,8 +890,9 @@ function ReportModal({ driver, onClose }: { driver: ApiDriver; onClose: () => vo
   const uploadInvoiceFile = async (index: number, file: File) => {
     setInvoices(prev => prev.map((inv, i) => i === index ? { ...inv, file, uploading: true } : inv));
     try {
+      const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
       const form = new FormData();
-      form.append("files", file);
+      form.append("files", toUpload);
       const res  = await fetch(`/api/upload/invoice-files?companyId=${companyId}`, { method: "POST", body: form });
       if (!res.ok) throw new Error();
       const { urls } = await res.json();

@@ -21,6 +21,8 @@ import AcMaintenancesPage from "./pages/AiresAcondicionados/Mantenimientos/page"
 import { ChecklistPage } from "./pages/Checklist/page";
 import { AlertsPage } from "./pages/Alertas/page";
 import { ReportsPage } from "./pages/Reports/page";
+import { CanvasBoardsListPage } from "./pages/Reports/CanvasBoardsListPage";
+import { CanvasBoardEditorPage } from "./pages/Reports/CanvasBoardEditorPage";
 import { FuelPage } from "./pages/Combustible/page";
 import { PeajesPage } from "./pages/Peajes/page";
 import { ProfilePage } from "./pages/Profile/page";
@@ -177,6 +179,8 @@ export default function App() {
           <Route path="/checklist" element={<ChecklistPage />} />
           <Route path="/alertas" element={<AlertsPage />} />
           <Route path="/reportes" element={<ReportsPage />} />
+          <Route path="/lienzo" element={<CanvasBoardsListPage />} />
+          <Route path="/lienzo/:boardId" element={<CanvasBoardEditorPage />} />
           <Route path="/combustible" element={<FuelPage />} />
           <Route path="/peajes" element={<PeajesPage />} />
           <Route path="/perfil" element={<ProfilePage />} />

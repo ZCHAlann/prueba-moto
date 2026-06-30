@@ -1,4 +1,4 @@
-export type AppAccent = "amber" | "cyan" | "emerald" | "lime" | "orange" | "rose" | "sky" | "teal";
+export type AppAccent = "amber" | "cyan" | "emerald" | "lime" | "orange" | "rose" | "sky" | "teal" | "violet";
 
 export type AppRoute = string;
 
@@ -233,6 +233,21 @@ export const navigationSections: NavigationSection[] = [
     ],
   },
   {
+    label: "Lienzo",
+    icon: "LZ",
+    description: "Dashboards personalizables",
+    accent: "violet",
+    items: [
+      {
+        label: "Lienzo de presentación",
+        href: "/lienzo",
+        icon: "LZ",
+        description: "Armá dashboards con KPIs, gráficos y tablas comparativas",
+        accent: "violet",
+      }
+    ],
+  },
+  {
     label: "Combustible",
     icon: "CB",
     description: "Control general de abastecimiento",
@@ -410,6 +425,16 @@ export const accentStyles: Record<
     dot: "bg-teal-400",
     focus: "focus:border-teal-400 focus:ring-teal-200",
     section: "border-teal-400/20 bg-teal-400/10 text-teal-100",
+  },
+  violet: {
+    activeNav: "bg-violet-300 text-zinc-950 shadow-[0_18px_40px_-22px_rgba(167,139,250,0.95)]",
+    icon: "bg-violet-400/15 text-violet-200 ring-1 ring-violet-300/20",
+    pill: "bg-violet-500/15 text-violet-800 ring-1 ring-violet-300/70",
+    header: "border-violet-200 bg-gradient-to-br from-violet-400/14 via-white to-fuchsia-400/10",
+    soft: "bg-violet-500/10 text-violet-700 ring-1 ring-violet-200",
+    dot: "bg-violet-400",
+    focus: "focus:border-violet-400 focus:ring-violet-200",
+    section: "border-violet-400/20 bg-violet-400/10 text-violet-100",
   },
 };
 

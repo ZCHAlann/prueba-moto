@@ -7,7 +7,7 @@
 //  - WebSocket en tiempo real (escucha { type: 'notification' })
 
 import { useEffect, useState } from "react";
-import { Bell, Check, CheckCheck, X } from "lucide-react";
+import { Bell, Check, CheckCheck, Clock, X } from "lucide-react";
 import { useNotifications, useUnreadCount, useMarkRead, useMarkAllRead } from "../../../hooks/useNotifications";
 import { useAuth } from "../../../context/AuthContext";
 import { toast } from "sonner";
@@ -19,15 +19,31 @@ interface Props {
   isAdmin?: boolean;
 }
 
-const KIND_LABEL: Record<string, { label: string; emoji: string }> = {
-  maintenance_due:          { label: 'Mantenimiento vencido',  emoji: '⏰' },
-  maintenance_scheduled:   { label: 'Mantenimiento reagendado', emoji: '🔁' },
-  maintenance_completed:   { label: 'Mantenimiento completado', emoji: '✅' },
-  maintenance_overshoot_km:{ label: 'Mantenimiento por km',   emoji: '🛣️' },
-  workshop_assigned:       { label: 'Asignado a taller',      emoji: '🔧' },
-  supplier_invoice:        { label: 'Compra a proveedor',     emoji: '🧾' },
-  system:                  { label: 'Sistema',                emoji: '⚙️' },
+// Meta por kind: ícono (lucide-react) + color de acento + label legible.
+// `color` es un nombre de paleta de Tailwind (rose / amber / emerald / blue / gray).
+const KIND_META: Record<string, { icon: React.ElementType; color: string; label: string }> = {
+  maintenance_due:          { icon: Clock, color: 'rose',  label: 'Mantenimiento atrasado' },
+  maintenance_scheduled:    { icon: Bell,  color: 'amber', label: 'Mantenimiento reagendado' },
+  maintenance_completed:    { icon: Check, color: 'emerald', label: 'Mantenimiento completado' },
+  maintenance_overshoot_km: { icon: Bell,  color: 'amber', label: 'Mantenimiento por km' },
+  workshop_assigned:        { icon: Bell,  color: 'blue',  label: 'Asignado a taller' },
+  supplier_invoice:         { icon: Bell,  color: 'amber', label: 'Compra a proveedor' },
+  system:                   { icon: Bell,  color: 'gray',  label: 'Sistema' },
 };
+
+const COLOR_CLASSES: Record<string, { fg: string; bg: string }> = {
+  rose:    { fg: 'text-rose-500',                       bg: 'bg-rose-50 dark:bg-rose-500/10' },
+  amber:   { fg: 'text-amber-500',                      bg: 'bg-amber-50 dark:bg-amber-500/10' },
+  emerald: { fg: 'text-emerald-500',                    bg: 'bg-emerald-50 dark:bg-emerald-500/10' },
+  blue:    { fg: 'text-blue-500',                       bg: 'bg-blue-50 dark:bg-blue-500/10' },
+  gray:    { fg: 'text-gray-500 dark:text-gray-400',    bg: 'bg-gray-100 dark:bg-white/[0.06]' },
+};
+
+function kindAccent(kind?: string) {
+  const meta = kind ? KIND_META[kind] : undefined;
+  const color = meta?.color ?? 'gray';
+  return COLOR_CLASSES[color] ?? COLOR_CLASSES.gray;
+}
 
 function relTime(iso: string): string {
   const d = new Date(iso);
@@ -67,7 +83,7 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
             // Refetch
             refetch();
             // Toast
-            const label = KIND_LABEL[msg.data?.kind]?.label ?? 'Notificación';
+            const label = KIND_META[msg.data?.kind]?.label ?? 'Notificación';
             toast(`${label}: ${msg.data?.title ?? ''}`, {
               description: msg.data?.body,
               duration: 5000,
@@ -136,9 +152,19 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
                   onClick={() => { if (!n.readAt) markRead.mutate(n.id); }}
                   className={`w-full text-left px-4 py-3 border-b border-gray-100 dark:border-white/[0.04] hover:bg-gray-50 dark:hover:bg-white/[0.04] transition flex gap-3 ${!n.readAt ? 'bg-blue-50/40 dark:bg-blue-500/5' : ''}`}
                 >
-                  <div className="text-xl leading-none mt-0.5">
-                    {KIND_LABEL[n.kind]?.emoji ?? '🔔'}
-                  </div>
+                  {(() => {
+                    const meta = KIND_META[n.kind];
+                    if (!meta) {
+                      return <div className="text-xl leading-none mt-0.5">🔔</div>;
+                    }
+                    const Icon = meta.icon;
+                    const accent = kindAccent(n.kind);
+                    return (
+                      <div className={`h-7 w-7 shrink-0 rounded-full grid place-items-center ${accent.bg}`}>
+                        <Icon size={14} className={accent.fg} />
+                      </div>
+                    );
+                  })()}
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
                       {n.title}

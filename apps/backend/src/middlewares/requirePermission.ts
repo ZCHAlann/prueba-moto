@@ -4,6 +4,32 @@ import { ForbiddenError } from '../lib/errors';
 const BYPASS_ROLES = ['superadmin', 'owner_empresa', 'admin_empresa'] as const;
 
 /**
+ * Compat shim: módulos que vivían como submódulo de otro y se migraron a
+ * top-level. El shim consulta primero el path nuevo y, si no encuentra
+ * la acción, intenta el path viejo.
+ *
+ *  - `lienzo.lienzo.*`  → fallback a `reportes.lienzo.*`  (jun 2026)
+ *
+ * Si en el futuro se migra otro módulo, agregar acá.
+ */
+const LEGACY_FALLBACK: Record<string, Record<string, string>> = {
+  lienzo: { lienzo: "reportes.lienzo" },
+};
+
+function resolveModuleSub(
+  module: string,
+  submodule: string,
+): Array<{ module: string; submodule: string }> {
+  const primary = [{ module, submodule }];
+  const fallback = LEGACY_FALLBACK[module]?.[submodule];
+  if (fallback) {
+    const [m2, s2] = fallback.split(".");
+    if (m2 && s2) primary.push({ module: m2, submodule: s2 });
+  }
+  return primary;
+}
+
+/**
  * Middleware granular de permisos por submódulo.
  *
  * Uso: requirePermission('gestion', 'flotas', 'eliminar')
@@ -28,15 +54,15 @@ export const requirePermission = (
   }
 
   const perms = (user.modulePermissions as unknown as Record<string, Record<string, string[]>>) ?? {};
-  const actions = perms[module]?.[submodule] ?? [];
 
-  if (!actions.includes(action)) {
-    throw new ForbiddenError(
-      `Sin permiso para '${action}' en '${module}/${submodule}'`,
-    );
+  for (const { module: m, submodule: s } of resolveModuleSub(module, submodule)) {
+    const actions = perms[m]?.[s] ?? [];
+    if (actions.includes(action)) return next();
   }
 
-  next();
+  throw new ForbiddenError(
+    `Sin permiso para '${action}' en '${module}/${submodule}'`,
+  );
 };
 
 /**
@@ -64,8 +90,14 @@ export const requirePermissionAny = (
   }
 
   const perms = (user.modulePermissions as unknown as Record<string, Record<string, string[]>>) ?? {};
-  for (const { module, submodule } of entries) {
-    const actions = perms[module]?.[submodule] ?? [];
+
+  // Expandimos cada entry con su fallback antes de iterar.
+  const expanded: Array<{ module: string; submodule: string }> = [];
+  for (const e of entries) {
+    for (const r of resolveModuleSub(e.module, e.submodule)) expanded.push(r);
+  }
+  for (const { module: m, submodule: s } of expanded) {
+    const actions = perms[m]?.[s] ?? [];
     if (actions.includes(action)) return next();
   }
 

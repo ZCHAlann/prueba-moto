@@ -1,15 +1,35 @@
 // src/hooks/useUploadQueue.ts
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
 
 type UploadState = "idle" | "uploading" | "done" | "error";
 
 type QueueEntry = {
+  // Tarea pendiente de ejecutar (la levanta el pump cuando hay cupo).
+  task: () => Promise<string>;
+  // Promise externa: la que consume `resolveAll`. Se resuelve cuando
+  // `task()` termina OK, o se rechaza si falla.
   promise: Promise<string>;
+  // URL resuelta (solo presente cuando state === "done")
   url: string | null;
+  // Estado actual
+  state: UploadState;
+  // Resolver/rejecter externos (los expone `enqueue` para que el caller
+  // pueda hacer `await enqueue(...).then(...)` y enterarse del resultado).
+  resolveOuter!: (url: string) => void;
+  rejectOuter!: (err: unknown) => void;
 };
 
 // Tamaño de cada chunk para videos: 2 MB
 const VIDEO_CHUNK_SIZE = 2 * 1024 * 1024;
+
+/**
+ * Concurrencia máxima de subidas simultáneas.
+ * Antes era 1 (secuencial); ahora subimos 3 archivos a la vez.
+ * Esto aprovecha mejor el ancho de banda del conductor (4G/Wi-Fi) y
+ * reduce el tiempo total del wizard cuando hay 10 fotos de evidencia.
+ */
+const MAX_CONCURRENT = 3;
 
 /** Log helper con prefijo para identificar origen en consola. */
 const log = (tag: string, ...args: unknown[]) =>
@@ -43,11 +63,6 @@ function safeUUID(): string {
 /**
  * Sube un video en chunks de 2 MB al endpoint de upload chunked.
  * El servidor ensambla los chunks y devuelve la URL final.
- *
- * Esto permite:
- * - Videos de 1-3 min sin timeout
- * - Reintentar chunks individuales si falla la red
- * - Progreso real de subida
  */
 async function uploadVideoChunked(
   file: File,
@@ -107,7 +122,13 @@ async function uploadVideoChunked(
 }
 
 /**
- * Sube fotos (o videos pequeños) en una sola request, como antes.
+ * Sube fotos (o videos pequeños) en una sola request.
+ *
+ * `compressIfImage` se aplica como "defense in depth" — el caller
+ * (SolicitarSalidaWizard.handleFile) ya comprime con
+ * `compressIfImage(captured, COMPRESS_OPTS_EVIDENCE)` antes de encolar,
+ * pero si en el futuro otro caller invoca esta función sin comprimir,
+ * nos aseguramos de que las imágenes igual se reduzcan antes de subir.
  */
 async function uploadSingle(
   file: File,
@@ -120,14 +141,18 @@ async function uploadSingle(
     isVideo, companyId,
   });
 
+  // Comprimir si es imagen. Videos (isVideo=true) se suben tal cual —
+  // su compresión se hace en otro lado (compressVideo / ffmpeg.wasm).
+  const toUpload = isVideo ? file : await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
+
   const form = new FormData();
-  form.append(isVideo ? "video" : "photos", file);
+  form.append(isVideo ? "video" : "photos", toUpload);
 
   const endpoint = isVideo
     ? `/api/upload/exit-auth-video?companyId=${companyId}`
     : `/api/upload/exit-auth-photos?companyId=${companyId}`;
 
-  log("single-send", { endpoint, bodySizeMB: +(file.size / 1024 / 1024).toFixed(2) });
+  log("single-send", { endpoint, bodySizeMB: +(toUpload.size / 1024 / 1024).toFixed(2) });
 
   const res = await fetch(endpoint, {
     method: "POST",
@@ -149,66 +174,169 @@ async function uploadSingle(
   return url;
 }
 
+// ─── UploadPool: pool concurrente con tope MAX_CONCURRENT ──────────────────────
+//
+// Diseño:
+//
+//   enqueue(stepId, file, isVideo)
+//     │
+//     ▼
+//   Crea una QueueEntry con state="uploading" y la agrega a `queue` + `pendingOrder`.
+//   Devuelve una promesa externa (entry.promise) que se resolverá cuando la
+//   tarea efectivamente termine.
+//
+//   pump()
+//     ▲
+//     │  loop: mientras haya cupo (inFlight < MAX_CONCURRENT) y pendientes en
+//     │  `pendingOrder`, saca el primero y corre su `entry.task()`.
+//     │
+//   Cuando una tarea termina (ok o error), decrementa inFlight y vuelve a
+//   llamar a pump() para arrancar la siguiente.
+//
+// Esto garantiza que SOLO haya MAX_CONCURRENT fetches en vuelo a la vez,
+// sin importar cuántas veces llame `enqueue()`. Antes era secuencial (1).
+//
+// Stats derivados (exposed via `stats`):
+//   { uploading, done, error, total }
+
+export type UploadStats = {
+  uploading: number;
+  done: number;
+  error: number;
+  total: number;
+};
+
 export function useUploadQueue(companyId: string | number) {
   const queue = useRef<Map<string, QueueEntry>>(new Map());
+  // Cola FIFO de stepIds pendientes (los que aún no arrancaron)
+  const pendingOrder = useRef<string[]>([]);
+  // Cantidad de uploads en vuelo (cuenta independiente de la cola)
+  const inFlight = useRef(0);
+  // Trigger para re-render cuando cambian los stats
+  const [tick, setTick] = useState(0);
   const [states, setStates] = useState<Record<string, UploadState>>({});
+
+  const bump = useCallback(() => setTick((t) => t + 1), []);
+
+  /**
+   * Avanza el pool: arranca hasta MAX_CONCURRENT - inFlight nuevas tareas
+   * desde la cola FIFO `pendingOrder`.
+   *
+   * Se llama: al encolar (para arrancar la primera tanda), y cada vez que
+   * una tarea termina (para arrancar la siguiente).
+   */
+  const pump = useCallback(() => {
+    while (inFlight.current < MAX_CONCURRENT && pendingOrder.current.length > 0) {
+      const stepId = pendingOrder.current.shift()!;
+      const entry = queue.current.get(stepId);
+      if (!entry) continue; // fue removida antes de arrancar
+
+      inFlight.current++;
+
+      // Corremos la tarea. Ya está marcada como "uploading" desde enqueue()
+      // para feedback inmediato de UI.
+      entry.task()
+        .then((url) => {
+          entry.url = url;
+          entry.state = "done";
+          setStates((s) => ({ ...s, [stepId]: "done" }));
+          entry.resolveOuter(url);
+        })
+        .catch((err) => {
+          entry.state = "error";
+          setStates((s) => ({ ...s, [stepId]: "error" }));
+          entry.rejectOuter(err);
+        })
+        .finally(() => {
+          inFlight.current--;
+          bump();
+          pump();
+        });
+    }
+  }, [bump]);
 
   const enqueue = useCallback(
     (stepId: string, file: File, isVideo: boolean): Promise<string> => {
-      // Si ya hay un upload en vuelo para este step, reemplazarlo
-      queue.current.delete(stepId);
+      // Si ya hay un upload en vuelo para este step, reemplazarlo.
+      // NOTA: la outerPromise anterior queda "huérfana" (nadie la await-ea)
+      // porque el caller que hizo enqueue() antes va a usar la NUEVA promise
+      // que retornamos ahora. Eso es correcto — el caller debe estar
+      // sincronizado con la última entry.
+      const existing = queue.current.get(stepId);
+      if (existing) {
+        log("enqueue-replace", { stepId, prevState: existing.state });
+        // Si estaba pendiente (aún no arrancaba), la sacamos de pendingOrder
+        const idx = pendingOrder.current.indexOf(stepId);
+        if (idx >= 0) pendingOrder.current.splice(idx, 1);
+        queue.current.delete(stepId);
+        // Rechazamos la outerPromise anterior para no dejar promesas colgadas
+        try { existing.rejectOuter(new Error("Reemplazado por nuevo upload")); } catch { /* noop */ }
+      }
 
       log("enqueue", {
         stepId, name: file.name, type: file.type || "(vacío)",
         sizeMB: +(file.size / 1024 / 1024).toFixed(2), isVideo,
       });
 
-      const promise = (async () => {
-        setStates((s) => ({ ...s, [stepId]: "uploading" }));
-        try {
-          let url: string;
+      // Creamos la outerPromise que el caller podrá await-ear.
+      let resolveOuter!: (url: string) => void;
+      let rejectOuter!: (err: unknown) => void;
+      const outerPromise = new Promise<string>((res, rej) => {
+        resolveOuter = res;
+        rejectOuter = rej;
+      });
 
-          if (isVideo && file.size > VIDEO_CHUNK_SIZE) {
-            // Video grande → chunked upload
-            log("enqueue-routing", { stepId, route: "chunked", sizeMB: +(file.size / 1024 / 1024).toFixed(2) });
-            url = await uploadVideoChunked(file, companyId);
-          } else {
-            // Foto o video pequeño → upload simple como antes
-            log("enqueue-routing", { stepId, route: "single", sizeMB: +(file.size / 1024 / 1024).toFixed(2) });
-            url = await uploadSingle(file, companyId, isVideo);
-          }
-
-          // Guardar URL resuelta en la entry
-          const entry = queue.current.get(stepId);
-          if (entry) entry.url = url;
-
-          setStates((s) => ({ ...s, [stepId]: "done" }));
-          return url;
-        } catch (err: any) {
-          // Logueamos TODO lo posible para diagnosticar:
-          //  - mensaje de la excepción
-          //  - stack
-          //  - info extra de fetch (si es AbortError, TypeError=network fail, etc.)
-          log("enqueue-error", {
-            stepId,
-            name: err instanceof Error ? err.name : typeof err,
-            msg:  err instanceof Error ? err.message : String(err),
-            stack: err instanceof Error ? err.stack?.slice(0, 500) : null,
-            type:  file.type || "(vacío)",
-            sizeMB: +(file.size / 1024 / 1024).toFixed(2),
-            isVideo,
-          });
-          queue.current.delete(stepId);
-          setStates((s) => ({ ...s, [stepId]: "error" }));
-          throw err;
+      // La tarea que ejecutará el pump cuando haya cupo.
+      const task = async (): Promise<string> => {
+        if (isVideo && file.size > VIDEO_CHUNK_SIZE) {
+          log("enqueue-routing", { stepId, route: "chunked", sizeMB: +(file.size / 1024 / 1024).toFixed(2) });
+          return uploadVideoChunked(file, companyId);
         }
-      })();
+        log("enqueue-routing", { stepId, route: "single", sizeMB: +(file.size / 1024 / 1024).toFixed(2) });
+        return uploadSingle(file, companyId, isVideo);
+      };
 
-      queue.current.set(stepId, { promise, url: null });
-      return promise;
+      const entry: QueueEntry = {
+        task,
+        promise: outerPromise,
+        url: null,
+        state: "uploading",
+        resolveOuter,
+        rejectOuter,
+      };
+      queue.current.set(stepId, entry);
+      pendingOrder.current.push(stepId);
+
+      // Feedback inmediato a la UI: "Subiendo..." desde el primer frame.
+      setStates((s) => ({ ...s, [stepId]: "uploading" }));
+      bump();
+
+      // Tratamos de arrancar la tarea inmediatamente (el pump respeta el cupo)
+      pump();
+
+      return outerPromise;
     },
-    [companyId],
+    [companyId, bump, pump],
   );
+
+  // Re-derivamos stats cuando cambia tick (las mutaciones a queue.current no
+  // causan re-render por sí solas, por eso necesitamos el bump manual).
+  // Como stats se calcula como un IIFE dentro del return, depende de `tick`
+  // y `states` para que React lo reevalúe en cada render.
+  useEffect(() => { /* noop — solo para registrar dependencia de tick */ }, [tick]);
+
+  const stats: UploadStats = (() => {
+    void tick; void states; // dependencias
+    let uploading = 0;
+    let done = 0;
+    let error = 0;
+    queue.current.forEach((e) => {
+      if (e.state === "uploading") uploading++;
+      else if (e.state === "done") done++;
+      else if (e.state === "error") error++;
+    });
+    return { uploading, done, error, total: queue.current.size };
+  })();
 
   // Espera todos los uploads pendientes y devuelve las URLs resueltas
   const resolveAll = useCallback(
@@ -234,9 +362,23 @@ export function useUploadQueue(companyId: string | number) {
     states[stepId] ?? "idle";
 
   const reset = useCallback(() => {
+    // Rechazamos todas las outerPromises pendientes para que awaiters no queden colgados
+    queue.current.forEach((e) => {
+      try { e.rejectOuter(new Error("Reset")); } catch { /* noop */ }
+    });
     queue.current.clear();
+    pendingOrder.current = [];
+    inFlight.current = 0;
     setStates({});
-  }, []);
+    bump();
+  }, [bump]);
 
-  return { enqueue, resolveAll, getState, reset };
+  return {
+    enqueue,
+    resolveAll,
+    getState,
+    reset,
+    stats,
+    MAX_CONCURRENT,
+  };
 }

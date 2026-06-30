@@ -34,6 +34,7 @@ import {
   useCarwashPhotos,
   useAddCarwashPhotos,
   uploadMaintenanceAttachment,
+  uploadPartPhoto,
   type Maintenance,
   type MaintenanceItemInput,
   type CarwashExtraInput,
@@ -57,45 +58,6 @@ function fmtDateTime(iso?: string | null) {
 function fmtMoney(n: number | string | null | undefined) {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(v);
-}
-
-// ─── Upload de foto de repuesto (quick-add desde el drawer) ────────────────
-
-const PART_ALLOWED_TYPES = new Set([
-  "image/jpeg", "image/png", "image/webp", "image/gif",
-  "image/heic", "image/heif", "application/pdf",
-]);
-const PART_MAX_SIZE_BYTES = 10 * 1024 * 1024;
-
-async function uploadPartPhoto(file: File, companyId?: string | number): Promise<string> {
-  if (!PART_ALLOWED_TYPES.has(file.type)) {
-    throw new Error(`Tipo de archivo no permitido: ${file.type || "(vacío)"}. Use JPG, PNG, WebP, HEIC o PDF.`);
-  }
-  if (file.size > PART_MAX_SIZE_BYTES) {
-    throw new Error("El archivo supera el tamaño máximo permitido (10 MB).");
-  }
-  if (!companyId) {
-    throw new Error("Sesión sin empresa: no se puede subir la foto.");
-  }
-
-  const fd = new FormData();
-  fd.append("photo", file);
-  const res = await fetch(`/api/upload/part-photos?companyId=${companyId}`, {
-    method: "POST",
-    body: fd,
-    credentials: "include",
-  });
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try {
-      const j = await res.clone().json();
-      if (j?.error) msg = j.error;
-    } catch { /* ignore */ }
-    throw new Error(`Upload part-photo: ${msg}`);
-  }
-  const json = await res.json();
-  if (!json.url) throw new Error("Upload part-photo: respuesta sin URL");
-  return json.url as string;
 }
 
 // Color determinístico por usuario (basado en hash del id).
@@ -126,6 +88,8 @@ const KIND_META: Record<string, { label: string; dot: string; ring: string; tone
   note_added:           { label: "Nota agregada",               dot: "bg-slate-500",   ring: "ring-slate-300",    tone: "text-slate-700 dark:text-slate-200" },
   photo_uploaded:       { label: "Foto subida",                 dot: "bg-fuchsia-500", ring: "ring-fuchsia-300",  tone: "text-fuchsia-700 dark:text-fuchsia-200" },
   cancelled:            { label: "Reprogramado",                dot: "bg-amber-500",   ring: "ring-amber-300",    tone: "text-amber-700 dark:text-amber-200" },
+  reauthorized:         { label: "Reautorizado",                dot: "bg-orange-500",  ring: "ring-orange-300",   tone: "text-orange-700 dark:text-orange-200" },
+  overdue:              { label: "Marcado como atrasado",       dot: "bg-rose-500",    ring: "ring-rose-300",     tone: "text-rose-700 dark:text-rose-200" },
   correction_requested: { label: "Marcado para corrección",     dot: "bg-rose-500",    ring: "ring-rose-300",     tone: "text-rose-700 dark:text-rose-200" },
   finalized:            { label: "Finalizado",                  dot: "bg-emerald-500", ring: "ring-emerald-300",  tone: "text-emerald-700 dark:text-emerald-200" },
   viewed:               { label: "Visualizado",                 dot: "bg-gray-400",    ring: "ring-gray-300",     tone: "text-gray-500 dark:text-gray-400" },

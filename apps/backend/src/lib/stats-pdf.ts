@@ -4,18 +4,23 @@
 //
 // Contenido del PDF (una página por sección):
 //   1. Header (título, módulo, período, rango, fecha de generación)
-//   2. Análisis IA (si existe en cache): resumen ejecutivo + puntos clave
-//      + recomendaciones + alertas
+//   2. Análisis IA (si existe en cache): resumen narrativo + métricas +
+//      acción principal + hallazgos secundarios — shape V2, ver
+//      lib/ai-insights.ts
 //   3. KPIs (4 tarjetas como tabla)
 //   4. Series temporales (tabla con los buckets)
 //   5. Distribuciones (top N como tabla)
 //   6. Anomalías activas (tabla)
 //
 // Usamos jsPDF (ya en node_modules) sin dependencias extra.
+//
+// NOTA (migración V1→V2 de ai-insights.ts): este archivo consumía antes
+// el shape viejo (resumenEjecutivo, puntosClave, recomendaciones,
+// alertas). Se actualizó para usar el shape V2 real (resumenNarrativo,
+// nivelAtencion, metricas, accionPrincipal, hallazgosSecundarios).
 // ─────────────────────────────────────────────────────────────────────
 
 import { jsPDF } from "jspdf";
-import type { AIInsights } from "./ai-insights";
 import type { EstadisticasDataExport } from "./stats-pdf-types";
 
 const COLOR_TEXT: [number, number, number]   = [31, 41, 55];   // gray-800
@@ -25,27 +30,9 @@ const COLOR_RULE:  [number, number, number]  = [229, 231, 235]; // gray-200
 const COLOR_ALTA:  [number, number, number]  = [225, 29, 72];  // rose-600
 const COLOR_MEDIA: [number, number, number]  = [217, 119, 6];  // amber-600
 const COLOR_BAJA:  [number, number, number]  = [37, 99, 235];  // blue-600
+const COLOR_OK:    [number, number, number]  = [5, 150, 105];  // emerald-600
 
-export type PDFExportInput = {
-  companyName: string;
-  modulo: string;
-  moduloLabel: string;
-  periodo: string;
-  fechaRef: string;
-  fechaHasta: string;
-  bucketActual: string;
-  bucketAnterior: string;
-  kpis: Array<{ label: string; valor: number | string; unidad?: string; variacionPct?: number; icono?: string }>;
-  lineChart:        { title: string; unidad: string; data: Array<{ x: string; y: number; proyectado?: boolean }>; regresion: { slope: number; r2: number } };
-  barVChart:        { title: string; unidad: string; data: Array<{ x: string; y: number }> };
-  barHChart:        { title: string; unidad: string; data: Array<{ label: string; value: number; meta?: string }> };
-  radarChart:       { title: string; data: Array<{ axis: string; value: number }> };
-  exponencialChart: { title: string; unidad: string; data: Array<{ x: string; y: number }> };
-  comparacionChart: { title: string; data: Array<{ label: string; actual: number; anterior: number }> };
-  anomalias: Array<{ tipo: string; dimensionLabel: string; severidad: "alta" | "media" | "baja"; descripcion: string; detectadoEn?: string }>;
-  insights: AIInsights | null;
-  insightsMeta: { fromCache: boolean; model: string; latencyMs: number } | null;
-};
+export type PDFExportInput = EstadisticasDataExport;
 
 export function buildStatsPDF(input: PDFExportInput): Buffer {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -85,6 +72,12 @@ export function buildStatsPDF(input: PDFExportInput): Buffer {
     ensureSpace(lines.length * 5);
     doc.text(lines, M, y);
     y += lines.length * 5 + 1;
+  }
+  function severityColor(sev: "alta" | "media" | "baja"): [number, number, number] {
+    return sev === "alta" ? COLOR_ALTA : sev === "media" ? COLOR_MEDIA : COLOR_BAJA;
+  }
+  function nivelAtencionColor(n: "ok" | "media" | "alta"): [number, number, number] {
+    return n === "alta" ? COLOR_ALTA : n === "media" ? COLOR_MEDIA : COLOR_OK;
   }
   function table(headers: string[], rows: Array<Array<string | number>>, colWidths: number[]) {
     const rowH = 6;
@@ -136,9 +129,11 @@ export function buildStatsPDF(input: PDFExportInput): Buffer {
   setText(COLOR_MUTED, 8);
   doc.text(`Generado: ${new Date().toLocaleString("es-EC")}`, W - M, 23, { align: "right" });
 
-  // ─── Análisis IA ──────────────────────────────────────────
+  // ─── Análisis IA (shape V2) ───────────────────────────────
   if (input.insights) {
+    const ins = input.insights;
     heading("Análisis IA");
+
     if (input.insightsMeta) {
       setText(COLOR_MUTED, 8);
       doc.text(
@@ -147,44 +142,71 @@ export function buildStatsPDF(input: PDFExportInput): Buffer {
       );
       y += 5;
     }
-    if (input.insights.resumenEjecutivo) {
-      paragraph(input.insights.resumenEjecutivo);
+
+    // Nivel de atención (badge textual + resumen narrativo)
+    ensureSpace(8);
+    const nivelColor = nivelAtencionColor(ins.nivelAtencion);
+    setText(nivelColor, 9, true);
+    doc.text(`Nivel de atención: ${ins.nivelAtencion.toUpperCase()}`, M, y);
+    y += 6;
+
+    if (ins.resumenNarrativo) {
+      paragraph(ins.resumenNarrativo);
     }
-    if (input.insights.puntosClave.length > 0) {
-      heading("Puntos clave", 11);
-      input.insights.puntosClave.forEach((p) => {
-        ensureSpace(6);
-        setText(COLOR_TEXT, 9);
-        doc.text(`• ${p}`, M + 2, y);
+
+    // Métricas de soporte
+    if (ins.metricas.length > 0) {
+      heading("Métricas clave", 11);
+      table(
+        ["Indicador", "Valor"],
+        ins.metricas.map((m) => [m.label, m.valor]),
+        [90, W - M * 2 - 90],
+      );
+    }
+
+    // Acción principal
+    if (ins.accionPrincipal) {
+      heading("Acción principal", 11);
+      setText(COLOR_HEAD, 10, true);
+      ensureSpace(6);
+      doc.text(ins.accionPrincipal.titulo, M, y);
+      y += 5;
+      if (ins.accionPrincipal.justificacion) {
+        paragraph(ins.accionPrincipal.justificacion);
+      }
+      const refs: string[] = [];
+      if (ins.accionPrincipal.refAssetPlate) refs.push(`Vehículo: ${ins.accionPrincipal.refAssetPlate}`);
+      if (ins.accionPrincipal.refDriverName) refs.push(`Conductor: ${ins.accionPrincipal.refDriverName}`);
+      if (refs.length > 0) {
+        setText(COLOR_MUTED, 8);
+        ensureSpace(5);
+        doc.text(refs.join("  ·  "), M, y);
         y += 5;
-      });
+      }
       y += 2;
     }
-    if (input.insights.recomendaciones.length > 0) {
-      heading("Recomendaciones", 11);
-      const rows = input.insights.recomendaciones.map((r) => [
-        r.prioridad.toUpperCase(),
-        r.titulo,
-        r.accion,
-      ]);
-      table(
-        ["Prioridad", "Título", "Acción"],
-        rows,
-        [22, 50, W - M * 2 - 22 - 50],
-      );
-    }
-    if (input.insights.alertas.length > 0) {
-      heading("Alertas", 11);
-      const rows = input.insights.alertas.map((a) => [
-        a.severidad.toUpperCase(),
-        a.titulo,
-        a.detalle,
-      ]);
-      table(
-        ["Severidad", "Título", "Detalle"],
-        rows,
-        [22, 50, W - M * 2 - 22 - 50],
-      );
+
+    // Hallazgos secundarios
+    if (ins.hallazgosSecundarios.length > 0) {
+      heading("Hallazgos", 11);
+      ins.hallazgosSecundarios.forEach((h) => {
+        ensureSpace(11);
+        setText(severityColor(h.severidad), 9, true);
+        doc.text(`[${h.severidad.toUpperCase()}] ${h.titulo}`, M, y);
+        y += 4.5;
+        setText(COLOR_TEXT, 9);
+        const lines = doc.splitTextToSize(h.detalle, W - M * 2 - 2);
+        doc.text(lines, M + 2, y);
+        y += lines.length * 4.5;
+        if (h.recomendacion) {
+          setText(COLOR_MUTED, 8.5);
+          const recLines = doc.splitTextToSize(`→ ${h.recomendacion}`, W - M * 2 - 2);
+          ensureSpace(recLines.length * 4.2);
+          doc.text(recLines, M + 2, y);
+          y += recLines.length * 4.2;
+        }
+        y += 2;
+      });
     }
   }
 

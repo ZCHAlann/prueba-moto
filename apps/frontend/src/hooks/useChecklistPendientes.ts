@@ -22,13 +22,22 @@ export type PendingCategory = {
   pendingItems: PendingItem[];
 };
 
+export type MissedItem = {
+  /** ID de la fila 'Vencido' persistida (para pedir reauth). null si la
+   *  categoría está en el fallback on-demand (empresa nueva, sin sweep). */
+  missedChecklistId: string | null;
+  assetId: string;
+  assetLabel: string;
+  assetPlate: string | null;
+};
+
 export type MissedCategory = {
   categoryId: string;
   categoryName: string;
   cycleStart: string;
   cycleEnd: string;
   cycleLabel: string;
-  missedItems: PendingItem[];
+  missedItems: MissedItem[];
 };
 
 export function useChecklistPendientes() {

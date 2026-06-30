@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
 
 export type InsuranceStatus = "Vigente" | "Por vencer" | "Vencido";
 
@@ -97,8 +98,9 @@ export function useAssetCenter(): UseInsurancePoliciesReturn {
   const uploadPolicyFile = useCallback(async (file: File): Promise<string | null> => {
     if (!companyId) return null;
     try {
+      const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", toUpload);
       const res = await fetch(`/api/upload/insurance-files?companyId=${companyId}`, {
         method: "POST",
         body: formData,

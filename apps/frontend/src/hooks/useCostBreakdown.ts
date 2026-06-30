@@ -35,6 +35,21 @@ export type BreakdownProveedor = {
   itemsCount:   number;
 };
 
+export type BreakdownItemRepuesto = {
+  supplierId:   number | null;
+  supplierName: string;
+  name:         string;
+  quantity:     number;
+  unitCost:     number;
+  subtotal:     number;
+  photoUrl:     string | null;
+};
+
+export type BreakdownAdjunto = {
+  url:   string;
+  label: string;
+};
+
 export type BreakdownMantenimiento = {
   id:             number;
   title:          string;
@@ -46,8 +61,18 @@ export type BreakdownMantenimiento = {
   workshop:       { id: number; name: string; nit: string | null } | null;
   manoObra:       number;
   repuestos:      number;
+  /**
+   * Cuando HAY supplierId en el filtro: subtotal de repuestos de ESE
+   * proveedor en esta OT. Cuando NO hay supplierId: null (usar
+   * `repuestosPorProveedor` para ver el desglose completo).
+   */
+  repuestosProveedor: number | null;
   total:          number;
-  /** Cuando NO hay supplierId en el filtro: desglose por proveedor dentro de la OT. */
+  /** Detalle de items de repuestos (con photoUrl) — alimenta la tabla y el PDF. */
+  items:          BreakdownItemRepuesto[];
+  /** Evidencias/adjuntos asociados a la OT (links a PDFs/fotos). */
+  attachments:    BreakdownAdjunto[];
+  /** Cuando NO hay supplierId: desglose por proveedor dentro de la OT. */
   repuestosPorProveedor: Array<{
     supplierId:   number;
     supplierName: string;

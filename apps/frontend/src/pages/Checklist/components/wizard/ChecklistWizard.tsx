@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ChevronLeft, ChevronRight, Check, AlertTriangle, Car, User, Wrench, ArrowRight, ClipboardCheck, Lock, Search } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Check, AlertTriangle, Car, User, Wrench, ArrowRight, ClipboardCheck, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../../../../context/AuthContext";
 import { useAssets, type Asset } from "../../../../hooks/useAssets";
@@ -10,84 +10,74 @@ import { useChecklistCategories, type ChecklistCategory } from "../../../../hook
 import { useChecklists, type ChecklistInspectionItem, type ChecklistStatus } from "../../../../hooks/useChecklists";
 import IncorrectoModal from "./IncorrectoModal";
 
+type WizardAsset = {
+  id: string | number;
+  name?: string | null;
+  plate?: string | null;
+  code?: string | null;
+  brand?: string | null;
+  model?: string | null;
+  status?: string | null;
+};
+
 type Props = {
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
-  /** Sólo un sub-set de items por página */
   itemsPerPage?: number;
-  /** Si se pasa, el wizard arranca con esta plantilla ya seleccionada
-   *  y se salta el step de elegir categoría. */
   initialCategory?: ChecklistCategory | null;
-  /**
-   * Si el usuario es Conductor, viene del /conductor-context y se usa
-   * para auto-seleccionar su vehículo y driver. Si es null/undefined,
-   * el wizard muestra el selector de vehículo normal.
-   */
-  presetAssetId?: string | number | null;
+  presetAsset?: { id: string | number; plate?: string | null } | null;
   presetDriverId?: number | null;
+  reauthRequestId?: string | null;
+  // Si viene, el step de vehículo solo mostrará este asset.
+  // Úsalo cuando el usuario es conductor para restringirlo a su asignación activa.
+  restrictToAssetId?: string | number | null;
 };
 
 type Step = "vehicle" | "category" | "items" | "review";
 
-/**
- * Wizard para realizar un checklist:
- *  1) Seleccionar el vehículo  (el conductor se AUTOCOMPLETA desde la asignación activa)
- *  2) Seleccionar la categoría (se omite si solo hay una)
- *  3) Marcar cada item como Correcto / Incorrecto, 7 en 7, con
- *     drawer modal para observación + foto cuando es Incorrecto
- *  4) Confirmar y guardar
- */
-export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage = 7, initialCategory = null, presetAssetId = null, presetDriverId = null }: Props) {
-  const { assets } = useAssets();
+export default function ChecklistWizard({
+  open, onClose, onSaved, itemsPerPage = 7,
+  initialCategory = null, presetAsset = null,
+  presetDriverId = null, reauthRequestId = null,
+  restrictToAssetId = null,
+}: Props) {
+  const { assets: allAssets } = useAssets();
   const { categories } = useChecklistCategories();
   const { createChecklist } = useChecklists();
   const { session } = useAuth();
-  const userRole = session?.role ?? "";
-  // El conductor solo puede inspeccionar el vehículo de su asignación activa.
-  // Esto se enforcea server-side; acá filtramos la UI para que no pueda elegir otro.
-  const isConductor = userRole === "conductor";
-  // Si es conductor, su `presetAssetId` es obligatorio. Si no viene, el padre
-  // ya bloqueó la apertura; igual defendemos acá.
-  const restrictedAssetId = isConductor ? presetAssetId : null;
+
+  // Si viene restrictToAssetId, el conductor solo ve su vehículo.
+  const assets = useMemo(() => {
+    if (!restrictToAssetId) return allAssets;
+    return allAssets.filter((a) => String(a.id) === String(restrictToAssetId));
+  }, [allAssets, restrictToAssetId]);
 
   const [step, setStep] = useState<Step>("vehicle");
-  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<WizardAsset | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<ChecklistCategory | null>(null);
-  // items que el usuario ya marcó (los "recolectados" del wizard)
   const [responses, setResponses] = useState<Record<string, ChecklistInspectionItem>>({});
   const [pendingIncorrectItem, setPendingIncorrectItem] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [submitting, setSubmitting] = useState(false);
 
-  // ── Cuando se abre el wizard, sembrar el estado ─────────────────────────
   useEffect(() => {
     if (!open) return;
-
-    // Reset siempre
     setResponses({});
     setPage(1);
     setPendingIncorrectItem(null);
 
-    if (presetAssetId) {
-      // Conductor (o caller que ya conoce el asset): sembrar y saltar "vehicle".
-      const found = assets.find((a) => String(a.id) === String(presetAssetId));
-      if (found) setSelectedAsset(found);
+    if (presetAsset) {
+      setSelectedAsset(presetAsset);
       setSelectedCategory(initialCategory ?? null);
       setStep(initialCategory ? "items" : "category");
     } else {
-      // Flujo normal: siempre empezar en vehicle
       setSelectedAsset(null);
       setSelectedCategory(initialCategory ?? null);
       setStep("vehicle");
     }
-  }, [open, initialCategory, presetAssetId, assets]);
+  }, [open, initialCategory, presetAsset]);
 
-  // ── Si el usuario eligió una plantilla por el path de "Iniciar inspección"
-  //    desde una card, salteamos el step de categoría y vamos directo a
-  //    "items" cuando seleccione el vehículo. Mientras tanto, la categoría
-  //    ya está fijada.
-  // ── Auto-selección si solo hay 1 categoría y NO se pasó initialCategory
   useEffect(() => {
     if (step !== "category" || initialCategory) return;
     if (categories.length === 1 && !selectedCategory) {
@@ -96,42 +86,30 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
     }
   }, [step, categories, selectedCategory, initialCategory]);
 
-  // ── Reset page cuando cambia la categoría o el asset ─────────────────────
   useEffect(() => {
     setPage(1);
     setResponses({});
   }, [selectedCategory?.id, selectedAsset?.id]);
 
-  // ── Driver inferido: si el padre pasó presetDriverId (caso Conductor),
-  //    ese es. Si no, leemos el `currentDriver` que el backend ya enriquece
-  //    en el GET /assets (no requiere hook cruzado).
-  const inferredDriver: { id: number; name: string; code?: string | null; phone?: string | null; photoUrl?: string | null } | null = useMemo(() => {
-    if (presetDriverId) {
-      return { id: presetDriverId, name: "—" };
-    }
+  const inferredDriver = useMemo(() => {
+    if (presetDriverId) return { id: presetDriverId, name: "—" };
     if (!selectedAsset) return null;
-    const cd = (selectedAsset as Asset & { currentDriver?: { id?: number; name?: string; code?: string; phone?: string; photoUrl?: string | null } | null }).currentDriver;
+    const cd = (selectedAsset as WizardAsset & { currentDriver?: { id?: number; name?: string } | null }).currentDriver;
     if (!cd?.id) return null;
-    return { id: cd.id, name: cd.name ?? "—", code: cd.code ?? null, phone: cd.phone ?? null, photoUrl: cd.photoUrl ?? null };
+    return { id: cd.id, name: cd.name ?? "—" };
   }, [selectedAsset, presetDriverId]);
 
   const items = selectedCategory?.items ?? [];
   const totalPages = Math.max(1, Math.ceil(items.length / itemsPerPage));
   const startIdx = (page - 1) * itemsPerPage;
   const pageItems = items.slice(startIdx, startIdx + itemsPerPage);
+  const answeredCount = useMemo(() => Object.keys(responses).length, [responses]);
 
-  const answeredCount = useMemo(
-    () => Object.keys(responses).length,
-    [responses]
-  );
-
-  // ── Handlers ──────────────────────────────────────────────────────────────
   const handleAnswerCorrect = (itemName: string) => {
-    setResponses((prev) => {
-      const next = { ...prev };
-      next[itemName] = { itemName, hasItem: "SI", condition: "Bueno", comment: null, photoUrl: null };
-      return next;
-    });
+    setResponses((prev) => ({
+      ...prev,
+      [itemName]: { itemName, hasItem: "SI", condition: "Bueno", comment: null, photoUrl: null },
+    }));
   };
 
   const handleAnswerIncorrect = (itemName: string) => {
@@ -140,17 +118,16 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
 
   const handleIncorrectoSave = (data: { observation: string; photoUrl: string | null }) => {
     if (!pendingIncorrectItem) return;
-    setResponses((prev) => {
-      const next = { ...prev };
-      next[pendingIncorrectItem] = {
+    setResponses((prev) => ({
+      ...prev,
+      [pendingIncorrectItem]: {
         itemName: pendingIncorrectItem,
         hasItem: "NO",
         condition: "Malo",
         comment: data.observation,
         photoUrl: data.photoUrl,
-      };
-      return next;
-    });
+      },
+    }));
     setPendingIncorrectItem(null);
     toast.success("Marcado como Incorrecto");
   };
@@ -171,7 +148,6 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
         .map((it) => responses[it])
         .filter((r): r is ChecklistInspectionItem => !!r);
 
-    
       const observed = itemsArr.some((i) => i.hasItem === "NO");
       const status: ChecklistStatus = observed ? "Observado" : "Aprobado";
       const findings = itemsArr
@@ -190,10 +166,13 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
         categoryId: selectedCategory.id,
         date: new Date().toISOString().slice(0, 10),
         status,
-        summary: `${selectedCategory.name} · ${status}`,
+        summary: reauthRequestId
+          ? `${selectedCategory.name} · ${status} · (atrasado, autorizado)`
+          : `${selectedCategory.name} · ${status}`,
         findings,
         items: itemsArr,
         photoUrls: [],
+        reauthRequestId: reauthRequestId ?? null,
       });
 
       toast.success("Checklist registrado", { description: `Estado: ${status}` });
@@ -207,24 +186,21 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
     }
   };
 
-  // ── Stepper ──────────────────────────────────────────────────────────────
-  // Si la plantilla ya viene preseleccionada (initialCategory), el step
-  // "category" se salta del stepper para que el usuario no vea un paso vacío.
   const STEPS: Array<{ key: Step; label: string; icon: typeof Car }> = [
-    { key: "vehicle",  label: "Vehículo",  icon: Car },
-    ...(initialCategory
-      ? []
-      : [{ key: "category" as Step, label: "Plantilla", icon: ClipboardCheck }]),
-    { key: "items",    label: "Puntos",    icon: Wrench },
-    { key: "review",   label: "Revisar",  icon: Check },
+    ...(!presetAsset ? [{ key: "vehicle" as Step, label: "Vehículo", icon: Car }] : []),
+    ...(initialCategory ? [] : [{ key: "category" as Step, label: "Plantilla", icon: ClipboardCheck }]),
+    { key: "items", label: "Puntos", icon: Wrench },
+    { key: "review", label: "Revisar", icon: Check },
   ];
   const currentStepIdx = STEPS.findIndex((s) => s.key === step);
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget && !submitting) onClose(); }}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === e.currentTarget && !submitting) onClose(); }}
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 12 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -246,14 +222,19 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
 
         {/* Stepper */}
         <div className="px-6 pt-3.5 pb-2 border-b border-gray-100 dark:border-white/[0.06] shrink-0">
+          {reauthRequestId && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+              <strong className="font-semibold">Reautorización aprobada.</strong>{" "}
+              Estás haciendo este checklist fuera de la ventana de su ciclo. Quedará registrado como <em>atrasado</em>.
+            </div>
+          )}
           <div className="flex items-center gap-2">
             {STEPS.map((s, idx) => {
-              const Icon = s.icon;
               const isCurrent = idx === currentStepIdx;
-              const isDone    = idx < currentStepIdx;
+              const isDone = idx < currentStepIdx;
               return (
                 <div key={s.key} className="flex items-center gap-2 flex-1 last:flex-none">
-                  <div className={`flex items-center gap-1.5 ${idx > 0 ? "" : ""}`}>
+                  <div className="flex items-center gap-1.5">
                     <div className={`flex h-7 w-7 items-center justify-center rounded-full border-2 text-xs font-bold transition ${
                       isDone ? "bg-emerald-500 border-emerald-500 text-white"
                         : isCurrent ? "bg-white dark:bg-gray-900 border-emerald-500 text-emerald-600 dark:text-emerald-400"
@@ -261,11 +242,17 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
                     }`}>
                       {isDone ? <Check size={12} strokeWidth={3} /> : idx + 1}
                     </div>
-                    <span className={`text-xs font-semibold ${isCurrent ? "text-emerald-700 dark:text-emerald-400" : isDone ? "text-gray-700 dark:text-gray-300" : "text-gray-400"}`}>
+                    <span className={`text-xs font-semibold ${
+                      isCurrent ? "text-emerald-700 dark:text-emerald-400"
+                        : isDone ? "text-gray-700 dark:text-gray-300"
+                        : "text-gray-400"
+                    }`}>
                       {s.label}
                     </span>
                   </div>
-                  {idx < STEPS.length - 1 && <div className={`flex-1 h-px ${isDone ? "bg-emerald-500" : "bg-gray-200 dark:bg-white/[0.08]"}`} />}
+                  {idx < STEPS.length - 1 && (
+                    <div className={`flex-1 h-px ${isDone ? "bg-emerald-500" : "bg-gray-200 dark:bg-white/[0.08]"}`} />
+                  )}
                 </div>
               );
             })}
@@ -280,8 +267,8 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
                 <StepVehicle
                   assets={assets}
                   selected={selectedAsset}
-                  onSelect={(a) => { setSelectedAsset(a); }}
-                  restrictToAssetId={restrictedAssetId}
+                  onSelect={(a) => setSelectedAsset(a)}
+                  isRestricted={!!restrictToAssetId}
                 />
               </motion.div>
             )}
@@ -366,7 +353,6 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
         </div>
       </motion.div>
 
-      {/* Modal Incorrecto */}
       <IncorrectoModal
         open={!!pendingIncorrectItem}
         itemName={pendingIncorrectItem ?? ""}
@@ -377,41 +363,37 @@ export default function ChecklistWizard({ open, onClose, onSaved, itemsPerPage =
   );
 }
 
-// ─── Sub-pasos ──────────────────────────────────────────────────────────────
+// ─── StepVehicle ─────────────────────────────────────────────────────────────
 
-function StepVehicle({ assets, selected, onSelect, restrictToAssetId }: {
-  assets: Asset[]; selected: Asset | null; onSelect: (a: Asset) => void;
-  /** Si está definido, solo este assetId es seleccionable. La UI muestra el resto
-   *  deshabilitado y con candado. Se usa cuando el usuario es Conductor. */
-  restrictToAssetId?: string | number | null;
+function StepVehicle({ assets, selected, onSelect, isRestricted }: {
+  assets: Asset[];
+  selected: WizardAsset | null;
+  onSelect: (a: Asset) => void;
+  isRestricted: boolean;
 }) {
-  const restricted = restrictToAssetId != null && restrictToAssetId !== "";
   const [search, setSearch] = useState("");
 
   const filteredAssets = useMemo(() => {
-    const base = restricted
-      ? assets.filter((a) => String(a.id) === String(restrictToAssetId))
-      : assets;
-    if (!search.trim()) return base;
+    if (!search.trim()) return assets;
     const q = search.toLowerCase();
-    return base.filter((a) =>
+    return assets.filter((a) =>
       (a.plate ?? "").toLowerCase().includes(q) ||
       (a.name ?? "").toLowerCase().includes(q) ||
       (a.code ?? "").toLowerCase().includes(q) ||
       (a.brand ?? "").toLowerCase().includes(q) ||
       (a.model ?? "").toLowerCase().includes(q)
     );
-  }, [assets, restricted, restrictToAssetId, search]);
+  }, [assets, search]);
 
   return (
     <div>
       <h3 className="text-sm font-bold text-gray-800 dark:text-white mb-1">¿A qué vehículo se le hará el checklist?</h3>
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-        El conductor se completará automáticamente desde la asignación activa. Si el vehículo no tiene asignación, se dejará en blanco.
+        {isRestricted
+          ? "Como conductor, solo podés inspeccionar el vehículo de tu asignación activa."
+          : "El conductor se completará automáticamente desde la asignación activa."}
       </p>
-
-      {/* Buscador */}
-      {!restricted && (
+      {!isRestricted && (
         <div className="relative mb-3">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
           <input
@@ -426,22 +408,21 @@ function StepVehicle({ assets, selected, onSelect, restrictToAssetId }: {
           </span>
         </div>
       )}
-
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[360px] overflow-y-auto pr-1">
-          {filteredAssets.length === 0 ? (
-            <div className="col-span-2 flex flex-col items-center justify-center py-10 text-center">
-              <Car size={20} className="text-gray-300 dark:text-gray-600 mb-2" />
-              <p className="text-sm text-gray-500">
-                {restricted
-                  ? "No tienes un vehículo con asignación activa. Pide a un supervisor que te asigne uno."
-                  : search
-                    ? `No se encontraron vehículos para "${search}".`
-                    : "No hay vehículos registrados."}
-              </p>
-            </div>
+        {filteredAssets.length === 0 ? (
+          <div className="col-span-2 flex flex-col items-center justify-center py-10 text-center">
+            <Car size={20} className="text-gray-300 dark:text-gray-600 mb-2" />
+            <p className="text-sm text-gray-500">
+              {isRestricted
+                ? "No tenés un vehículo asignado actualmente. Pedí a un supervisor que te asigne uno."
+                : search
+                ? `No se encontraron vehículos para "${search}".`
+                : "No hay vehículos registrados."}
+            </p>
+          </div>
         ) : (
           filteredAssets.map((a) => {
-            const isSelected = selected?.id === a.id;
+            const isSelected = String(selected?.id) === String(a.id);
             return (
               <button key={a.id} type="button" onClick={() => onSelect(a)}
                 className={`text-left rounded-xl border p-3 transition flex items-start gap-3 ${
@@ -455,28 +436,25 @@ function StepVehicle({ assets, selected, onSelect, restrictToAssetId }: {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold text-gray-800 dark:text-white truncate">{a.plate ?? a.code ?? a.name}</p>
                   <p className="text-[11px] text-gray-500 dark:text-gray-400 truncate">{[a.brand, a.model].filter(Boolean).join(" ") || a.name}</p>
-                  <p className="mt-0.5 text-[10px] text-gray-400 dark:text-gray-500 truncate">
-                    {a.status ?? "—"}
-                  </p>
+                  <p className="mt-0.5 text-[10px] text-gray-400 dark:text-gray-500 truncate">{a.status ?? "—"}</p>
                 </div>
                 {isSelected && <Check size={14} className="text-emerald-500 mt-0.5" />}
               </button>
             );
           })
         )}
-        {/* Si está restringido y hay otros assets, los listamos deshabilitados para
-            que el usuario entienda que existen pero no puede elegirlos. */}
-        {restricted && assets.length > filteredAssets.length && (
-          <div className="col-span-2 mt-1 text-[10px] text-gray-400 dark:text-gray-500">
-            Los demás vehículos de la empresa están ocultos porque solo puedes inspeccionar el tuyo.
-          </div>
-        )}
       </div>
     </div>
   );
 }
 
-function StepCategory({ categories, selected, onSelect }: { categories: ChecklistCategory[]; selected: ChecklistCategory | null; onSelect: (c: ChecklistCategory) => void }) {
+// ─── StepCategory ─────────────────────────────────────────────────────────────
+
+function StepCategory({ categories, selected, onSelect }: {
+  categories: ChecklistCategory[];
+  selected: ChecklistCategory | null;
+  onSelect: (c: ChecklistCategory) => void;
+}) {
   return (
     <div>
       <h3 className="text-sm font-bold text-gray-800 dark:text-white mb-1">¿Qué plantilla de checklist vas a usar?</h3>
@@ -515,6 +493,8 @@ function StepCategory({ categories, selected, onSelect }: { categories: Checklis
   );
 }
 
+// ─── StepItems ────────────────────────────────────────────────────────────────
+
 type StepItemsProps = {
   category: ChecklistCategory | null;
   pageItems: string[];
@@ -544,7 +524,6 @@ function StepItems({ category, pageItems, responses, page, totalPages, answeredC
           <p className="text-sm font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{answeredCount} / {total}</p>
         </div>
       </div>
-
       <div className="space-y-2">
         {pageItems.map((it) => {
           const r = responses[it];
@@ -561,16 +540,14 @@ function StepItems({ category, pageItems, responses, page, totalPages, answeredC
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button type="button" onClick={() => onAnswerCorrect(it)} disabled={isCorrect}
                     className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
-                      isCorrect
-                        ? "bg-emerald-500 text-white"
+                      isCorrect ? "bg-emerald-500 text-white"
                         : "border border-emerald-300 dark:border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10"
                     }`}>
                     <Check size={12} /> Correcto
                   </button>
                   <button type="button" onClick={() => onAnswerIncorrect(it)}
                     className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
-                      isIncorrect
-                        ? "bg-rose-500 text-white"
+                      isIncorrect ? "bg-rose-500 text-white"
                         : "border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"
                     }`}>
                     <AlertTriangle size={12} /> Incorrecto
@@ -586,8 +563,6 @@ function StepItems({ category, pageItems, responses, page, totalPages, answeredC
           );
         })}
       </div>
-
-      {/* Paginación 7-en-7 */}
       {totalPages > 1 && (
         <div className="mt-3 flex items-center justify-between">
           <p className="text-[11px] text-gray-500 dark:text-gray-400">
@@ -598,9 +573,7 @@ function StepItems({ category, pageItems, responses, page, totalPages, answeredC
               className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 dark:border-white/[0.08] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40">
               <ChevronLeft size={12} />
             </button>
-            <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 tabular-nums px-2">
-              {page} / {totalPages}
-            </span>
+            <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 tabular-nums px-2">{page} / {totalPages}</span>
             <button type="button" onClick={onNextPage} disabled={page >= totalPages}
               className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 dark:border-white/[0.08] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40">
               <ChevronRight size={12} />
@@ -612,14 +585,18 @@ function StepItems({ category, pageItems, responses, page, totalPages, answeredC
   );
 }
 
+// ─── StepReview ───────────────────────────────────────────────────────────────
+
 function StepReview({ asset, driver, category, responses }: {
-  asset: Asset | null; driver: { id: number; name: string; code?: string | null; phone?: string | null; photoUrl?: string | null } | null; category: ChecklistCategory | null;
+  asset: WizardAsset | null;
+  driver: { id: number; name: string } | null;
+  category: ChecklistCategory | null;
   responses: Record<string, ChecklistInspectionItem>;
 }) {
   const items = category?.items ?? [];
   const incorrect = items.filter((it) => responses[it]?.hasItem === "NO");
-  const correct   = items.filter((it) => responses[it]?.hasItem === "SI");
-  const observed  = incorrect.length > 0;
+  const correct = items.filter((it) => responses[it]?.hasItem === "SI");
+  const observed = incorrect.length > 0;
   return (
     <div className="space-y-3">
       <div className="rounded-xl border border-gray-200 dark:border-white/[0.08] p-3 bg-gray-50 dark:bg-white/[0.03]">
@@ -628,7 +605,7 @@ function StepReview({ asset, driver, category, responses }: {
         <p className="text-xs text-gray-500 dark:text-gray-400">{[asset?.brand, asset?.model].filter(Boolean).join(" ")}</p>
         {driver ? (
           <p className="mt-1.5 text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
-            <User size={11} /> Conductor: <span className="font-semibold">{driver.firstName} {driver.lastName}</span>
+            <User size={11} /> Conductor: <span className="font-semibold">{driver.name}</span>
           </p>
         ) : (
           <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
@@ -636,14 +613,14 @@ function StepReview({ asset, driver, category, responses }: {
           </p>
         )}
       </div>
-
       <div className="rounded-xl border border-gray-200 dark:border-white/[0.08] p-3">
         <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Plantilla</p>
         <p className="text-sm font-bold text-gray-800 dark:text-white">{category?.name}</p>
         <p className="text-xs text-gray-500 dark:text-gray-400">{items.length} puntos · {correct.length} correctos · {incorrect.length} incorrectos</p>
       </div>
-
-      <div className={`rounded-xl border-2 p-3 ${observed ? "border-rose-300 dark:border-rose-500/40 bg-rose-50/40 dark:bg-rose-500/[0.04]" : "border-emerald-300 dark:border-emerald-500/40 bg-emerald-50/40 dark:bg-emerald-500/[0.04]"}`}>
+      <div className={`rounded-xl border-2 p-3 ${observed
+        ? "border-rose-300 dark:border-rose-500/40 bg-rose-50/40 dark:bg-rose-500/[0.04]"
+        : "border-emerald-300 dark:border-emerald-500/40 bg-emerald-50/40 dark:bg-emerald-500/[0.04]"}`}>
         <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">Resultado</p>
         <p className={`text-base font-bold ${observed ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>
           {observed ? "Observado" : "Aprobado"}

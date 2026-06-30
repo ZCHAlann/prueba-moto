@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
 
 /**
  * Subset del "acta de asignación" que llega del endpoint de detalle
@@ -209,8 +210,9 @@ export function useDrivers() {
 
 /** Sube 1 foto al endpoint de conductores y devuelve la URL pública. */
 export async function uploadDriverPhoto(file: File, companyId: number): Promise<string> {
+  const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
   const fd = new FormData();
-  fd.append("photos", file); 
+  fd.append("photos", toUpload); 
   const res = await fetch(`/api/upload/driver-photos?companyId=${companyId}`, {  
     method: "POST",
     body: fd,

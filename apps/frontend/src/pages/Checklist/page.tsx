@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, ClipboardCheck, ListChecks, AlertTriangle, ClipboardList } from "lucide-react";
+import { Plus, ClipboardCheck, ListChecks, AlertTriangle, ClipboardList, Inbox } from "lucide-react";
 import { useChecklistCategories, type ChecklistCategory } from "../../hooks/useChecklistCategories";
 import { useChecklists, type Checklist } from "../../hooks/useChecklists";
 import { usePermissions } from "../../hooks/usePermissions";
@@ -10,8 +10,9 @@ import { ChecklistHistorial } from "./components/historial/ChecklistHistorial";
 import { ChecklistAnomalias } from "./components/historial/ChecklistAnomalias";
 import { ChecklistDetailDrawer } from "./components/historial/ChecklistDetailDrawer";
 import { ChecklistPendientes } from "./components/ChecklistPendientes";
+import { ChecklistReauthInbox } from "./components/ChecklistReauthInbox";
 
-type Tab = "pendientes" | "realizar" | "historial";
+type Tab = "pendientes" | "realizar" | "historial" | "reauth";
 type HistorialSub = "anomalias" | "todos";
 
 const ADMIN_ROLES = ["owner_empresa", "admin_empresa", "supervisor"];
@@ -45,6 +46,12 @@ export function ChecklistPage() {
   // Ver plantillas: el tab "Realizar" con el listado de plantillas requiere esto.
   // (No bloquea el "Pendientes" — el filtro de visibilidad ya lo hace server-side.)
   const canSeePlantillas = ADMIN_ROLES.includes(role) || can("checklist", "checklist", "ver");
+  // Bandeja de reautorizaciones (aprobar/rechazar): SOLO quien tiene `editar`.
+  // OJO: no usar `ver` acá — operador/conductor también tienen `ver` (se
+  // auto-selecciona junto con `crear` para que puedan consultar el estado de
+  // SUS propias solicitudes), pero esa vista vive dentro de ChecklistPendientes
+  // (sección "Atrasados"), no en esta pestaña de bandeja de aprobación.
+  const canSeeReauth = ADMIN_ROLES.includes(role) || can("checklist", "reautorizaciones", "editar");
   const canCreate = can("checklist", "checklist", "crear");
 
   // Tab inicial: si puede ver inspecciones, arranca en "Pendientes"; si no, en "Realizar".
@@ -93,8 +100,9 @@ export function ChecklistPage() {
       {/* tabs: cada tab requiere su permiso independiente.
             Pendientes  -> ver inspecciones
             Realizar    -> ver plantillas
-            Historial   -> ver historial (permiso dedicado, NO se hereda) */}
-      {(canSeeInspecciones || canSeeHistorial || canSeePlantillas) && (
+            Historial   -> ver historial (permiso dedicado, NO se hereda)
+            Reautorizaciones -> editar reautorizaciones (bandeja de aprobación) */}
+      {(canSeeInspecciones || canSeeHistorial || canSeePlantillas || canSeeReauth) && (
         <div className="flex items-center gap-1 overflow-x-auto border-b border-gray-200 dark:border-white/[0.06]">
           {canSeeInspecciones && (
             <TabButton active={tab === "pendientes"} onClick={() => setTab("pendientes")}>
@@ -109,6 +117,11 @@ export function ChecklistPage() {
           {canSeeHistorial && (
             <TabButton active={tab === "historial"} onClick={() => setTab("historial")}>
               <ListChecks size={13} /> Historial
+            </TabButton>
+          )}
+          {canSeeReauth && (
+            <TabButton active={tab === "reauth"} onClick={() => setTab("reauth")}>
+              <Inbox size={13} /> Reautorizaciones
             </TabButton>
           )}
         </div>
@@ -145,6 +158,16 @@ export function ChecklistPage() {
             transition={{ duration: 0.18 }}
             className="space-y-4">
             <HistorialTabs />
+          </motion.div>
+        )}
+
+        {tab === "reauth" && canSeeReauth && (
+          <motion.div key="reauth"
+            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.18 }}>
+            {/* Si llegó hasta acá es porque tiene `editar` (ver canSeeReauth arriba),
+                así que siempre puede decidir. */}
+            <ChecklistReauthInbox canDecide={true} />
           </motion.div>
         )}
       </AnimatePresence>

@@ -4,6 +4,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from '../lib/mediaCompress';
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -21,7 +22,7 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
 export type MaintenanceType     = 'Correctivo' | 'Programado' | 'Lavada';
-export type MaintenanceStatus = 'Programado' | 'En proceso' | 'Completado' | 'Correccion';
+export type MaintenanceStatus = 'Programado' | 'En proceso' | 'Completado' | 'Correccion' | 'Atrasado';
 export type CadenceKind         = 'none' | 'weekly' | 'days' | 'monthly' | 'km_based';
 
 export type MaintenanceEventKind =
@@ -117,6 +118,19 @@ export interface Maintenance {
   events:        MaintenanceEvent[];
   correctionReason: string | null;
   correctionRequestedAt: string | null;
+  /** Atajo de presentación: derivado de `status === 'Atrasado'`. El backend
+   *  lo calcula comparando `scheduledFor` contra la fecha actual en el
+   *  response de la API; el frontend puede tolerar que llegue o no el
+   *  flag explícito y caer al status. Ver `isMaintenanceOverdue()`. */
+  isOverdue?: boolean;
+}
+
+/** Helper local: devuelve si un mantenimiento está atrasado. Prefiere el
+ *  flag explícito que mande el backend, pero tolera que solo venga el
+ *  status. Útil para mantener la UI consistente mientras la migración a
+ *  `status: 'Atrasado'` se completa. */
+export function isMaintenanceOverdue(m: Pick<Maintenance, 'status' | 'isOverdue'>): boolean {
+  return m.isOverdue === true || m.status === 'Atrasado';
 }
 
 export interface CarwashExtra {
@@ -226,8 +240,9 @@ export interface MaintenanceCategory {
 
 // ─── Hooks ────────────────────────────────────────────────────────────────────
 
-export function useMaintenancesList(filters: ListFilters = {}) {
+export function useMaintenancesList(filters: ListFilters = {}, options?: { enabled?: boolean }) {
   const { companyId } = useAuth();
+  const enabled = (options?.enabled ?? true) && !!companyId;
   return useQuery({
     queryKey: ['maintenances', companyId, filters],
     queryFn: async () => {
@@ -239,7 +254,7 @@ export function useMaintenancesList(filters: ListFilters = {}) {
       );
       return res;
     },
-    enabled: !!companyId,
+    enabled,
   });
 }
 
@@ -262,8 +277,9 @@ export async function uploadMaintenanceAttachment(
     throw new Error("El archivo supera el tamaño máximo permitido (10 MB)");
   }
 
+  const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
   const fd = new FormData();
-  fd.append("files", file);
+  fd.append("files", toUpload);
   const res = await fetch(
     `/api/upload/maintenance-evidence?companyId=${companyId}`,
     { method: "POST", body: fd, credentials: "include" },
@@ -441,15 +457,26 @@ export function useFinalizeMaintenance() {
   });
 }
 
-/** Cancelar y reprogramar: vuelve a Programado, mantiene timeline, borra items. */
+/** Cancelar y reprogramar: vuelve a Programado, mantiene timeline, borra items
+ *  (a menos que `keepItems` sea true — en ese caso conserva los repuestos, fotos y
+ *  notas que ya estuvieran cargados). */
 export function useCancelRescheduleMaintenance() {
   const { companyId } = useAuth();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, newScheduledFor, reason }: { id: string; newScheduledFor: string; reason: string }) => {
+    mutationFn: async ({
+      id, newScheduledFor, reason, keepItems,
+    }: {
+      id: string;
+      newScheduledFor: string;
+      reason: string;
+      /** Si true, conservar repuestos / fotos / notas que ya estén cargados
+       *  en el mantenimiento en lugar de borrarlos en la reprogramación. */
+      keepItems?: boolean;
+    }) => {
       return jsonFetch<{ ok: boolean; id: string; status: string; isReprogrammed: boolean }>(
         `/api/company/${companyId}/maintenances/${id}/cancel-reschedule`,
-        { method: 'POST', body: JSON.stringify({ newScheduledFor, reason }) },
+        { method: 'POST', body: JSON.stringify({ newScheduledFor, reason, keepItems: !!keepItems }) },
       );
     },
     onSuccess: () => {
@@ -464,10 +491,46 @@ export function useRequestCorrection() {
   const { companyId } = useAuth();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, reason, newScheduledFor }: { id: string; reason: string; newScheduledFor?: string | null }) => {
+    mutationFn: async ({
+      id, reason, newScheduledFor, keepItems,
+    }: {
+      id: string;
+      reason: string;
+      newScheduledFor?: string | null;
+      /** Si true, conservar repuestos / fotos / notas ya cargados. */
+      keepItems?: boolean;
+    }) => {
       return jsonFetch<{ ok: boolean; id: string; status: string }>(
         `/api/company/${companyId}/maintenances/${id}/request-correction`,
-        { method: 'POST', body: JSON.stringify({ reason, newScheduledFor: newScheduledFor ?? null }) },
+        { method: 'POST', body: JSON.stringify({
+          reason,
+          newScheduledFor: newScheduledFor ?? null,
+          keepItems: !!keepItems,
+        }) },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenances'] });
+      qc.invalidateQueries({ queryKey: ['maintenance'] });
+      qc.invalidateQueries({ queryKey: ['maintenances-agenda'] });
+    },
+  });
+}
+
+/** Reautorizar un mantenimiento "Atrasado" de tipo Programado: el
+ *  admin/supervisor confirma que el mantenimiento sigue autorizado para
+ *  ejecutarse aunque haya pasado la fecha prevista. El backend registra
+ *  el evento "reauthorized" en la línea de tiempo y (en mantenimiento
+ *  Programado) resetea la ventana de atraso para que la próxima corrida
+ *  del cron no lo marque como Completado. NO aplica para Correctivo. */
+export function useReauthorizeMaintenance() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason?: string | null }) => {
+      return jsonFetch<{ ok: boolean; id: string }>(
+        `/api/company/${companyId}/maintenances/${id}/reauthorize`,
+        { method: 'POST', body: JSON.stringify({ reason: reason ?? null }) },
       );
     },
     onSuccess: () => {
@@ -570,8 +633,9 @@ export function useAddCarwashPhotos() {
       //    queda separada por empresa: /uploads/maintenance/<companyId>/<file>.
       const uploaded: { url: string; caption: string | null }[] = [];
       for (const p of photos) {
+        const toUpload = await compressIfImage(p.file, COMPRESS_OPTS_EVIDENCE);
         const fd = new FormData();
-        fd.append('photos', p.file);
+        fd.append('photos', toUpload);
         const upRes = await fetch(
           `/api/upload/photos?category=maintenance&companyId=${encodeURIComponent(String(companyId))}`,
           { method: 'POST', body: fd, credentials: 'include' },
@@ -661,4 +725,55 @@ export function useDeleteMaintenanceCategory() {
       qc.invalidateQueries({ queryKey: ['maintenance-categories'] });
     },
   });
+}
+
+// ─── Upload de foto de repuesto (consolidado) ───────────────────────────────
+// Antes esta función estaba duplicada en MaintenanceFormModal.tsx y
+// MaintenanceDetailDrawer.tsx. La centralizamos acá para que la compresión
+// y la validación sean consistentes en ambos puntos de entrada.
+
+/**
+ * Sube la foto de un repuesto al endpoint `/api/upload/part-photos`.
+ * Valida mimetype + tamaño en el cliente para fallar rápido con un mensaje
+ * claro (el backend re-valida con whitelist y companyId).
+ */
+export async function uploadPartPhoto(
+  file: File,
+  companyId: string | number | undefined,
+): Promise<string> {
+  if (!companyId) {
+    throw new Error('Sesión sin empresa: no se puede subir la foto.');
+  }
+
+  const ALLOWED = new Set([
+    'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+    'image/heic', 'image/heif', 'application/pdf',
+  ]);
+  if (!ALLOWED.has(file.type)) {
+    throw new Error(`Tipo de archivo no permitido: ${file.type || '(vacío)'}`);
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error('El archivo supera el tamaño máximo permitido (10 MB).');
+  }
+
+  const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
+
+  const fd = new FormData();
+  fd.append('photo', toUpload);
+  const res = await fetch(`/api/upload/part-photos?companyId=${companyId}`, {
+    method: 'POST',
+    body: fd,
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const j = await res.clone().json();
+      if (j?.error) msg = j.error;
+    } catch { /* ignore */ }
+    throw new Error(`Upload part-photo: ${msg}`);
+  }
+  const json = await res.json();
+  if (!json.url) throw new Error('Upload part-photo: respuesta sin URL');
+  return json.url as string;
 }

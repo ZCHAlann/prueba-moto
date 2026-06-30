@@ -105,6 +105,11 @@ export const MODULE_TREE = {
       // Es un permiso separado para que un usuario que ejecuta no vea por defecto
       // el historial de toda la empresa.
       historial: "Historial",
+      // Reautorización de checklists atrasados: flujo de "pedir permiso" +
+      // "aprobar/rechazar". El operador/conductor pide con `crear`, el admin
+      // (o un supervisor delegado) aprueba/rechaza con `editar`. Ver sirve
+      // para listar las solicitudes propias o de la empresa según corresponda.
+      reautorizaciones: "Reautorización de atrasados",
     },
   },
   alertas: {
@@ -120,6 +125,15 @@ export const MODULE_TREE = {
       // Submódulo "Estadísticas" — solo owner/admin por defecto (ver ROLE_DEFAULT_PERMISSIONS).
       // Se renderiza como tab colorida dentro de /reportes con KPIs + 6 charts + matemática.
       estadisticas: "Estadísticas",
+    },
+  },
+  lienzo: {
+    label: "Lienzo",
+    submodules: {
+      // Módulo top-level dedicado al dashboard builder. Antes vivía como
+      // submódulo de `reportes` (compat shim en backend) — ahora es módulo
+      // propio para que aparezca como entrada destacada en el sidebar.
+      lienzo: "Lienzo de presentación",
     },
   },
   combustible: {

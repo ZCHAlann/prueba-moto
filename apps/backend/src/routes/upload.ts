@@ -9,6 +9,7 @@ import { authenticate } from '../middlewares/authenticate';
 import {
   validateImageFile,
   validateUploadCompanyId,
+  optimizeImageIfNeeded,
 } from '../lib/upload-security';
 
 const router = Router();
@@ -127,12 +128,19 @@ function resolveUrls(
 function uploadHandler(category: UploadCategory) {
   const upload = buildUpload(category);
   return (req: Request, res: Response, next: NextFunction) => {
-    upload(req, res, (err) => {
+    upload(req, res, async (err) => {
       if (err) return next(err);
       const files = req.files as Express.Multer.File[];
       if (!files || files.length === 0) {
         return next(new AppError(400, 'No se recibieron archivos.'));
       }
+
+      // Optimización server-side con sharp: reduce tamaño de las fotos de
+      // celular (4-8 MB → 200-400 KB), quita EXIF (privacidad), estandariza
+      // a JPEG progresivo. Si falla en alguna foto, NO rompe el upload —
+      // esa foto queda como estaba.
+      await Promise.allSettled(files.map((f) => optimizeImageIfNeeded(f)));
+
       const companyId = req.query.companyId as string | undefined;
       res.json({ urls: resolveUrls(files, category, companyId) });
     });
@@ -156,10 +164,11 @@ router.post('/toll-photos', (req: Request, res: Response, next: NextFunction) =>
     fileFilter: imageFilter,
   }).array('photos', 10);
 
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
     const files = req.files as Express.Multer.File[];
     if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+    await Promise.allSettled(files.map((f) => optimizeImageIfNeeded(f)));
     res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
   });
 });
@@ -175,10 +184,11 @@ router.post('/driver-photos', (req: Request, res: Response, next: NextFunction) 
     fileFilter: imageFilter,
   }).array('photos', 10);
 
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
     const files = req.files as Express.Multer.File[];
     if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+    await Promise.allSettled(files.map((f) => optimizeImageIfNeeded(f)));
     res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
   });
 });
@@ -193,10 +203,11 @@ router.post('/user-photos', (req: Request, res: Response, next: NextFunction) =>
     fileFilter: imageFilter,
   }).array('photos', 10);
 
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
     const files = req.files as Express.Multer.File[];
     if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+    await Promise.allSettled(files.map((f) => optimizeImageIfNeeded(f)));
     res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
   });
 });
@@ -213,11 +224,12 @@ router.post('/exit-auth-photos', (req: Request, res: Response, next: NextFunctio
     fileFilter: imageFilter,
   }).array('photos', 10);
 
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0)
       return next(new AppError(400, 'No se recibieron archivos.'));
+    await Promise.allSettled(files.map((f) => optimizeImageIfNeeded(f)));
     res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
   });
 });
@@ -449,7 +461,7 @@ router.post('/part-photos', (req: Request, res: Response, next: NextFunction) =>
     fileFilter: imageFilter,
   }).single('photo');
 
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
     const file = req.file as Express.Multer.File | undefined;
     if (!file) return next(new AppError(400, 'No se recibió la foto.'));
@@ -459,6 +471,7 @@ router.post('/part-photos', (req: Request, res: Response, next: NextFunction) =>
     } catch (e) {
       return next(new AppError(400, (e as Error).message));
     }
+    await optimizeImageIfNeeded(file);
     res.json({
       url:  `/uploads/${folder}/${file.filename}`,
       type: file.mimetype,
@@ -496,7 +509,7 @@ router.post('/fuel-photos', (req: Request, res: Response, next: NextFunction) =>
     fileFilter: imageFilter,
   }).array('photos', 10);
 
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
     const files = req.files as Express.Multer.File[];
     if (!files?.length) return next(new AppError(400, 'No se recibió el archivo.'));
@@ -508,6 +521,7 @@ router.post('/fuel-photos', (req: Request, res: Response, next: NextFunction) =>
       return next(new AppError(400, (e as Error).message));
     }
 
+    await Promise.allSettled(files.map((f) => optimizeImageIfNeeded(f)));
     res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
   });
 });
@@ -528,10 +542,11 @@ router.post('/checklist-photos', (req: Request, res: Response, next: NextFunctio
     },
   }).single('photo');
 
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
     const file = req.file as Express.Multer.File | undefined;
     if (!file) return next(new AppError(400, 'No se recibió la foto.'));
+    await optimizeImageIfNeeded(file);
     res.json({
       url:  `/uploads/${folder}/${file.filename}`,
       type: file.mimetype,
@@ -578,10 +593,13 @@ router.post('/invoice-files', (req, res, next) => {
     },
   }).array('files', 5);
 
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
     const files = req.files as Express.Multer.File[];
     if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+    // Solo optimizamos imágenes; los PDFs van tal cual (sharp no los maneja).
+    const imageFiles = files.filter((f) => f.mimetype.startsWith('image/'));
+    await Promise.allSettled(imageFiles.map((f) => optimizeImageIfNeeded(f)));
     const companyId = req.query.companyId as string | undefined;
     const folder2 = companyId ? `invoices/${companyId}` : 'invoices';
     res.json({ urls: files.map(f => `/uploads/${folder2}/${f.filename}`) });
@@ -603,10 +621,13 @@ router.post('/maintenance-evidence', (req, res, next) => {
     },
   }).array('files', 10);
 
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
     const files = req.files as Express.Multer.File[];
     if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+    // Solo optimizamos imágenes; los PDFs van tal cual.
+    const imageFiles = files.filter((f) => f.mimetype.startsWith('image/'));
+    await Promise.allSettled(imageFiles.map((f) => optimizeImageIfNeeded(f)));
     res.json({
       urls: files.map(f => ({
         url:  `/uploads/${folder}/${f.filename}`,
@@ -633,10 +654,15 @@ router.post('/insurance-files', (req, res, next) => {
     },
   }).single('file');
 
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
-    if (!req.file) return next(new AppError(400, 'No se recibió archivo.'));
-    res.json({ url: `/uploads/${folder}/${req.file.filename}` });
+    const file = req.file;
+    if (!file) return next(new AppError(400, 'No se recibió archivo.'));
+    // Solo optimizamos si es imagen; PDF va tal cual.
+    if (file.mimetype.startsWith('image/')) {
+      await optimizeImageIfNeeded(file);
+    }
+    res.json({ url: `/uploads/${folder}/${file.filename}` });
   });
 });
 
@@ -662,7 +688,7 @@ router.post('/photos', (req: Request, res: Response, next: NextFunction) => {
   }
 
   const upload = buildUpload(safeCategory);
-  upload(req, res, (err) => {
+  upload(req, res, async (err) => {
     if (err) return next(err);
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0) {
@@ -673,6 +699,7 @@ router.post('/photos', (req: Request, res: Response, next: NextFunction) => {
     } catch (e) {
       return next(new AppError(400, (e as Error).message));
     }
+    await Promise.allSettled(files.map((f) => optimizeImageIfNeeded(f)));
     res.json({ urls: resolveUrls(files, safeCategory, companyId?.toString()) });
   });
 });

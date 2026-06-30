@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   Search, ChevronLeft, ChevronRight, ChevronDown, Plus, Download, Pencil, Trash2, X,
   Wrench, Package, User as UserIcon, FileDown,
-  ClipboardList, Truck, Check, Calendar,
+  ClipboardList, Truck, Check, Calendar, AlertTriangle, RefreshCw, CheckCircle2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -17,7 +17,9 @@ import {
   useFinalizeMaintenance,
   useCancelRescheduleMaintenance,
   useRequestCorrection,
+  useReauthorizeMaintenance,
   useMaintenanceCategories,
+  isMaintenanceOverdue,
   type Maintenance,
   type MaintenanceStatus,
   type MaintenanceType,
@@ -36,6 +38,7 @@ const STATUS_CFG: Record<MaintenanceStatus, { label: string; cls: string; dot: s
   "En proceso":  { label: "En proceso",   cls: "text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/10 border-sky-200 dark:border-sky-500/20",                     dot: "bg-sky-500 dark:bg-sky-400"        },
   Completado:    { label: "Completado",   cls: "text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20", dot: "bg-emerald-500 dark:bg-emerald-400" },
   Correccion:    { label: "Corrección",   cls: "text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/20",               dot: "bg-rose-500 dark:bg-rose-400" },
+  Atrasado:      { label: "Atrasado",     cls: "text-rose-700 dark:text-rose-200 bg-rose-100 dark:bg-rose-500/20 border-rose-300 dark:border-rose-500/40",                dot: "bg-rose-600 dark:bg-rose-400"      },
 };
 
 const TYPE_CFG: Record<string, { label: string; cls: string; rowAccent: string }> = {
@@ -69,9 +72,15 @@ function idFromPrefixedString(s: string | null | undefined): number | null {
 
 interface Props {
   title?: string;
+  /** Handler opcional para reautorizar un mantenimiento Atrasado de tipo
+   *  Programado. Si no se pasa, usamos el handler interno que llama al
+   *  endpoint POST /api/company/{companyId}/maintenances/{id}/reauthorize
+   *  y refresca la lista. Se invoca con la fila y el motivo tipeado por
+   *  el admin (puede ser string vacío). */
+  onReauthorize?: (m: Maintenance, reason: string) => void;
 }
 
-export function MaintenanceListTab({ title }: Props) {
+export function MaintenanceListTab({ title, onReauthorize }: Props) {
   const { session, companyId } = useAuth();
   const { can } = usePermissions();
   const meId   = userIdFromSession(session?.id);
@@ -81,6 +90,7 @@ export function MaintenanceListTab({ title }: Props) {
   const canCreate = can("mantenimiento", "execution", "crear");
   const canEdit   = can("mantenimiento", "execution", "editar");
   const canDelete = can("mantenimiento", "records", "eliminar");
+  const canReauthorize = canEdit || isFullAccess;
 
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -108,6 +118,7 @@ export function MaintenanceListTab({ title }: Props) {
         "En proceso": "En proceso",
         "Completado": "Completado",
         "Corrección": "Correccion",
+        "Atrasado":   "Atrasado",
         "En curso": "En proceso",
       };
       const resolved = statusMap[kpi];
@@ -160,9 +171,18 @@ export function MaintenanceListTab({ title }: Props) {
       "En proceso": 0,
       Completado: 0,
       Correccion: 0,
+      Atrasado: 0,
     };
     for (const m of kpiRows) {
-      const s = (m.status === "En curso" ? "En proceso" : m.status) as MaintenanceStatus;
+      // Si el backend marca isOverdue pero el status sigue siendo
+      // "Programado" (durante el rollout), lo contamos como Atrasado
+      // para que la UI sea consistente.
+      const isOver = isMaintenanceOverdue(m);
+      const s = (isOver
+        ? "Atrasado"
+        : m.status === "En curso"
+          ? "En proceso"
+          : m.status) as MaintenanceStatus;
       if (s in acc) acc[s] += 1;
     }
     return acc;
@@ -176,6 +196,7 @@ export function MaintenanceListTab({ title }: Props) {
       "En proceso": new Array(14).fill(0),
       Completado:  new Array(14).fill(0),
       Correccion:  new Array(14).fill(0),
+      Atrasado:    new Array(14).fill(0),
     };
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -185,7 +206,12 @@ export function MaintenanceListTab({ title }: Props) {
       const diffDays = Math.floor((today.getTime() - d.getTime()) / 86_400_000);
       if (diffDays < 0 || diffDays > 13) continue;
       const idx = 13 - diffDays; // 0 = más viejo, 13 = hoy
-      const s = (m.status === "En curso" ? "En proceso" : m.status) as MaintenanceStatus;
+      const isOver = isMaintenanceOverdue(m);
+      const s = (isOver
+        ? "Atrasado"
+        : m.status === "En curso"
+          ? "En proceso"
+          : m.status) as MaintenanceStatus;
       if (s in buckets) buckets[s][idx] += 1;
     }
     return buckets;
@@ -258,6 +284,7 @@ export function MaintenanceListTab({ title }: Props) {
   const startMut      = useStartMaintenance();
   const finalizeMut   = useFinalizeMaintenance();
   const rescheduleMut = useCancelRescheduleMaintenance();
+  const reauthorizeMut = useReauthorizeMaintenance();
 
   const onDelete = (m: Maintenance) => setDeleteTarget(m);
 
@@ -292,24 +319,54 @@ export function MaintenanceListTab({ title }: Props) {
     catch (e) { toast.error((e as Error).message); }
   };
 
-  const onReschedule = async (newScheduledFor: string, reason: string) => {
+  const onReschedule = async (newScheduledFor: string, reason: string, keepItems: boolean) => {
     if (!reprogramTarget) return;
     try {
-      await rescheduleMut.mutateAsync({ id: reprogramTarget.id, newScheduledFor, reason });
+      await rescheduleMut.mutateAsync({ id: reprogramTarget.id, newScheduledFor, reason, keepItems });
       toast.success("Mantenimiento reprogramado", { description: `Nueva fecha: ${fmtDate(newScheduledFor)}` });
       setReprogramOpen(false);
       setReprogramTarget(null);
-    } catch (e) { toast.error((e as Error).message); }
+    } catch (e) {
+      const msg = (e as Error).message;
+      // Mensaje claro cuando el backend rechaza mantener items (p.ej. cuando
+      // el mantenimiento ya está Completado y no se pueden conservar).
+      if (/\bitems?\b/i.test(msg) && /completado/i.test(msg)) {
+        toast.error("No se pueden mantener los items: el mantenimiento ya está completado.");
+      } else {
+        toast.error(msg);
+      }
+    }
   };
 
-  const onRequestCorrection = async (newScheduledFor: string | null, reason: string) => {
+  const onRequestCorrection = async (newScheduledFor: string | null, reason: string, keepItems: boolean) => {
     if (!correctionTarget) return;
     try {
-      await correctionMut.mutateAsync({ id: correctionTarget.id, reason, newScheduledFor });
+      await correctionMut.mutateAsync({ id: correctionTarget.id, reason, newScheduledFor, keepItems });
       toast.success("Mantenimiento marcado para corrección");
       setCorrectionOpen(false);
       setCorrectionTarget(null);
-    } catch (e) { toast.error((e as Error).message); }
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (/\bitems?\b/i.test(msg) && /completado/i.test(msg)) {
+        toast.error("No se pueden mantener los items: el mantenimiento ya está completado.");
+      } else {
+        toast.error(msg);
+      }
+    }
+  };
+
+  // Handler opcional via prop (default no-op) que el parent puede pasar.
+  // La implementación por defecto usa el hook interno para llamar al nuevo
+  // endpoint POST /:id/reauthorize y refrescar la lista al volver.
+  const localOnReauthorize = async (m: Maintenance, reason: string) => {
+    try {
+      await reauthorizeMut.mutateAsync({ id: m.id, reason });
+      toast.success("Mantenimiento reautorizado", {
+        description: "Sigue autorizado para ejecutarse aunque esté atrasado.",
+      });
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
   };
 
   const createPrefillType: MaintenanceType | undefined =
@@ -328,7 +385,7 @@ export function MaintenanceListTab({ title }: Props) {
           Cards estilo "CRÍTICAS / OPERATIVAS / UNIDADES" pero aplicadas
           a los estados de mantenimiento. Click → setea subTab al
           estado correspondiente (toggle off si ya estaba activo). */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <StatusKpiCard
           label="Programado"
           count={statusCounts.Programado}
@@ -360,6 +417,14 @@ export function MaintenanceListTab({ title }: Props) {
           color="rose"
           active={subTab === "Correccion"}
           onClick={() => { setSubTab(subTab === "Correccion" ? "all" : "Correccion"); setPage(1); }}
+        />
+        <StatusKpiCard
+          label="Atrasados"
+          count={statusCounts.Atrasado}
+          spark={sparkByStatus.Atrasado}
+          color="rose"
+          active={subTab === "Atrasado"}
+          onClick={() => { setSubTab(subTab === "Atrasado" ? "all" : "Atrasado"); setPage(1); }}
         />
       </div>
 
@@ -393,6 +458,7 @@ export function MaintenanceListTab({ title }: Props) {
             { id: "En proceso",  label: "En proceso",  dot: <span className="h-1.5 w-1.5 rounded-full bg-sky-500 dark:bg-sky-400" /> },
             { id: "Completado",  label: "Completado",  dot: <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" /> },
             { id: "Correccion",  label: "Corrección",  dot: <span className="h-1.5 w-1.5 rounded-full bg-rose-500 dark:bg-rose-400" /> },
+            { id: "Atrasado",    label: "Atrasados",   dot: <span className="h-1.5 w-1.5 rounded-full bg-rose-600 dark:bg-rose-400" /> },
           ]}
         />
 
@@ -502,6 +568,9 @@ export function MaintenanceListTab({ title }: Props) {
                     const st = STATUS_CFG[m.status as MaintenanceStatus] ?? STATUS_CFG.Programado;
                     const ty = TYPE_CFG[m.type] ?? TYPE_CFG.Programado;
                     const cat = allCategories[m.category] ?? { label: m.category, dot: "bg-gray-400", cls: "text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-white/[0.04]" };
+                    const overdue = isMaintenanceOverdue(m);
+                    // Atrasado siempre domina visualmente: border y fondo.
+                    const rowAccent = overdue ? "border-l-rose-500 bg-rose-50/40 dark:bg-rose-500/[0.06]" : `${ty.rowAccent}`;
                     return (
                       <motion.tr
                         key={m.id}
@@ -511,8 +580,8 @@ export function MaintenanceListTab({ title }: Props) {
                         exit={{ opacity: 0, y: -4 }}
                         transition={{ duration: 0.18, delay: Math.min(i, 10) * 0.025, ease: "easeOut" }}
                         onClick={() => setDetailId(m.id)}
-                        className={`border-t border-gray-100 dark:border-white/[0.04] border-l-4 ${ty.rowAccent} cursor-pointer transition-colors ${
-                          i % 2 === 1 ? "bg-gray-50/50 dark:bg-white/[0.015]" : ""
+                        className={`border-t border-gray-100 dark:border-white/[0.04] border-l-4 ${overdue ? rowAccent : ty.rowAccent} cursor-pointer transition-colors ${
+                          !overdue && i % 2 === 1 ? "bg-gray-50/50 dark:bg-white/[0.015]" : ""
                         } hover:bg-blue-50/40 dark:hover:bg-white/[0.04]`}
                       >
                         <td className="px-4 py-3 text-gray-600 dark:text-gray-300 whitespace-nowrap">
@@ -540,6 +609,7 @@ export function MaintenanceListTab({ title }: Props) {
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border ${st.cls}`}>
                             <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />
+                            {overdue && <AlertTriangle size={11} className="shrink-0" />}
                             {st.label}
                           </span>
                         </td>
@@ -552,6 +622,43 @@ export function MaintenanceListTab({ title }: Props) {
                         <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-200 font-medium">{fmtMoney(m.totalCost)}</td>
                         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                           <div className="flex justify-end gap-1">
+                            {/* Reautorizar (solo Atrasado + Programado, si el user
+                                tiene permiso de edición): confirma que el mantenimiento
+                                sigue autorizado para ejecutarse aunque haya pasado la
+                                fecha prevista. Para Correctivo esta acción no aplica
+                                (el botón se oculta). Muestra un prompt nativo para que
+                                el admin escriba el motivo antes de invocar el endpoint
+                                POST /:id/reauthorize. */}
+                            {canReauthorize && overdue && m.type === "Programado" && m.status !== "Completado" && (
+                              <button
+                                onClick={() => {
+                                  // window.prompt devuelve null si el admin cancela.
+                                  const raw = window.prompt("Motivo de la reautorización (opcional):", "");
+                                  if (raw === null) return;
+                                  const reason = raw.trim();
+                                  void (onReauthorize ?? localOnReauthorize)(m, reason);
+                                }}
+                                disabled={reauthorizeMut.isPending}
+                                className="p-1.5 rounded-md text-emerald-600 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 disabled:opacity-50 transition"
+                                title="Reautorizar mantenimiento atrasado"
+                                aria-label="Reautorizar mantenimiento atrasado"
+                              >
+                                <CheckCircle2 size={13} />
+                              </button>
+                            )}
+                            {/* Reagendar (solo Atrasado): dispara el ReprogramDialog
+                                existente en modo reschedule. Mantenemos también
+                                la opción de reagendar para los casos en que el
+                                mantenimiento se mueve de fecha, no se reautoriza. */}
+                            {overdue && m.status !== "Completado" && (
+                              <button
+                                onClick={() => { setReprogramTarget(m); setReprogramOpen(true); }}
+                                className="p-1.5 rounded-md text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition"
+                                title="Reagendar mantenimiento atrasado"
+                              >
+                                <RefreshCw size={13} />
+                              </button>
+                            )}
                             {canEdit && (
                               <button
                                 onClick={() => { setEditing(m); setModalOpen(true); }}

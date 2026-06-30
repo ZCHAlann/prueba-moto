@@ -8,7 +8,7 @@
 //   - rango de fechas
 
 import { z } from 'zod';
-import { and, eq, gte, lte, desc, ilike, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, desc, ilike, sql } from 'drizzle-orm';
 import { db } from '../../../db/client';
 import {
   companyChecklists,
@@ -16,10 +16,10 @@ import {
   companyDrivers,
 } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
-import { tolerantString, tolerantNumber, tolerantBoolean, tolerantDateString } from '../schema-helpers';
+import { tolerantString, tolerantNumber, tolerantBoolean, tolerantDateString, enumOrList } from '../schema-helpers';
 
 const argsSchema = z.object({
-  estado:    z.enum(['Aprobado', 'Observado', 'Pendiente', 'Rechazado']).optional(),
+  estado:    enumOrList(['Aprobado', 'Observado', 'Pendiente', 'Rechazado']).optional(),
   assetId:   tolerantNumber().int().positive().optional(),
   placa:     tolerantString().optional(),
   driverId:  tolerantNumber().int().positive().optional(),
@@ -42,7 +42,11 @@ export const checklistsTool: ToolDefinition<Args> = {
   async execute(args, ctx): Promise<ToolResult> {
     const where = [eq(companyChecklists.companyId, ctx.empresaId)];
 
-    if (args.estado)   where.push(eq(companyChecklists.status, args.estado));
+    if (args.estado) {
+      Array.isArray(args.estado)
+        ? where.push(inArray(companyChecklists.status, args.estado))
+        : where.push(eq(companyChecklists.status, args.estado));
+    }
     if (args.desde)    where.push(gte(companyChecklists.date, args.desde));
     if (args.hasta)    where.push(lte(companyChecklists.date, args.hasta));
     if (args.assetId)  where.push(eq(companyChecklists.assetId, args.assetId));

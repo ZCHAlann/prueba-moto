@@ -18,6 +18,8 @@ import { createServer } from 'http';
 import app from './app';
 import { attachWebSocket } from './services/websocket';
 import { startMaintenanceCron } from './lib/cron/maintenance';
+import { startMaintenanceOverdueCron, runOverdueMaintenance } from './lib/cron/maintenance-overdue';
+import { startChecklistOverdueCron, runOverdueChecklists } from './lib/cron/checklist-overdue';
 import { startStatsAnomaliesCron } from './lib/cron/stats-anomalies';
 import { startStatsCleanupCron } from './lib/cron/cleanup';
 import { startScheduledJobs as startJarvisWeeklySummary } from './scheduled/weekly-summary';
@@ -31,6 +33,33 @@ attachWebSocket(server);
 startMaintenanceCron();
 startStatsAnomaliesCron();
 startStatsCleanupCron();
+
+// Detección de mantenimientos atrasados (diario 00:05 EC).
+// Se apaga con MAINTENANCE_OVERDUE_CRON_ENABLED != true.
+startMaintenanceOverdueCron();
+
+// Detección de checklists vencidos (diario 00:10 EC).
+// Se apaga con CHECKLIST_OVERDUE_CRON_ENABLED != true.
+startChecklistOverdueCron();
+
+// Sweep inicial best-effort: si por algún motivo el cron diario no se
+// ejecutó (deployment, cold start), corremos una pasada al arrancar.
+void (async () => {
+  try {
+    const n = await runOverdueMaintenance();
+    if (n > 0) console.log(`[startup] overdue: ${n} mantenimientos marcados como Atrasado en el sweep inicial.`);
+  } catch (err) {
+    console.warn('[startup] overdue: sweep inicial falló (no crítico):', (err as Error).message);
+  }
+
+  // Sweep inicial de checklists vencidos (idempotente).
+  try {
+    const m = await runOverdueChecklists();
+    if (m > 0) console.log(`[startup] checklist-overdue: ${m} checklists persistidos como Vencido en el sweep inicial.`);
+  } catch (err) {
+    console.warn('[startup] checklist-overdue: sweep inicial falló (no crítico):', (err as Error).message);
+  }
+})();
 
 // Resumen semanal Jarvis (lunes 8am EC). Se puede apagar con
 // JARVIS_WEEKLY_SUMMARY_ENABLED != true.

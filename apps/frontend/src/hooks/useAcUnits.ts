@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
 import type {
   AirConditioningUnit,
   AirConditioningStatus,
@@ -391,7 +392,11 @@ export function useAcUnits() {
       if (!companyId || files.length === 0) return [];
       try {
         const form = new FormData();
-        files.forEach((f) => form.append("photos", f));
+        // Comprimir cada foto antes de subirla (PDFs y archivos no-imagen se suben tal cual)
+        const compressed = await Promise.all(
+          files.map((f) => compressIfImage(f, COMPRESS_OPTS_EVIDENCE))
+        );
+        compressed.forEach((f) => form.append("photos", f));
         const res = await fetch(
           `/api/upload/ac-photos?companyId=${companyId}`,
           { method: "POST", body: form }

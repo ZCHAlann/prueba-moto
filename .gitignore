@@ -87,3 +87,4 @@ drizzle/*
 apps/backend/migrations/*
 apps/backend/scripts/*
 apps/backend/migrations/**
+.mavis/**

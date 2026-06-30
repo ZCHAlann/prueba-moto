@@ -1,20 +1,41 @@
+import { useMemo } from "react";
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { usePermissions } from "../../hooks/usePermissions";
 import { MantenimientosAgendar } from "./Agendar";
 import { MaintenanceListTab } from "./components/MaintenanceListTab";
 import {
-  Calendar as CalIcon, Wrench,
+  Calendar as CalIcon, Wrench, AlertTriangle,
 } from "lucide-react";
+import { useAuth } from "../../context/AuthContext";
+import {
+  useMaintenancesList,
+  isMaintenanceOverdue,
+} from "../../hooks/useMaintenancesV2";
 
 type Tab = "agendar" | "lista";
 
 export function MantenimientosPage() {
   const { can } = usePermissions();
+  const { session } = useAuth();
+  const meRole = session?.role ?? "";
 
   const canSeeAgenda    = can("mantenimiento", "agenda",    "ver");
   const canSeeExecution = can("mantenimiento", "execution", "ver");
   const canSeeRecords   = can("mantenimiento", "records",   "ver");
+
+  // Banner de atrasados: se muestra si el user logueado es operador
+  // (o cualquier rol que opere mantenimientos) y tiene AL MENOS UN
+  // mantenimiento con status === 'Atrasado' asignado a él.
+  const isOperatorLike = meRole === "operador" || meRole === "supervisor";
+  const { data: mineData } = useMaintenancesList(
+    { scope: "mine" },
+    { enabled: isOperatorLike },
+  );
+  const myOverdueCount = useMemo(() => {
+    const items = mineData?.data ?? [];
+    return items.filter((m) => isMaintenanceOverdue(m) && m.status !== "Completado").length;
+  }, [mineData]);
 
   // Default: si el user tiene permiso de ver la lista, arrancar ahí. Si no, agenda.
   const [tab, setTab] = useState<Tab>(() => {
@@ -51,6 +72,23 @@ export function MantenimientosPage() {
           ))}
         </div>
       </div>
+
+      {/* Banner de atrasados para el operador:
+          visible solo si tiene ≥1 mantenimiento atrasado asignado a él.
+          Lo ubicamos entre el header y la lista para que el operador lo
+          vea apenas entra a la pantalla. */}
+      {isOperatorLike && myOverdueCount > 0 && (
+        <div
+          role="alert"
+          className="mb-3 flex items-start gap-2.5 rounded-xl border border-rose-300 bg-rose-50 px-3.5 py-2.5 text-rose-800 shadow-sm dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200"
+        >
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          <div className="flex-1 text-xs leading-snug">
+            <span className="font-semibold">Tenés {myOverdueCount} mantenimiento{myOverdueCount !== 1 ? "s" : ""} atrasado{myOverdueCount !== 1 ? "s" : ""}.</span>{" "}
+            Comunicate con tu supervisor para reagendar.
+          </div>
+        </div>
+      )}
 
       {/* Contenido */}
       <div className="flex-1 min-h-0 overflow-hidden">

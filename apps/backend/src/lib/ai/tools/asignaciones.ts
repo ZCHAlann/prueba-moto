@@ -7,7 +7,7 @@
 //   - vehículo (assetId o placa)
 
 import { z } from 'zod';
-import { and, eq, gte, lte, desc, ilike, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, desc, ilike, sql } from 'drizzle-orm';
 import { db } from '../../../db/client';
 import {
   companyAssignments,
@@ -15,10 +15,10 @@ import {
   companyDrivers,
 } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
-import { tolerantString, tolerantNumber, tolerantDateString } from '../schema-helpers';
+import { tolerantString, tolerantNumber, tolerantDateString, enumOrList } from '../schema-helpers';
 
 const argsSchema = z.object({
-  estado:      z.enum(['Activa', 'Finalizada', 'Inactiva']).optional(),
+  estado:      enumOrList(['Activa', 'Finalizada', 'Inactiva']).optional(),
   driverId:    tolerantNumber().int().positive().optional(),
   assetId:     tolerantNumber().int().positive().optional(),
   placa:       tolerantString().optional(),
@@ -39,7 +39,11 @@ export const asignacionesTool: ToolDefinition<Args> = {
 
   async execute(args, ctx): Promise<ToolResult> {
     const where = [eq(companyAssignments.companyId, ctx.empresaId)];
-    if (args.estado)  where.push(eq(companyAssignments.status, args.estado));
+    if (args.estado) {
+      Array.isArray(args.estado)
+        ? where.push(inArray(companyAssignments.status, args.estado))
+        : where.push(eq(companyAssignments.status, args.estado));
+    }
     if (args.driverId) where.push(eq(companyAssignments.driverId, args.driverId));
     if (args.assetId) where.push(eq(companyAssignments.assetId, args.assetId));
     if (args.desde) where.push(gte(companyAssignments.startDate, args.desde));

@@ -525,3 +525,111 @@ export function useExportarPDF() {
 
   return { exportar, loading, error, ultimoArchivo };
 }
+
+// ─── useEstadisticasMultiEntity ─────────────────────────────────────
+// Compara el mismo módulo para N entidades (assets o drivers) en paralelo.
+// Espejo de useEstadisticas pero contra el endpoint /multi-entidad.
+// Usado por el Lienzo de Presentación con scope='varios'.
+
+export type EntityKind = "asset" | "driver";
+
+export type EntityRefFE = {
+  id:       number;
+  label:    string;
+  sublabel?: string | null;
+  color:    string;
+};
+
+export type MultiEntityKpiFE = {
+  label:  string;
+  icono?: string;
+  unidad?: string;
+  porEntidad: Record<string, {
+    valor:        number | string;
+    unidad?:       string;
+    variacionPct?: number;
+  }>;
+};
+
+export type MultiEntityLinePointFE = {
+  x: string;
+  [entityId: string]: number | string | null | undefined;
+};
+
+export type MultiEntityDataFE = {
+  modulo:     Modulo;
+  periodo:    Periodo;
+  entityKind: EntityKind;
+  entidades:  EntityRefFE[];
+  kpis:       MultiEntityKpiFE[];
+  lineChart:  { title: string; unidad: string; data: MultiEntityLinePointFE[] };
+  barVChart:  { title: string; unidad: string; data: MultiEntityLinePointFE[] };
+  barHChart:  { title: string; unidad: string; data: Array<{ name: string; value: number; meta?: string }> };
+  radarChart: {
+    title:  string;
+    data:   RadarPoint[];
+    series: Array<{ entityId: number; name: string; color: string; data: RadarPoint[] }>;
+  };
+  exponencialChart: { title: string; unidad: string; data: MultiEntityLinePointFE[] };
+  warnings:   string[];
+};
+
+export type UseEstadisticasMultiEntityParams = {
+  companyId:  string | null;
+  modulo:     Modulo;
+  entityKind: EntityKind;
+  entityIds:  number[];
+  periodo?:   Periodo;
+  desde:      string;          // YYYY-MM-DD
+  hasta?:     string;          // YYYY-MM-DD; default = desde
+  enabled?:   boolean;
+};
+
+export function useEstadisticasMultiEntity(params: UseEstadisticasMultiEntityParams) {
+  const {
+    companyId, modulo, entityKind, entityIds,
+    periodo = "month", desde, hasta, enabled = true,
+  } = params;
+
+  const [data, setData]       = useState<MultiEntityDataFE | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
+
+  const fetch_ = useCallback(async () => {
+    if (!companyId || !enabled) return;
+    if (!entityIds.length) {
+      setData(null);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const qs = new URLSearchParams();
+      qs.set("periodo", periodo);
+      qs.set("desde", desde);
+      qs.set("hasta", hasta ?? desde);
+      qs.set("entityKind", entityKind);
+      qs.set("entityIds", entityIds.join(","));
+
+      const res = await fetch(
+        `/api/company/${companyId}/estadisticas/${modulo}/multi-entidad?${qs.toString()}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status} — ${txt.slice(0, 200)}`);
+      }
+      const json = (await res.json()) as MultiEntityDataFE;
+      setData(json);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error desconocido");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [companyId, modulo, entityKind, entityIds.join(","), periodo, desde, hasta, enabled]);
+
+  useEffect(() => { void fetch_(); }, [fetch_]);
+
+  return { data, loading, error, refetch: fetch_ };
+}

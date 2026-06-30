@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useProfile } from "@/hooks/useProfile";
 import type { UpdateProfileInput, ChangePasswordInput } from "@/hooks/useProfile";
 import { fmtDateLongEc } from "@/lib/datetime";
+import { compressIfImage, COMPRESS_OPTS_STANDARD } from "@/lib/mediaCompress";
 
 // ─── Iconos inline ────────────────────────────────────────────────────────────
 
@@ -302,17 +303,37 @@ export function ProfilePage() {
     }
 
     setIsProcessingPhoto(true);
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target?.result as string;
-      setPhotoPreview(dataUrl);
-      setIsProcessingPhoto(false);
-    };
-    reader.onerror = () => {
-      toast.error("No se pudo leer el archivo.");
-      setIsProcessingPhoto(false);
-    };
-    reader.readAsDataURL(file);
+    // Comprimir antes de generar el dataURL: la foto de perfil se guarda
+    // como base64 en el backend, así que reducir el tamaño del File reduce
+    // proporcionalmente el tamaño del dataURL (~33% más pequeño).
+    compressIfImage(file, COMPRESS_OPTS_STANDARD)
+      .then((compressed) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const dataUrl = ev.target?.result as string;
+          setPhotoPreview(dataUrl);
+          setIsProcessingPhoto(false);
+        };
+        reader.onerror = () => {
+          toast.error("No se pudo leer el archivo.");
+          setIsProcessingPhoto(false);
+        };
+        reader.readAsDataURL(compressed);
+      })
+      .catch(() => {
+        // Si la compresión falla, subimos el original
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const dataUrl = ev.target?.result as string;
+          setPhotoPreview(dataUrl);
+          setIsProcessingPhoto(false);
+        };
+        reader.onerror = () => {
+          toast.error("No se pudo leer el archivo.");
+          setIsProcessingPhoto(false);
+        };
+        reader.readAsDataURL(file);
+      });
 
     // Reset input para permitir reseleccionar el mismo archivo
     e.target.value = "";

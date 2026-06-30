@@ -10,6 +10,7 @@ import {
   useCreateMaintenance,
   useUpdateMaintenance,
   uploadMaintenanceAttachment,
+  uploadPartPhoto,
   type Maintenance,
   type MaintenanceInput,
   type MaintenanceItemInput,
@@ -22,52 +23,6 @@ import { useAssets } from "../../../hooks/useAssets";
 import { useCompanyUsers } from "../../../hooks/useCompanyUsers";
 import { usePermissions } from "../../../hooks/usePermissions";
 import { useAuth } from "../../../context/AuthContext";
-
-// ─── Upload helper ─────────────────────────────────────────────────────────────
-// Valida mimetype/tamaño en el cliente para fallar rápido con un mensaje
-// claro (el backend re-valida con whitelist y companyId).
-
-const PART_ALLOWED_TYPES = new Set([
-  "image/jpeg", "image/png", "image/webp", "image/gif",
-  "image/heic", "image/heif", "application/pdf",
-]);
-const PART_MAX_SIZE_BYTES = 10 * 1024 * 1024;
-
-async function uploadPartPhoto(file: File, companyId?: string | number): Promise<string> {
-  if (!PART_ALLOWED_TYPES.has(file.type)) {
-    throw new Error(`Tipo de archivo no permitido: ${file.type || "(vacío)"}. Use JPG, PNG, WebP, HEIC o PDF.`);
-  }
-  if (file.size > PART_MAX_SIZE_BYTES) {
-    throw new Error("El archivo supera el tamaño máximo permitido (10 MB).");
-  }
-
-  const fd = new FormData();
-  fd.append("photo", file);
-  const qs = companyId ? `?companyId=${companyId}` : "";
-
-  // Validación client-side de companyId: si el user no tiene sesión
-  // con companyId, no tiene sentido intentar el upload.
-  if (!companyId) {
-    throw new Error("Sesión sin empresa: no se puede subir la foto.");
-  }
-
-  const res = await fetch(`/api/upload/part-photos${qs}`, {
-    method: "POST",
-    body: fd,
-    credentials: "include",
-  });
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try {
-      const j = await res.clone().json();
-      if (j?.error) msg = j.error;
-    } catch { /* ignore */ }
-    throw new Error(`Upload part-photo: ${msg}`);
-  }
-  const json = await res.json();
-  if (!json.url) throw new Error("Upload part-photo: respuesta sin URL");
-  return json.url as string;
-}
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 

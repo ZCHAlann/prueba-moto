@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -243,7 +244,11 @@ export function useHandoverWizard(
     setUploading(true);
     try {
       const form = new FormData();
-      data.vehiclePhotos.forEach((f) => form.append("photos", f));
+      // Comprimir cada foto antes de subirla
+      const compressed = await Promise.all(
+        data.vehiclePhotos.map((f) => compressIfImage(f, COMPRESS_OPTS_EVIDENCE))
+      );
+      compressed.forEach((f) => form.append("photos", f));
       const res = await fetch(
         `/api/upload/assignment-photos?companyId=${companyId}`,
         { method: "POST", body: form },
@@ -263,8 +268,9 @@ export function useHandoverWizard(
       try {
         const blob = await (await fetch(dataUrl)).blob();
         const file = new File([blob], `sig-${type}-${Date.now()}.png`, { type: "image/png" });
+        const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
         const form = new FormData();
-        form.append("photos", file);
+        form.append("photos", toUpload);
         const res = await fetch(
           `/api/upload/assignment-photos?companyId=${companyId}`,
           { method: "POST", body: form },
@@ -286,6 +292,7 @@ export function useHandoverWizard(
     setUploading(true);
     try {
       const form = new FormData();
+      // PDF: no se comprime (compressIfImage lo dejaría igual por no ser imagen)
       form.append("pdf", blob, `acta-${Date.now()}.pdf`);
       const res = await fetch(
         `/api/upload/handover-pdf?companyId=${companyId}`,
@@ -308,8 +315,9 @@ export function useHandoverWizard(
     if (!file) return null;
     setUploading(true);
     try {
+      const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
       const form = new FormData();
-      form.append("photos", file);
+      form.append("photos", toUpload);
       const res = await fetch(
         `/api/upload/assignment-photos?companyId=${companyId}`,
         { method: "POST", body: form },

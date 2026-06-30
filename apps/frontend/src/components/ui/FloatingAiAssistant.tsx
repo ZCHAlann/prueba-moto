@@ -6,6 +6,7 @@ import {
   Check, Search, AlertCircle, Mic, MicOff, Volume2, Download, FileText,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
+import { ConfirmModal } from "./ConfirmModal";
 
 // ─── Tipos ────────────────────────────────────────────────────────────
 
@@ -95,6 +96,7 @@ export function FloatingAiAssistant() {
     return stored == null ? true : stored === "1";
   });
   const [speaking, setSpeaking] = useState(false);
+  const [convToDelete, setConvToDelete] = useState<Conversation | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<any>(null);
   const chatRef   = useRef<HTMLDivElement>(null);
@@ -359,7 +361,7 @@ export function FloatingAiAssistant() {
   }
 
   async function deleteConversation(cid: string) {
-    if (!companyId || !confirm("¿Borrar esta conversación?")) return;
+    if (!companyId) return;
     try {
       const res = await fetch(
         `/api/company/${companyId}/ai/conversations/${cid}`,
@@ -758,7 +760,7 @@ function speakLastResponse() {
                               { icon: <Download className="h-3 w-3" />, fn: () => void exportConversation(c.id, "csv"), title: "CSV" },
                               { icon: <FileText className="h-3 w-3" />,  fn: () => void exportConversation(c.id, "pdf"), title: "PDF" },
                               { icon: <Pencil className="h-3 w-3" />,    fn: () => { setRenamingId(c.id); setRenameValue(c.title ?? ""); }, title: "Renombrar" },
-                              { icon: <Trash2 className="h-3 w-3" />,    fn: () => void deleteConversation(c.id), title: "Eliminar" },
+                              { icon: <Trash2 className="h-3 w-3" />,    fn: () => setConvToDelete(c), title: "Eliminar" },
                             ].map((btn, i) => (
                               <button
                                 key={i}
@@ -1051,9 +1053,25 @@ function speakLastResponse() {
         </div>
       )}
 
-      {/* ── Modal confirmación ──────────────────────────────────────── */}
-      {/* Jarvis es solo lectura: ya no propone acciones de escritura, */}
-      {/* así que este modal ya no se renderiza nunca. */}
+      {/* ── Modal confirmación: eliminar conversación ──────────────── */}
+      <ConfirmModal
+        open={!!convToDelete}
+        title="Eliminar conversación"
+        description={
+          <>
+            ¿Seguro que quieres eliminar{" "}
+            <strong>"{convToDelete?.title || "esta conversación"}"</strong>? Esta acción no se puede deshacer.
+          </>
+        }
+        confirmLabel="Eliminar"
+        cancelLabel="Cancelar"
+        tone="danger"
+        onConfirm={() => {
+          if (convToDelete) void deleteConversation(convToDelete.id);
+          setConvToDelete(null);
+        }}
+        onClose={() => setConvToDelete(null)}
+      />
 
       <style>{`
         @keyframes panelIn {

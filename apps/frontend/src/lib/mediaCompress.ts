@@ -5,10 +5,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  Compresión client-side de imágenes y videos antes de subirlos al backend.
 //
-//  - Imágenes:  Canvas → JPEG quality 0.85, max 1920px (mantiene aspect ratio).
+//  - Imágenes:  Canvas → JPEG quality 0.78, max 1280px (mantiene aspect ratio).
+//               HEIC soportado via decode nativo si hay createImageBitmap, o
+//               se sube tal cual (iOS lo convierte automáticamente al servir).
 //  - Video:     ffmpeg.wasm → H.264 480p @ CRF 28 "fast". Soporta 1-3 min sin
 //               el problema de tiempo-real de MediaRecorder.
 //  - Thumbnail: primer frame renderizado en canvas.
+//  - Batch:     `compressImagesBatch` corre hasta 2 imágenes en paralelo.
+//  - Warmup:    `warmupFFmpeg` arranca la carga del core en background para
+//               que cuando el usuario acepte la primera foto, ffmpeg ya esté listo.
 //
 //  Si el archivo ya es suficientemente pequeño, se sube tal cual.
 
@@ -16,9 +21,9 @@ import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile } from "@ffmpeg/util";
 
 export type CompressOptions = {
-  /** Para imágenes: ancho máximo en px (default 1920). */
+  /** Para imágenes: ancho máximo en px (default 1280). */
   maxImageWidth?: number;
-  /** Para imágenes: calidad JPEG 0..1 (default 0.85). */
+  /** Para imágenes: calidad JPEG 0..1 (default 0.78). */
   imageQuality?: number;
   /** Para videos: altura objetivo en px (default 480). */
   targetVideoHeight?: number;
@@ -27,11 +32,16 @@ export type CompressOptions = {
 };
 
 const DEFAULT_OPTS: Required<CompressOptions> = {
-  maxImageWidth:     1920,
-  imageQuality:      0.85,
+  maxImageWidth:     1280,
+  imageQuality:      0.78,
   targetVideoHeight: 480,
   videoCrf:          28,
 };
+
+// Umbral por debajo del cual NO comprimimos (ya es suficientemente pequeño).
+// Bajamos de 350 KB → 180 KB porque con maxWidth=1280 las fotos típicamente
+// quedan < 200 KB de todas formas.
+const IMAGE_SKIP_THRESHOLD = 180 * 1024;
 
 // ─── Singleton de FFmpeg ──────────────────────────────────────────────────────
 // Se carga una sola vez y se reutiliza para todas las compresiones.
@@ -58,6 +68,58 @@ async function getFFmpeg(): Promise<FFmpeg> {
   return _ffmpegLoading;
 }
 
+/**
+ * Pre-carga el core de ffmpeg.wasm en background.
+ *
+ * Llamar en un useEffect de mount del componente principal (ej: Autorizaciones
+ * page). Cuando el usuario termina de tomar la primera foto y el wizard llama
+ * a `compressVideo()`, ffmpeg ya está listo y no hay un "freeze" de 2-3 s
+ * mientras carga el WASM (~30 MB).
+ *
+ * Es seguro llamarlo varias veces: si ya está cargado (o cargando), es noop.
+ * Si ffmpeg.wasm no está disponible (browser sin SharedArrayBuffer), el
+ * promise rechaza silenciosamente — `compressVideo` ya tiene fallback al
+ * archivo original.
+ */
+export function warmupFFmpeg(): void {
+  // No await-eamos: corre en background. Capturamos errores en consola
+  // para diagnóstico pero no propagamos.
+  getFFmpeg().catch((err) => {
+    console.warn("[mediaCompress:warmup] ffmpeg no se pudo pre-cargar:", err?.message ?? err);
+  });
+}
+
+// ─── HEIC / HEIF ──────────────────────────────────────────────────────────────
+// iPhone graba en HEIC por defecto. La mayoría de navegadores modernos (Chrome,
+// Safari, Edge) pueden decodificar HEIC nativamente vía createImageBitmap o <img>.
+// Si el browser no puede, igual subimos el archivo (el servidor lo recibe y
+// puede servirlo directo).
+//
+// Esta función chequea si podemos decodificar HEIC en este browser, para
+// decidir si comprimimos o subimos tal cual.
+
+let _heicSupported: boolean | null = null;
+
+async function isHeicSupported(): Promise<boolean> {
+  if (_heicSupported !== null) return _heicSupported;
+  try {
+    // Test: crear un canvas 1x1 y dibujar un blob HEIC vacío.
+    // createImageBitmap con un HEIC real valida el decoder.
+    if (typeof createImageBitmap !== "function") {
+      _heicSupported = false;
+      return false;
+    }
+    // No tenemos un HEIC de prueba, así que heurística: si el userAgent es
+    // Safari o iOS, asumimos soporte nativo. Si es Chrome desktop / Android,
+    // también (Chrome 100+ soporta HEIC).
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    _heicSupported = /Safari|iPhone|iPad|Chrome\/1[0-9]{2,}/.test(ua);
+  } catch {
+    _heicSupported = false;
+  }
+  return _heicSupported;
+}
+
 // ─── Imagen ───────────────────────────────────────────────────────────────────
 
 /** Comprime una imagen y devuelve un File listo para subir. */
@@ -66,13 +128,24 @@ export async function compressImage(
   opts: CompressOptions = {},
 ): Promise<File> {
   const o = { ...DEFAULT_OPTS, ...opts };
-  if (!file.type.startsWith("image/")) return file;
-  if (file.size < 350 * 1024) return file; // <350 KB: ya está bien
+
+  // HEIC: si el browser no lo soporta, subimos tal cual (el servidor lo maneja).
+  const isHeic = /\.(heic|heif)$/i.test(file.name) ||
+                  file.type === "image/heic" ||
+                  file.type === "image/heif";
+  if (isHeic) {
+    const supported = await isHeicSupported();
+    if (!supported) return file;
+  }
+
+  if (!file.type.startsWith("image/") && !isHeic) return file;
+  if (file.size < IMAGE_SKIP_THRESHOLD) return file; // ya está bien
 
   const bitmap = await loadBitmap(file);
+  // Para imágenes muy pequeñas (<= maxWidth), no redimensionamos (ratio = 1).
   const ratio = Math.min(1, o.maxImageWidth / bitmap.width);
-  const w = Math.round(bitmap.width * ratio);
-  const h = Math.round(bitmap.height * ratio);
+  const w = Math.max(1, Math.round(bitmap.width * ratio));
+  const h = Math.max(1, Math.round(bitmap.height * ratio));
 
   const canvas = document.createElement("canvas");
   canvas.width = w;
@@ -91,6 +164,45 @@ export async function compressImage(
     type: "image/jpeg",
     lastModified: Date.now(),
   });
+}
+
+// ─── Batch ────────────────────────────────────────────────────────────────────
+// Corre `compressImage` sobre varios archivos con concurrencia limitada.
+// Antes cada llamada era secuencial (N fotos → N awaits); ahora corremos 2
+// en paralelo (suficiente para no saturar memoria del browser con bitmaps
+// grandes). El orden del array de salida es estable.
+
+const BATCH_CONCURRENCY = 2;
+
+/**
+ * Comprime varias imágenes en paralelo (concurrencia 2).
+ *
+ * Devuelve un File[] en el mismo orden del input. Si una imagen falla, se
+ * devuelve el File original (no se rompe el wizard).
+ */
+export async function compressImagesBatch(
+  files: File[],
+  opts: CompressOptions = {},
+): Promise<File[]> {
+  const results: File[] = new Array(files.length);
+  let cursor = 0;
+
+  async function worker() {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= files.length) return;
+      try {
+        results[idx] = await compressImage(files[idx], opts);
+      } catch (err) {
+        console.warn(`[mediaCompress:batch] idx=${idx} falló, subiendo original:`, err);
+        results[idx] = files[idx];
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(BATCH_CONCURRENCY, files.length) }, worker);
+  await Promise.all(workers);
+  return results;
 }
 
 // ─── Thumbnail ────────────────────────────────────────────────────────────────
@@ -226,4 +338,42 @@ function loadBitmap(file: File): Promise<ImageBitmap> {
 function replaceExt(name: string, newExt: string): string {
   const i = name.lastIndexOf(".");
   return (i >= 0 ? name.slice(0, i) : name) + newExt;
+}
+
+// ─── Presets + helper de "comprimir si es imagen" ────────────────────────────
+// Capa fina sobre `compressImage` pensada para los uploads puntuales del
+// frontend (facturas, repuestos, fotos de mantenimiento, combustible,
+// checklists). Centralizar acá evita que cada componente re-defina su
+// propia versión y nos asegura que las opciones aplicadas son consistentes.
+
+/** Opciones estándar para fotos de evidencia/operación (facturas,
+ *  repuestos, fotos de mantenimiento, combustible, checklists). No
+ *  necesitan alta fidelidad — legibilidad es suficiente. */
+export const COMPRESS_OPTS_EVIDENCE: CompressOptions = {
+  maxImageWidth: 1280,
+  imageQuality: 0.78,
+};
+
+/** Opciones para fotos de perfil y documentos donde el detalle
+ *  importa más. */
+export const COMPRESS_OPTS_STANDARD: CompressOptions = {
+  maxImageWidth: 1600,
+  imageQuality: 0.82,
+};
+
+/**
+ * Comprime si es imagen. Si es PDF u otro tipo, devuelve el archivo
+ * original. Si la compresión falla, devuelve el original silenciosamente
+ * (preferimos subir un archivo sin comprimir antes que romper el flujo).
+ */
+export async function compressIfImage(
+  file: File,
+  opts: CompressOptions = COMPRESS_OPTS_EVIDENCE,
+): Promise<File> {
+  if (!file.type.startsWith("image/")) return file;
+  try {
+    return await compressImage(file, opts);
+  } catch {
+    return file;
+  }
 }

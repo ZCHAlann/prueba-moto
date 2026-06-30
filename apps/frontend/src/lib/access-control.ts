@@ -32,6 +32,8 @@ const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub
   { test: (h) => h === "/checklist" || h.startsWith("/checklist"),                                        mod: "checklist",     sub: "checklist" },
   { test: (h) => h === "/alertas" || h.startsWith("/alertas"),                                             mod: "alertas",       sub: "alertas" },
   { test: (h) => h === "/reportes" || h.startsWith("/reportes"),                                          mod: "reportes",      sub: "reportes" },
+  // Lienzo — módulo top-level (migrado desde `reportes.lienzo` en jun 2026)
+  { test: (h) => h === "/lienzo" || h.startsWith("/lienzo"),                                              mod: "lienzo",        sub: "lienzo" },
   { test: (h) => h === "/combustible" || h.startsWith("/combustible"),                                    mod: "combustible",   sub: "combustible" },
   { test: (h) => h === "/peajes"      || h.startsWith("/peajes"),                                         mod: "peajes",        sub: "peajes"      },
   { test: (h) => h === "/geolocalizacion" || h.startsWith("/geolocalizacion"),                            mod: "geolocalizacion", sub: "geolocalizacion" },
@@ -308,6 +310,7 @@ const rules: RouteRule[] = [
       pathname.startsWith("/checklist") ||
       pathname.startsWith("/alertas") ||
       pathname.startsWith("/reportes") ||
+      pathname.startsWith("/lienzo") ||
       pathname.startsWith("/combustible") ||
       pathname.startsWith("/peajes") ||
       pathname.startsWith("/geolocalizacion") ||
@@ -416,6 +419,7 @@ export function getDefaultRouteForSession(session: {
     "/checklist",
     "/alertas",
     "/reportes",
+    "/lienzo",
     "/combustible",
     "/geolocalizacion",
     "/accesos/usuarios",
@@ -514,6 +518,7 @@ const SECTION_MODULE_MAP: Record<string, string[]> = {
   "checklist":        ["checklist"],
   "alertas":          ["alertas"],
   "reportes":         ["reportes"],
+  "lienzo":           ["lienzo"],
   "combustible":      ["combustible"],
   "peajes":           ["peajes"],
   "geolocalizacion":  ["geolocalizacion"],

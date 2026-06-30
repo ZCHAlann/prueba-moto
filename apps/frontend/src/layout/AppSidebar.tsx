@@ -24,7 +24,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
   MA: ClipboardList, HA: Calendar, PC: ClipboardList, IV: Package,
   CA: BookOpen,   VA: BookOpen, RC: BookOpen, KM: Table2,
   CC: List,       PF: User,    CF: Plug,      RG: PieChart,
-  GR: BookOpen,   RI: Table2,
+  GR: BookOpen,   RI: Table2,  LZ: LayoutGrid,
   // Platform icons
   EM: Users,      MD: Box,      PL: FileText, AU: Truck,
   CRM: Users,     LD: FileText, CL: Users,    FC: FileText,

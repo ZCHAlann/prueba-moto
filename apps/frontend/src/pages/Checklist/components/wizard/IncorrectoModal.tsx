@@ -6,6 +6,7 @@ import { X, Camera, Upload, Trash2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../../../../context/AuthContext";
 import { sanitizeString } from "../../../../lib/form-validation";
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../../../../lib/mediaCompress";
 
 type Props = {
   open: boolean;
@@ -68,8 +69,9 @@ export default function IncorrectoModal({ open, itemName, onClose, onSave }: Pro
     try {
       let photoUrl: string | null = null;
       if (photoFile) {
+        const toUpload = await compressIfImage(photoFile, COMPRESS_OPTS_EVIDENCE);
         const fd = new FormData();
-        fd.append("photo", photoFile);
+        fd.append("photo", toUpload);
         const res = await fetch(`/api/upload/checklist-photos?companyId=${companyId}`, {
           method: "POST",
           body: fd,

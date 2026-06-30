@@ -1,27 +1,18 @@
 "use client";
 
-import { useState, useMemo, useRef, createContext, useContext } from "react";
+import { useState, useMemo, useRef, useContext } from "react";
 import * as React from "react";
 import { useNavigate } from "react-router";
-import {
-  Area, AreaChart, Bar, BarChart, Line, LineChart,
-  CartesianGrid, XAxis, YAxis,
-  PolarAngleAxis, PolarGrid, Radar, RadarChart,
-  LabelList, RadialBar, RadialBarChart,
-  Pie, PieChart, Cell,
-  ResponsiveContainer, Tooltip, Legend,
-} from "recharts";
 import {
   Wrench, Fuel, Truck, Users, ClipboardList, Bell,
   AirVent, Shield, MapPin, FileText,
   Pin, PinOff, ChevronRight, RefreshCw, FileDown,
-  ArrowUp, ArrowDown, Clock, BarChart2, Sparkles,
+  ArrowUp, ArrowDown, Clock, Sparkles,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   useEstadisticas, useExportarPDF,
   type Modulo, type Periodo, type KpiItem, type EstadisticasData,
-  type BarHPoint, type BarCompItem, type LinePoint, type BarPoint, type RadarPoint,
 } from "../../hooks/useEstadisticas";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import { AIInsightsProvider } from "../../components/estadisticas/AIInsightsContext";
@@ -30,15 +21,19 @@ import { ChartWithNote } from "../../components/estadisticas/ChartWithNote";
 import { todayEcuador, daysFromNowEcuador } from "@/lib/datetime";
 import { AIInsightsContext } from "@/components/estadisticas/AIInsightsContext";
 import type { ChartRef } from "@/hooks/useEstadisticas";
+import {
+  CHART_PALETTE as P,
+  CHART_SEQ as SEQ,
+  ChartEmpty,
+  ChartTooltip as CT,
+  ChartHoverWrapper,
+  useHoverChartRef,
+  AreaTendencia, LineDots, BarVertical, BarHorizontal, RadarC, Donut, BarMultiple,
+  fmtNumber as n,
+} from "../../components/estadisticas/charts";
 
-// ─── Hover Chart Ref Context ─────────────────────────────────────────
-// Passes the current chartRef down to CT (custom tooltip) so it can
-// look up the AI insight from AIInsightsContext.
-const HoverChartRefCtx = createContext<ChartRef | null>(null);
-export function useHoverChartRef() { return useContext(HoverChartRefCtx); }
-function ChartHoverWrapper({ chartRef, children }: { chartRef: ChartRef; children: React.ReactNode }) {
-  return <HoverChartRefCtx.Provider value={chartRef}>{children}</HoverChartRefCtx.Provider>;
-}
+// ─── Hover Chart Ref Context se provee en components/estadisticas/charts.tsx ───
+// (ChartHoverWrapper + useHoverChartRef ya vienen del archivo compartido).
 
 // Combines ChartWithNote (sidebar AI note) with ChartHoverWrapper (tooltip insight)
 function ChartWithHoverInsight({ chartRef, side, children, onClick }: {
@@ -54,19 +49,7 @@ function ChartWithHoverInsight({ chartRef, side, children, onClick }: {
 }
 
 // ─── PALETA ───────────────────────────────────────────────────────
-// Colores fijos, independientes de CSS vars del tema
-const P = {
-  blue:    "#3b82f6",
-  indigo:  "#6366f1",
-  violet:  "#8b5cf6",
-  orange:  "#f97316",
-  amber:   "#f59e0b",
-  emerald: "#10b981",
-  teal:    "#14b8a6",
-  rose:    "#f43f5e",
-  cyan:    "#06b6d4",
-  pink:    "#d946ef",
-} as const;
+// Se importa como `P` y `SEQ` desde components/estadisticas/charts.tsx arriba.
 
 const MODULE_COLOR: Record<Modulo, string> = {
   mantenimiento: P.amber,
@@ -80,9 +63,6 @@ const MODULE_COLOR: Record<Modulo, string> = {
   peajes:        P.pink,
   asignaciones:  P.emerald,
 };
-
-// Secuencia para multi-serie / multi-categoría
-const SEQ = [P.blue, P.emerald, P.orange, P.violet, P.rose, P.cyan, P.amber, P.teal, P.indigo, P.pink];
 
 // ─── MÓDULOS ──────────────────────────────────────────────────────
 type ModuloDef = {
@@ -124,95 +104,16 @@ const PERIODS: { key: Periodo; label: string }[] = [
 ];
 
 // ─── HELPERS ──────────────────────────────────────────────────────
-function n(v: number, dec = 0) {
-  if (!Number.isFinite(v)) return "—";
-  return v.toLocaleString("es-EC", { minimumFractionDigits: dec, maximumFractionDigits: dec });
-}
+// Helpers locales que NO están en el archivo compartido.
 function fmtDelta(pct?: number) {
   if (pct == null || !Number.isFinite(pct)) return null;
   const v = Math.round(pct * 10) / 10;
   return { text: `${v > 0 ? "+" : ""}${v.toFixed(1)}%`, up: v >= 0 };
 }
-function dedupeComp(data: BarCompItem[]): BarCompItem[] {
-  const seen = new Map<string, BarCompItem>();
-  for (const d of data) {
-    if (seen.has(d.label)) {
-      const prev = seen.get(d.label)!;
-      seen.set(d.label, { label: d.label, actual: prev.actual + d.actual, anterior: prev.anterior + d.anterior });
-    } else {
-      seen.set(d.label, { ...d });
-    }
-  }
-  return Array.from(seen.values());
-}
-
-// ─── EMPTY STATE ──────────────────────────────────────────────────
-function ChartEmpty({ label = "Sin datos para este período" }: { label?: string }) {
-  return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-2">
-      <BarChart2 size={26} className="text-gray-300 dark:text-gray-600" />
-      <p className="text-[12px] font-medium text-gray-400 dark:text-gray-500 text-center px-6 max-w-[200px]">{label}</p>
-    </div>
-  );
-}
-
-// ─── TOOLTIP ──────────────────────────────────────────────────────
-function CT({ active, payload, label: lbl, suffix = "" }: any) {
-  const chartRef = useHoverChartRef();
-  // Use raw context directly to avoid hook-in-try/catch violation;
-  // useContext is always unconditional at the top level.
-  const ctx = useContext(AIInsightsContext);
-  const aiNota = ctx && chartRef ? ctx.notaPara(chartRef) : null;
-
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-gray-900 shadow-xl text-[12px] min-w-[160px] max-w-[260px] overflow-hidden">
-      {lbl && (
-        <div className="px-3 pt-2.5 pb-1.5 border-b border-gray-100 dark:border-white/6">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{lbl}</p>
-        </div>
-      )}
-      <div className="px-3 py-2 space-y-1">
-        {payload.map((p: any, i: number) => (
-          <div key={i} className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ background: p.color }} />
-              <span className="text-gray-500 dark:text-gray-400 text-[11px]">{p.name}</span>
-            </div>
-            <span className="font-bold tabular-nums text-gray-900 dark:text-white">
-              {typeof p.value === "number" ? n(p.value, 1) : p.value}{suffix}
-            </span>
-          </div>
-        ))}
-      </div>
-      {aiNota && (
-        <div className="px-3 pb-2.5 pt-1.5 border-t border-gray-100 dark:border-white/6">
-          <div className="flex items-center gap-1 mb-1">
-            <Sparkles size={9} className="flex-shrink-0" style={{ color: "#8b5cf6" }} />
-            <p className="text-[10px] font-bold text-violet-600 dark:text-violet-400">{aiNota.titulo}</p>
-          </div>
-          <p className="text-[10.5px] text-gray-500 dark:text-gray-400 leading-relaxed">{aiNota.detalle}</p>
-          {aiNota.tags && aiNota.tags.length > 0 && (
-            <div className="mt-1.5 flex flex-wrap gap-1">
-              {aiNota.tags.slice(0, 3).map((t, i) => (
-                <span key={i} className="rounded-full bg-violet-100 dark:bg-violet-500/20 px-1.5 py-0.5 text-[9px] font-medium text-violet-700 dark:text-violet-300">
-                  {t}
-                </span>
-              ))}
-            </div>
-          )}
-          {aiNota.recomendacion && (
-            <p className="mt-1.5 text-[10px] text-amber-600 dark:text-amber-400 leading-relaxed italic">
-              💡 {aiNota.recomendacion}
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ─── CHART CARD ───────────────────────────────────────────────────
+// CC no se reutiliza en el canvas (los widgets del canvas usan otro layout)
+// pero vive acá para no romper el resto del archivo.
 function CC({ title, subtitle, children, height = 240, onClick }: {
   title: string; subtitle?: string; children: React.ReactNode; height?: number;
   onClick?: () => void;
@@ -230,8 +131,19 @@ function CC({ title, subtitle, children, height = 240, onClick }: {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// CHARTS — Recharts con colores reales
+// CHARTS ESPECÍFICOS QUE NO SE REUSAN EN EL CANVAS
+// (AreaComparativa y RadialDist son single-entity — el canvas usa sus
+//  equivalentes multi-entidad desde components/estadisticas/charts.tsx)
 // ═══════════════════════════════════════════════════════════════════
+
+// Area comparativa: período actual vs anterior (single entity)
+// NOTA: usa recharts directo porque solo se usa acá. Mantenemos
+// recharts en este archivo solo para AreaComparativa y RadialDist.
+import {
+  Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis,
+  LabelList, RadialBar, RadialBarChart,
+  ResponsiveContainer, Tooltip, Legend, Cell,
+} from "recharts";
 
 // Area comparativa: período actual vs anterior
 function AreaComparativa({ data, color, label1 = "Actual", label2 = "Anterior", unidad = "" }: {
@@ -264,168 +176,6 @@ function AreaComparativa({ data, color, label1 = "Actual", label2 = "Anterior", 
         <Area dataKey="actual"   name={label1} type="natural" fill={`url(#${gA})`} stroke={color}    strokeWidth={2.2} dot={false} activeDot={{ r: 4, fill: color, stroke: "#fff", strokeWidth: 2 }} />
       </AreaChart>
     </ResponsiveContainer>
-  );
-}
-
-// Area simple con tendencia
-function AreaTendencia({ data, color, unidad = "" }: { data: LinePoint[]; color: string; unidad?: string }) {
-  if (!data.length || data.every(d => d.y === 0)) return <ChartEmpty />;
-  const gId = `at${color.replace(/[^a-z0-9]/gi,"")}`;
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={data} margin={{ top: 6, right: 8, left: -10, bottom: 0 }}>
-        <defs>
-          <linearGradient id={gId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%"  stopColor={color} stopOpacity={0.55} />
-            <stop offset="95%" stopColor={color} stopOpacity={0.02} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid strokeDasharray="3 4" strokeOpacity={0.07} vertical={false} />
-        <XAxis dataKey="x" tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} tickMargin={8} minTickGap={20} />
-        <YAxis tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} width={36} />
-        <Tooltip content={<CT suffix={unidad ? ` ${unidad}` : ""} />} cursor={{ stroke: color, strokeWidth: 1, strokeDasharray: "3 3", strokeOpacity: 0.4 }} />
-        <Area dataKey="y" name={unidad || "valor"} type="natural" fill={`url(#${gId})`} stroke={color} strokeWidth={2.2} dot={false} activeDot={{ r: 4, fill: color, stroke: "#fff", strokeWidth: 2 }} isAnimationActive animationDuration={600} />
-      </AreaChart>
-    </ResponsiveContainer>
-  );
-}
-
-// Line con dots — para eficiencia / tendencia puntual
-function LineDots({ data, color, unidad = "" }: { data: LinePoint[]; color: string; unidad?: string }) {
-  if (!data.length || data.every(d => d.y === 0)) return <ChartEmpty />;
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 6, right: 12, left: -10, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 4" strokeOpacity={0.07} vertical={false} />
-        <XAxis dataKey="x" tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} tickMargin={8} minTickGap={20} />
-        <YAxis tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} width={36} />
-        <Tooltip content={<CT suffix={unidad ? ` ${unidad}` : ""} />} cursor={{ stroke: color, strokeWidth: 1, strokeDasharray: "3 3", strokeOpacity: 0.4 }} />
-        <Line dataKey="y" name={unidad || "valor"} type="natural" stroke={color} strokeWidth={2.2}
-          dot={{ fill: color, r: 4, stroke: "#fff", strokeWidth: 2 }}
-          activeDot={{ r: 6, fill: color, stroke: "#fff", strokeWidth: 2 }}
-          isAnimationActive animationDuration={500} />
-      </LineChart>
-    </ResponsiveContainer>
-  );
-}
-
-// Bar vertical actual vs anterior (deduplicado)
-function BarMultiple({ data, color }: { data: BarCompItem[]; color: string }) {
-  const clean = dedupeComp(data);
-  if (!clean.length || clean.every(d => d.actual === 0 && d.anterior === 0)) return <ChartEmpty />;
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={clean} margin={{ top: 6, right: 8, left: -10, bottom: 0 }} barGap={3} barCategoryGap="28%">
-        <CartesianGrid strokeDasharray="3 4" strokeOpacity={0.07} vertical={false} />
-        <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false}
-          tickFormatter={(v: string) => v.length > 9 ? v.slice(0, 8) + "…" : v} />
-        <YAxis tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} width={32} />
-        <Tooltip content={<CT />} cursor={{ fill: color, fillOpacity: 0.05 }} />
-        <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} iconType="circle" iconSize={7} />
-        <Bar dataKey="anterior" name="Período anterior" fill="#94a3b8" fillOpacity={0.65} radius={[4,4,0,0]} maxBarSize={20} isAnimationActive animationDuration={500} />
-        <Bar dataKey="actual"   name="Período actual"   fill={color}    radius={[4,4,0,0]} maxBarSize={20} isAnimationActive animationDuration={500} />
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
-// Bar vertical con colores por categoría
-function BarVertical({ data, color }: { data: BarPoint[]; color: string }) {
-  if (!data.length || data.every(d => d.y === 0)) return <ChartEmpty />;
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data} margin={{ top: 6, right: 8, left: -10, bottom: 0 }} barCategoryGap="32%">
-        <CartesianGrid strokeDasharray="3 4" strokeOpacity={0.07} vertical={false} />
-        <XAxis dataKey="x" tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false}
-          tickFormatter={(v: string) => v.length > 9 ? v.slice(0,8)+"…" : v} />
-        <YAxis tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} width={32} />
-        <Tooltip content={<CT />} cursor={{ fill: color, fillOpacity: 0.05 }} />
-        <Bar dataKey="y" name="Cantidad" radius={[4,4,0,0]} maxBarSize={28} isAnimationActive animationDuration={500}>
-          {data.map((_, i) => <Cell key={i} fill={SEQ[i % SEQ.length]} />)}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
-// Bar horizontal rankeado con color según intensidad
-function BarHorizontal({ data, color, unidad = "" }: { data: BarHPoint[]; color: string; unidad?: string }) {
-  if (!data.length || data.every(d => d.value === 0)) return <ChartEmpty />;
-  const max = Math.max(...data.map(d => d.value));
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 52, left: 4, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 4" strokeOpacity={0.07} horizontal={false} />
-        <XAxis type="number" hide />
-        <YAxis dataKey="label" type="category" tickLine={false} axisLine={false}
-          tick={{ fontSize: 11, fill: "#6b7280" }} width={100}
-          tickFormatter={(v: string) => v.length > 14 ? v.slice(0,13)+"…" : v} />
-        <Tooltip content={<CT suffix={unidad ? ` ${unidad}` : ""} />} cursor={{ fill: color, fillOpacity: 0.05 }} />
-        <Bar dataKey="value" name={unidad || "valor"} radius={[0,4,4,0]} maxBarSize={14} isAnimationActive animationDuration={500}>
-          {data.map((d, i) => {
-            const pct = d.value / (max || 1);
-            return <Cell key={i} fill={SEQ[i % SEQ.length]} />;
-          })}
-          <LabelList dataKey="value" position="right"
-            formatter={(v: number) => `${n(v)}${unidad ? " "+unidad : ""}`}
-            style={{ fontSize: 10, fill: "#9ca3af" }} />
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
-// Radar — shape real { axis, value }
-function RadarC({ data, color }: { data: RadarPoint[]; color: string }) {
-  if (!data.length || data.every(d => d.value === 0)) return <ChartEmpty label="Sin datos de evaluación" />;
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <RadarChart data={data} cx="50%" cy="50%">
-        <PolarGrid gridType="circle" strokeOpacity={0.12} />
-        <PolarAngleAxis dataKey="axis" tick={{ fontSize: 10, fill: "#9ca3af" }} />
-        <Radar dataKey="value" name="Valor"
-          fill={color} fillOpacity={0.3}
-          stroke={color} strokeWidth={2}
-          dot={{ r: 4, fill: color, stroke: "#fff", strokeWidth: 2, fillOpacity: 1 }} />
-        <Tooltip content={<CT />} />
-      </RadarChart>
-    </ResponsiveContainer>
-  );
-}
-
-// Donut con leyenda
-function Donut({ data, color }: { data: BarPoint[]; color: string }) {
-  if (!data.length || data.every(d => d.y === 0)) return <ChartEmpty />;
-  const total = data.reduce((s, d) => s + d.y, 0) || 1;
-  return (
-    <div className="flex flex-col h-full">
-      <div className="relative flex-1 min-h-[140px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie data={data} dataKey="y" nameKey="x" cx="50%" cy="50%"
-              innerRadius="46%" outerRadius="80%" paddingAngle={2} startAngle={90} endAngle={-270} stroke="none">
-              {data.map((_, i) => <Cell key={i} fill={SEQ[i % SEQ.length]} />)}
-            </Pie>
-            <Tooltip content={<CT />} />
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400">total</p>
-          <p className="text-[22px] font-black tabular-nums text-gray-900 dark:text-white">{n(total)}</p>
-        </div>
-      </div>
-      <ul className="mt-2 space-y-1 px-1">
-        {data.slice(0, 5).map((d, i) => (
-          <li key={d.x} className="flex items-center gap-2 text-[11px]">
-            <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: SEQ[i % SEQ.length] }} />
-            <span className="flex-1 truncate text-gray-600 dark:text-gray-300">{d.x}</span>
-            <span className="font-mono font-semibold text-gray-500 tabular-nums">
-              {n(d.y)} <span className="text-gray-300 dark:text-gray-600">({n((d.y/total)*100)}%)</span>
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
   );
 }
 
@@ -825,6 +575,34 @@ export function EstadisticasTab({ companyId }: { companyId: string }) {
 
   function applyDates() { setFechaApDesde(fechaDesde); setFechaApHasta(fechaHasta); setDateOpen(false); }
 
+  // Cuando cambia el período (Mes/Trimestre/Año), actualizar el rango
+  // de fechas aplicado a las gráficas para que realmente se regeneren
+  // con el rango correspondiente al período elegido.
+  function setPeriodoAndApply(p: Periodo) {
+    setPeriodo(p);
+    const today = todayEcuador();
+    if (p === "month") {
+      setFechaApDesde(todayEcuador().slice(0, 7) + "-01");
+      setFechaApHasta(today);
+    } else if (p === "quarter") {
+      const startMonth = Math.floor(new Date(today).getMonth() / 3) * 3;
+      const d = new Date(today);
+      d.setMonth(startMonth, 1);
+      const isoStart = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+      // último día del trimestre: ir al primer día del siguiente trimestre menos 1
+      const end = new Date(d);
+      end.setMonth(startMonth + 3, 0);
+      const isoEnd = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
+      setFechaApDesde(isoStart);
+      setFechaApHasta(isoEnd);
+    } else {
+      // year
+      const y = new Date(today).getFullYear();
+      setFechaApDesde(`${y}-01-01`);
+      setFechaApHasta(today);
+    }
+  }
+
   return (
     <div className="flex items-start gap-4">
       <Sidebar activeKey={moduloKey} onSelect={setModuloKey} />
@@ -845,7 +623,7 @@ export function EstadisticasTab({ companyId }: { companyId: string }) {
             <div className="flex flex-wrap items-center gap-2">
               <div className="inline-flex items-center gap-1 rounded-full border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-1">
                 {PERIODS.map(p => (
-                  <button key={p.key} type="button" onClick={() => setPeriodo(p.key)}
+                  <button key={p.key} type="button" onClick={() => setPeriodoAndApply(p.key)}
                     className={`rounded-full px-3 py-1 text-[11.5px] font-semibold transition ${
                       periodo === p.key
                         ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"

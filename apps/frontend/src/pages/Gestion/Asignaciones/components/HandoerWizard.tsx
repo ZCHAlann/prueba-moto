@@ -149,6 +149,18 @@ export function HandoverWizard({
   const STEPS = finalizeMode ? STEPS_FINALIZE : STEPS_CREATE;
   const firstStep = (editMode || finalizeMode) ? FIRST_STEP_EDIT : FIRST_STEP_CREATE;
 
+  // ── Índices resueltos por NOMBRE ──────────────────────────────────────────
+  // Antes estaban hardcodeados (6, 7, 8...) asumiendo el offset del flujo
+  // CREATE. En finalizeMode el array tiene un step menos (no hay "Conductor"),
+  // así que todo se corría una posición y el PDF nunca se generaba al llegar
+  // a "Vista previa". Resolviendo por nombre, funciona para ambos modos.
+  const idxActaInfo = STEPS.indexOf("Datos del acta");
+  const idxDriver   = STEPS.indexOf("Conductor");     // -1 en finalizeMode
+  const idxVehicle  = STEPS.indexOf("Vehículo");
+  const idxPhotos   = STEPS.indexOf("Fotos");
+  const idxSigLog   = STEPS.indexOf("Firma Logística");
+  const idxSigResp  = STEPS.indexOf("Firma Responsable");
+
   const [step, setStep]                       = useState(firstStep);
   const [saving, setSaving]                   = useState(false);
   const [pdfBlob, setPdfBlob]                 = useState<Blob | null>(null);
@@ -165,9 +177,9 @@ export function HandoverWizard({
   // para que siempre tenga acceso al `data` más reciente.
   const stepError = (() => {
     switch (step) {
-      case 1: return validateStep1(data);
-      case 2: return validateStep2(data);
-      case 3: return validateStep3(data);
+      case idxActaInfo: return validateStep1(data);
+      case idxDriver:   return validateStep2(data);
+      case idxVehicle:  return validateStep3(data);
       default: return null;
     }
   })();
@@ -188,9 +200,9 @@ export function HandoverWizard({
   // ── Validación por step al avanzar ─────────────────────────────────────────
   function getStepError(): string | null {
     switch (step) {
-      case 1: return validateStep1(data);
-      case 2: return validateStep2(data);
-      case 3: return validateStep3(data);
+      case idxActaInfo: return validateStep1(data);
+      case idxDriver:   return validateStep2(data);
+      case idxVehicle:  return validateStep3(data);
       default: return null;
     }
   }
@@ -206,16 +218,16 @@ export function HandoverWizard({
     }
 
     try {
-      if (step === 6 && data.vehiclePhotos.length > 0 && !data.vehiclePhotoUrls.length) {
+      if (step === idxPhotos && data.vehiclePhotos.length > 0 && !data.vehiclePhotoUrls.length) {
         await uploadPhotos();
       }
-      if (step === 7 && data.signatureLogDataUrl && !data.signatureLogUrl) {
+      if (step === idxSigLog && data.signatureLogDataUrl && !data.signatureLogUrl) {
         await uploadSignature("log", data.signatureLogDataUrl);
       }
-      if (step === 8 && data.signatureRespDataUrl && !data.signatureRespUrl) {
+      if (step === idxSigResp && data.signatureRespDataUrl && !data.signatureRespUrl) {
         await uploadSignature("resp", data.signatureRespDataUrl);
       }
-      if (step === 8) {
+      if (step === idxSigResp) {
         const blob = await generateActaPdf(data, data.vehiclePhotos, {
           mode: finalizeMode ? "finalizacion" : "alta",
           initialData: finalizeMode ? existingData ?? null : null,

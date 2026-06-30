@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, RefreshCw, Calendar, AlertCircle } from "lucide-react";
+import { X, RefreshCw, Calendar, AlertCircle, Package } from "lucide-react";
 import type { Maintenance } from "../../../hooks/useMaintenancesV2";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import { daysFromNowEcuador } from "@/lib/datetime";
@@ -14,9 +14,14 @@ export function ReprogramDialog({
   target: Maintenance | null;
   saving: boolean;
   onClose: () => void;
-  /** reschedule: fecha obligatoria, manda (iso, reason).
-   *  correction: fecha opcional, manda (iso | null, reason). */
-  onConfirm: (newScheduledFor: string | null, reason: string) => void;
+  /** reschedule: fecha obligatoria, manda (iso, reason, keepItems).
+   *  correction: fecha opcional, manda (iso | null, reason, keepItems).
+   *  `keepItems` lo controla el toggle del dialog (default true): si true, el
+   *  backend conservará repuestos, fotos y notas que ya estén cargados en
+   *  el mantenimiento. Si el backend rechaza mantener items (p.ej. porque
+   *  el mantenimiento ya está Completado), propagará el error en `onConfirm`
+   *  via el throw del hook. */
+  onConfirm: (newScheduledFor: string | null, reason: string, keepItems: boolean) => void;
   mode?: "reschedule" | "correction";
 }) {
   // Guardamos fecha (YYYY-MM-DD) y hora (HH:mm) por separado para que
@@ -26,6 +31,11 @@ export function ReprogramDialog({
   const [time, setTime]   = useState<string>("08:00");
   const [reason, setReason] = useState<string>("");
   const [wantsReschedule, setWantsReschedule] = useState(mode === "reschedule");
+  // Mantener items / fotos / notas ya cargados en el mantenimiento. Por
+  // default TRUE porque es lo que el usuario espera (no perder trabajo
+  // durante una reprogramación). Si el backend lo rechaza (p.ej. porque
+  // el mantenimiento ya está Completado), el padre mostrará un error claro.
+  const [keepItems, setKeepItems] = useState<boolean>(true);
 
   useEffect(() => {
     if (open) {
@@ -40,8 +50,11 @@ export function ReprogramDialog({
       setTime(baseTime);
       setReason("");
       setWantsReschedule(mode === "reschedule");
+      // Re-establecer el toggle a su default cada vez que se abre, así no
+      // arrastramos el valor de la apertura anterior.
+      setKeepItems(true);
     }
-  }, [open, target]);
+  }, [open, target, mode]);
 
   const needsDate = mode === "reschedule" || wantsReschedule;
   const canSubmit = !!reason.trim() && (!needsDate || !!(date && time)) && !saving;
@@ -50,9 +63,9 @@ export function ReprogramDialog({
     if (!canSubmit) return;
     if (needsDate) {
       const iso = new Date(`${date}T${time}:00`).toISOString();
-      onConfirm(iso, reason.trim());
+      onConfirm(iso, reason.trim(), keepItems);
     } else {
-      onConfirm(null, reason.trim());
+      onConfirm(null, reason.trim(), keepItems);
     }
   };
 
@@ -129,19 +142,44 @@ export function ReprogramDialog({
                   />
                 </div>
 
+                {/* Toggle "Mantener items / fotos / notas ya cargados".
+                    Marcado por default (porque el usuario espera no perder
+                    trabajo durante una reprogramación). Si el backend rechaza
+                    mantener items (p.ej. porque el mantenimiento ya está
+                    Completado), el padre mostrará un error claro. */}
+                <label className="flex items-start gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2.5 cursor-pointer hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.02] dark:hover:bg-white/[0.04] transition">
+                  <input
+                    type="checkbox"
+                    checked={keepItems}
+                    onChange={(e) => setKeepItems(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-amber-500 focus:ring-amber-500/30 dark:border-white/[0.12]"
+                  />
+                  <span className="flex flex-col gap-0.5">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-800 dark:text-white">
+                      <Package size={12} className="text-amber-500" />
+                      Mantener repuestos, fotos y notas ya cargados
+                    </span>
+                    <span className="text-[11px] text-gray-500 dark:text-gray-400 leading-snug">
+                      Si lo destildás, los repuestos y fotos asociados se eliminan (la línea de tiempo se conserva igual).
+                    </span>
+                  </span>
+                </label>
+
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
                   <p className="inline-flex items-start gap-1.5 text-[11px] text-amber-800 dark:text-amber-200">
                     <AlertCircle size={12} className="mt-0.5 shrink-0" />
                     {mode === "correction"
                       ? "El mantenimiento vuelve a Corrección, conservando la asignación. Podrás iniciarlo y volver a finalizarlo normalmente."
-                      : "Los repuestos y fotos asociados se eliminan, pero la línea de tiempo se conserva. El mantenimiento vuelve a Programado, conservando la asignación."
+                      : keepItems
+                        ? "Se conservan los repuestos, fotos y notas que ya estaban cargados. El mantenimiento vuelve a Programado conservando la asignación."
+                        : "Los repuestos y fotos asociados se eliminan, pero la línea de tiempo se conserva. El mantenimiento vuelve a Programado, conservando la asignación."
                     }
                   </p>
                 </div>
               </div>
 
               {mode === "correction" && (
-                <label className="flex items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300">
+                <label className="mt-4 flex items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300">
                   <input
                     type="checkbox"
                     checked={wantsReschedule}

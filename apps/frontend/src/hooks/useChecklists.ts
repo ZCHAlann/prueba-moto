@@ -55,6 +55,10 @@ export type CreateChecklistInput = {
   findings?: string;
   items: ChecklistInspectionItem[];
   photoUrls?: string[];
+  // Si viene, el checklist se crea como consecuencia de una reautorización
+  // aprobada (checklist atrasado). El backend setea isLate=true y permite
+  // bypassear el bloqueo de ciclo cerrado.
+  reauthRequestId?: string | null;
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -155,6 +159,7 @@ export function useChecklists() {
         findings:    input.findings ?? null,
         items:       input.items,
         photoUrls:   input.photoUrls ?? [],
+        reauthRequestId: input.reauthRequestId ?? null,
       };
       const res = await fetch(`/api/company/${companyId}/checklists`, {
         method: "POST",

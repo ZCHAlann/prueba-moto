@@ -1,0 +1,17 @@
+error TS6059: File 'C:/Users/netwn/Trabajos/Motors/motors-aplismart-main/motors-aplismart-main/apps/backend/scripts/clean-user-data.ts' is not under 'rootDir' 'C:/Users/netwn/Trabajos/Motors/motors-aplismart-main/motors-aplismart-main/apps/backend/src'. 'rootDir' is expected to contain all source files.
+  The file is in the program because:
+    Matched by include pattern 'scripts' in 'tsconfig.json'
+error TS6059: File 'C:/Users/netwn/Trabajos/Motors/motors-aplismart-main/motors-aplismart-main/apps/backend/scripts/migrate-fuel-gallons.ts' is not under 'rootDir' 'C:/Users/netwn/Trabajos/Motors/motors-aplismart-main/motors-aplismart-main/apps/backend/src'. 'rootDir' is expected to contain all source files.
+  The file is in the program because:
+    Matched by include pattern 'scripts' in 'tsconfig.json'
+error TS6059: File 'C:/Users/netwn/Trabajos/Motors/motors-aplismart-main/motors-aplismart-main/apps/backend/scripts/seed-conductor-test.ts' is not under 'rootDir' 'C:/Users/netwn/Trabajos/Motors/motors-aplismart-main/motors-aplismart-main/apps/backend/src'. 'rootDir' is expected to contain all source files.
+  The file is in the program because:
+    Matched by include pattern 'scripts' in 'tsconfig.json'
+error TS6059: File 'C:/Users/netwn/Trabajos/Motors/motors-aplismart-main/motors-aplismart-main/apps/backend/scripts/seed-maintenance.ts' is not under 'rootDir' 'C:/Users/netwn/Trabajos/Motors/motors-aplismart-main/motors-aplismart-main/apps/backend/src'. 'rootDir' is expected to contain all source files.
+  The file is in the program because:
+    Matched by include pattern 'scripts' in 'tsconfig.json'
+error TS6059: File 'C:/Users/netwn/Trabajos/Motors/motors-aplismart-main/motors-aplismart-main/apps/backend/scripts/seed.ts' is not under 'rootDir' 'C:/Users/netwn/Trabajos/Motors/motors-aplismart-main/motors-aplismart-main/apps/backend/src'. 'rootDir' is expected to contain all source files.
+  The file is in the program because:
+    Matched by include pattern 'scripts' in 'tsconfig.json'
+tsconfig.json(16,25): error TS5107: Option 'moduleResolution=node10' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+  Visit https://aka.ms/ts6 for migration information.

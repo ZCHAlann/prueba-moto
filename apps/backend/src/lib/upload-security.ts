@@ -1,4 +1,5 @@
 import path from 'path';
+import { promises as fs } from 'fs';
 
 // ─── Tipos permitidos ────────────────────────────────────────────────────────
 //
@@ -119,4 +120,118 @@ export function buildSafeStoragePath(
   const safeFolder = folder.replace(/[^a-z0-9-]/gi, '').toLowerCase() || 'misc';
   const safeFilename = sanitizeFilename(originalFilename);
   return `${safeFolder}/${companyId}/${Date.now()}-${safeFilename}`;
+}
+
+// ─── optimizeImageIfNeeded ───────────────────────────────────────────────────
+//
+// Re-codifica la imagen subida con sharp para reducir tamaño y estandarizar
+// el formato. Beneficios:
+//
+//   1. Reduce ancho de banda de almacenamiento y de serving (un JPEG de 4 MB
+//      de celular queda en ~250-400 KB).
+//   2. Quita EXIF (privacidad — GPS del conductor, modelo de cámara, etc).
+//   3. Estandariza a JPEG progresivo → mejor perceived performance al servir.
+//
+// SAFETY: si sharp falla por cualquier razón, NO rompe el upload. Devuelve
+// el archivo original sin tocar. El log queda en consola para diagnóstico.
+//
+// PERFORMANCE: usamos Promise.race con timeout de 5 s para no colgar el
+// handler si sharp se cuelga (raro, pero visto en deploys con poca RAM).
+//
+// USO:
+//
+//   const files = req.files as Express.Multer.File[];
+//   await Promise.allSettled(files.map(f => optimizeImageIfNeeded(f)));
+//
+// Ponemos `Promise.allSettled` (no `Promise.all`) porque si UNA imagen falla
+// no queremos tirar el upload entero — las que sí optimizaron quedan
+// optimizadas y la que falló queda como estaba.
+//
+// NOTA: NO se llama desde `/handover-pdf`, `/invoice-files`, ni
+// `/insurance-files` porque esos aceptan PDF, no imágenes. Los endpoints de
+// fotos que sí lo llaman son:
+//
+//   /exit-auth-photos      /maintenance-photos
+//   /maintenance-evidence  /fuel-photos
+//   /checklist-photos      /asset-photos
+//   /driver-photos         /user-photos
+
+const MAX_IMAGE_DIMENSION = 1600;     // px — fotos de evidencia no necesitan más
+const JPEG_QUALITY = 80;               // 0-100; 80 = buen balance tamaño/calidad
+const MIN_SIZE_TO_OPTIMIZE = 200 * 1024; // 200 KB — por debajo no vale la pena
+const OPTIMIZE_TIMEOUT_MS = 5000;
+
+export async function optimizeImageIfNeeded(
+  file: Express.Multer.File,
+): Promise<void> {
+  // Solo imágenes
+  if (!file.mimetype || !file.mimetype.startsWith('image/')) return;
+
+  // Solo si el archivo es lo suficientemente grande (optimizar imágenes de 50 KB
+  // gasta CPU sin ganancia perceptible).
+  let size: number;
+  try {
+    const stat = await fs.stat(file.path);
+    size = stat.size;
+  } catch {
+    return; // no se pudo leer — no bloqueamos el upload
+  }
+  if (size < MIN_SIZE_TO_OPTIMIZE) return;
+
+  // GIF y SVG los dejamos como están (sharp no maneja bien GIF animados).
+  if (file.mimetype === 'image/gif' || file.mimetype === 'image/svg+xml') return;
+
+  const inputPath = file.path;
+  const tmpPath = `${inputPath}.opt.jpg`;
+
+  try {
+    // Lazy import: sharp es pesado (binding nativo) y solo lo necesitamos
+    // aquí. Si falla por falta de memoria o binario incompatible, el catch
+    // general protege el upload.
+    const sharp = (await import('sharp')).default;
+
+    const optimizePromise = sharp(inputPath)
+      .rotate() // respeta EXIF orientation antes de re-codificar
+      .resize({
+        width: MAX_IMAGE_DIMENSION,
+        height: MAX_IMAGE_DIMENSION,
+        fit: 'inside', // mantiene aspect ratio, no recorta
+        withoutEnlargement: true, // no upscalea imágenes chicas
+      })
+      .jpeg({
+        quality: JPEG_QUALITY,
+        progressive: true,
+        mozjpeg: false, // libmozjpeg no viene en el binario default de sharp
+      })
+      .toFile(tmpPath);
+
+    // Timeout duro: si sharp se cuelga, no rompemos el handler.
+    const result = await Promise.race([
+      optimizePromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('sharp timeout')), OPTIMIZE_TIMEOUT_MS),
+      ),
+    ]);
+
+    // Si el archivo optimizado es MAYOR que el original (raro, pasa con
+    // imágenes muy pequeñas que ya estaban bien comprimidas), descartamos
+    // la optimización y dejamos el original.
+    if (result.size >= size) {
+      await fs.unlink(tmpPath).catch(() => {});
+      return;
+    }
+
+    // Atomic rename: reemplazar el archivo original solo si la optimización
+    // fue exitosa. Si el rename falla por permisos o filesystem, el original
+    // queda intacto.
+    await fs.rename(tmpPath, inputPath);
+  } catch (err) {
+    // Limpiar tmp si quedó
+    await fs.unlink(tmpPath).catch(() => {});
+    console.warn(
+      '[upload:optimize] falló la optimización, manteniendo original:',
+      { name: file.originalname, mime: file.mimetype, err: (err as Error).message },
+    );
+    // NO propagamos el error — el upload sigue OK con el archivo original.
+  }
 }

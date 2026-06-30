@@ -6,14 +6,14 @@
 //   - búsqueda libre por nombre / código / cédula
 
 import { z } from 'zod';
-import { and, eq, ilike, or, sql } from 'drizzle-orm';
+import { and, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import { db } from '../../../db/client';
 import { companyDrivers, companyAssets } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
-import { tolerantString, tolerantBoolean } from '../schema-helpers';
+import { tolerantString, tolerantBoolean, enumOrList } from '../schema-helpers';
 
 const argsSchema = z.object({
-  estado:    z.enum(['Activo', 'Inactivo']).optional(),
+  estado:    enumOrList(['Activo', 'Inactivo']).optional(),
   q:         tolerantString().optional(),
   conAsignacion: tolerantBoolean().optional().default(false),
   // limit removido del schema público — ver nota en vehiculos.ts.
@@ -31,7 +31,11 @@ export const conductoresTool: ToolDefinition<Args> = {
 
   async execute(args, ctx): Promise<ToolResult> {
     const where = [eq(companyDrivers.companyId, ctx.empresaId)];
-    if (args.estado) where.push(eq(companyDrivers.status, args.estado));
+    if (args.estado) {
+      Array.isArray(args.estado)
+        ? where.push(inArray(companyDrivers.status, args.estado))
+        : where.push(eq(companyDrivers.status, args.estado));
+    }
     if (args.q) {
       where.push(or(
         ilike(companyDrivers.firstName, `%${args.q}%`),

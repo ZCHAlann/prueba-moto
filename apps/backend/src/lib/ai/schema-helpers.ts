@@ -102,23 +102,72 @@ export function tolerantDateString() {
 export const tolerantNumber = () => z.coerce.number();
 
 /**
- * Boolean tolerante. Distingue "true"/"false"/"1"/"0"/"si"/"no".
+ * Boolean tolerante. Acepta `true`/`false` nativos O strings tipo
+ * `"true"`/`"false"`/`"1"`/`"0"`. Si el LLM manda un string en vez
+ * de boolean (lo cual hace seguido el modelo chico llama-3.1-8b-instant),
+ * el conversor Zod → JSON Schema emite un `anyOf: [boolean, string-enum]`
+ * para que Groq NO rechace el tool call con 400 "expected boolean, but
+ * got string", y este .transform() normaliza el valor a boolean real
+ * antes de llegar al execute().
  *
- * IMPORTANTE: usamos .transform() en lugar de .preprocess() porque
- * .transform() sobre un ZodBoolean devuelve ZodEffects — PERO el
- * .preprocess con un transform custom devuelve el tipo "boolean"
- * directamente al esquema subyacente.
- *
- * Truco: usamos z.preprocess + z.boolean() que devuelve ZodEffects,
- * y luego encadenamos con .transform() para casos raros. PERO eso
- * rompe .optional() y .default().
- *
- * Solución final: usamos una función que devuelve un ZodEffects pero
- * con .transform() que normaliza. La realidad es que para boolean,
- * la mayoría de los LLMs mandan `true` o `false` directamente. Si
- * mandan string, lo manejamos en flattenArgs() del orquestador.
+ * Uso: `tolerantBoolean().optional().default(false)` — .optional() y
+ * .default() siguen funcionando porque aplican sobre el ZodEffects
+ * resultante.
  */
-export const tolerantBoolean = () => z.boolean();
+export const tolerantBoolean = () =>
+  z
+    .union([
+      z.boolean(),
+      z.enum(['true', 'false', '1', '0']),
+    ])
+    .transform((v) => (typeof v === 'string' ? v === 'true' || v === '1' : v));
+
+/**
+ * Enum tolerante que acepta TRES formatos que el LLM puede generar:
+ *  1. Un valor único del enum:                 `"Correctivo"`
+ *  2. Un array de valores del enum:            `["Correctivo","Programado"]`
+ *  3. Un string con valores separados por coma: `"Correctivo, Programado"` ← caso del bug
+ *
+ * Caso (3) es lo que el modelo chico (llama-3.1-8b-instant) tiende a generar
+ * cuando quiere filtrar por varios valores, en vez de mandar un array. Groq
+ * rechaza eso con 400 si el JSON Schema declara `enum` simple.
+ *
+ * El JSON Schema emitido al LLM es:
+ *   anyOf: [
+ *     { type: "string", enum: [...] },
+ *     { type: "array", items: { type: "string", enum: [...] } }
+ *   ]
+ * Así Groq acepta tanto `"Correctivo"` como `["Correctivo","Programado"]`
+ * sin 400. Si llega `"Correctivo, Programado"`, el preprocess lo divide en
+ * array y también pasa la validación.
+ *
+ * El output es siempre un array (lo aplicamos antes de pasarlo al execute).
+ *
+ * Uso: `enumOrList(['Correctivo', 'Programado', 'Lavada']).optional()`
+ */
+export function enumOrList<T extends [string, ...string[]]>(values: T) {
+  return z.preprocess(
+    (val) => {
+      if (typeof val === 'string') {
+        const trimmed = val.trim();
+        // Comma-separated string: split en array (filtra vacíos)
+        if (trimmed.includes(',')) {
+          const parts = trimmed
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+          if (parts.length > 0) return parts;
+        }
+        return trimmed;
+      }
+      return val;
+    },
+    z.union([
+      z.enum(values),
+      z.array(z.enum(values)),
+    ])
+  );
+}
 
 // ─── Rescate de args ────────────────────────────────────────────────
 // Aplana objetos args profundamente anidados. Usado por el orquestador

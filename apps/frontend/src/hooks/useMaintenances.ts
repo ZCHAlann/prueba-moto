@@ -23,6 +23,7 @@ export type ApiMaintenance = {
   updatedAt: string;
   laborCost: number | null;
   partsCost: number | null;
+  isOverdue: boolean;
   // ── Backend enrichment (display-only) ──────────────────────────────────────
   /** Vehicle name — avoids separate useAssets() call */
   assetName: string | null;
@@ -67,6 +68,7 @@ function mapApi(raw: Record<string, unknown>): ApiMaintenance {
     createdAt: (raw.createdAt as string) ?? (raw.created_at as string) ?? "",
     laborCost: raw.laborCost != null ? Number(raw.laborCost) : null,
     partsCost: raw.partsCost != null ? Number(raw.partsCost) : null,
+    isOverdue: raw.isOverdue === true || raw.status === "Atrasado",
     updatedAt: (raw.updatedAt as string) ?? (raw.updated_at as string) ?? "",
     // ── Backend enrichment ──────────────────────────────────────────────────────
     assetName: (raw.assetName as string | null) ?? null,

@@ -141,6 +141,14 @@ const updateMaintenanceSchema = z.object({
 const cancelRescheduleSchema = z.object({
   newScheduledFor: z.string().min(1, 'Nueva fecha requerida'),
   reason:           safeString({ min: 3, max: 1000, fieldLabel: 'Motivo', allowEmpty: false }),
+  // Si true, NO se borran items/attachments/notas — solo se reagenda
+  // el mantenimiento. Default false para conservar el comportamiento
+  // histórico del endpoint.
+  keepItems:        z.boolean().optional().default(false),
+});
+
+const reauthorizeSchema = z.object({
+  reason: z.string().min(1).max(500).optional(),
 });
 
 const requestCorrectionSchema = z.object({
@@ -340,6 +348,9 @@ function buildItemValues(maintenanceId: number, items: z.infer<typeof itemSchema
 function normalizeStatus(status: string): string {
   // Compat: "En curso" lo aceptamos como "En proceso" (renombre UX).
   if (status === 'En curso') return 'En proceso';
+  // "Atrasado" es un estado terminal del flujo (lo setea el cron diario).
+  // No se normaliza → round-trip exacto para que el filtrado por
+  // ?status=Atrasado coincida con el enum del schema.
   return status;
 }
 
@@ -354,6 +365,10 @@ function serializeMaintenance(m: any, items: any[], events: any[] = []) {
     workshopName:  m.workshopName,
     type:          m.type,
     status:        normalizeStatus(m.status),
+    // Flag derivado: el cron maintenance-overdue marca los vencidos.
+    // Útil para que el frontend muestre badge/banner sin tener que
+    // comparar strings.
+    isOverdue:     m.status === 'Atrasado',
     category:      m.category,
     title:         m.title,
     description:   m.description,
@@ -421,10 +436,15 @@ router.get(
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
-      const { status, type, category, workshopId, assetId, from, to, q, mine, scope } = req.query as Record<string, string | undefined>;
+      const { status, type, category, workshopId, assetId, from, to, q, mine, scope, overdue } = req.query as Record<string, string | undefined>;
       const meId   = getUserIdFromSub(req.user!.sub);
       const meRole = req.user!.role;
       const isFull = hasFullAccess(meRole);
+
+      // ?overdue=true → filtra directamente por status='Atrasado' (lo setea
+      // el cron diario maintenance-overdue). Tiene precedencia sobre ?status
+      // porque es un shortcut semántico: "mostrame los vencidos".
+      const overdueOnly = overdue === 'true' || overdue === '1';
 
       const where: any[] = [eq(companyMaintenanceRecords.companyId, companyId)];
       // Filtrado por role:
@@ -462,7 +482,10 @@ router.get(
           )!,
         );
       }
-      if (status) {
+      if (overdueOnly) {
+        // Shortcut semántico: solo los marcados como Atrasado por el cron.
+        where.push(eq(companyMaintenanceRecords.status, 'Atrasado'));
+      } else if (status) {
         const s = normalizeStatus(status);
         if (s === 'En proceso') {
           where.push(or(
@@ -671,10 +694,12 @@ router.get(
       const assetId    = req.query.assetId    ? Number(req.query.assetId)    : null;
 
       // 1) Traer los mantenimientos del rango
+      // Filtra por scheduledFor (fecha programada) en vez de createdAt, para
+      // que el rango visual que aplica el usuario coincida con las OTs listadas.
       const whereMant: any[] = [
         eq(companyMaintenanceRecords.companyId, companyId),
-        gte(companyMaintenanceRecords.createdAt, from),
-        lte(companyMaintenanceRecords.createdAt, to),
+        gte(companyMaintenanceRecords.scheduledFor, from),
+        lte(companyMaintenanceRecords.scheduledFor, to),
       ];
       if (assetId)    whereMant.push(eq(companyMaintenanceRecords.assetId, assetId));
       if (workshopId) whereMant.push(eq(companyMaintenanceRecords.workshopId, workshopId));
@@ -690,6 +715,7 @@ router.get(
           laborCost:      companyMaintenanceRecords.laborCost,
           scheduledFor:   companyMaintenanceRecords.scheduledFor,
           completedAt:    companyMaintenanceRecords.completedAt,
+          attachments:    companyMaintenanceRecords.attachments,
         })
         .from(companyMaintenanceRecords)
         .where(and(...whereMant))
@@ -700,6 +726,7 @@ router.get(
       let items: Array<{
         id: number; mantenimientoId: number; supplierId: number | null;
         name: string; quantity: string; unitCost: string; subtotal: string;
+        photoUrl: string | null;
       }> = [];
       if (mantenimientoIds.length) {
         const whereItems: any[] = [inArray(companyMaintenanceItems.maintenanceId, mantenimientoIds)];
@@ -713,6 +740,7 @@ router.get(
             quantity:       companyMaintenanceItems.quantity,
             unitCost:       companyMaintenanceItems.unitCost,
             subtotal:       companyMaintenanceItems.subtotal,
+            photoUrl:       companyMaintenanceItems.photoUrl,
           })
           .from(companyMaintenanceItems)
           .where(and(...whereItems));
@@ -750,6 +778,37 @@ router.get(
         const repuestos = myItems.reduce((acc, it) => acc + Number(it.subtotal ?? 0), 0);
         const labor     = Number(m.laborCost ?? 0);
         const total     = Number(m.totalCost ?? 0);
+        // Cuando hay supplierId filtrado, los items ya vienen solo de ese
+        // proveedor, así que `repuestosProveedor` es la suma total.
+        // (Para el caso sin supplierId, mantenemos el desglose por proveedor
+        // dentro de la OT como antes.)
+        const repuestosProveedorTotal = supplierId
+          ? round2(repuestos)
+          : null;
+        const repuestosPorProveedorList = !supplierId
+          ? (() => {
+              const map: Record<number, { supplierId: number; supplierName: string; total: number; count: number }> = {};
+              for (const it of myItems) {
+                if (!it.supplierId) continue;
+                if (!map[it.supplierId]) {
+                  map[it.supplierId] = {
+                    supplierId: it.supplierId,
+                    supplierName: supplierMap.get(it.supplierId)?.name ?? "Sin proveedor",
+                    total: 0,
+                    count: 0,
+                  };
+                }
+                map[it.supplierId].total += Number(it.subtotal ?? 0);
+                map[it.supplierId].count += 1;
+              }
+              return Object.values(map).map((r) => ({
+                supplierId:   r.supplierId,
+                supplierName: r.supplierName,
+                total:        round2(r.total),
+                itemsCount:   r.count,
+              }));
+            })()
+          : null;
         return {
           id:             m.id,
           title:          m.title ?? "—",
@@ -765,31 +824,23 @@ router.get(
           } : null,
           manoObra:       round2(labor),
           repuestos:      round2(repuestos),
+          /** Cuando supplierId está activo: subtotal de repuestos de ESE proveedor en esta OT. */
+          repuestosProveedor: repuestosProveedorTotal,
           total:          round2(total),
-          repuestosPorProveedor: supplierId
-            ? null
-            : (() => {
-                const map: Record<number, { supplierId: number; supplierName: string; total: number; count: number }> = {};
-                for (const it of myItems) {
-                  if (!it.supplierId) continue;
-                  if (!map[it.supplierId]) {
-                    map[it.supplierId] = {
-                      supplierId: it.supplierId,
-                      supplierName: supplierMap.get(it.supplierId)?.name ?? "Sin proveedor",
-                      total: 0,
-                      count: 0,
-                    };
-                  }
-                  map[it.supplierId].total += Number(it.subtotal ?? 0);
-                  map[it.supplierId].count += 1;
-                }
-                return Object.values(map).map((r) => ({
-                  supplierId:   r.supplierId,
-                  supplierName: r.supplierName,
-                  total:        round2(r.total),
-                  itemsCount:   r.count,
-                }));
-              })(),
+          /** Detalle de items de repuestos (con photoUrl) — útil para la tabla y para exportar PDF. */
+          items: myItems.map((it) => ({
+            supplierId:   it.supplierId,
+            supplierName: it.supplierId ? (supplierMap.get(it.supplierId)?.name ?? "Sin proveedor") : "Sin proveedor",
+            name:         it.name,
+            quantity:     Number(it.quantity),
+            unitCost:     Number(it.unitCost),
+            subtotal:     Number(it.subtotal),
+            photoUrl:     it.photoUrl,
+          })),
+          /** Evidencias/adjuntos asociados a la OT. */
+          attachments:    Array.isArray(m.attachments) ? m.attachments : [],
+          /** Sin supplierId: desglose por proveedor dentro de la OT. */
+          repuestosPorProveedor: repuestosPorProveedorList,
         };
       });
 
@@ -1512,7 +1563,17 @@ router.post(
 
 // ─── POST /:id/cancel-reschedule ─────────────────────────────────────────────
 // Cancela el mantenimiento actual y lo reprograma para una nueva fecha.
-// Borra items y fotos. Mantiene la línea de tiempo.
+//
+// Comportamiento por defecto (keepItems ausente o false):
+//   - Borra items (y sus fotos quedan huérfanas; se limpian por storage path)
+//   - Mantiene la línea de tiempo
+//   - Resetea flags de ejecución
+//
+// Con keepItems=true:
+//   - Conserva items, attachments y notas intactos
+//   - Solo reagenda y resetea flags de ejecución
+//   - Útil para reagendar sin perder lo que el operador ya cargó
+//     (ej. corregir fecha de un Programado que se atrasó por un feriado).
 router.post(
   '/:id/cancel-reschedule',
   requireModule('mantenimiento'),
@@ -1526,6 +1587,7 @@ router.post(
       const meId   = getUserIdFromSub(req.user!.sub);
       const meRole = req.user!.role;
       const isFull = hasFullAccess(meRole);
+      const keepItems = body.keepItems === true;
 
       const [existing] = await db
         .select()
@@ -1540,10 +1602,15 @@ router.post(
         }
       }
 
-      // 1) Borrar items (y sus fotos quedan huérfanas; se limpian por storage path)
-      await db.delete(companyMaintenanceItems).where(eq(companyMaintenanceItems.maintenanceId, id));
+      // 1) Borrar items SOLO si keepItems=false (comportamiento histórico).
+      //    Si keepItems=true, conservamos todo lo que el operador ya cargó.
+      if (!keepItems) {
+        await db.delete(companyMaintenanceItems).where(eq(companyMaintenanceItems.maintenanceId, id));
+      }
 
-      // 2) Reset: status Programado, mantener assignedUserId, marcar reprogramado
+      // 2) Reset: status Programado, mantener assignedUserId, marcar reprogramado.
+      //    NOTA: no tocamos notes/attachments — viven en sus propias tablas
+      //    (events/attachments) y se conservan en ambos modos.
       const [updated] = await db
         .update(companyMaintenanceRecords)
         .set({
@@ -1563,8 +1630,10 @@ router.post(
         .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
         .returning();
 
-      // 3) Recalcular totalCost: como se borraron los items, el total
-      // debe volver a ser solo laborCost (+ extras de lavada si los hubiera).
+      // 3) Recalcular totalCost: si se borraron los items, el total debe
+      //    volver a ser solo laborCost (+ extras de lavada si los hubiera).
+      //    Si keepItems=true, los items siguen → recalcular asegura
+      //    consistencia sin importar el modo.
       await recalcMaintenanceTotal(id);
 
       // 4) Registrar evento en línea de tiempo (con la foto del antes/después)
@@ -1575,7 +1644,8 @@ router.post(
         reason:          body.reason,
         newScheduledFor: body.newScheduledFor,
         previousDate:    existing.scheduledFor,
-        itemsCleared:    (existing as any).totalCost !== '0' || true,
+        itemsCleared:    !keepItems,
+        keepItems,
       });
 
       res.json({
@@ -1583,7 +1653,78 @@ router.post(
         id: toId('maintenance', updated.id),
         status: 'Programado',
         isReprogrammed: true,
+        keepItems,
       });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── POST /:id/reauthorize ────────────────────────────────────────────────────
+// Reautoriza un mantenimiento 'Atrasado' para que el operador pueda
+// continuar el trabajo SIN reprogramar ni perder items/notas/attachments.
+//
+// Sólo aplica a mantenimientos type='Programado' en status='Atrasado':
+//   - type distinto de 'Programado' → 403 (un Correctivo/Lavada nunca
+//     debería llegar a 'Atrasado'; si lo hizo es por bug del cron, y
+//     reauthorize no es la vía correcta).
+//   - status distinto de 'Atrasado' → 403 (no tiene sentido "reautorizar"
+//     un mantenimiento que no está atrasado).
+//
+// Efectos:
+//   1) status pasa de 'Atrasado' → 'En proceso'
+//   2) NO se borran items, attachments ni notas
+//   3) NO se modifica scheduledFor (sigue siendo la fecha original,
+//      ahora pasada: queda como referencia histórica en el timeline)
+//   4) Se registra evento kind='reauthorized' en la timeline con el
+//      motivo opcional que envíe el admin.
+router.post(
+  '/:id/reauthorize',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'records', 'ver'),
+  validate(reauthorizeSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+      const meId = getUserIdFromSub(req.user!.sub);
+      const body = req.body as z.infer<typeof reauthorizeSchema>;
+
+      const [existing] = await db
+        .select()
+        .from(companyMaintenanceRecords)
+        .where(and(
+          eq(companyMaintenanceRecords.id, id),
+          eq(companyMaintenanceRecords.companyId, companyId),
+        ))
+        .limit(1);
+      if (!existing) throw new NotFoundError('Mantenimiento', req.params.id);
+
+      if (existing.status !== 'Atrasado') {
+        throw new ForbiddenError('Solo se pueden reautorizar mantenimientos atrasados.');
+      }
+      if (existing.type !== 'Programado') {
+        throw new ForbiddenError('Solo mantenimientos Programados soportan reautorización.');
+      }
+
+      // Mantener items/notas/attachments tal cual. Solo cambiar status.
+      await db
+        .update(companyMaintenanceRecords)
+        .set({ status: 'En proceso' })
+        .where(eq(companyMaintenanceRecords.id, id));
+
+      // Registrar evento en la timeline. 'reauthorized' es string libre
+      // en la columna kind (varchar), no requiere migración de schema.
+      await recordEvent(companyId, id, 'reauthorized', {
+        userId: meId,
+        name: req.user!.name ?? null,
+      }, {
+        reason: body?.reason ?? null,
+        previousStatus: existing.status,
+      });
+
+      res.json({ ok: true, status: 'En proceso' });
     } catch (err) {
       next(err);
     }

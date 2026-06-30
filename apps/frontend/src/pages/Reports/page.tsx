@@ -56,6 +56,15 @@ const PAGE_SIZE = 6;
 const SIDEBAR_EXPANDED_WIDTH = 216;
 const SIDEBAR_COLLAPSED_WIDTH = 56;
 
+/** Quita el prefijo "workshop-"/"supplier-" del ID serializado por el backend.
+ *  El backend usa `toId('workshop', n)` que devuelve "workshop-123", pero el
+ *  estado del filtro de este módulo (`maintWorkshopId`, `maintSupplierId`)
+ *  guarda el número puro. Para que el <select value={n}> matchee contra
+ *  <option value="w.id}>, ambos lados tienen que estar en el mismo formato. */
+function stripIdPrefix(id: string): string {
+  return String(id ?? "").replace(/^(workshop|supplier|asset|maintenance|company|company-user|maint-cat|maint-event)-/, "");
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Tone = "info" | "success" | "warning" | "danger" | "neutral";
@@ -871,7 +880,7 @@ export function ReportsPage() {
   const [page, setPage]         = useState(1);
   const [draft, setDraft]       = useState<DateRange>({ from: "", to: "" });
   const [applied, setApplied]   = useState<DateRange>({ from: "", to: "" });
-  const [maintSubtab, setMaintSubtab] = useState<"todos" | "programados" | "en_proceso" | "completados">("todos");
+  const [maintSubtab, setMaintSubtab] = useState<"todos" | "programados" | "en_proceso" | "completados" | "atrasados">("todos");
   const [maintCategory, setMaintCategory] = useState<"all" | "Preventivo" | "Correctivo" | "Predictivo" | "Emergencia">("all");
   const [maintWorkshopId,  setMaintWorkshopId]  = useState<number | null>(null);
   const [maintSupplierId,  setMaintSupplierId]  = useState<number | null>(null);
@@ -1020,7 +1029,7 @@ export function ReportsPage() {
         summary: [
           { label: "Movimientos",   value: rows.length.toString(),          detail: "Registros totales", tone: "info"    },
           { label: "Combustible",   value: fuelEntries.length.toString(),   detail: "Cargas incluidas",  tone: "warning" },
-          { label: "Mantenimiento", value: maintenances.length.toString(),  detail: "OT incluidas",      tone: "success" },
+          { label: "Mantenimiento", value: maintenances.length.toString(),  detail: "Mantenimientos incluidos",      tone: "success" },
         ],
       };
     }
@@ -1254,7 +1263,7 @@ export function ReportsPage() {
         columns,
         rows,
         summary: [
-          { label: "Total",       value: maintenances.length.toString(),                                          detail: "OT registradas", tone: "info"    },
+          { label: "Total",       value: maintenances.length.toString(),                                          detail: "Mantenimientos registrados", tone: "info"    },
           { label: "Pendientes",  value: maintenances.filter((m) => m.status === "Pendiente").length.toString(),  detail: "Sin iniciar",    tone: "warning" },
           { label: "En proceso",  value: maintenances.filter((m) => m.status === "En proceso").length.toString(), detail: "En taller",      tone: "info"    },
           { label: "Completados", value: maintenances.filter((m) => m.status === "Completado").length.toString(), detail: "Cerrados",       tone: "success" },
@@ -1281,6 +1290,7 @@ export function ReportsPage() {
           programados: "Programado",
           en_proceso:  "En proceso",
           completados: "Completado",
+          atrasados:   "Atrasado",
         };
         const target = statusMap[maintSubtab];
         filtered = filtered.filter((r) => r.__status === target);
@@ -1309,6 +1319,15 @@ export function ReportsPage() {
     () => Math.max(1, ...numericSummary.map((s) => s.n)),
     [numericSummary]
   );
+
+  // En rep-009 (Mantenimiento) cuando hay filtro de taller o proveedor activo,
+  // el CostBreakdownPanel ya muestra la tabla detallada de OTs — ocultamos el
+  // GroupedReportTable para no duplicar la información. Cuando NO hay filtro
+  // activo, mostramos la vista agrupada por placa.
+  const breakdownActivo =
+    activeId === "rep-009" &&
+    (maintWorkshopId != null || maintSupplierId != null);
+  const mostrarAgrupada = GROUPED_MODULES.has(activeId) && !breakdownActivo;
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -1434,6 +1453,7 @@ export function ReportsPage() {
                             { id: "programados", label: "Programados" },
                             { id: "en_proceso",  label: "En proceso"  },
                             { id: "completados", label: "Completados" },
+                            { id: "atrasados",   label: "Atrasados", statusValue: "Atrasado" },
                           ] as const).map((opt) => (
                             <button
                               key={opt.id}
@@ -1466,8 +1486,8 @@ export function ReportsPage() {
                       </div>
 
                       <CostBreakdownFilters
-                        workshops={workshops}
-                        suppliers={suppliers}
+                        workshops={workshops.map((w) => ({ id: stripIdPrefix(w.id), name: w.name }))}
+                        suppliers={suppliers.map((s) => ({ id: stripIdPrefix(s.id), name: s.name }))}
                         workshopId={maintWorkshopId}
                         supplierId={maintSupplierId}
                         onWorkshopChange={(id) => { setMaintWorkshopId(id); setPage(1); }}
@@ -1523,6 +1543,8 @@ export function ReportsPage() {
                       supplierId={maintSupplierId}
                       from={applied.from || undefined}
                       to={applied.to || undefined}
+                      workshopName={workshops.find((w) => stripIdPrefix(w.id) === String(maintWorkshopId))?.name}
+                      supplierName={suppliers.find((s) => stripIdPrefix(s.id) === String(maintSupplierId))?.name}
                       onClear={() => { setMaintWorkshopId(null); setMaintSupplierId(null); }}
                     />
                   )}
@@ -1580,7 +1602,7 @@ export function ReportsPage() {
                         Ninguna fila coincide con el rango o filtro actual.
                       </p>
                     </div>
-                  ) : GROUPED_MODULES.has(activeId) ? (
+                  ) : mostrarAgrupada ? (
                     // ── Módulos agrupados: acordeón por placa (sin paginación) ──
                     <GroupedReportTable
                       columns={preview.columns}
@@ -1652,7 +1674,3 @@ export function ReportsPage() {
   );
 }
 
-
-// ─── Sub-componentes del desglose de costos (taller + proveedor) ───
-// Movidos a apps/frontend/src/pages/Mantenimientos/components/CostBreakdown.tsx
-// para reusarse desde el módulo Mantenimientos además de Reports.

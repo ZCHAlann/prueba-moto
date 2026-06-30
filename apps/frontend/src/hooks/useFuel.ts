@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
 
 // ─── Validación client-side de uploads ──────────────────────────────────────
 // Defense in depth: el servidor valida (mimetype + extensión + companyId),
@@ -108,8 +109,9 @@ function mapApi(raw: Record<string, unknown>): ApiFuelEntry {
 export async function uploadFuelPhoto(file: File, companyId: number): Promise<string> {
   assertFileAllowed(file);
 
+  const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
   const fd = new FormData();
-  fd.append("photos", file);
+  fd.append("photos", toUpload);
   const res = await fetch(`/api/upload/fuel-photos?companyId=${companyId}`, {
     method: "POST",
     body: fd,
@@ -127,8 +129,9 @@ export async function uploadFuelPhoto(file: File, companyId: number): Promise<st
 export async function uploadOdometerPhoto(file: File, companyId: number): Promise<string> {
   assertFileAllowed(file);
 
+  const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
   const fd = new FormData();
-  fd.append("photos", file);
+  fd.append("photos", toUpload);
   const res = await fetch(`/api/upload/fuel-photos?companyId=${companyId}`, {
     method: "POST",
     body: fd,

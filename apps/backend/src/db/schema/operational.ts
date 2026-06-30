@@ -279,6 +279,7 @@ export const maintenanceStatusEnum = pgEnum('maintenance_status_enum', [
   'Completado',
   'Cancelado',
   'Correccion',
+  'Atrasado',
 ]);
 
 export const maintenanceCategoryEnum = pgEnum('maintenance_category_enum', [
@@ -621,8 +622,94 @@ export const companyChecklists = pgTable('company_checklists', {
   findings: text('findings'),
   items: jsonb('items').notNull().default([]),
   photoUrls: text('photo_urls').array().notNull().default([]),
+
+  // ── Ciclo (llenado por el cron de cierre cuando persiste filas 'Vencido'
+  //    o cuando el operador crea un checklist atrasado con reautorización) ──
+  cycleStart: timestamp('cycle_start'),
+  cycleEnd:   timestamp('cycle_end'),
+  windowEnd:  timestamp('window_end'),
+
+  // true cuando este checklist se completó DESPUÉS de windowEnd gracias a
+  // una reautorización aprobada. false/null en cualquier otro caso (a tiempo,
+  // o vencido sin hacer — en ese caso el status es 'Vencido').
+  isLate: boolean('is_late').notNull().default(false),
+
+  // Si esta fila fue creada como consecuencia de una reautorización aprobada,
+  // referencia a la solicitud que la habilitó. ON DELETE SET NULL para no
+  // borrar la fila de checklist si alguien purga la solicitud.
+  reauthRequestId: integer('reauth_request_id')
+    .references(() => companyChecklistReauthRequests.id, { onDelete: 'set null' }),
+
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ─────────────────────────────────────────────
+// Reautorización de checklists vencidos
+// ─────────────────────────────────────────────
+//
+// Cuando un operador/conductor no hizo un checklist dentro de la ventana
+// de su ciclo, el cron persiste una fila en `company_checklists` con
+// status='Vencido'. Si después quiere hacerla, debe pedir autorización a
+// alguien con permiso `checklist.reautorizaciones.editar`.
+//
+// Esta tabla guarda esa solicitud. Estado:
+//   - 'Pendiente'  → esperando decisión del aprobador
+//   - 'Autorizada' → aprobada, el operador ya puede hacer el checklist
+//                    (la fila queda "reservada" para él hasta que la use)
+//   - 'Rechazada'  → rechazada con nota
+//
+// `missedChecklistId` apunta a la fila 'Vencido' persistida por el cron.
+// `completedChecklistId` se llena cuando el operador efectivamente completa
+// el checklist atrasado (consume la reautorización).
+
+export const checklistReauthStatusEnum = pgEnum('checklist_reauth_status_enum', [
+  'Pendiente',
+  'Autorizada',
+  'Rechazada',
+]);
+
+export const companyChecklistReauthRequests = pgTable('company_checklist_reauth_requests', {
+  id:               serial('id').primaryKey(),
+  companyId:        integer('company_id').notNull()
+                       .references(() => companies.id, { onDelete: 'cascade' }),
+  categoryId:       integer('category_id').notNull()
+                       .references(() => companyChecklistCategories.id, { onDelete: 'cascade' }),
+  // Null permitido solo si scopeKind de la categoría es 'pick' y aún no se
+  // eligió activo (caso raro: el operador pide reautorización antes de saber
+  // a qué vehículo se la va a aplicar).
+  assetId:          integer('asset_id').references(() => companyAssets.id, { onDelete: 'set null' }),
+
+  // Ciclo vencido que se está pidiendo re-hacer. Copiados de la fila
+  // 'Vencido' que originó el pedido — son la "evidencia" del atraso.
+  cycleStart:       timestamp('cycle_start').notNull(),
+  cycleEnd:         timestamp('cycle_end').notNull(),
+  windowEnd:        timestamp('window_end').notNull(),
+
+  // Vínculo a la fila 'Vencido' persistida por el cron.
+  missedChecklistId: integer('missed_checklist_id')
+                        .references(() => companyChecklists.id, { onDelete: 'set null' }),
+
+  status:           checklistReauthStatusEnum('status').notNull().default('Pendiente'),
+
+  requestedByUserId: integer('requested_by_user_id')
+                        .references(() => companyUsers.id, { onDelete: 'set null' }),
+  requestedByName:   varchar('requested_by_name', { length: 160 }),
+  reason:             text('reason').notNull(),
+
+  decidedByUserId:    integer('decided_by_user_id')
+                         .references(() => companyUsers.id, { onDelete: 'set null' }),
+  decidedByName:       varchar('decided_by_name', { length: 160 }),
+  decisionNotes:       text('decision_notes'),
+  decidedAt:           timestamp('decided_at'),
+
+  // Se llena cuando el operador efectivamente completa el checklist atrasado
+  // tras la aprobación. Cierra el ciclo de la solicitud.
+  completedChecklistId: integer('completed_checklist_id')
+                          .references(() => companyChecklists.id, { onDelete: 'set null' }),
+
+  createdAt:          timestamp('created_at').notNull().defaultNow(),
+  updatedAt:           timestamp('updated_at').notNull().defaultNow(),
 });
 
 // ─────────────────────────────────────────────
@@ -1196,5 +1283,118 @@ export const exitAnalysisRejections = pgTable('exit_analysis_rejections', {
   // queda como histórico. superseded_at != null marca que ya no aplica.
   supersededAt:           timestamp('superseded_at'),
   createdAt:              timestamp('created_at').notNull().defaultNow(),
+});
+
+// ─────────────────────────────────────────────
+// Lienzo de presentación (dashboard builder)
+// ─────────────────────────────────────────────
+//
+// `company_canvas_boards` representa un lienzo guardado. Cada usuario puede
+// tener varios (reuniones recurrentes: "Junta semanal", "Cierre de mes"). Los
+// lienzos tienen un set de módulos en el panel izquierdo + widgets colocados
+// libremente en el canvas.
+//
+// Visibilidad:
+//   - `is_shared = true`  → todos los de la empresa con permiso `lienzo.lienzo.ver` lo ven.
+//     (Antes `reportes.lienzo.ver` — el shim en `requirePermission` mantiene compat.)
+//   - `is_shared = false` → solo el dueño (`owner_user_id`) lo ve en su listado.
+//
+// Aislamiento por empresa: SIEMPRE filtramos por `companyId`. El companyId
+// del JWT, nunca del body.
+
+export const companyCanvasBoards = pgTable('company_canvas_boards', {
+  id:           serial('id').primaryKey(),
+  companyId:    integer('company_id').notNull()
+                  .references(() => companies.id, { onDelete: 'cascade' }),
+  ownerUserId:  integer('owner_user_id').references(() => companyUsers.id, { onDelete: 'set null' }),
+  // Nombre corto que se muestra en la lista y en el header del lienzo.
+  name:         varchar('name', { length: 160 }).notNull(),
+  description:  text('description'),
+  // Módulos que el usuario agregó al panel izquierdo, en orden.
+  // Cada elemento es el `key` del modulo (Modulo en useEstadisticas.ts):
+  // 'mantenimiento' | 'combustible' | 'flotas' | etc.
+  // Se guarda como array de varchar — Drizzle mapea a text[].
+  // Usamos `text('panel_modules').array()` para mantenerlo simple (la
+  // validación se hace del lado de la app, no en BD).
+  // (Drizzle ya tiene `text('panel_modules').array()` importado arriba.)
+  // El cast al tipo PG lo hace Drizzle con `text({ enum: [...keys] }).array()`
+  // pero para evitar acoplar este schema al union del frontend, usamos text plano.
+  panelModules: text('panel_modules').array().notNull().default([]),
+  // Si el lienzo es compartido dentro de la empresa (visible para todos
+  // los que tengan permiso `ver`) o solo para el dueño.
+  isShared:     boolean('is_shared').notNull().default(false),
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+  updatedAt:    timestamp('updated_at').notNull().defaultNow(),
+});
+
+// Enums para los widgets del lienzo.
+//   - `viz_kind`: 'chart' (recharts) o 'table' (auto-derivada).
+//   - `chart_type`: subtipo de chart. null cuando viz_kind='table'.
+//   - `scope`: si el widget mira toda la empresa, una entidad sola, o varias.
+//     'varios' usa el endpoint /multi-entidad (calcula N entidades en paralelo).
+export const canvasWidgetVizKindEnum = pgEnum('canvas_widget_viz_kind_enum', ['chart', 'table']);
+export const canvasWidgetChartTypeEnum = pgEnum('canvas_widget_chart_type_enum', [
+  'bar_h', 'bar_v', 'line', 'line_exponencial', 'pie', 'radar',
+]);
+export const canvasWidgetScopeEnum = pgEnum('canvas_widget_scope_enum', ['todos', 'uno', 'varios']);
+
+export const companyCanvasWidgets = pgTable('company_canvas_widgets', {
+  id:           serial('id').primaryKey(),
+  boardId:      integer('board_id').notNull()
+                  .references(() => companyCanvasBoards.id, { onDelete: 'cascade' }),
+  companyId:    integer('company_id').notNull()
+                  .references(() => companies.id, { onDelete: 'cascade' }),
+
+  // Módulo de Estadísticas (de useEstadisticas.ts Modulo type).
+  modulo:       varchar('modulo', { length: 40 }).notNull(),
+  vizKind:      canvasWidgetVizKindEnum('viz_kind').notNull(),
+  // Null si vizKind='table'.
+  chartType:    canvasWidgetChartTypeEnum('chart_type'),
+
+  // Alcance: 'todos' = toda la empresa; 'uno' = entityIds tiene 1 elemento;
+  // 'varios' = entityIds tiene 2..N elementos (usa /multi-entidad).
+  scope:        canvasWidgetScopeEnum('scope').notNull().default('todos'),
+  // 'asset' | 'driver'. Determina si el módulo compara por vehículo o conductor.
+  // Null si scope='todos'.
+  entityKind:   varchar('entity_kind', { length: 10 }),
+  entityIds:    integer('entity_ids').array().notNull().default([]),
+
+  // Período de bucketing + rango. El "periodo" es 'month' | 'quarter' | 'year'.
+  // fecha_desde/hasta son strings YYYY-MM-DD.
+  periodo:      varchar('periodo', { length: 10 }).notNull().default('month'),
+  fechaDesde:   date('fecha_desde').notNull(),
+  fechaHasta:   date('fecha_hasta').notNull(),
+
+  // Campo del payload del calculator que el widget renderiza.
+  // Determinado por el chartType al crear el widget:
+  //   bar_h             -> 'barHChart' (top N)
+  //   bar_v             -> 'barVChart'
+  //   line              -> 'lineChart'
+  //   line_exponencial  -> 'exponencialChart'
+  //   pie               -> 'barVChart' (datos crudos, renderizados como donut)
+  //   radar             -> 'radarChart'
+  // Lo guardamos para no re-derivarlo en cada render.
+  sourceField:  varchar('source_field', { length: 30 }).notNull(),
+
+  // Posición libre (no grid) en el canvas. px relativos al top-left del canvas.
+  posX:         integer('pos_x').notNull().default(0),
+  posY:         integer('pos_y').notNull().default(0),
+  // Tamaño del widget. Defaults = tamaño cómodo para un chart con título.
+  width:        integer('width').notNull().default(420),
+  height:       integer('height').notNull().default(300),
+
+  // Override opcional del título (ej: "Costo combustible vs meta").
+  title:        varchar('title', { length: 160 }),
+
+  // ── Combinación de módulos (jun 2026) ─────────────────────────────────────
+  // Si está set, el widget muestra datos de DOS módulos side-by-side
+  // (ej. "Costo combustible vs costo mantenimiento por vehículo").
+  // Solo aplica a vizKind='chart'. El módulo principal es `modulo`, el
+  // secundario es `secondaryModulo`. Ambos se agregan por entidad (asset
+  // o driver según widget.entityKind).
+  secondaryModulo: varchar('secondary_modulo', { length: 40 }),
+
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+  updatedAt:    timestamp('updated_at').notNull().defaultNow(),
 });
 

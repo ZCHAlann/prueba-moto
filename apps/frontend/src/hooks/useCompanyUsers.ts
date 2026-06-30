@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import type { PlatformRole } from "@/types/platform";
 import type { PermissionMap } from "../lib/module-tree";
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -73,8 +74,9 @@ function mapApiToUser(data: Record<string, unknown>): CompanyUser {
 
 /** Sube 1 foto al endpoint de usuarios y devuelve la URL pública. */
 export async function uploadUserPhoto(file: File, companyId: number): Promise<string> {
+  const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
   const fd = new FormData();
-  fd.append("photos", file); 
+  fd.append("photos", toUpload); 
   const res = await fetch(`/api/upload/user-photos?companyId=${companyId}`, { 
     method: "POST",
     body: fd,

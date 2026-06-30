@@ -257,6 +257,58 @@ router.get(
   },
 );
 
+// ─── GET /company/:id/estadisticas/:modulo/multi-entidad ────────────
+//
+// Calcula el mismo módulo para N entidades (assets o drivers) en paralelo
+// y devuelve un payload agregado con una serie por entidad.
+//
+// Query: ?periodo=month&desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+//        &entityKind=asset|driver&entityIds=12,15,21
+//
+// Usado por el Lienzo de Presentación cuando el usuario configura un widget
+// con scope='varios'. El calculator corre una vez por cada entityId, en
+// paralelo. Los KPIs/charts se mergean con entityId como key.
+
+router.get(
+  "/:modulo/multi-entidad",
+  requireModule("reportes", "estadisticas"),
+  requirePermission("reportes", "estadisticas", "ver"),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const modulo = parseModulo(req.params.modulo);
+      if (!modulo) {
+        return res.status(400).json({ error: "Módulo inválido" });
+      }
+
+      const periodo = parsePeriodo(req.query.periodo as string | undefined);
+      const desde = (req.query.desde as string | undefined) ?? new Date().toISOString().slice(0, 10);
+      const hasta = (req.query.hasta as string | undefined) ?? desde;
+      const entityKind = (req.query.entityKind as string | undefined) === "driver" ? "driver" : "asset";
+      const entityIdsRaw = (req.query.entityIds as string | undefined) ?? "";
+      const entityIds = entityIdsRaw
+        .split(",")
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isFinite(n) && n > 0);
+
+      if (entityIds.length === 0) {
+        return res.status(400).json({
+          error: "entityIds debe ser una lista CSV de IDs numéricos (ej: ?entityIds=12,15,21).",
+        });
+      }
+
+      const { calculateMultiEntity } = await import("../../lib/stats-multi-entity");
+      const data = await calculateMultiEntity({
+        companyId, modulo, periodo, desde, hasta, entityKind, entityIds,
+      });
+
+      return res.json(data);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // ─── GET /company/:id/estadisticas/:modulo/anomalias ─────────────────
 
 router.get(

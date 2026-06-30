@@ -8,14 +8,14 @@
 //   - rango de fechas de inicio/fin
 
 import { z } from 'zod';
-import { and, eq, gte, lte, desc, ilike, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, desc, ilike, sql } from 'drizzle-orm';
 import { db } from '../../../db/client';
 import { companyInsurancePolicies, companyAssets } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
-import { tolerantString, tolerantNumber, tolerantBoolean, tolerantDateString } from '../schema-helpers';
+import { tolerantString, tolerantNumber, tolerantBoolean, tolerantDateString, enumOrList } from '../schema-helpers';
 
 const argsSchema = z.object({
-  estado:       z.enum(['Vigente', 'Vencida', 'Renovada', 'Cancelada']).optional(),
+  estado:       enumOrList(['Vigente', 'Vencida', 'Renovada', 'Cancelada']).optional(),
   porVencer:    tolerantBoolean().optional().default(false),
   dias:         tolerantNumber().int().positive().max(365).optional().default(30),
   assetId:      tolerantNumber().int().positive().optional(),
@@ -38,7 +38,11 @@ export const segurosTool: ToolDefinition<Args> = {
   async execute(args, ctx): Promise<ToolResult> {
     const where = [eq(companyInsurancePolicies.companyId, ctx.empresaId)];
 
-    if (args.estado) where.push(eq(companyInsurancePolicies.status, args.estado));
+    if (args.estado) {
+      Array.isArray(args.estado)
+        ? where.push(inArray(companyInsurancePolicies.status, args.estado))
+        : where.push(eq(companyInsurancePolicies.status, args.estado));
+    }
     if (args.desde)  where.push(gte(companyInsurancePolicies.endDate, args.desde));
     if (args.hasta)  where.push(lte(companyInsurancePolicies.startDate, args.hasta));
     if (args.assetId) where.push(eq(companyInsurancePolicies.assetId, args.assetId));

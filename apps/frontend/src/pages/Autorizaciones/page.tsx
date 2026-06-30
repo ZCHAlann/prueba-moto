@@ -11,6 +11,7 @@ import { useExitAuthorizations, type ConductorContext, type ExitAuthorization, t
 import { SolicitarSalidaWizard } from "./components/SolicitarSalidaWizard";
 import { useUploadQueue } from "../../hooks/useUploadQueue";
 import { ExitAuthDetailDrawer } from "./components/ExitAuthDetailDrawer";
+import { warmupFFmpeg } from "../../lib/mediaCompress";
 import { DatePicker } from "@/components/ui/date-picker/DatePicker";
 import { fmtDateTimeEc } from "@/lib/datetime";
 
@@ -60,6 +61,20 @@ export function AutorizacionesPage() {
   const [analyzingStartedAt, setAnalyzingStartedAt] = useState<number | null>(null);
   const initialLoadDone = useRef(false);
   const [aiAptoPopup, setAiAptoPopup] = useState(false);
+
+  // ── Pre-cargar ffmpeg.wasm al entrar a la pantalla de autorizaciones.
+  // El wizard de "Solicitar salida" graba un video (bayoneta de aceite) y
+  // necesita ffmpeg.wasm para comprimirlo antes de subir. ffmpeg.wasm pesa
+  // ~30 MB (WASM + glue) y tarda 2-3 s en cargar desde la CDN. Si lo
+  // arrancamos al mount del page, cuando el usuario termina la primera
+  // captura el core ya está listo y no hay freeze perceptible.
+  //
+  // Es seguro llamarlo aunque ffmpeg no esté disponible: warmupFFmpeg
+  // captura el error internamente y `compressVideo()` cae al archivo
+  // original.
+  useEffect(() => {
+    warmupFFmpeg();
+  }, []);
   // Cuando el análisis IA falla por video muy grande, abrimos este
   // mini-modal para que el conductor reenvíe solo el video problemático.
   // Para otros errores (rate limit, timeout, etc.) NO se abre — el

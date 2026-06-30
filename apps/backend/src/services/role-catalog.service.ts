@@ -28,19 +28,22 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<DefaultRoleKey, ModulePermissionMa
     checklist:     { checklist: ["ver", "crear"] },
     alertas:       { alertas: ["ver"] },
     reportes:      { reportes: ["ver"] },
+    // Lienzo: solo `ver` por default. Crear/editar/eliminar se delegan
+    // per-user si querés que el supervisor arme sus propios lienzos.
+    lienzo:        { lienzo: ["ver"] },
   },
   operador: {
     dashboard:       { dashboard:       ["ver"] },
     mantenimiento:   { ordenes: ["ver", "crear"], inventario: ["ver"], oil: ["ver"] },
     combustible:     { combustible: ["ver", "crear"] },
     peajes:          { peajes: ["ver", "crear"] },
-    checklist:       { checklist:       ["ver", "crear"] },
+    checklist:       { checklist: ["ver", "crear"], reautorizaciones: ["ver", "crear"] },
     alertas:         { alertas:         ["ver"] },
     geolocalizacion: { geolocalizacion: ["ver"] },
   },
   conductor: {
     dashboard:       { dashboard:       ["ver"] },
-    checklist:       { checklist:       ["ver", "crear"] },
+    checklist:       { checklist: ["ver", "crear"], reautorizaciones: ["ver", "crear"] },
     alertas:         { alertas:         ["ver"] },
     geolocalizacion: { geolocalizacion: ["ver"] },
     autorizaciones:  { autorizaciones:  ["ver", "crear"] },
@@ -93,7 +96,22 @@ export async function getPermissionsForRole(
     .limit(1);
 
   if (!row) return {};
-  return (row.permissions as ModulePermissionMap) ?? {};
+  const raw = (row.permissions as ModulePermissionMap) ?? {};
+
+  // ── Compat shim ─────────────────────────────────────────────────────────
+  // Roles creados ANTES del plan del lienzo pueden tener `reportes.lienzo.*`
+  // guardado. Como el lienzo ahora es módulo top-level `lienzo`, proyectamos
+  // esos permisos viejos a `lienzo.lienzo.*` para que sigan funcionando
+  // sin necesidad de migrar la BD.
+  if (raw.reportes?.lienzo) {
+    const next: ModulePermissionMap = { ...raw };
+    next.lienzo = { ...(next.lienzo ?? {}), lienzo: Array.from(new Set([
+      ...((next.lienzo?.lienzo ?? []) as string[]),
+      ...((raw.reportes.lienzo ?? []) as string[]),
+    ])) };
+    return next;
+  }
+  return raw;
 }
 
 /**

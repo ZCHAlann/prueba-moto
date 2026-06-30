@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
 
 export type ApiTollEntry = {
   id: string;
@@ -178,8 +179,9 @@ export function useToll() {
 
 /** Sube 1 foto de peaje al endpoint correspondiente y devuelve la URL pública. */
 export async function uploadTollPhoto(file: File, companyId: number): Promise<string> {
+  const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
   const fd = new FormData();
-  fd.append("photos", file);
+  fd.append("photos", toUpload);
   const res = await fetch(`/api/upload/toll-photos?companyId=${companyId}`, {
     method: "POST",
     body: fd,

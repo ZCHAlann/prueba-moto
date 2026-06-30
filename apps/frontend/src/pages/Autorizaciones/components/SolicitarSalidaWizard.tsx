@@ -10,7 +10,7 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "../../../context/AuthContext";
 import { useExitAuthorizations } from "../../../hooks/useExitAuthorizations";
-import { compressImage } from "../../../lib/mediaCompress";
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../../../lib/mediaCompress";
 import { useUploadQueue } from "../../../hooks/useUploadQueue";
 import type { ExitAuthorization } from "../../../hooks/useExitAuthorizations";
 
@@ -78,7 +78,7 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
   const { session } = useAuth();
   const companyId = session?.companyId;
   const { create } = useExitAuthorizations();
-  const { enqueue, resolveAll, getState, reset } = useUploadQueue(correctionMode?.companyId ?? companyId ?? "");
+  const { enqueue, resolveAll, getState, reset, stats, MAX_CONCURRENT } = useUploadQueue(correctionMode?.companyId ?? companyId ?? "");
 
   const myDriverId: number | null = (() => {
     if (driverId) return driverId;
@@ -286,10 +286,11 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
     previewsRef.current[step.id] = localUrl;
     setLocalPreviews((prev) => ({ ...prev, [step.id]: localUrl }));
 
-    let toUpload = captured;
-    if (captured.type.startsWith("image/")) {
-      try { toUpload = await compressImage(captured); } catch { /* usar original */ }
-    }
+    // Comprimir si es imagen; PDFs y otros pasan tal cual. Mantenemos
+    // COMPRESS_OPTS_EVIDENCE (1280px / q0.78) coherente con el resto
+    // de las fotos de evidencia — era la opción local EXIT_AUTH_COMPRESS_OPTS,
+    // idéntica en valores.
+    const toUpload = await compressIfImage(captured, COMPRESS_OPTS_EVIDENCE);
 
     const isVideo = step.type === "video";
     enqueue(step.id, toUpload, isVideo).catch((err: any) => {
@@ -618,7 +619,17 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
         </div>
 
         {/* Footer */}
-        <footer className="flex items-center justify-between gap-2 px-5 py-3.5 border-t border-gray-200 dark:border-white/[0.08] bg-gray-50/60 dark:bg-white/[0.02] shrink-0">
+        <footer className="flex flex-col gap-2 px-5 py-3.5 border-t border-gray-200 dark:border-white/[0.08] bg-gray-50/60 dark:bg-white/[0.02] shrink-0">
+          {/* Stats de subida concurrentes */}
+          {stats.total > 0 && stats.uploading > 0 && (
+            <div className="flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-400">
+              <Loader2 size={12} className="animate-spin text-amber-500" />
+              <span>
+                Subiendo {stats.uploading} archivo{stats.uploading !== 1 ? "s" : ""} de {stats.total} ({(stats.done + stats.error)} listos{stats.error > 0 ? `, ${stats.error} con error` : ""})
+              </span>
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-2">
           <button type="button" onClick={prev} disabled={stepIdx === 0 || submitting}
             className="inline-flex items-center gap-1 rounded-lg border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 transition">
             <ChevronLeft size={14} /> Atrás
@@ -640,6 +651,7 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
               {submitting ? "Enviando…" : isCorrectionMode ? "Enviar correcciones" : "Enviar solicitud"}
             </button>
           )}
+          </div>
         </footer>
       </motion.div>
     </div>

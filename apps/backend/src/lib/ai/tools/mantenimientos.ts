@@ -4,17 +4,17 @@
 // Lista mantenimientos con filtros (rango de fecha, estado, tipo, vehículo).
 
 import { z } from 'zod';
-import { and, eq, gte, lte, desc, ilike, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, desc, ilike, sql } from 'drizzle-orm';
 import { db } from '../../../db/client';
 import { companyMaintenanceRecords, companyAssets } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
-import { tolerantString, tolerantNumber, tolerantDateString } from '../schema-helpers';
+import { tolerantString, tolerantNumber, tolerantDateString, enumOrList } from '../schema-helpers';
 
 const argsSchema = z.object({
   desde:        tolerantDateString().optional(),
   hasta:        tolerantDateString().optional(),
-  estado:       z.enum(['Programado', 'En curso', 'PendienteAtencion', 'Completado', 'Cancelado', 'Correccion']).optional(),
-  tipo:         z.enum(['Correctivo', 'Programado', 'Lavada']).optional(),
+  estado:       enumOrList(['Programado', 'En curso', 'PendienteAtencion', 'Completado', 'Cancelado', 'Correccion']).optional(),
+  tipo:         enumOrList(['Correctivo', 'Programado', 'Lavada']).optional(),
   assetId:      tolerantNumber().int().positive().optional(),
   placa:        tolerantString().optional(),
   // limit removido del schema público — ver nota en vehiculos.ts.
@@ -35,8 +35,17 @@ export const mantenimientosTool: ToolDefinition<Args> = {
 
     if (args.desde)  where.push(gte(companyMaintenanceRecords.scheduledFor, new Date(args.desde)));
     if (args.hasta)  where.push(lte(companyMaintenanceRecords.scheduledFor, new Date(`${args.hasta}T23:59:59`)));
-    if (args.estado) where.push(eq(companyMaintenanceRecords.status, args.estado));
-    if (args.tipo)   where.push(eq(companyMaintenanceRecords.type, args.tipo));
+    // enumOrList puede devolver un único valor o un array; manejamos ambos.
+    if (args.estado) {
+      Array.isArray(args.estado)
+        ? where.push(inArray(companyMaintenanceRecords.status, args.estado))
+        : where.push(eq(companyMaintenanceRecords.status, args.estado));
+    }
+    if (args.tipo) {
+      Array.isArray(args.tipo)
+        ? where.push(inArray(companyMaintenanceRecords.type, args.tipo))
+        : where.push(eq(companyMaintenanceRecords.type, args.tipo));
+    }
 
     // Si pasaron `placa`, resolvemos a un assetId (o varios) en una sola query.
     let resolvedAssetIds: number[] | null = null;

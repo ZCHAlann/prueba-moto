@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import compression from 'compression';
 import authRouter from './routes/auth';
 import platformRouter from './routes/platform/index';
 import companyRouter from './routes/company/index';
@@ -20,6 +21,25 @@ app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 app.use(morgan('combined'));
 app.use(cookieParser());
+
+// Compresión gzip de responses JSON. Reduce ~70% el ancho de banda en
+// listados grandes (mantenimientos, combustibles, reportes). El threshold
+// de 1 KB evita comprimir responses minúsculos (no vale la pena el CPU).
+// NO comprime uploads ni streams binarios (esos ya están comprimidos).
+// Lo ubicamos DESPUÉS de morgan para que los logs muestren el tamaño real
+// (sin Content-Encoding) y ANTES de las routes para que aplique a todo.
+app.use(compression({
+  level: 6,                  // balance entre CPU y ratio (1=rápido, 9=máx ratio)
+  threshold: 1024,           // solo responses ≥ 1 KB
+  filter: (req, res) => {
+    // No comprimir si el cliente no acepta gzip
+    if (!req.headers['accept-encoding']?.includes('gzip')) return false;
+    // No comprimir responses binarios (ya vienen comprimidos: jpg/png/mp4)
+    const ct = res.getHeader('Content-Type');
+    if (typeof ct === 'string' && /^(image|video|audio)\//i.test(ct)) return false;
+    return compression.filter(req, res); // default filter
+  },
+}));
 
 // Sanitización global — bloquea XSS / SQLi / code-execution en TODOS los requests
 app.use(sanitizeRequest);

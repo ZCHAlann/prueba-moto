@@ -30,6 +30,20 @@ export type ChecklistReauthRequest = {
   updatedAt: string;
 };
 
+export type ReauthPage = {
+  data: ChecklistReauthRequest[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export type ReauthFilters = {
+  status?: ReauthStatus;
+  page?: number;
+  pageSize?: number;
+};
+
 // ─── Hook ───────────────────────────────────────────────────────────────────
 
 export function useChecklistReauth() {
@@ -37,16 +51,24 @@ export function useChecklistReauth() {
   const companyId = session?.companyId ? String(session.companyId) : null;
 
   const [requests, setRequests] = useState<ChecklistReauthRequest[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchRequests = useCallback(async (status?: ReauthStatus) => {
+  const fetchRequests = useCallback(async (filters: ReauthFilters = {}) => {
     if (!companyId) return;
     setLoading(true);
     setError(null);
     try {
-      const qs = status ? `?status=${encodeURIComponent(status)}` : "";
-      const res = await fetch(`/api/company/${companyId}/checklists/reauth-requests${qs}`, {
+      const params = new URLSearchParams();
+      if (filters.status)   params.set("status",   filters.status);
+      if (filters.page)     params.set("page",     String(filters.page));
+      if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
+      const qs = params.toString();
+      const res = await fetch(`/api/company/${companyId}/checklists/reauth-requests${qs ? `?${qs}` : ""}`, {
         credentials: "include",
       });
       if (!res.ok) {
@@ -77,6 +99,10 @@ export function useChecklistReauth() {
         createdAt: String(r.createdAt),
         updatedAt: String(r.updatedAt),
       })));
+      setTotal(typeof json.total === "number" ? json.total : 0);
+      setPage(typeof json.page === "number" ? json.page : 1);
+      setPageSize(typeof json.pageSize === "number" ? json.pageSize : 20);
+      setTotalPages(typeof json.totalPages === "number" ? json.totalPages : 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error desconocido");
     } finally {
@@ -127,6 +153,10 @@ export function useChecklistReauth() {
 
   return {
     requests,
+    total,
+    page,
+    pageSize,
+    totalPages,
     loading,
     error,
     fetchRequests,

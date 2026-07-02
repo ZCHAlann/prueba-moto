@@ -20,6 +20,7 @@ import { attachWebSocket } from './services/websocket';
 import { startMaintenanceCron } from './lib/cron/maintenance';
 import { startMaintenanceOverdueCron, runOverdueMaintenance } from './lib/cron/maintenance-overdue';
 import { startChecklistOverdueCron, runOverdueChecklists } from './lib/cron/checklist-overdue';
+import { startMaintenanceStatusCron } from './lib/cron/maintenanceStatusCron';
 import { startStatsAnomaliesCron } from './lib/cron/stats-anomalies';
 import { startStatsCleanupCron } from './lib/cron/cleanup';
 import { startScheduledJobs as startJarvisWeeklySummary } from './scheduled/weekly-summary';
@@ -31,6 +32,7 @@ attachWebSocket(server);
 
 // Cron jobs (opcional, se apaga con MAINTENANCE_CRON_ENABLED != true)
 startMaintenanceCron();
+startMaintenanceStatusCron();
 startStatsAnomaliesCron();
 startStatsCleanupCron();
 

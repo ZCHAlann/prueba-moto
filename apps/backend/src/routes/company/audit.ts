@@ -1,63 +1,72 @@
 import { Router } from 'express';
-import { eq, and, gte, lte } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, sql, isNotNull } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyAuditEntries } from '../../db/schema/operational';
 import { requireModule } from '../../middlewares/requireModule';
 import { toId } from '../../lib/ids';
+import { DEFAULT_GEO_TOLERANCE_M } from '../../lib/geo';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router({ mergeParams: true });
 
-const PAGE_SIZE = 50;
-
 // ─── GET /company/:id/audit ───────────────────────────────────────────────────
-// Query: ?entity=assets &action=create &from=2024-01-01 &to=2024-12-31 &page=1
+// Query: ?entity=assets &action=create &from=2024-01-01 &to=2024-12-31 &page=1 &pageSize=50
+//
+// Paginación SQL real: las condiciones del WHERE (incluyendo los filtros) se
+// construyen UNA SOLA VEZ en `conds` y se reusan en la query de datos y en la
+// query de count, para que `total` siempre refleje el universo que matchea el
+// filtro real (no `data.length`, que sería solo la página).
 
 router.get('/', requireModule('reportes'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
-    const { entity, action, from, to, page } = req.query;
-    const pageNum = Math.max(1, parseInt((page as string) || '1', 10));
-    const offset = (pageNum - 1) * PAGE_SIZE;
+    const { entity, action, from, to } = req.query;
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>, { pageSize: 50, maxPageSize: 100 });
 
-    let rows = await db
-      .select()
-      .from(companyAuditEntries)
-      .where(eq(companyAuditEntries.companyId, companyId))
-      .orderBy(companyAuditEntries.createdAt);
-
-    // Filtros en memoria (el volumen de auditoría por empresa es manejable)
+    // WHERE compartido entre SELECT paginado y COUNT(*).
+    const conds = [eq(companyAuditEntries.companyId, companyId)];
     if (entity && typeof entity === 'string') {
-      rows = rows.filter((r) => r.entity === entity);
+      conds.push(eq(companyAuditEntries.entity, entity));
     }
     if (action && typeof action === 'string') {
-      rows = rows.filter((r) => r.action === action);
+      conds.push(eq(companyAuditEntries.action, action));
     }
     if (from && typeof from === 'string') {
       const fromDate = new Date(from);
-      rows = rows.filter((r) => r.createdAt >= fromDate);
+      if (!Number.isNaN(fromDate.getTime())) {
+        conds.push(gte(companyAuditEntries.createdAt, fromDate));
+      }
     }
     if (to && typeof to === 'string') {
       const toDate = new Date(to);
-      toDate.setHours(23, 59, 59, 999);
-      rows = rows.filter((r) => r.createdAt <= toDate);
+      if (!Number.isNaN(toDate.getTime())) {
+        toDate.setHours(23, 59, 59, 999);
+        conds.push(lte(companyAuditEntries.createdAt, toDate));
+      }
     }
+    const where = conds.length > 0 ? and(...conds) : undefined;
 
-    const total = rows.length;
-    const paginated = rows
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      .slice(offset, offset + PAGE_SIZE);
+    const [rows, countRow] = await Promise.all([
+      db
+        .select()
+        .from(companyAuditEntries)
+        .where(where)
+        .orderBy(desc(companyAuditEntries.createdAt))
+        .limit(pageSize)
+        .offset(offset),
+      db
+        .select({ value: sql<number>`cast(count(*) as int)` })
+        .from(companyAuditEntries)
+        .where(where),
+    ]);
 
-    res.json({
-      data: paginated.map(serializeEntry),
-      total,
-      page: pageNum,
-      pageSize: PAGE_SIZE,
-      pages: Math.ceil(total / PAGE_SIZE),
-    });
+    const total = countRow?.[0]?.value ?? 0;
+    res.json(buildPageResponse(rows.map(serializeEntry), total, page, pageSize));
   } catch (err) {
     next(err);
   }
 });
+  
 
 // ─── Serializer ───────────────────────────────────────────────────────────────
 

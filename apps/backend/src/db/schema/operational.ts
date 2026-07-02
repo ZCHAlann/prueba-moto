@@ -114,6 +114,7 @@ export const companyAssets = pgTable(
     assetType: assetTypeEnum('asset_type'),
     category: assetCategoryEnum('category'),
     status: assetStatusEnum('status').default('Operativo'),
+    statusBeforeMaintenance: assetStatusEnum('status_before_maintenance'),
     responsible: varchar('responsible', { length: 160 }),
     brand: varchar('brand', { length: 120 }),
     model: varchar('model', { length: 120 }),
@@ -476,6 +477,7 @@ export const companyFuelEntries = pgTable('company_fuel_entries', {
   notes: text('notes'),
   photoUrl: text('photo_url'),
   odometerPhotoUrl: text('odometer_photo_url'),
+  invoiceNumber: varchar('invoice_number', { length: 60 }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

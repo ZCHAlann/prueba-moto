@@ -8,7 +8,9 @@ import { usePermissions } from "../../hooks/usePermissions";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import { todayEcuador } from "@/lib/datetime";
 
-const PAGE_SIZE = 7;
+// PAGE_SIZE ya no es necesario: la paginación la controla el backend
+// (parsePageParams con default 20, max 100). El componente solo guarda
+// `page` local y la pasa al hook al fetchear.
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -474,7 +476,7 @@ function CreateDrawer({
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function AlertsPage() {
-  const { alerts, loading, createAlert, updateAlert, deleteAlert } = useAlerts();
+  const { alerts, total, page: serverPage, totalPages, loading, fetchPage, createAlert, updateAlert, deleteAlert } = useAlerts();
   const { assets } = useAssets();
   const { can } = usePermissions();
 
@@ -503,27 +505,40 @@ export function AlertsPage() {
     if (mapped) setFilter(mapped);
   }, []);
 
+  // ── Fetch al backend cuando cambian page/filtros/búsqueda ────────────────
+  // El backend pagina, filtra por status/severity y aplica `q` sobre title/notes.
+  // Reset page=1 al cambiar cualquier filtro (si no, podemos quedar en una
+  // página fuera de rango para el nuevo universo filtrado).
+  useEffect(() => {
+    const status = filter === "Todas" ? undefined : (filter as Exclude<FilterValue, "Todas">);
+    void fetchPage({ page, status, q: search.trim() || undefined });
+    // fetchPage tiene `companyId` como única dep estable; el resto son inputs
+    // del efecto. NO incluir fetchPage en deps para no re-disparar en bucle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, filter, search]);
+
+  // Sincronizar `page` local con la que devolvió el servidor (clamp si quedó
+  // fuera de rango tras un cambio de filtro).
+  useEffect(() => {
+    if (totalPages > 0 && page > totalPages) setPage(1);
+  }, [totalPages, page]);
+
   const assetLabel = (alert: ApiAlert) => {
     if (!alert.assetName && !alert.assetPlate) return "";
     return [alert.assetPlate, alert.assetName].filter(Boolean).join(" — ");
   };
 
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase();
-    return [...alerts]
-      .sort((a, b) => {
-        if (a.status === "Cerrada" && b.status !== "Cerrada") return 1;
-        if (a.status !== "Cerrada" && b.status === "Cerrada") return -1;
-        const sevOrder: Record<AlertSeverity, number> = { Alta: 0, Media: 1, Baja: 2 };
-        return sevOrder[a.severity] - sevOrder[b.severity];
-      })
-      .filter(a => filter === "Todas" || a.status === filter)
-      .filter(a => !q || a.title.toLowerCase().includes(q) || (a.notes ?? "").toLowerCase().includes(q) || assetLabel(a).toLowerCase().includes(q));
-  }, [alerts, filter, search]);
-
-  // Reset página cuando cambian filtros o búsqueda
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // Sort display-only sobre la página actual (no es un filtro real — el
+  // backend ya devuelve la página del universo filtrado, nosotros solo
+  // reordenamos lo que se ve).
+  const sortedAlerts = useMemo(() => {
+    return [...alerts].sort((a, b) => {
+      if (a.status === "Cerrada" && b.status !== "Cerrada") return 1;
+      if (a.status !== "Cerrada" && b.status === "Cerrada") return -1;
+      const sevOrder: Record<AlertSeverity, number> = { Alta: 0, Media: 1, Baja: 2 };
+      return sevOrder[a.severity] - sevOrder[b.severity];
+    });
+  }, [alerts]);
 
   function setFilterAndReset(f: FilterValue) { setFilter(f); setPage(1); }
   function setSearchAndReset(s: string)      { setSearch(s); setPage(1); }
@@ -579,7 +594,7 @@ export function AlertsPage() {
           <div>
             <h2 className="text-sm font-semibold text-gray-800 dark:text-white">Feed de alertas</h2>
             <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
-              {filtered.length} alerta{filtered.length !== 1 ? "s" : ""}
+              {total} alerta{total !== 1 ? "s" : ""}
               {totalPages > 1 && <span className="ml-1">· pág. {page} de {totalPages}</span>}
             </p>
           </div>
@@ -602,7 +617,7 @@ export function AlertsPage() {
                 <div key={i} className="h-20 animate-pulse rounded-2xl bg-gray-100 dark:bg-white/[0.04]" />
               ))}
             </div>
-          ) : filtered.length === 0 ? (
+          ) : sortedAlerts.length === 0 ? (
             <div className="py-16 text-center">
               <p className="text-sm text-gray-400 dark:text-gray-500">
                 {search || filter !== "Todas" ? "Sin resultados para ese filtro" : "No hay alertas registradas"}
@@ -617,7 +632,7 @@ export function AlertsPage() {
           ) : (
             <div className="space-y-2">
               <AnimatePresence initial={false}>
-                {paged.map(alert => (
+                {sortedAlerts.map(alert => (
                   <AlertCard
                     key={alert.id}
                     alert={alert}
@@ -636,7 +651,7 @@ export function AlertsPage() {
         <Paginator
           page={page}
           totalPages={totalPages}
-          total={filtered.length}
+          total={total}
           onChange={setPage}
         />
       </div>

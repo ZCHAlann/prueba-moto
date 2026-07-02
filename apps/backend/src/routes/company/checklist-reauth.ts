@@ -36,6 +36,7 @@ import { logAudit } from '../../lib/audit';
 import { wsBroadcast } from '../../services/websocket';
 import { notify, notifyAdmins } from '../../lib/notification-service';
 import { safeString, validators } from '../../lib/validators';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router({ mergeParams: true });
 
@@ -294,6 +295,7 @@ router.get(
       const companyId = req.companyId!;
       const user = req.user!;
       const status = typeof req.query.status === 'string' ? req.query.status : null;
+      const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
       // `can` se evalúa aquí sin un helper del frontend: replicamos la lógica
       // del middleware para mantener este endpoint autocontenido.
@@ -303,6 +305,7 @@ router.get(
                    || ((user.modulePermissions as unknown as Record<string, Record<string, string[]>> | undefined)
                         ?.['checklist']?.['reautorizaciones'] ?? []).includes('editar');
 
+      // WHERE compartido entre SELECT paginado y COUNT(*).
       const conds = [eq(companyChecklistReauthRequests.companyId, companyId)];
       if (status && ['Pendiente', 'Autorizada', 'Rechazada'].includes(status)) {
         conds.push(eq(companyChecklistReauthRequests.status, status as 'Pendiente'));
@@ -311,14 +314,23 @@ router.get(
         const userIdNum = parseIdFlexible('company-user', user.sub);
         conds.push(eq(companyChecklistReauthRequests.requestedByUserId, userIdNum));
       }
+      const where = and(...conds);
 
-      const rows = await db
-        .select()
-        .from(companyChecklistReauthRequests)
-        .where(and(...conds))
-        .orderBy(desc(companyChecklistReauthRequests.createdAt));
+      const [rows, countRow] = await Promise.all([
+        db
+          .select()
+          .from(companyChecklistReauthRequests)
+          .where(where)
+          .orderBy(desc(companyChecklistReauthRequests.createdAt))
+          .limit(pageSize)
+          .offset(offset),
+        db
+          .select({ value: sql<number>`cast(count(*) as int)` })
+          .from(companyChecklistReauthRequests)
+          .where(where),
+      ]);
 
-      // Enrichment batch: nombres de categorías y assets.
+      // Enrichment batch: nombres de categorías y assets, sobre la página actual.
       const catIds = Array.from(new Set(rows.map((r) => r.categoryId)));
       const assetIds = Array.from(new Set(rows.map((r) => r.assetId).filter((x): x is number => x != null)));
 
@@ -347,7 +359,8 @@ router.get(
         });
       });
 
-      res.json({ data, total: data.length });
+      const total = countRow?.[0]?.value ?? 0;
+      res.json(buildPageResponse(data, total, page, pageSize));
     } catch (err) {
       next(err);
     }

@@ -35,6 +35,23 @@ export type CreateAlertPayload = {
 
 export type UpdateAlertPayload = Partial<CreateAlertPayload>;
 
+export type AlertsPage = {
+  data: ApiAlert[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export type AlertsFilters = {
+  status?: AlertStatus;
+  severity?: AlertSeverity;
+  assetId?: string;
+  q?: string;
+  page?: number;
+  pageSize?: number;
+};
+
 function mapApi(raw: Record<string, unknown>): ApiAlert {
   return {
     id: String(raw.id),
@@ -58,20 +75,37 @@ export function useAlerts() {
   const { session } = useAuth();
   const companyId = session?.companyId;
 
+  // `alerts` mantiene la firma del componente (array de la página actual).
   const [alerts, setAlerts] = useState<ApiAlert[]>([]);
   const [assets, setAssets] = useState<Array<{ id: string; name: string | null; plate: string | null }>>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const fetchPage = useCallback(async (filters: AlertsFilters = {}) => {
     if (!companyId) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/company/${companyId}/alerts`);
+      const params = new URLSearchParams();
+      if (filters.status)   params.set("status",   filters.status);
+      if (filters.severity) params.set("severity", filters.severity);
+      if (filters.assetId)  params.set("assetId",  filters.assetId);
+      if (filters.q)        params.set("q",        filters.q);
+      if (filters.page)     params.set("page",     String(filters.page));
+      if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
+      const qs = params.toString();
+      const res = await fetch(`/api/company/${companyId}/alerts${qs ? `?${qs}` : ""}`);
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const json = await res.json();
-      setAlerts((json.data ?? json).map(mapApi));
+      setAlerts((json.data ?? []).map(mapApi));
+      setTotal(typeof json.total === "number" ? json.total : 0);
+      setPage(typeof json.page === "number" ? json.page : 1);
+      setPageSize(typeof json.pageSize === "number" ? json.pageSize : 20);
+      setTotalPages(typeof json.totalPages === "number" ? json.totalPages : 1);
       if (Array.isArray(json.assets)) setAssets(json.assets);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar alertas");
@@ -80,7 +114,7 @@ export function useAlerts() {
     }
   }, [companyId]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { void fetchPage(); }, [fetchPage]);
 
   const createAlert = useCallback(async (payload: CreateAlertPayload): Promise<ApiAlert> => {
     const res = await fetch(`/api/company/${companyId}/alerts`, {
@@ -99,6 +133,7 @@ export function useAlerts() {
     if (!res.ok) throw new Error(`Error ${res.status}`);
     const created = mapApi(await res.json());
     setAlerts((prev) => [created, ...prev]);
+    setTotal((t) => t + 1);
     return created;
   }, [companyId]);
 
@@ -139,14 +174,19 @@ export function useAlerts() {
     const res = await fetch(`/api/company/${companyId}/alerts/${id}`, { method: "DELETE" });
     if (!res.ok) throw new Error(`Error ${res.status}`);
     setAlerts((prev) => prev.filter((a) => a.id !== id));
+    setTotal((t) => Math.max(0, t - 1));
   }, [companyId]);
 
   return {
     alerts,
     assets,
+    total,
+    page,
+    pageSize,
+    totalPages,
     loading,
     error,
-    refresh,
+    fetchPage,
     createAlert,
     updateAlert,
     patchAlertStatus,

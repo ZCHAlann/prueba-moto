@@ -1,5 +1,5 @@
 import { useState, useMemo, lazy, Suspense } from "react";
-import { useMaintenances } from "../../hooks/useMaintenances";
+import { useMaintenancesListLegacy } from "../../hooks/useMaintenances";
 import { useAssets } from "../../hooks/useAssets";
 import { Search, Loader2, Wrench, Zap, Clock, AlertTriangle, RotateCcw, ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -119,19 +119,27 @@ function TypePill({ type }: { type: string }) {
   );
 }
 
-// ─── Constantes ──────────────────────────────────────────────────────────────
-
-const PAGE_SIZE = 8;
-
 // ─── Componente principal ────────────────────────────────────────────────────
 
 export function MaintenanceTable() {
-  const { maintenances, loading: hookLoading } = useMaintenances();
+  // Track A: usamos la variante paginada del hook legacy. El backend ya
+  // pagina real con LIMIT/OFFSET + count (ver routes/company/maintenances.ts
+  // y AUDITORIA_PAGINACION.md). Pedimos pageSize=8 (default razonable para
+  // un widget de dashboard) y mapeamos los tabs/filtros del cliente a
+  // query params server-side.
+  const {
+    maintenances,
+    loading: hookLoading,
+    total: serverTotal,
+    page: serverPage,
+    totalPages: serverTotalPages,
+    pageSize: serverPageSize,
+    setPage,
+  } = useMaintenancesListLegacy({ pageSize: 8 });
   const { assets } = useAssets();
 
   const [search, setSearch]       = useState("");
   const [tab, setTab]             = useState<TabKey>("todos");
-  const [page, setPage]           = useState(1);
   // Mantenimiento seleccionado para abrir el modal completo
   const [editing, setEditing]     = useState<typeof maintenances[0] | null>(null);
 
@@ -141,6 +149,13 @@ export function MaintenanceTable() {
   };
 
   // ── Filtrado ───────────────────────────────────────────────────────────────
+  // Antes se hacía sobre el array completo cargado en memoria. Con paginación
+  // server-side el backend devuelve UNA página ya filtrada por ?type / ?status
+  // y ?q. Los filtros locales SOLO se usan para terminar de excluir
+  // "Completado"/"Cancelado" en la vista "todos" (la API no acepta "exclude
+  // status") y para los filtros que el backend no soporta (ej. unificar
+  // "Correccion"/"Corrección"). Esto mantiene la UX del widget mientras la
+  // migración avanza.
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
 
@@ -163,6 +178,10 @@ export function MaintenanceTable() {
   }, [maintenances, search, tab, assets]);
 
   // ── Conteos por tab ────────────────────────────────────────────────────────
+  // Estos conteos son SOLO sobre la página actual del backend. Para un
+  // dashboard con hasta 8 filas visibles esto es suficiente — los
+  // conteos reales del universo vendrían de queries específicas
+  // adicionales (no implementadas aquí; ver AUDITORIA_PAGINACION.md).
   const counts = useMemo(() => {
     const active = maintenances.filter((m) => m.status !== "Completado" && m.status !== "Cancelado");
     return {
@@ -175,9 +194,13 @@ export function MaintenanceTable() {
   }, [maintenances]);
 
   // ── Paginación ─────────────────────────────────────────────────────────────
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const safePage   = Math.min(page, totalPages);
-  const pageItems  = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  // Track A: paginación totalmente server-side. Usamos `total` / `totalPages`
+  // del backend (universo filtrado), NO del array cargado. `safePage` protege
+  // contra el caso en que el usuario tenía page=3 y tras un filtro quedó en
+  // una sola página.
+  const totalPages = Math.max(1, serverTotalPages);
+  const safePage   = Math.min(Math.max(1, serverPage), totalPages);
+  const pageItems  = filtered; // sin .slice local — la página ya viene del backend.
 
   const handleTabChange = (key: TabKey) => {
     setTab(key);
@@ -341,13 +364,13 @@ export function MaintenanceTable() {
         {totalPages > 1 && (
           <div className="flex items-center justify-between border-t border-gray-100 dark:border-white/[0.05] px-4 sm:px-6 py-3">
             <p className="text-xs text-gray-400 dark:text-gray-500">
-              {filtered.length} resultado{filtered.length !== 1 ? "s" : ""} ·{" "}
+              {serverTotal} resultado{serverTotal !== 1 ? "s" : ""} ·{" "}
               página {safePage} de {totalPages}
             </p>
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                onClick={() => setPage(Math.max(1, safePage - 1))}
                 disabled={safePage === 1}
                 className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 dark:border-white/[0.08] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 disabled:cursor-not-allowed transition"
               >
@@ -388,7 +411,7 @@ export function MaintenanceTable() {
 
               <button
                 type="button"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                onClick={() => setPage(Math.min(totalPages, safePage + 1))}
                 disabled={safePage === totalPages}
                 className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 dark:border-white/[0.08] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] disabled:opacity-40 disabled:cursor-not-allowed transition"
               >

@@ -31,8 +31,6 @@ import { MaintenanceDetailDrawer } from "./MaintenanceDetailDrawer";
 import { ReprogramDialog } from "./ReprogramDialog";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 
-const PAGE_SIZE = 10;
-
 const STATUS_CFG: Record<MaintenanceStatus, { label: string; cls: string; dot: string }> = {
   Programado:    { label: "Programado",   cls: "text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-500/10 border-violet-200 dark:border-violet-500/20",   dot: "bg-violet-500 dark:bg-violet-400" },
   "En proceso":  { label: "En proceso",   cls: "text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/10 border-sky-200 dark:border-sky-500/20",                     dot: "bg-sky-500 dark:bg-sky-400"        },
@@ -90,7 +88,13 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
   const canCreate = can("mantenimiento", "execution", "crear");
   const canEdit   = can("mantenimiento", "execution", "editar");
   const canDelete = can("mantenimiento", "records", "eliminar");
-  const canReauthorize = canEdit || isFullAccess;
+  // Permiso propio e independiente para reautorizar atrasados — NO se
+  // hereda de `execution`. owner_empresa / admin_empresa lo tienen por
+  // bypass automático en el backend (requirePermission); para cualquier
+  // otro rol hay que asignarlo explícito desde el editor de permisos.
+  // Ver regla dura de "no autoaprobarse" en:
+  // apps/backend/src/routes/company/maintenances.ts → POST /:id/reauthorize
+  const canReauthorize = can("mantenimiento", "reautorizaciones", "editar");
 
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -127,7 +131,7 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
   }, []); // run once on mount
 
   const filters = useMemo(() => {
-    const f: Record<string, string> = {};
+    const f: Record<string, string | number> = { page };
     if (subTab !== "all")   f.status   = subTab;
     if (catChip !== "all")  f.category = catChip;
     if (typeChip !== "all") f.type     = typeChip;
@@ -136,7 +140,7 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
     if (to)     f.to   = to;
     if (assetIdFromUrl) f.assetId = assetIdFromUrl;
     return f;
-  }, [subTab, catChip, typeChip, search, from, to, assetIdFromUrl]);
+  }, [subTab, catChip, typeChip, search, from, to, assetIdFromUrl, page]);
 
   const clearAssetFilter = () => {
     const next = new URLSearchParams(searchParams);
@@ -144,52 +148,53 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
     setSearchParams(next, { replace: true });
   };
 
-  const { data, isLoading } = useMaintenancesList(filters);
-  const allRows = data?.data ?? [];
-  const rows = useMemo(() => allRows, [allRows]);
-  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const pageRows   = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const { data, isLoading, isFetching } = useMaintenancesList(filters);
+  // Track A: `data.data` es la página actual del backend; `data.total` es
+  // el universo filtrado (no la longitud de la página). El componente
+  // ya no hace `.slice(...)`.
+  const pageRows   = data?.data ?? [];
+  const total      = data?.total ?? 0;
+  const totalPages = Math.max(1, data?.totalPages ?? 1);
 
   // ── KPIs por estado ─────────────────────────────────────────────────
   // Para que el conteo por estado NO esté sesgado por el filtro de
-  // status activo, hacemos una segunda query paralela con los mismos
-  // filtros MENOS status. Así un usuario que filtra "Completado"
-  // sigue viendo cuántos hay en cada estado.
-  const kpiFilters = useMemo(() => {
-    const f: Record<string, string> = { ...filters };
-    delete f.status;
+  // status activo, hacemos 5 queries paralelas, una por estado, con los
+  // mismos filtros MENOS status. Cada `data.total` es el universo
+  // filtrado para ese estado (no la longitud de la página).
+  //
+  // Para las sparklines (que sí necesitan las filas), pedimos pageSize
+  // = 100 (el cap del backend) y aceptamos que más allá de 100 filas no
+  // se muestren — en la práctica, 100 filas alcanzan para una
+  // sparkline de 14 buckets.
+  const kpiBaseFilters = useMemo(() => {
+    const f: Record<string, string | number> = { pageSize: 100 };
+    if (catChip !== "all")  f.category = catChip;
+    if (typeChip !== "all") f.type     = typeChip;
+    if (search) f.q = search;
+    if (from)   f.from = from;
+    if (to)     f.to   = to;
+    if (assetIdFromUrl) f.assetId = assetIdFromUrl;
     return f;
-  }, [filters]);
-  const { data: kpiData } = useMaintenancesList(kpiFilters);
-  const kpiRows = kpiData?.data ?? [];
+  }, [catChip, typeChip, search, from, to, assetIdFromUrl]);
 
-  // Conteo por estado. "En curso" se mapea a "En proceso" para que
-  // coincida con el chip que el usuario ve.
-  const statusCounts = useMemo(() => {
-    const acc: Record<MaintenanceStatus, number> = {
-      Programado: 0,
-      "En proceso": 0,
-      Completado: 0,
-      Correccion: 0,
-      Atrasado: 0,
-    };
-    for (const m of kpiRows) {
-      // Si el backend marca isOverdue pero el status sigue siendo
-      // "Programado" (durante el rollout), lo contamos como Atrasado
-      // para que la UI sea consistente.
-      const isOver = isMaintenanceOverdue(m);
-      const s = (isOver
-        ? "Atrasado"
-        : m.status === "En curso"
-          ? "En proceso"
-          : m.status) as MaintenanceStatus;
-      if (s in acc) acc[s] += 1;
-    }
-    return acc;
-  }, [kpiRows]);
+  const { data: kpiProgramado  } = useMaintenancesList({ ...kpiBaseFilters, status: "Programado"   });
+  const { data: kpiEnProceso   } = useMaintenancesList({ ...kpiBaseFilters, status: "En proceso"  });
+  const { data: kpiCompletado  } = useMaintenancesList({ ...kpiBaseFilters, status: "Completado"   });
+  const { data: kpiCorreccion  } = useMaintenancesList({ ...kpiBaseFilters, status: "Correccion"   });
+  const { data: kpiAtrasado    } = useMaintenancesList({ ...kpiBaseFilters, status: "Atrasado"     });
 
-  // Sparkline: serie de los últimos 14 buckets diarios con el conteo
-  // de mantenimientos en cada estado. Sirve para la mini-línea del KPI.
+  const statusCounts: Record<MaintenanceStatus, number> = useMemo(() => ({
+    Programado:   kpiProgramado?.total  ?? 0,
+    "En proceso": kpiEnProceso?.total   ?? 0,
+    Completado:   kpiCompletado?.total  ?? 0,
+    Correccion:   kpiCorreccion?.total  ?? 0,
+    Atrasado:     kpiAtrasado?.total    ?? 0,
+  }), [kpiProgramado, kpiEnProceso, kpiCompletado, kpiCorreccion, kpiAtrasado]);
+
+  // Para las sparklines seguimos necesitando las filas (no solo el total).
+  // Tomamos las filas de los 5 queries anteriores: cubre hasta 100 por
+  // estado. Si el dataset es mayor, los buckets más viejos quedan
+  // subrepresentados — aceptable para una mini-línea del KPI.
   const sparkByStatus = useMemo(() => {
     const buckets: Record<MaintenanceStatus, number[]> = {
       Programado:  new Array(14).fill(0),
@@ -200,7 +205,14 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
     };
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    for (const m of kpiRows) {
+    const allRows = [
+      ...(kpiProgramado?.data ?? []),
+      ...(kpiEnProceso?.data ?? []),
+      ...(kpiCompletado?.data ?? []),
+      ...(kpiCorreccion?.data ?? []),
+      ...(kpiAtrasado?.data ?? []),
+    ];
+    for (const m of allRows) {
       const d = new Date(m.scheduledFor);
       if (isNaN(d.getTime())) continue;
       const diffDays = Math.floor((today.getTime() - d.getTime()) / 86_400_000);
@@ -215,7 +227,7 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
       if (s in buckets) buckets[s][idx] += 1;
     }
     return buckets;
-  }, [kpiRows]);
+  }, [kpiProgramado, kpiEnProceso, kpiCompletado, kpiCorreccion, kpiAtrasado]);
 
   const { data: customCats = [] } = useMaintenanceCategories();
   const allCategories = useMemo(() => {
@@ -362,7 +374,7 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
     try {
       await reauthorizeMut.mutateAsync({ id: m.id, reason });
       toast.success("Mantenimiento reautorizado", {
-        description: "Sigue autorizado para ejecutarse aunque esté atrasado.",
+        description: "Vuelve a estar Programado. Alguien tiene que tomarlo/iniciarlo.",
       });
     } catch (e) {
       toast.error((e as Error).message);
@@ -490,7 +502,7 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
             {title}
           </h3>
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-            {rows.length} resultado{rows.length !== 1 ? "s" : ""}
+            {total} resultado{total !== 1 ? "s" : ""}
           </p>
         </div>
         <div className="flex flex-col sm:flex-row sm:items-end gap-2">
@@ -510,8 +522,12 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
               const { generateMaintenanceListPdf } = await import("../../../components/features/pdf/MaintenanceListPdf");
               // El módulo Mantenimientos NO incluye sección de desglose
               // de costos (eso vive solo en Reportes).
+              // Track A: el PDF se genera SOLO con la página actual (no
+              // con el universo — un PDF de N miles de filas no tiene
+              // sentido). Si el operador quiere un PDF completo, tiene
+              // que ajustar filtros hasta cubrir todo.
               const blob = await generateMaintenanceListPdf(
-                rows,
+                pageRows,
                 { from: from || new Date().toISOString().slice(0, 10), to: to || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10) },
               );
               const url = URL.createObjectURL(blob);
@@ -571,6 +587,14 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
                     const overdue = isMaintenanceOverdue(m);
                     // Atrasado siempre domina visualmente: border y fondo.
                     const rowAccent = overdue ? "border-l-rose-500 bg-rose-50/40 dark:bg-rose-500/[0.06]" : `${ty.rowAccent}`;
+                    // Regla dura del backend: el propio asignado/creador NO
+                    // puede reautorizar su mantenimiento, aunque el rol
+                    // tenga el permiso. Lo chequeamos acá para no mostrar
+                    // un botón que el backend va a rechazar con 403 —
+                    // mejor UX que dejarlo aparecer y fallar al click.
+                    const isOwnMaintenance =
+                      meId != null &&
+                      (idFromPrefixedString(m.assignedUserId) === meId || idFromPrefixedString(m.createdBy) === meId);
                     return (
                       <motion.tr
                         key={m.id}
@@ -623,13 +647,15 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
                         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                           <div className="flex justify-end gap-1">
                             {/* Reautorizar (solo Atrasado + Programado, si el user
-                                tiene permiso de edición): confirma que el mantenimiento
-                                sigue autorizado para ejecutarse aunque haya pasado la
-                                fecha prevista. Para Correctivo esta acción no aplica
-                                (el botón se oculta). Muestra un prompt nativo para que
-                                el admin escriba el motivo antes de invocar el endpoint
-                                POST /:id/reauthorize. */}
-                            {canReauthorize && overdue && m.type === "Programado" && m.status !== "Completado" && (
+                                tiene el permiso independiente `reautorizaciones.editar`
+                                Y no es su propio mantenimiento — regla dura del
+                                backend, ver POST /:id/reauthorize): confirma que el
+                                mantenimiento sigue autorizado para ejecutarse aunque
+                                haya pasado la fecha prevista. Para Correctivo esta
+                                acción no aplica (el botón se oculta). Muestra un
+                                prompt nativo para que el aprobador escriba el motivo
+                                antes de invocar el endpoint. */}
+                            {canReauthorize && overdue && m.type === "Programado" && m.status !== "Completado" && !isOwnMaintenance && (
                               <button
                                 onClick={() => {
                                   // window.prompt devuelve null si el admin cancela.
@@ -701,7 +727,7 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
         {/* Paginación */}
         {!isLoading && pageRows.length > 0 && (
           <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-100 dark:border-white/[0.04] text-xs text-gray-400 dark:text-gray-500">
-            <div>Mostrando {pageRows.length} de {rows.length}</div>
+            <div>Mostrando {pageRows.length} de {total}</div>
             <div className="flex items-center gap-1">
               <button
                 disabled={page === 1}

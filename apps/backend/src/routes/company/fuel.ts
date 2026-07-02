@@ -1,13 +1,17 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, gte, lte } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyFuelEntries, companyAssets, companyDrivers } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
 import { safeString, validators } from '../../lib/validators';
-import { toId } from '../../lib/ids';
+import { toId, parseId, parseIdFlexible  } from '../../lib/ids';
+import { NotFoundError } from '../../lib/errors';
+import { logAudit } from '../../lib/audit';
+
+
 
 const router = Router({ mergeParams: true });
 
@@ -147,7 +151,6 @@ router.post(
       const assetId = parseIdFlexible('asset', body.assetId);
       const driverId = body.driverId ? parseIdFlexible('driver', body.driverId) : null;
 
-      // Verificar que el activo pertenece a esta empresa
       const asset = await db
         .select()
         .from(companyAssets)
@@ -155,7 +158,6 @@ router.post(
         .limit(1);
       if (!asset.length) throw new NotFoundError('Activo', body.assetId);
 
-      // Verificar conductor si viene
       if (driverId) {
         const driver = await db
           .select()
@@ -184,16 +186,29 @@ router.post(
         })
         .returning();
 
+      // ── Generar N.° de factura autoincremental ────────────────────────────
+      // Usamos el `id` serial que Postgres ya asignó de forma atómica (sin
+      // condiciones de carrera, sin necesidad de un contador aparte).
+      // Formato: FAC-0001, FAC-0002... — único a nivel de TODA la tabla,
+      // no por empresa (evita tener que lockear filas de un contador
+      // compartido entre empresas).
+      const invoiceNumber = `FAC-${String(created.id).padStart(4, '0')}`;
+      const [withInvoice] = await db
+        .update(companyFuelEntries)
+        .set({ invoiceNumber })
+        .where(eq(companyFuelEntries.id, created.id))
+        .returning();
+
       await logAudit(db, companyId, {
         entity: 'fuel',
         entityId: toId('fuel', created.id),
         action: 'create',
         actorId: req.user!.sub,
         actorName: req.user!.name,
-        description: `Carga de combustible registrada: ${body.gallons.toFixed(2)} gal para "${asset[0].name}".`,
+        description: `Carga de combustible registrada: ${body.gallons.toFixed(2)} gal para "${asset[0].name}" (${invoiceNumber}).`,
       });
 
-      res.status(201).json(serializeFuel(created, { plate: asset[0].plate, brand: asset[0].brand, model: asset[0].model }));
+      res.status(201).json(serializeFuel(withInvoice, { plate: asset[0].plate, brand: asset[0].brand, model: asset[0].model }));
     } catch (err) {
       next(err);
     }
@@ -212,6 +227,13 @@ router.put(
       const companyId = req.companyId!;
       const fuelId = parseId('fuel', req.params.fuelId);
       const body = req.body as z.infer<typeof updateFuelSchema>;
+
+      // Defensa explícita: invoiceNumber NUNCA es editable por el cliente,
+      // sin importar qué schema esté activo. Se genera una sola vez al
+      // crear el registro y es inmutable de ahí en adelante.
+      if ('invoiceNumber' in req.body) {
+        return next(new AppError(400, 'El número de factura no puede modificarse manualmente.'));
+      }
 
       const existing = await db
         .select()
@@ -236,6 +258,7 @@ router.put(
       if (body.notes !== undefined) updateData.notes = body.notes;
       if (body.photoUrl !== undefined) updateData.photoUrl = body.photoUrl;
       if (body.odometerPhotoUrl !== undefined) updateData.odometerPhotoUrl = body.odometerPhotoUrl;
+      // Nota: invoiceNumber deliberadamente ausente de este bloque — es inmutable.
 
       const [updated] = await db
         .update(companyFuelEntries)
@@ -252,7 +275,6 @@ router.put(
         description: `Registro de combustible "${toId('fuel', updated.id)}" actualizado.`,
       });
 
-      // ── Enrichment ────────────────────────────────────────────────────────────
       const [assetInfo] = await db
         .select({ plate: companyAssets.plate, brand: companyAssets.brand, model: companyAssets.model })
         .from(companyAssets)
@@ -326,7 +348,7 @@ function serializeFuel(
     notes: f.notes,
     photoUrl: f.photoUrl,
     odometerPhotoUrl: f.odometerPhotoUrl ?? null,
-    // ── Enrichment: datos del activo para display sin hooks externos ─────────
+    invoiceNumber: f.invoiceNumber ?? null, // NUEVO
     assetPlate: assetInfo?.plate ?? null,
     assetBrand: assetInfo?.brand ?? null,
     assetModel: assetInfo?.model ?? null,

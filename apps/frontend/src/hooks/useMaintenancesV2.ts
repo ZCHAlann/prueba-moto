@@ -221,6 +221,9 @@ export interface ListFilters {
   q?:          string;
   mine?:       'me' | 'all';
   scope?:      'mine' | 'all';
+  /** Track A: paginación server-side. */
+  page?:       number;
+  pageSize?:   number;
 }
 
 export interface AgendaRange { from: string; to: string; }
@@ -247,9 +250,20 @@ export function useMaintenancesList(filters: ListFilters = {}, options?: { enabl
     queryKey: ['maintenances', companyId, filters],
     queryFn: async () => {
       const params = new URLSearchParams();
-      Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, String(v)); });
+      Object.entries(filters).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') params.set(k, String(v));
+      });
       const qs = params.toString();
-      const res = await jsonFetch<{ data: Maintenance[]; total: number; assets?: any[]; workshops?: any[]; suppliers?: any[] }>(
+      const res = await jsonFetch<{
+        data: Maintenance[];
+        total: number;
+        page: number;
+        pageSize: number;
+        totalPages: number;
+        assets?: any[];
+        workshops?: any[];
+        suppliers?: any[];
+      }>(
         `/api/company/${companyId}/maintenances${qs ? `?${qs}` : ''}`,
       );
       return res;
@@ -517,18 +531,26 @@ export function useRequestCorrection() {
   });
 }
 
-/** Reautorizar un mantenimiento "Atrasado" de tipo Programado: el
- *  admin/supervisor confirma que el mantenimiento sigue autorizado para
- *  ejecutarse aunque haya pasado la fecha prevista. El backend registra
- *  el evento "reauthorized" en la línea de tiempo y (en mantenimiento
- *  Programado) resetea la ventana de atraso para que la próxima corrida
- *  del cron no lo marque como Completado. NO aplica para Correctivo. */
+/** Reautoriza un mantenimiento "Atrasado" de tipo Programado: alguien
+ *  DISTINTO del asignado/creador (típicamente un superior) confirma que
+ *  el mantenimiento sigue autorizado para ejecutarse aunque haya pasado
+ *  la fecha prevista. El backend bloquea con 403 si quien llama es el
+ *  propio asignado/creador, aunque tenga el permiso — es una regla dura,
+ *  no un check de UI.
+ *
+ *  Requiere el permiso independiente `mantenimiento.reautorizaciones.editar`
+ *  (no se hereda de `execution` ni de `records`).
+ *
+ *  Efecto: status pasa de 'Atrasado' a 'Programado' (el estado previo al
+ *  vencimiento) — NO a 'En proceso'. El backend registra el evento
+ *  "reauthorized" en la línea de tiempo con el motivo opcional. NO aplica
+ *  a Correctivo/Lavada. */
 export function useReauthorizeMaintenance() {
   const { companyId } = useAuth();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, reason }: { id: string; reason?: string | null }) => {
-      return jsonFetch<{ ok: boolean; id: string }>(
+      return jsonFetch<{ ok: boolean; status: string }>(
         `/api/company/${companyId}/maintenances/${id}/reauthorize`,
         { method: 'POST', body: JSON.stringify({ reason: reason ?? null }) },
       );

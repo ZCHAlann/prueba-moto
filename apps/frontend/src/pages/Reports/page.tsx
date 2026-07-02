@@ -1082,10 +1082,10 @@ export function ReportsPage() {
         { key: "date",      label: "Fecha carga" },
         { key: "station",   label: "Estación" },
       ];
-      const rows: ReportRow[] = fuelEntries.map((e, i) => {
+      const rows: ReportRow[] = fuelEntries.map((e) => {
         const asset = assets.find((a) => a.id === e.assetId);
         return {
-          invoice:   `FAC-${String(i + 1).padStart(4, "0")}`,
+          invoice:   e.invoiceNumber || "—", // antes: `FAC-${String(i + 1).padStart(4, "0")}`
           plate:     asset?.plate ?? "—",
           kmStart:   Math.max(e.odometer - 420, 0),
           kmEnd:     e.odometer,

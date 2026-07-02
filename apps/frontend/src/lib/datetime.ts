@@ -36,8 +36,24 @@ function toDate(value: string | number | Date | null | undefined): Date | null {
     const d = new Date(value);
     return isNaN(d.getTime()) ? null : d;
   }
-  const s = String(value).trim();
+  let s = String(value).trim();
   if (!s) return null;
+
+  // Si el string NO tiene indicador de timezone (ni 'Z' final ni offset
+  // ±HH:MM), lo tratamos como UTC explícito. Esto es necesario porque
+  // algunos endpoints devuelven timestamps de Postgres vía SQL crudo
+  // (db.execute(sql`...`)) como "2026-07-02 22:54:06.86" (sin T, sin Z),
+  // y JS interpreta eso como hora LOCAL del navegador en vez de UTC,
+  // rompiendo la conversión a hora de Ecuador más abajo. Cuando el
+  // valor SÍ viene de Drizzle vía .returning()/select() normal, ya
+  // llega como Date/ISO con "Z" y este branch no se activa.
+  const hasTimezoneInfo = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(s);
+  if (!hasTimezoneInfo) {
+    // Normalizar separador " " → "T" si hace falta, y forzar UTC con "Z".
+    s = s.includes("T") ? s : s.replace(" ", "T");
+    s = s + "Z";
+  }
+
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 }

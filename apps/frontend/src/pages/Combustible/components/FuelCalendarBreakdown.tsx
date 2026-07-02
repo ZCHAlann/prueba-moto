@@ -28,12 +28,27 @@ const MONTH_LABELS = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
+// ── Parseo seguro de fechas "YYYY-MM-DD" (o con hora/timezone al final) ─────
+// NUNCA usar `new Date(dateOnlyString)` para esto: JS interpreta strings
+// "YYYY-MM-DD" como medianoche UTC, y en timezones detrás de UTC (ej.
+// Ecuador, UTC-5) eso se corre al día anterior al convertir a hora local.
+// Acá extraemos año/mes/día directamente del string, ignorando timezone.
+function parseDateParts(dateStr: string): { year: number; month: number; day: number } | null {
+  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]) - 1, // 0-indexed, como Date.getMonth()
+    day: Number(match[3]),
+  };
+}
+
 function bucketByDay(entries: ApiFuelEntry[], year: number, month: number) {
   const map = new Map<string, ApiFuelEntry[]>();
   for (const e of entries) {
-    const d = new Date(e.date);
-    if (isNaN(d.getTime())) continue;
-    if (d.getFullYear() !== year || d.getMonth() !== month) continue;
+    const parts = parseDateParts(e.date);
+    if (!parts) continue;
+    if (parts.year !== year || parts.month !== month) continue;
     const key = e.date.slice(0, 10);
     if (!map.has(key)) map.set(key, []);
     map.get(key)!.push(e);
@@ -182,8 +197,9 @@ export function FuelCalendarBreakdown({ entries, isAdmin }: Props) {
             </button>
             <h3 className="text-sm font-bold text-gray-800 dark:text-white">
               {(() => {
-                const d = new Date(selectedDay);
-                return `${d.getDate()} ${MONTH_LABELS[d.getMonth()].toLowerCase()}`;
+                const parts = parseDateParts(selectedDay);
+                if (!parts) return "";
+                return `${parts.day} ${MONTH_LABELS[parts.month].toLowerCase()}`;
               })()}
             </h3>
           </div>

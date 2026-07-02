@@ -65,6 +65,7 @@ export type ApiFuelEntry = {
   assetPlate: string | null;
   assetBrand: string | null;
   assetModel: string | null;
+  invoiceNumber: string | null; 
 };
 
 export type CreateFuelPayload = {
@@ -102,6 +103,7 @@ function mapApi(raw: Record<string, unknown>): ApiFuelEntry {
     assetPlate: (raw.assetPlate as string | null) ?? null,
     assetBrand: (raw.assetBrand as string | null) ?? null,
     assetModel: (raw.assetModel as string | null) ?? null,
+    invoiceNumber: (raw.invoiceNumber as string | null) ?? null
   };
 }
 
@@ -187,6 +189,7 @@ export function useFuel() {
         notes:            payload.notes ?? "",
         photoUrl:         payload.photoUrl ?? null,
         odometerPhotoUrl: payload.odometerPhotoUrl ?? null,
+        invoiceNumber: payload.invoiceNumber ?? null,
       }),
     });
     if (!res.ok) throw new Error(await extractApiError(res, "Error al guardar"));
@@ -210,6 +213,7 @@ export function useFuel() {
         ...(payload.notes            !== undefined && { notes:            payload.notes            }),
         ...(payload.photoUrl         !== undefined && { photoUrl:         payload.photoUrl         }),
         ...(payload.odometerPhotoUrl !== undefined && { odometerPhotoUrl: payload.odometerPhotoUrl }),
+        ...(payload.invoiceNumber !== undefined && { invoiceNumber: payload.invoiceNumber }),
       }),
     });
     if (!res.ok) throw new Error(await extractApiError(res, "Error al actualizar"));

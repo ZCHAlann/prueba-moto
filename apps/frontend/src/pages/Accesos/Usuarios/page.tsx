@@ -566,26 +566,6 @@ function RoleBadge({ role }: { role: string }) {
   );
 }
 
-// ─── Row Menu ─────────────────────────────────────────────────────────────────
-
-function RowMenu({
-  onEdit,
-  onDelete,
-}: {
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <RowActionMenu
-      ariaLabel="Acciones del usuario"
-      items={[
-        { label: "Editar",   onClick: onEdit,   tone: "default" },
-        { label: "Eliminar", onClick: onDelete, tone: "danger" },
-      ]}
-    />
-  );
-}
-
 // ─── Delete Confirm Modal ─────────────────────────────────────────────────────
 
 function DeleteConfirmModal({
@@ -1059,7 +1039,22 @@ export function UsersPage() {
   const { roles: companyRoles } = useCompanyRoles();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const canManage = ["owner_empresa", "admin_empresa"].includes(session?.role ?? "");
+  // ── Permisos de gestión ──────────────────────────────────────────────────
+  // owner_empresa / admin_empresa: acceso total (bypass), igual que en el
+  // resto de la app.
+  // Cualquier otro rol (supervisor, operador, conductor, custom): depende
+  // del permiso granular `accesos.accesos` en su JWT/modulePermissions —
+  // el mismo submódulo que gatea si la página es visible en el sidebar
+  // (ver access-control.ts). Antes esto estaba hardcodeado a solo
+  // owner/admin, lo que bloqueaba a cualquier rol con permiso de crear/
+  // editar/eliminar asignado explícitamente desde el editor de roles.
+  const isAdminRole = ["owner_empresa", "admin_empresa"].includes(session?.role ?? "");
+  const accesosActions: string[] =
+    (session as any)?.modulePermissions?.accesos?.accesos ?? [];
+  const canCreate = isAdminRole || accesosActions.includes("crear");
+  const canEdit   = isAdminRole || accesosActions.includes("editar");
+  const canDeleteUsers = isAdminRole || accesosActions.includes("eliminar");
+  const canManage = canCreate || canEdit || canDeleteUsers;
 
   // ── Apertura por deep link ────────────────────────────────────────────────
   // Si el admin llega con `?rol=conductor&nuevo=1` (caso típico: el botón
@@ -1079,8 +1074,8 @@ export function UsersPage() {
 
   useEffect(() => {
     if (!deepLinkInitialRole) return;
-    // Solo abrir si el admin tiene permiso y no estamos ya editando.
-    if (!canManage) return;
+    // Solo abrir si el usuario puede crear y no estamos ya editando.
+    if (!canCreate) return;
     if (modalOpen) return;
     setEditingUser(null);
     setOriginalPermissionsSnapshot(undefined);
@@ -1091,7 +1086,7 @@ export function UsersPage() {
     next.delete("nuevo");
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deepLinkInitialRole, canManage]);
+  }, [deepLinkInitialRole, canCreate]);
 
   const roleOptions = useMemo(() => {
     const opts: { key: string; label: string }[] = PLATFORM_ROLES.map((r) => ({
@@ -1208,7 +1203,7 @@ export function UsersPage() {
               Gestión de colaboradores, credenciales y permisos por módulo.
             </p>
           </div>
-          {canManage && (
+          {canCreate && (
             <button onClick={openCreate}
               className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -1339,8 +1334,14 @@ export function UsersPage() {
                                 <StatusBadge status={u.status} />
                               </td>
                               <td className="group-hover:bg-gray-50 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
-                                {canManage && (
-                                  <RowMenu onEdit={() => openEdit(u)} onDelete={() => setDeleteTarget(u)} />
+                                {(canEdit || canDeleteUsers) && (
+                                  <RowActionMenu
+                                    ariaLabel="Acciones del usuario"
+                                    items={[
+                                      ...(canEdit ? [{ label: "Editar", onClick: () => openEdit(u), tone: "default" as const }] : []),
+                                      ...(canDeleteUsers ? [{ label: "Eliminar", onClick: () => setDeleteTarget(u), tone: "danger" as const }] : []),
+                                    ]}
+                                  />
                                 )}
                               </td>
                         </tr>
@@ -1388,7 +1389,7 @@ export function UsersPage() {
           )}
         </div>
 
-        {!canManage && (
+        {!canCreate && !canEdit && (
           <div className="rounded-xl border border-yellow-200 dark:border-yellow-500/20 bg-yellow-50 dark:bg-yellow-500/10 px-4 py-3 text-sm text-yellow-800 dark:text-yellow-400">
             Solo administradores pueden crear o editar usuarios.
           </div>

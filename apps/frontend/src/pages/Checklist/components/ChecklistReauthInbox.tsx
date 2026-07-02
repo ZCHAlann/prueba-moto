@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Inbox, Send, CheckCircle2, ShieldAlert, Loader2, X,
@@ -22,7 +22,7 @@ export function ChecklistReauthInbox({
 }: {
   canDecide: boolean;
 }) {
-  const { requests, loading, error, decideRequest, refetch } = useChecklistReauth();
+  const { requests, total, loading, error, fetchRequests, decideRequest } = useChecklistReauth();
   const [statusFilter, setStatusFilter] = useState<ReauthStatus | "all">("Pendiente");
   const [decideModal, setDecideModal] = useState<{
     id: string; decision: "Autorizada" | "Rechazada";
@@ -30,9 +30,14 @@ export function ChecklistReauthInbox({
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const filtered = statusFilter === "all"
-    ? requests
-    : requests.filter((r) => r.status === statusFilter);
+  // Re-fetch al backend cuando cambia el filtro de status (paginación del lado
+  // del servidor — la lista `requests` ya es la página filtrada).
+  useEffect(() => {
+    const status = statusFilter === "all" ? undefined : statusFilter;
+    void fetchRequests({ status });
+    // fetchRequests tiene `companyId` como única dep estable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter]);
 
   async function handleSubmitDecide() {
     if (!decideModal) return;
@@ -53,7 +58,8 @@ export function ChecklistReauthInbox({
       );
       setDecideModal(null);
       setNotes("");
-      void refetch();
+      // Re-fetch con el filtro actual para que el conteo se mantenga coherente.
+      void fetchRequests({ status: statusFilter === "all" ? undefined : statusFilter });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error al decidir");
     } finally {
@@ -92,9 +98,9 @@ export function ChecklistReauthInbox({
                 Bandeja de reautorizaciones
               </p>
               <h2 className="text-base font-bold text-gray-800 dark:text-white">
-                {requests.length === 0
+                {total === 0
                   ? "Sin solicitudes"
-                  : `${requests.length} ${requests.length === 1 ? "solicitud" : "solicitudes"}`}
+                  : `${total} ${total === 1 ? "solicitud" : "solicitudes"}`}
               </h2>
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 {canDecide
@@ -105,29 +111,40 @@ export function ChecklistReauthInbox({
           </div>
 
           <div className="flex flex-wrap items-center gap-1 rounded-xl border border-gray-200 bg-white p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
-            {(["Pendiente", "Autorizada", "Rechazada", "all"] as const).map((s) => (
-              <FilterChip
-                key={s}
-                active={statusFilter === s}
-                onClick={() => setStatusFilter(s)}
-                label={s === "all" ? "Todas" : s}
-                count={s === "all" ? requests.length : requests.filter((r) => r.status === s).length}
-              />
-            ))}
+            {(["Pendiente", "Autorizada", "Rechazada", "all"] as const).map((s) => {
+              const isActive = statusFilter === s;
+              // El backend pagina y filtra por status; solo tenemos el count
+              // del chip activo (es la página actual). Los demás chips muestran
+              // el total del backend (que corresponde al universo del filtro
+              // activo, no a los otros estados). Para no mentir con un count
+              // falso, mostramos el count solo del chip activo.
+              const count = isActive ? total : null;
+              return (
+                <FilterChip
+                  key={s}
+                  active={isActive}
+                  onClick={() => setStatusFilter(s)}
+                  label={s === "all" ? "Todas" : s}
+                  count={count}
+                />
+              );
+            })}
           </div>
         </div>
       </div>
 
       {/* Lista */}
-      {filtered.length === 0 ? (
+      {requests.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-400 dark:border-white/[0.06]">
           {statusFilter === "Pendiente"
             ? "No hay solicitudes pendientes."
-            : `No hay solicitudes en estado "${statusFilter}".`}
+            : statusFilter === "all"
+              ? "No hay solicitudes registradas."
+              : `No hay solicitudes en estado "${statusFilter}".`}
         </div>
       ) : (
         <div className="space-y-2">
-          {filtered.map((r) => (
+          {requests.map((r) => (
             <ReauthInboxRow
               key={r.id}
               row={r}
@@ -159,7 +176,7 @@ export function ChecklistReauthInbox({
 // ─── Sub-componentes ───────────────────────────────────────────────────────
 
 function FilterChip({ active, onClick, label, count }: {
-  active: boolean; onClick: () => void; label: string; count: number;
+  active: boolean; onClick: () => void; label: string; count: number | null;
 }) {
   return (
     <button
@@ -172,9 +189,11 @@ function FilterChip({ active, onClick, label, count }: {
       }`}
     >
       {label}
-      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
-        active ? "bg-white/20 text-white" : "bg-gray-200 text-gray-600 dark:bg-white/[0.08] dark:text-gray-400"
-      }`}>{count}</span>
+      {count != null && (
+        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+          active ? "bg-white/20 text-white" : "bg-gray-200 text-gray-600 dark:bg-white/[0.08] dark:text-gray-400"
+        }`}>{count}</span>
+      )}
     </button>
   );
 }

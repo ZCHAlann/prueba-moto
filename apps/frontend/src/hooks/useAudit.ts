@@ -15,9 +15,18 @@ export interface AuditEntry {
 export interface AuditFilters {
   entity?: string;
   action?: string;
-  from?: string;   // ISO date YYYY-MM-DD
+  from?: string;
   to?: string;
   page?: number;
+  pageSize?: number;
+}
+
+export interface AuditResponse {
+  data: AuditEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 export interface AuditResponse {
@@ -43,6 +52,7 @@ export function useAudit(companyId: string | null, filters: AuditFilters = {}) {
       if (filters.from)   params.set("from", filters.from);
       if (filters.to)     params.set("to", filters.to);
       if (filters.page)   params.set("page", String(filters.page));
+      if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
 
       const qs = params.toString();
       const res = await fetch(`/api/company/${companyId}/audit${qs ? `?${qs}` : ""}`);
@@ -54,7 +64,7 @@ export function useAudit(companyId: string | null, filters: AuditFilters = {}) {
     } finally {
       setLoading(false);
     }
-  }, [companyId, filters.entity, filters.action, filters.from, filters.to, filters.page]);
+  }, [companyId, filters.entity, filters.action, filters.from, filters.to, filters.page, filters.pageSize]);
 
   useEffect(() => { void fetch_(); }, [fetch_]);
 

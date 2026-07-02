@@ -861,7 +861,6 @@ export function FuelPage() {
     const q = search.trim().toLowerCase();
     return fuelEntries
       .map((e) => {
-        // BUG FIX: comparar como strings para evitar number vs string mismatch
         const asset = assets.find((a) => String(a.id) === String(e.assetId));
         return {
           id:       e.id,
@@ -877,7 +876,7 @@ gallons:  `${fmt(e.gallons, 2)} gal`,
       })
       .sort((a, b) => b.date.localeCompare(a.date))
       .filter((r) => {
-        const matchQ    = !q || r.plate.toLowerCase().includes(q) || r.unit.toLowerCase().includes(q) || r.station.toLowerCase().includes(q);
+        const matchQ    = !q || r.plate.toLowerCase().includes(q) || r.unit.toLowerCase().includes(q) || r.station.toLowerCase().includes(q) || (r.entry.invoiceNumber ?? "").toLowerCase().includes(q);
         const matchFrom = !dateFrom || r.date >= dateFrom;
         const matchTo   = !dateTo   || r.date <= dateTo;
         return matchQ && matchFrom && matchTo;

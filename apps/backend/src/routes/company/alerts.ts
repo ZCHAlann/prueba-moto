@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyAlerts, companyAssets } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
@@ -11,6 +11,7 @@ import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router({ mergeParams: true });
 
@@ -38,41 +39,72 @@ const patchStatusSchema = z.object({
 });
 
 // ─── GET /company/:id/alerts ──────────────────────────────────────────────────
-// Query: ?status=Abierta &severity=Alta &assetId=asset-1
+// Query: ?status=Abierta &severity=Alta &assetId=asset-1 &q=texto &page=1 &pageSize=20
+//
+// Paginación SQL real: las condiciones del WHERE se construyen UNA SOLA VEZ
+// en `conds` y se reusan en la query de datos y en la query de count.
+// `assets` (catálogo para dropdowns de filtro) NO se pagina — es un subrecurso
+// aparte, no parte del dataset de alertas.
 
 router.get('/', requireModule('alertas'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
-    const { status, severity, assetId } = req.query;
+    const { status, severity, assetId, q } = req.query;
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
-    let rows = await db
-      .select()
-      .from(companyAlerts)
-      .where(eq(companyAlerts.companyId, companyId))
-      .orderBy(companyAlerts.createdAt);
-
+    // WHERE compartido entre SELECT paginado y COUNT(*).
+    const conds = [eq(companyAlerts.companyId, companyId)];
     if (status && typeof status === 'string') {
-      rows = rows.filter((a) => a.status === status);
+      conds.push(eq(companyAlerts.status, status as 'Abierta'));
     }
     if (severity && typeof severity === 'string') {
-      rows = rows.filter((a) => a.severity === severity);
+      conds.push(eq(companyAlerts.severity, severity as 'Alta'));
     }
     if (assetId && typeof assetId === 'string') {
-      const parsedAssetId = parseId('asset', assetId);
-      rows = rows.filter((a) => a.assetId === parsedAssetId);
+      try {
+        const parsedAssetId = parseId('asset', assetId);
+        conds.push(eq(companyAlerts.assetId, parsedAssetId));
+      } catch {
+        // assetId malformado → no filtra, simplemente no matchea nada
+        conds.push(eq(companyAlerts.id, -1));
+      }
     }
+    if (q && typeof q === 'string' && q.trim().length > 0) {
+      const like = `%${q.trim().toLowerCase()}%`;
+      // ILIKE sobre title/notes. Para no romper el contrato de "todas las
+      // condiciones compartidas entre datos y count", aplicamos el mismo OR
+      // en ambos.
+      conds.push(sql`(
+        lower(${companyAlerts.title}) like ${like}
+        or lower(coalesce(${companyAlerts.notes}, '')) like ${like}
+      )`);
+    }
+    const where = and(...conds);
 
-    // ── Enrichment: cargar nombres de activos ─────────────────────────────────
-    const assetsRows = await db
-      .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate })
-      .from(companyAssets)
-      .where(eq(companyAssets.companyId, companyId));
+    const [rows, countRow, assetsRows] = await Promise.all([
+      db
+        .select()
+        .from(companyAlerts)
+        .where(where)
+        .orderBy(desc(companyAlerts.createdAt))
+        .limit(pageSize)
+        .offset(offset),
+      db
+        .select({ value: sql<number>`cast(count(*) as int)` })
+        .from(companyAlerts)
+        .where(where),
+      // Catálogo de activos (no paginado, se usa para dropdowns).
+      db
+        .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate })
+        .from(companyAssets)
+        .where(eq(companyAssets.companyId, companyId)),
+    ]);
 
+    const total = countRow?.[0]?.value ?? 0;
     const assetMap = new Map(assetsRows.map(a => [a.id, { name: a.name, plate: a.plate }]));
 
     res.json({
-      data: rows.map(a => serializeAlert(a, assetMap.get(a.assetId))),
-      total: rows.length,
+      ...buildPageResponse(rows.map(a => serializeAlert(a, assetMap.get(a.assetId))), total, page, pageSize),
       assets: assetsRows.map((a) => ({ id: a.id, name: a.name, plate: a.plate })),
     });
   } catch (err) {

@@ -325,6 +325,20 @@ router.put(
         .where(and(eq(companyDrivers.id, driverId), eq(companyDrivers.companyId, companyId)))
         .returning();
 
+      // ── Sync: si el driver está vinculado a un company_user y vino
+      //    photoUrl en el body, propagar el cambio también a companyUsers.
+      //    Esto es necesario porque serializeDriver() prioriza
+      //    user.photoUrl sobre driver.photoUrl cuando hay user asociado
+      //    (para que Accesos/Perfil sea la fuente de verdad de foto), así
+      //    que si no la sincronizamos acá, la foto subida desde Conductores
+      //    nunca se ve reflejada.
+      if (body.photoUrl !== undefined && updated.userId) {
+        await db
+          .update(companyUsers)
+          .set({ photoUrl: body.photoUrl ?? null, updatedAt: new Date() })
+          .where(and(eq(companyUsers.id, updated.userId), eq(companyUsers.companyId, companyId)));
+      }
+
       await logAudit(db, companyId, {
         entity: 'drivers',
         entityId: toId('driver', updated.id),
@@ -345,7 +359,26 @@ router.put(
         siteName = site?.name ?? null;
       }
 
-      res.json(serializeDriver(updated, siteName));
+      // ── Releer el user actualizado para que la respuesta refleje ya el
+      //    photoUrl sincronizado (evita que el frontend muestre la foto
+      //    vieja hasta el próximo refresh).
+      let userEnrichment: UserEnrichment = null;
+      if (updated.userId) {
+        const [u] = await db
+          .select({
+            id:          companyUsers.id,
+            email:       companyUsers.email,
+            photoUrl:    companyUsers.photoUrl,
+            status:      companyUsers.status,
+            profileData: companyUsers.profileData,
+          })
+          .from(companyUsers)
+          .where(and(eq(companyUsers.id, updated.userId), eq(companyUsers.companyId, companyId)))
+          .limit(1);
+        userEnrichment = u ?? null;
+      }
+
+      res.json(serializeDriver(updated, siteName, userEnrichment));
     } catch (err) {
       next(err);
     }

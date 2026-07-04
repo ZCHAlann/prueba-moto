@@ -1,8 +1,7 @@
 import { useRef, useState } from "react";
 import { X, Loader2, ImagePlus, Trash2 } from "lucide-react";
 import { useAcUnits } from "../../hooks/useAcUnits";
-import { useSites } from "../../hooks/useSites";
-import { useCompanyUsers, type CompanyUser } from "../../hooks/useCompanyUsers";
+import { useACFormOptions } from "../../hooks/useFormOptions";
 import { DatePicker } from "../ui/date-picker/DatePicker";
 import type {
   AirConditioningType,
@@ -103,8 +102,9 @@ function Field({
 
 export function AcEditModal({ unit, onClose }: Props) {
   const { updateUnit, uploadAcPhotos } = useAcUnits();
-  const { sites } = useSites();
-  const { users } = useCompanyUsers();
+  const { data: formOptions } = useACFormOptions();
+  const sites = formOptions?.sites ?? [];
+  const users = formOptions?.users ?? [];
   const fileRef = useRef<HTMLInputElement>(null);
   const [values, setValues] = useState<FormValues>(() => fromUnit(unit));
   const [errors, setErrors] = useState<Partial<Record<keyof FormValues, string>>>({});

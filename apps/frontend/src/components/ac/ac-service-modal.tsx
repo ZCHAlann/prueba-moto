@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { X, Loader2, ImagePlus, Trash2, Wrench } from "lucide-react";
 import { useAcUnits } from "../../hooks/useAcUnits";
-import { useCompanyUsers, type CompanyUser } from "../../hooks/useCompanyUsers";
+import { useACFormOptions } from "../../hooks/useFormOptions";
 import { DatePicker } from "../ui/date-picker/DatePicker";
 import type { AirConditioningUnit, AcServiceKind } from "../../types/fleet";
 import { todayEcuador } from "@/lib/datetime";
@@ -48,7 +48,8 @@ function Field({
 
 export function AcServiceModal({ unit, onClose, onCreated }: Props) {
   const { createService, uploadAcPhotos } = useAcUnits();
-  const { users } = useCompanyUsers();
+  const { data: formOptions } = useACFormOptions();
+  const users = formOptions?.users ?? [];
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [date, setDate] = useState<string>(todayEcuador());

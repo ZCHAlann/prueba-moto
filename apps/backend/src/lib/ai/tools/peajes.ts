@@ -15,12 +15,12 @@ import {
   companyDrivers,
 } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
-import { tolerantString, tolerantNumber, tolerantDateString } from '../schema-helpers';
+import { tolerantString, tolerantNumber, tolerantAssetId, tolerantDateString } from '../schema-helpers';
 
 const argsSchema = z.object({
   desde:     tolerantDateString().optional(),
   hasta:     tolerantDateString().optional(),
-  assetId:   tolerantNumber().int().positive().optional(),
+  assetId:   tolerantAssetId(),
   placa:     tolerantString().optional(),
   ruta:      tolerantString().optional(),
   // limit removido del schema público — ver nota en vehiculos.ts.

@@ -302,19 +302,12 @@ export interface InventarioBajo {
   location: string | null;
   deficit: number;
 }
-export function useInventarioBajo(companyId: string | null) {
-  const [data, setData] = useState<{ data: InventarioBajo[]; total: number } | null>(null);
-  const [loading, setLoading] = useState(false);
-  useEffect(() => {
-    if (!companyId) return;
-    setLoading(true);
-    fetch(`/api/company/${companyId}/analytics/dashboard-extended/inventario-bajo`)
-      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-      .then(j => setData({ data: j.data ?? [], total: j.total ?? 0 }))
-      .catch(() => setData({ data: [], total: 0 }))
-      .finally(() => setLoading(false));
-  }, [companyId]);
-  return { data, loading };
+export function useInventarioBajo(_companyId: string | null) {
+  // El módulo de Inventario ya no existe: el endpoint backend fue removido
+  // en el borrado del módulo Inventario. Devolvemos una respuesta vacía
+  // estable para que los consumidores no rompan con 404 ni borren UI que
+  // ya tenían condicionada a esta card.
+  return { data: { data: [], total: 0 }, loading: false };
 }
 
 export interface KpisAcData {

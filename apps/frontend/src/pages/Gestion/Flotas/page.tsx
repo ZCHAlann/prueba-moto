@@ -920,6 +920,16 @@ export default function FlotasPage() {
       setFilterStatus(status);
     }
   }, []); // run once on mount
+
+  // Deep-link: ?assetId=X abre el drawer de detalle de ese vehículo.
+  // Útil cuando llegamos desde un Reporte de Alertas/Mantenimiento y
+  // queremos ver el activo causante sin tener que buscarlo.
+  useEffect(() => {
+    const assetId = searchParams.get("assetId");
+    if (!assetId) return;
+    const match = vehicles.find((v) => v.id === assetId);
+    if (match) setDrawerVehicle(match);
+  }, [searchParams, vehicles]);
   const handleKpiClick = (label: string | null) => {
     if (label === null) {
       setSearchParams((prev) => { const n = new URLSearchParams(prev); n.delete("kpi"); return n; });

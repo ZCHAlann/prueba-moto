@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyInsurancePolicies } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
@@ -10,6 +10,7 @@ import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router({ mergeParams: true });
 
@@ -54,14 +55,18 @@ function serializePolicy(p: typeof companyInsurancePolicies.$inferSelect) {
 router.get('/', requireModule('seguros'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
-    const rows = await db
-      .select()
-      .from(companyInsurancePolicies)
-      .where(eq(companyInsurancePolicies.companyId, companyId))
-      .orderBy(companyInsurancePolicies.endDate);
+    const where = eq(companyInsurancePolicies.companyId, companyId);
 
-    res.json({ data: rows.map(serializePolicy), total: rows.length });
+    const [rows, countRow] = await Promise.all([
+      db.select().from(companyInsurancePolicies).where(where)
+        .orderBy(desc(companyInsurancePolicies.endDate)).limit(pageSize).offset(offset),
+      db.select({ value: sql<number>`cast(count(*) as int)` }).from(companyInsurancePolicies).where(where),
+    ]);
+
+    const total = countRow?.[0]?.value ?? 0;
+    res.json(buildPageResponse(rows.map(serializePolicy), total, page, pageSize));
   } catch (err) {
     next(err);
   }

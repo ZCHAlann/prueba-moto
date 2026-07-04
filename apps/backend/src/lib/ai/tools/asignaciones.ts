@@ -15,12 +15,12 @@ import {
   companyDrivers,
 } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
-import { tolerantString, tolerantNumber, tolerantDateString, enumOrList } from '../schema-helpers';
+import { tolerantString, tolerantNumber, tolerantAssetId, tolerantDateString, enumOrList } from '../schema-helpers';
 
 const argsSchema = z.object({
   estado:      enumOrList(['Activa', 'Finalizada', 'Inactiva']).optional(),
   driverId:    tolerantNumber().int().positive().optional(),
-  assetId:     tolerantNumber().int().positive().optional(),
+  assetId:     tolerantAssetId(),
   placa:       tolerantString().optional(),
   desde:       tolerantDateString().optional(),
   hasta:       tolerantDateString().optional(),

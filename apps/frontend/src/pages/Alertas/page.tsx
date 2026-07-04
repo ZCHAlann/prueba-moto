@@ -1,9 +1,10 @@
 import { useMemo, useState, useEffect } from "react";
-import { useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { motion, AnimatePresence } from "framer-motion";
+import { BellRing, X } from "lucide-react";
 import { toast } from "sonner";
 import { useAlerts, type ApiAlert, type AlertSeverity, type AlertStatus, type AlertType } from "../../hooks/useAlerts";
-import { useAssets } from "../../hooks/useAssets";
+import { useAlertsFormOptions } from "../../hooks/useFormOptions";
 import { usePermissions } from "../../hooks/usePermissions";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import { todayEcuador } from "@/lib/datetime";
@@ -477,7 +478,8 @@ function CreateDrawer({
 
 export function AlertsPage() {
   const { alerts, total, page: serverPage, totalPages, loading, fetchPage, createAlert, updateAlert, deleteAlert } = useAlerts();
-  const { assets } = useAssets();
+  const { data: formOptions } = useAlertsFormOptions();
+  const assets = formOptions?.assets ?? [];
   const { can } = usePermissions();
 
   const canCreate = can("alertas", "alertas", "crear");
@@ -489,8 +491,14 @@ export function AlertsPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [page, setPage]           = useState(1);
 
-  // KPI click: map ?kpi= URL param (from EstadisticasTab KPI card) to filter
+  // Deep-link: ?assetId=X pre-filtra por ese vehículo. Lo leemos una vez
+  // y armamos un initial filter para useAlerts. El usuario puede limpiarlo
+  // después. Esto da consistencia con MaintenanceListTab (que ya lo hacía).
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const initialAssetFilter = searchParams.get("assetId") || null;
+
+  // KPI click: map ?kpi= URL param (from EstadisticasTab KPI card) to filter
   useEffect(() => {
     const kpiLabel = searchParams.get("kpi");
     if (!kpiLabel) return;
@@ -506,16 +514,21 @@ export function AlertsPage() {
   }, []);
 
   // ── Fetch al backend cuando cambian page/filtros/búsqueda ────────────────
-  // El backend pagina, filtra por status/severity y aplica `q` sobre title/notes.
+  // El backend pagina, filtra por status/severity/assetId y aplica `q` sobre title/notes.
   // Reset page=1 al cambiar cualquier filtro (si no, podemos quedar en una
   // página fuera de rango para el nuevo universo filtrado).
   useEffect(() => {
     const status = filter === "Todas" ? undefined : (filter as Exclude<FilterValue, "Todas">);
-    void fetchPage({ page, status, q: search.trim() || undefined });
+    void fetchPage({
+      page,
+      status,
+      assetId: initialAssetFilter ?? undefined,
+      q: search.trim() || undefined,
+    });
     // fetchPage tiene `companyId` como única dep estable; el resto son inputs
     // del efecto. NO incluir fetchPage en deps para no re-disparar en bucle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, filter, search]);
+  }, [page, filter, search, initialAssetFilter]);
 
   // Sincronizar `page` local con la que devolvió el servidor (clamp si quedó
   // fuera de rango tras un cambio de filtro).
@@ -586,6 +599,32 @@ export function AlertsPage() {
 
       {/* KPI bar */}
       <KpiBar alerts={alerts} active={filter} onFilter={setFilterAndReset} />
+
+      {/* Banner de deep-link: ?assetId=X (e.g. desde un detalle de Activo
+          en Reportes) pre-filtra por ese vehículo. El usuario puede seguir
+          aplicando los demás filtros encima. */}
+      {initialAssetFilter && (
+        <div className="flex items-center gap-2 rounded-xl border border-indigo-200/60 bg-indigo-50/80 px-3 py-2 text-xs text-indigo-700 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-200">
+          <BellRing size={13} />
+          <span>
+            Filtrado por vehículo{" "}
+            <code className="rounded bg-white/40 px-1.5 py-0.5 font-mono text-[11px] dark:bg-black/20">
+              {initialAssetFilter}
+            </code>
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              const next = new URLSearchParams(searchParams);
+              next.delete("assetId");
+              navigate({ search: next.toString() });
+            }}
+            className="ml-auto flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold hover:bg-white/40 dark:hover:bg-black/20"
+          >
+            <X size={11} /> Quitar filtro
+          </button>
+        </div>
+      )}
 
       {/* list */}
       <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03]">

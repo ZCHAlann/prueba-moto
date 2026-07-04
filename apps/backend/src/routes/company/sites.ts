@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companySites, companyAssets, companyDrivers } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
@@ -10,6 +10,7 @@ import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
+import { invalidateSiteStatusCache } from '../../lib/userStatus.db';
 
 const router = Router({ mergeParams: true });
 
@@ -130,6 +131,60 @@ router.post(
   }
 );
 
+// ─── GET /company/:id/sites/:siteId/impact ────────────────────────────────────
+//
+// Devuelve el conteo de conductores/vehículos que se verían afectados
+// si esta sede pasa a 'Inactiva'. El frontend lo usa para mostrar el
+// modal de confirmación con números reales (Fase 3.2) sin tener que
+// hacer el PUT todavía.
+
+router.get('/:siteId/impact', requireModule('gestion', 'sedes'), async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const siteId = parseId('site', req.params.siteId);
+
+    // 1) Sede debe existir y pertenecer a la empresa
+    const [site] = await db
+      .select({ id: companySites.id, name: companySites.name, status: companySites.status })
+      .from(companySites)
+      .where(and(eq(companySites.id, siteId), eq(companySites.companyId, companyId)))
+      .limit(1);
+    if (!site) throw new NotFoundError('Sede', req.params.siteId);
+
+    // 2) Conteos
+    const driverRows = await db
+      .select({ status: companyDrivers.status })
+      .from(companyDrivers)
+      .where(and(eq(companyDrivers.companyId, companyId), eq(companyDrivers.siteId, siteId)));
+
+    const driversActivosCount   = driverRows.filter(d => d.status === 'Activo').length;
+    const driversInactivosCount = driverRows.filter(d => d.status === 'Inactivo').length;
+
+    const [assetRow] = await db
+      .select({ value: sql<number>`cast(count(*) as int)` })
+      .from(companyAssets)
+      .where(and(eq(companyAssets.companyId, companyId), eq(companyAssets.siteId, siteId)));
+
+    const affectedDriversOnDeactivation = driversActivosCount;
+
+    res.json({
+      site: {
+        id: toId('site', site.id),
+        name: site.name,
+        status: site.status,
+      },
+      // Conductores que tienen status='Activo' y se bloquearían si la sede pasa a Inactiva
+      affectedDriversOnDeactivation,
+      // Desglose útil para el modal
+      driversActivosCount,
+      driversInactivosCount,
+      assetsCount: assetRow?.value ?? 0,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ─── PUT /company/:id/sites/:siteId ──────────────────────────────────────────
 
 router.put(
@@ -151,11 +206,46 @@ router.put(
 
       if (!existing.length) throw new NotFoundError('Sede', req.params.siteId);
 
+      const previousStatus = existing[0]!.status;
+      const newStatus      = body.status ?? previousStatus;
+
       const [updated] = await db
         .update(companySites)
         .set({ ...body, updatedAt: new Date() })
         .where(and(eq(companySites.id, siteId), eq(companySites.companyId, companyId)))
         .returning();
+
+      // Si cambió el status de la sede, contar conductores afectados y
+      // registrar en auditoría. La cascada NO se persiste en company_drivers
+      // (se calcula dinámicamente vía isUserEffectivelyActive), pero sí
+      // queremos dejar rastro de quién decidió inactivar la sede.
+      let auditDescription = `Sede "${updated.name}" actualizada.`;
+      let affectedDriversCount = 0;
+
+      if (previousStatus === 'Activa' && newStatus === 'Inactiva') {
+        // Contar conductores activos que se bloquearán por la cascada
+        const affected = await db
+          .select({ value: sql<number>`cast(count(*) as int)` })
+          .from(companyDrivers)
+          .where(and(
+            eq(companyDrivers.companyId, companyId),
+            eq(companyDrivers.siteId, siteId),
+            eq(companyDrivers.status, 'Activo'),
+          ));
+        affectedDriversCount = affected[0]?.value ?? 0;
+
+        auditDescription = `Sede "${updated.name}" desactivada. ${affectedDriversCount} conductor${affectedDriversCount !== 1 ? 'es' : ''} quedará${affectedDriversCount !== 1 ? 'n' : ''} sin acceso por cascada.`;
+
+        // Invalidar el cache de statusEffectivo para que la próxima
+        // request de cualquier conductor de esta sede vea el cambio
+        // sin esperar al TTL de 60s.
+        invalidateSiteStatusCache(siteId);
+      } else if (previousStatus === 'Inactiva' && newStatus === 'Activa') {
+        // Reactivación: los conductores manualmente Activos vuelven
+        // a tener acceso automático. También invalidamos cache.
+        invalidateSiteStatusCache(siteId);
+        auditDescription = `Sede "${updated.name}" reactivada. Los conductores con estado manual Activo recuperan el acceso automáticamente.`;
+      }
 
       await logAudit(db, companyId, {
         entity: 'sites',
@@ -163,10 +253,24 @@ router.put(
         action: 'update',
         actorId: req.user!.sub,
         actorName: req.user!.name,
-        description: `Sede "${updated.name}" actualizada.`,
+        description: auditDescription,
+        metadata: {
+          previousStatus,
+          newStatus,
+          affectedDriversCount,
+        },
       });
 
-      res.json(serializeSite(updated));
+      // Devolvemos el conteo en la response para que el frontend
+      // (toast / UI) pueda mostrarlo sin pedir un GET extra.
+      res.json({
+        ...serializeSite(updated),
+        _impact: {
+          previousStatus,
+          newStatus,
+          affectedDriversCount,
+        },
+      });
     } catch (err) {
       next(err);
     }

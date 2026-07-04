@@ -284,18 +284,6 @@ export type FuelEntry = {
   station: string;
 };
 
-export type InventoryItem = {
-  id: string;
-  tenantId: string;
-  code: string;
-  name: string;
-  category: string;
-  stock: number;
-  minStock: number;
-  location: string;
-  unit: string;
-};
-
 export type AuditAction =
   | "create"
   | "update"

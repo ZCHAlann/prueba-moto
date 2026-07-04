@@ -2,9 +2,10 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ClipboardList, Search, X, CalendarClock, CheckCircle2,
-  AlertTriangle, Car, ChevronRight, Filter, Loader2, ChevronDown,
+  AlertTriangle, Car, ChevronRight, Filter, Loader2,
   Hourglass, ShieldAlert, Send, MessageSquare,
 } from "lucide-react";
+import { CollapsibleGroup } from "../../../components/ui/collapsible-group/CollapsibleGroup";
 import {
   useChecklistPendientes, type PendingCategory,
 } from "../../../hooks/useChecklistPendientes";
@@ -21,6 +22,13 @@ const PAGE_SIZE = 8;
 type Props = {
   categories: ChecklistCategory[];
   onOpenWizard: (templateId: string | null) => void;
+  /**
+   * Si viene, indica que el usuario llegó aquí con `?assetId=X` (p. ej.
+   * desde ProfilePage). Mostramos un banner informativo arriba del listado
+   * para que sepa que está mirando pendientes de su vehículo asignado.
+   * El filtrado real server-side se hace en el hook cuando aplique.
+   */
+  deepLinkedAssetId?: string | null;
 };
 
 type VencidoRow = {
@@ -45,7 +53,7 @@ function findReauthForMissed(
   return byMissed.get(missedChecklistId) ?? null;
 }
 
-export function ChecklistPendientes({ categories, onOpenWizard }: Props) {
+export function ChecklistPendientes({ categories, onOpenWizard, deepLinkedAssetId }: Props) {
   const { session } = useAuth();
   const { can } = usePermissions();
   const canExecute = can("checklist", "inspecciones", "crear");
@@ -58,8 +66,18 @@ export function ChecklistPendientes({ categories, onOpenWizard }: Props) {
     ? (driverState.assignment.asset?.plate ?? null)
     : null;
 
-  const { pendientes, vencidos, loading, error, refetch } = useChecklistPendientes();
+  const { pendientes, vencidos, loading, error, refetch } = useChecklistPendientes(
+    deepLinkedAssetId ?? null,
+  );
   const { requests: reauths, refetch: refetchReauths, createRequest } = useChecklistReauth();
+
+  // Fetch explícito al montar — el hook useChecklistReauth ya NO hace
+  // auto-fetch interno (ver fix en el hook), así que cada consumidor
+  // debe pedir sus propios datos.
+  useEffect(() => {
+    void refetchReauths();
+  }, [refetchReauths]);
+
 
   const reauthByMissed = useMemo(() => {
     const map = new Map<string, ChecklistReauthRequest>();
@@ -219,6 +237,19 @@ export function ChecklistPendientes({ categories, onOpenWizard }: Props) {
 
   return (
     <div className="space-y-4">
+      {/* Banner de deep-link: el usuario llegó con `?assetId=X` desde
+          otra página (Profile → "Mis inspecciones pendientes"). */}
+      {deepLinkedAssetId && (
+        <div className="rounded-xl border border-brand-200 bg-brand-50/60 px-4 py-2.5 dark:border-brand-500/20 dark:bg-brand-500/[0.06]">
+          <p className="text-xs font-medium text-brand-700 dark:text-brand-300">
+            Mostrando pendientes de tu vehículo asignado.{" "}
+            <span className="font-mono text-[10px] text-brand-700/70 dark:text-brand-300/70">
+              assetId={deepLinkedAssetId}
+            </span>
+          </p>
+        </div>
+      )}
+
       {/* Hero */}
       {pendientes.length > 0 && (
         <div className="rounded-2xl border border-cyan-200 bg-cyan-50/40 p-4 dark:border-cyan-500/20 dark:bg-cyan-500/[0.04]">
@@ -412,101 +443,81 @@ function PendingAccordion({
   const itemCount = pending.pendingItems.length;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={onToggle}
-        onKeyDown={(e) => e.key === "Enter" && onToggle()}
-        className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-gray-50/60 dark:hover:bg-white/[0.02] cursor-pointer"
-      >
-        <motion.div
-          animate={{ rotate: isOpen ? 0 : -90 }}
-          transition={{ duration: 0.18, ease: "easeInOut" }}
-          className="shrink-0 text-gray-400"
-        >
-          <ChevronDown size={15} />
-        </motion.div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-bold text-gray-800 dark:text-white truncate">
-              {pending.categoryName}
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-bold text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300">
-              {itemCount} {itemCount === 1 ? "pendiente" : "pendientes"}
-            </span>
-          </div>
-          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-            {pending.scopeLabel} · {pending.cycleLabel}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
-          <span className={`hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${
-            urgent
-              ? "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
-              : "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
-          }`}>
-            <CalendarClock size={11} />
-            {daysLeft > 0 ? `${daysLeft}d ${hoursLeft}h` : `${hoursLeft}h`}
-          </span>
-          {canExecute ? (
-            <button
-              type="button"
-              onClick={onStart}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-500 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-cyan-600 active:scale-95"
-            >
-              Realizar <ChevronRight size={12} />
-            </button>
-          ) : (
-            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">
-              Sin permiso
-            </span>
-          )}
-        </div>
-      </div>
-
-      <AnimatePresence initial={false}>
-        {isOpen && (
-          <motion.div
-            key="body"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.22, ease: "easeInOut" }}
-            style={{ overflow: "hidden" }}
-          >
-            <div className="border-t border-gray-100 dark:border-white/[0.06]">
-              {pending.scopeKind === "pick" ? (
-                <p className="px-5 py-3 text-xs text-gray-500 dark:text-gray-400">
-                  Esta plantilla es de selección libre. Pulsa <strong className="font-semibold text-gray-700 dark:text-gray-300">Realizar</strong> para elegir el activo.
-                </p>
-              ) : (
-                <ul className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                  {pending.pendingItems.map((it) => (
-                    <li key={it.assetId} className="flex items-center justify-between gap-2 px-5 py-2.5">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gray-100 dark:bg-white/[0.06]">
-                          <Car size={12} className="text-gray-400" />
-                        </div>
-                        <span className="truncate text-xs text-gray-700 dark:text-gray-300">{it.assetLabel}</span>
-                      </div>
-                      <span className={`sm:hidden inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                        urgent
-                          ? "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
-                          : "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
-                      }`}>
-                        <CalendarClock size={9} />
-                        {daysLeft > 0 ? `${daysLeft}d` : `${hoursLeft}h`}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+    <CollapsibleGroup
+      id={pending.categoryId}
+      isOpen={isOpen}
+      onToggle={onToggle}
+      tone="gray"
+      header={{
+        left: (
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-bold text-gray-800 dark:text-white truncate">
+                {pending.categoryName}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-bold text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300">
+                {itemCount} {itemCount === 1 ? "pendiente" : "pendientes"}
+              </span>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              {pending.scopeLabel} · {pending.cycleLabel}
+            </p>
+          </div>
+        ),
+        right: (
+          <>
+            <span className={`hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${
+              urgent
+                ? "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+                : "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+            }`}>
+              <CalendarClock size={11} />
+              {daysLeft > 0 ? `${daysLeft}d ${hoursLeft}h` : `${hoursLeft}h`}
+            </span>
+            {canExecute ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onStart(); }}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-500 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-cyan-600 active:scale-95"
+              >
+                Realizar <ChevronRight size={12} />
+              </button>
+            ) : (
+              <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+                Sin permiso
+              </span>
+            )}
+          </>
+        ),
+      }}
+    >
+      {pending.scopeKind === "pick" ? (
+        <p className="px-5 py-3 text-xs text-gray-500 dark:text-gray-400">
+          Esta plantilla es de selección libre. Pulsa <strong className="font-semibold text-gray-700 dark:text-gray-300">Realizar</strong> para elegir el activo.
+        </p>
+      ) : (
+        <ul className="divide-y divide-gray-100 dark:divide-white/[0.04]">
+          {pending.pendingItems.map((it) => (
+            <li key={it.assetId} className="flex items-center justify-between gap-2 px-5 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gray-100 dark:bg-white/[0.06]">
+                  <Car size={12} className="text-gray-400" />
+                </div>
+                <span className="truncate text-xs text-gray-700 dark:text-gray-300">{it.assetLabel}</span>
+              </div>
+              <span className={`sm:hidden inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                urgent
+                  ? "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+                  : "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+              }`}>
+                <CalendarClock size={9} />
+                {daysLeft > 0 ? `${daysLeft}d` : `${hoursLeft}h`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </CollapsibleGroup>
   );
 }
 
@@ -534,7 +545,33 @@ function VencidosSection({
   }, [rows]);
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // IDs que el usuario ha toggleado explícitamente (abrir o cerrar). Los
+  // respetamos aunque el set de grupos cambie. Para los IDs nuevos (que
+  // el usuario no ha tocado), los defaulteamos a colapsados.
+  const userToggled = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    setCollapsed((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const [catId] of groups) {
+        if (!userToggled.current.has(catId) && !next.has(catId)) {
+          next.add(catId);
+          changed = true;
+        }
+      }
+      // Limpieza: si un catId ya no existe en `groups` y nunca fue
+      // togglado, lo sacamos para no mantener basura.
+      for (const id of Array.from(next)) {
+        if (!groups.some(([cid]) => cid === id) && !userToggled.current.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [groups]);
   function toggle(catId: string) {
+    userToggled.current.add(catId);
     setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(catId)) next.delete(catId);
@@ -582,70 +619,48 @@ function VencidosSection({
           }
 
           return (
-            <div
+            <CollapsibleGroup
               key={catId}
-              className="overflow-hidden rounded-2xl border border-rose-200 bg-white dark:border-rose-500/20 dark:bg-white/[0.03]"
-            >
-              {/* Header carpeta */}
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => toggle(catId)}
-                onKeyDown={(e) => e.key === "Enter" && toggle(catId)}
-                className="flex w-full items-center gap-3 px-4 py-3.5 cursor-pointer transition hover:bg-rose-50/40 dark:hover:bg-rose-500/[0.04]"
-              >
-                <motion.div
-                  animate={{ rotate: isOpen ? 0 : -90 }}
-                  transition={{ duration: 0.18, ease: "easeInOut" }}
-                  className="shrink-0 text-rose-400"
-                >
-                  <ChevronDown size={15} />
-                </motion.div>
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-rose-500 dark:bg-rose-500/10 dark:text-rose-400">
-                  <AlertTriangle size={14} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-bold text-gray-800 dark:text-white truncate">
-                      {group.categoryName}
-                    </span>
-                    <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">
-                      {group.rows.length} atrasados
-                    </span>
-                  </div>
-                  <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                    Ciclo {group.cycleLabel}
-                  </p>
-                </div>
-              </div>
-
-              {/* Items colapsables */}
-              <AnimatePresence initial={false}>
-                {isOpen && (
-                  <motion.div
-                    key="items"
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.2, ease: "easeInOut" }}
-                    style={{ overflow: "hidden" }}
-                  >
-                    <div className="divide-y divide-rose-100 border-t border-rose-100 dark:divide-rose-500/10 dark:border-rose-500/10">
-                      {group.rows.map((row) => (
-                        <VencidoRowItem
-                          key={row.key}
-                          row={row}
-                          canExecute={canExecute}
-                          compact
-                          onAskReauth={() => onAskReauth(row)}
-                          onResumeReauth={() => onResumeReauth(row)}
-                        />
-                      ))}
+              id={catId}
+              isOpen={isOpen}
+              onToggle={() => toggle(catId)}
+              tone="rose"
+              header={{
+                left: (
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-rose-500 dark:bg-rose-500/10 dark:text-rose-400">
+                      <AlertTriangle size={14} />
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-bold text-gray-800 dark:text-white truncate">
+                          {group.categoryName}
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">
+                          {group.rows.length} atrasados
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+                        Ciclo {group.cycleLabel}
+                      </p>
+                    </div>
+                  </div>
+                ),
+              }}
+            >
+              <div className="divide-y divide-rose-100 dark:divide-rose-500/10">
+                {group.rows.map((row) => (
+                  <VencidoRowItem
+                    key={row.key}
+                    row={row}
+                    canExecute={canExecute}
+                    compact
+                    onAskReauth={() => onAskReauth(row)}
+                    onResumeReauth={() => onResumeReauth(row)}
+                  />
+                ))}
+              </div>
+            </CollapsibleGroup>
           );
         })}
       </div>
@@ -701,7 +716,12 @@ function VencidoRowItem({
             <Hourglass size={11} /> Esperando aprobación
           </span>
         )}
-        {r && r.status === "Autorizada" && canExecute && (
+        {r && r.status === "Autorizada" && r.completedChecklistId && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+            <CheckCircle2 size={11} /> Completada
+          </span>
+        )}
+        {r && r.status === "Autorizada" && !r.completedChecklistId && canExecute && (
           <button
             type="button"
             onClick={onResumeReauth}
@@ -709,6 +729,11 @@ function VencidoRowItem({
           >
             Realizar ahora <ChevronRight size={11} />
           </button>
+        )}
+        {r && r.status === "Autorizada" && !r.completedChecklistId && !canExecute && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+            <CheckCircle2 size={11} /> Aprobada
+          </span>
         )}
         {r && r.status === "Autorizada" && !canExecute && (
           <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">

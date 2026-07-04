@@ -5,11 +5,12 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
-import { useSites } from "@/hooks/useSites";
+import { useUsersFormOptions } from "@/hooks/useFormOptions";
 import { useCompanyUsers, uploadUserPhoto, type CompanyUser, type CreateCompanyUserInput, type UpdateCompanyUserInput } from "@/hooks/useCompanyUsers";
 import { useCompanyRoles } from "@/hooks/useCompanyRoles";
 import type { PlatformRole } from "@/types/platform";
 import { MODULE_TREE, countModulesWithAccess, type ActionKey, type PermissionMap } from "@/lib/module-tree";
+import { isBypassRole, hasAnyPermission } from "@/lib/permissions";
 import { PermissionEditor } from "@/components/users/PermissionEditor";
 import { RowActionMenu } from "@/components/ui/table/RowActionMenu";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -112,11 +113,12 @@ const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionMap> = {
       sedes:         ["ver"],
       garajes:       ["ver"],
       asignaciones:  ["ver"],
-      seguros:       ["ver"],
       talleres:      ["ver"],
       proveedores:   ["ver"],
     },
-    motores:       { lista_motores: ["ver"], historial_motor: ["ver"] },
+    // Jun 2026 — `seguros` migró de submódulo de gestion a módulo
+    // top-level (alineado con `requireModule('seguros')` en insurance.ts).
+    seguros:       { polizas: ["ver"] },
     mantenimiento: { agenda: ["ver"], execution: ["ver", "crear", "editar"], records: ["ver"] },
     combustible:   { combustible: ["ver", "crear", "editar"] },
     peajes:        { peajes: ["ver", "crear", "editar"] },
@@ -340,15 +342,22 @@ function pruneEmptyPermissions(perms: PermissionMap): PermissionMap {
   return result;
 }
 
-function formToCreateInput(form: UserFormState): CreateCompanyUserInput {
+function formToCreateInput(form: UserFormState, options?: { restrictRoleToConductor?: boolean }): CreateCompanyUserInput {
   const isConductor = form.role === "conductor";
+  // Defensa en profundidad: si el caller NO puede asignar permisos
+  // manualmente, mandamos los defaults del rol 'conductor' en el body.
+  // El backend los validará/overrride de todos modos (resolveModule…),
+  // pero así evitamos enviar un {} vacío o permisos manipulados.
+  const modulePermissions = options?.restrictRoleToConductor
+    ? ROLE_DEFAULT_PERMISSIONS.conductor
+    : pruneEmptyPermissions(form.permissions);
   return {
     email:    form.email.trim().toLowerCase(),
     username: form.username.trim().toLowerCase(),
     password: form.password,
     role:     form.role,
     status:   form.status,
-    modulePermissions: pruneEmptyPermissions(form.permissions),
+    modulePermissions,
     profileData: {
       // fullName se conserva por compatibilidad (algunos lugares lo muestran
       // directo), pero ahora también mandamos firstName / lastName por
@@ -374,14 +383,17 @@ function formToCreateInput(form: UserFormState): CreateCompanyUserInput {
   };
 }
 
-function formToUpdateInput(form: UserFormState): UpdateCompanyUserInput {
+function formToUpdateInput(form: UserFormState, options?: { restrictRoleToConductor?: boolean }): UpdateCompanyUserInput {
   const isConductor = form.role === "conductor";
+  const modulePermissions = options?.restrictRoleToConductor
+    ? ROLE_DEFAULT_PERMISSIONS.conductor
+    : pruneEmptyPermissions(form.permissions);
   const input: UpdateCompanyUserInput = {
     email:    form.email.trim().toLowerCase(),
     username: form.username.trim().toLowerCase(),
     role:     form.role,
     status:   form.status,
-    modulePermissions: pruneEmptyPermissions(form.permissions),
+    modulePermissions,
     profileData: {
       fullName:       `${form.fullName.trim()} ${form.lastName.trim()}`.trim(),
       firstName:      form.fullName.trim(),
@@ -652,6 +664,7 @@ function UserFormModal({
   companyRoles,
   originalPermissions,
   initialRole,
+  restrictRoleToConductor,
   onClose,
   onCreate,
   onUpdate,
@@ -673,11 +686,30 @@ function UserFormModal({
    * /operaciones/conductores redirige acá). En modo edición se ignora.
    */
   initialRole?: PlatformRole;
+  /**
+   * true si el caller (UsersPage) determinó que este usuario SOLO puede
+   * crear usuarios con role="conductor" — es decir, no es admin, no tiene
+   * `accesos.accesos.crear`, pero sí tiene `gestion.conductores.crear`.
+   * En ese caso el `<select>` de rol se bloquea a "conductor" únicamente,
+   * en paridad con la validación que hace el backend en POST /company/:id/users.
+   *
+   * Se calcula UNA SOLA VEZ en el padre (UsersPage) y se pasa ya resuelto
+   * como booleano — antes este componente intentaba recalcularlo leyendo
+   * `isAdminRole` y `accesosActions`, que son variables del scope de
+   * UsersPage y no existen acá, causando un ReferenceError en tiempo de
+   * ejecución cada vez que se abría el modal para un usuario con permiso
+   * de "solo conductores".
+   */
+  restrictRoleToConductor: boolean;
   onClose: () => void;
   onCreate: (input: CreateCompanyUserInput) => Promise<void>;
   onUpdate: (id: string, input: UpdateCompanyUserInput) => Promise<void>;
 }) {
   const { session } = useAuth();
+  // Solo admin_empresa/owner_empresa pueden cambiar la foto de un usuario
+  // (propio o ajeno). Coincide con el chequeo de rol en el backend
+  // (PUT /company/:id/users/:userId).
+  const canEditPhoto = session?.role === "admin_empresa" || session?.role === "owner_empresa";
   const [form, setForm]         = useState<UserFormState>(() => createEmptyForm(
     siteOptions[0]?.name ?? "",
     siteOptions[0]?.id ?? "",
@@ -735,10 +767,10 @@ function UserFormModal({
     setSaving(true);
     try {
       if (user) {
-        await onUpdate(user.id, formToUpdateInput(form));
+        await onUpdate(user.id, formToUpdateInput(form, { restrictRoleToConductor }));
         toast.success("Usuario actualizado");
       } else {
-        await onCreate(formToCreateInput(form));
+        await onCreate(formToCreateInput(form, { restrictRoleToConductor }));
         toast.success("Usuario creado", { description: "El colaborador ya tiene acceso al sistema." });
       }
       onClose();
@@ -803,51 +835,52 @@ function UserFormModal({
                 <div className="overflow-y-auto px-4 py-5 sm:px-6 space-y-5">
 
                   {/* Foto */}
-                  <div>
-                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Foto</p>
-                    <div className="flex items-center gap-4">
-                      <div className="h-20 w-20 overflow-hidden rounded-2xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.05]">
-                        {form.photoUrl ? (
-                          /* eslint-disable-next-line @next/next/no-img-element */
-                          <img src={form.photoUrl} alt="Foto" className="h-full w-full object-cover" />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">Sin foto</div>
+                  {canEditPhoto && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Foto</p>
+                      <div className="flex items-center gap-4">
+                        <div className="h-20 w-20 overflow-hidden rounded-2xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.05]">
+                          {form.photoUrl ? (
+                            <img src={form.photoUrl} alt="Foto" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">Sin foto</div>
+                          )}
+                        </div>
+                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3.5 py-2.5 text-sm font-semibold text-gray-600 transition hover:border-brand-400 hover:text-brand-600 dark:border-white/[0.12] dark:bg-white/[0.04] dark:text-gray-300">
+                          Subir foto
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setSaving(true);
+                              try {
+                                const url = await uploadUserPhoto(file, session?.companyId ?? 0);
+                                setForm((prev) => ({ ...prev, photoUrl: url }));
+                                toast.success("Foto subida");
+                              } catch (err) {
+                                toast.error(err instanceof Error ? err.message : "Error al subir");
+                              } finally {
+                                setSaving(false);
+                                e.target.value = "";
+                              }
+                            }}
+                          />
+                        </label>
+                        {form.photoUrl && (
+                          <button
+                            type="button"
+                            onClick={() => setForm((prev) => ({ ...prev, photoUrl: null }))}
+                            className="text-xs font-semibold text-gray-500 hover:text-rose-500"
+                          >
+                            Quitar
+                          </button>
                         )}
                       </div>
-                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3.5 py-2.5 text-sm font-semibold text-gray-600 transition hover:border-brand-400 hover:text-brand-600 dark:border-white/[0.12] dark:bg-white/[0.04] dark:text-gray-300">
-                        Subir foto
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            setSaving(true);
-                            try {
-                              const url = await uploadUserPhoto(file, session?.companyId ?? 0);
-                              setForm((prev) => ({ ...prev, photoUrl: url }));
-                              toast.success("Foto subida");
-                            } catch (err) {
-                              toast.error(err instanceof Error ? err.message : "Error al subir");
-                            } finally {
-                              setSaving(false);
-                              e.target.value = "";
-                            }
-                          }}
-                        />
-                      </label>
-                      {form.photoUrl && (
-                        <button
-                          type="button"
-                          onClick={() => setForm((prev) => ({ ...prev, photoUrl: null }))}
-                          className="text-xs font-semibold text-gray-500 hover:text-rose-500"
-                        >
-                          Quitar
-                        </button>
-                      )}
                     </div>
-                  </div>
+                  )}
 
                   {/* Datos personales */}
                   <div>
@@ -899,9 +932,25 @@ function UserFormModal({
                           onChange={(e) => set("area", e.target.value)} />
                       </FormField>
                       <FormField label="Rol *" error={errors.role}>
-                        <select className={inputCls} value={form.role} onChange={(e) => set("role", e.target.value)}>
-                          {roleOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-                        </select>
+                        {restrictRoleToConductor ? (
+                          // Caller que NO es admin/owner/superadmin: solo puede
+                          // crear usuarios con role="conductor" (regla aplicada
+                          // también en el backend — resolveUsersScope devuelve
+                          // 'conductor' y POST /users rechaza body.role distinto
+                          // con 403). Mostramos un input plano, sin flecha de
+                          // dropdown, para que sea claro que NO hay elección.
+                          <input
+                            type="text"
+                            className={inputCls + " cursor-not-allowed bg-gray-50 dark:bg-white/[0.02]"}
+                            value="Conductor"
+                            readOnly
+                            aria-readonly="true"
+                          />
+                        ) : (
+                          <select className={inputCls} value={form.role} onChange={(e) => set("role", e.target.value)}>
+                            {roleOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+                          </select>
+                        )}
                       </FormField>
                       <FormField label="Estado">
                         <select className={inputCls} value={form.status} onChange={(e) => set("status", e.target.value)}>
@@ -954,7 +1003,7 @@ function UserFormModal({
                             max={30}
                             className={inputCls}
                             placeholder="30"
-                            value={form.licensePoints}
+                            value={form.licensePoints === 0 ? "" : form.licensePoints}
                             onChange={(e) => {
                               // Forzar 0..30, default 0 si vacío o NaN.
                               const n = Number(e.target.value);
@@ -990,17 +1039,27 @@ function UserFormModal({
                     </div>
                   </div>
 
-                  {/* Permisos */}
-                  <div>
-                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Permisos por módulo</p>
-                    <PermissionEditor
-                      permissions={form.permissions}
-                      onChange={(next) => setForm((prev) => ({ ...prev, permissions: next }))}
-                      defaultPermissions={getDefaultPermissionsForRole(form.role, companyRoles)}
-                      readOnlyWithFullAccess={form.role === "owner_empresa" || form.role === "admin_empresa"}
-                      originalPermissions={user ? originalPermissions : undefined}
-                    />
-                  </div>
+                  {/* Permisos — solo visible para admins. El operador (no admin)
+                      no elige permisos: los del rol 'conductor' los define el
+                      backend y se asignan automáticamente al crear/editar. */}
+                  {!restrictRoleToConductor && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Permisos por módulo</p>
+                      <PermissionEditor
+                        permissions={form.permissions}
+                        onChange={(next) => setForm((prev) => ({ ...prev, permissions: next }))}
+                        defaultPermissions={getDefaultPermissionsForRole(form.role, companyRoles)}
+                        // El editor de permisos granulares es readonly cuando
+                        // el target es admin/owner/superadmin: el caller NO
+                        // debería poder modificar permisos de un admin (ni
+                        // siquiera siendo admin, para evitar autoescalación).
+                        // Para roles "no-admin" (operador/supervisor/etc.),
+                        // el editor sí está activo.
+                        readOnlyWithFullAccess={isBypassRole(form.role)}
+                        originalPermissions={user ? originalPermissions : undefined}
+                      />
+                    </div>
+                  )}
 
                   {/* Notas */}
                   <FormField label="Observaciones">
@@ -1034,27 +1093,71 @@ function UserFormModal({
 
 export function UsersPage() {
   const { session } = useAuth();
-  const { sites } = useSites();
+  // Antes usábamos `useSites()` que pega al endpoint /sites (requiere
+  // `gestion/sedes.ver`). Un usuario con permiso de Accesos/Usuarios pero
+  // SIN permiso de Sedes no podía abrir el modal — el `useSites` fallaba
+  // con 403. Ahora usamos `useUsersFormOptions()` que es el endpoint
+  // propio del módulo de Usuarios (sin requerir permiso extra).
+  const { data: formOptions } = useUsersFormOptions();
+  const allSites = formOptions?.sites ?? [];
   const { users, loading, createUser, updateUser, deleteUser } = useCompanyUsers();
+  // `users` ya viene paginado del backend con pageSize=100 (suficiente para
+  // la lista típica de usuarios de una empresa). Los filtros display-only
+  // (rol, status, búsqueda por texto) siguen siendo locales.
   const { roles: companyRoles } = useCompanyRoles();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // ── Permisos de gestión ──────────────────────────────────────────────────
-  // owner_empresa / admin_empresa: acceso total (bypass), igual que en el
-  // resto de la app.
+  // superadmin / owner_empresa / admin_empresa: acceso total (bypass),
+  // igual que en el resto de la app (ver lib/permissions.ts →
+  // isBypassRole).
   // Cualquier otro rol (supervisor, operador, conductor, custom): depende
-  // del permiso granular `accesos.accesos` en su JWT/modulePermissions —
-  // el mismo submódulo que gatea si la página es visible en el sidebar
-  // (ver access-control.ts). Antes esto estaba hardcodeado a solo
-  // owner/admin, lo que bloqueaba a cualquier rol con permiso de crear/
-  // editar/eliminar asignado explícitamente desde el editor de roles.
-  const isAdminRole = ["owner_empresa", "admin_empresa"].includes(session?.role ?? "");
+  // de los permisos granulares `accesos.usuarios.*` (legacy
+  // `accesos.accesos.*`) Y `gestion.conductores.*`. Un operador con
+  // `gestion.conductores.crear/editar/eliminar` puede gestionar
+  // SOLO conductores — el backend filtra el listado y valida el target
+  // (ver apps/backend/src/routes/company/user.ts).
+  const isAdminRole = isBypassRole(session?.role);
+  // Permisos granulares. Soportamos ambos paths porque `accesos.usuarios`
+  // y `gestion.conductores` son entradas distintas del mismo flujo:
+  //   - `accesos.usuarios` = admin gestiona usuarios (cualquier rol)
+  //   - `gestion.conductores` = operador gestiona conductores
+  // El backend usa requirePermissionAny que acepta cualquiera de los dos.
   const accesosActions: string[] =
+    (session as any)?.modulePermissions?.accesos?.usuarios ?? [];
+  const accesosLegacyActions: string[] =
     (session as any)?.modulePermissions?.accesos?.accesos ?? [];
-  const canCreate = isAdminRole || accesosActions.includes("crear");
-  const canEdit   = isAdminRole || accesosActions.includes("editar");
-  const canDeleteUsers = isAdminRole || accesosActions.includes("eliminar");
+  const conductoresActions: string[] =
+    (session as any)?.modulePermissions?.gestion?.conductores ?? [];
+  // Permiso granular para crear SOLO conductores (sin acceso completo al módulo
+  // de accesos). Un usuario con este permiso entra al flujo de "Nuevo conductor"
+  // y solo puede crear usuarios con role="conductor" — el backend ya valida
+  // esa restricción en POST /company/:id/users.
+  const canCreateConductoresOnly = conductoresActions.includes("crear") && !isAdminRole;
+  // canCreate: admin → sí. Si no, necesita 'crear' en accesos (path
+  // nuevo o legacy) o `gestion.conductores.crear` (operador scope
+  // 'conductor' que solo gestiona conductores).
+  const canCreate = isAdminRole
+    || accesosActions.includes("crear")
+    || accesosLegacyActions.includes("crear")
+    || canCreateConductoresOnly;
+  // canEdit / canDelete: además de los accesos granulares, también
+  // aceptamos `gestion.conductores.{editar,eliminar}` (operador scope
+  // 'conductor' que quiere editar/eliminar un conductor).
+  const canEdit   = isAdminRole
+    || accesosActions.includes("editar")
+    || accesosLegacyActions.includes("editar")
+    || conductoresActions.includes("editar");
+  const canDeleteUsers = isAdminRole
+    || accesosActions.includes("eliminar")
+    || accesosLegacyActions.includes("eliminar")
+    || conductoresActions.includes("eliminar");
   const canManage = canCreate || canEdit || canDeleteUsers;
+  // restrictRoleToConductor: si el caller NO es admin/owner/superadmin,
+  // el único role que puede asignar al crear es 'conductor'. Esto
+  // coincide con el backend (resolveUsersScope devuelve 'conductor'
+  // para todo no-admin, y POST /users rechaza body.role distinto).
+  const restrictRoleToConductor = !isAdminRole;
 
   // ── Apertura por deep link ────────────────────────────────────────────────
   // Si el admin llega con `?rol=conductor&nuevo=1` (caso típico: el botón
@@ -1119,8 +1222,8 @@ export function UsersPage() {
   const [originalPermissionsSnapshot, setOriginalPermissionsSnapshot] = useState<PermissionMap | undefined>(undefined);
 
   const activeSites = useMemo(
-    () => sites.filter((s) => s.status === "Activa").map((s) => ({ id: s.id, name: s.name })),
-    [sites]
+    () => allSites.filter((s) => s.status === "Activa").map((s) => ({ id: s.id, name: s.name })),
+    [allSites]
   );
 
   const filtered = useMemo(() => {
@@ -1315,9 +1418,9 @@ export function UsersPage() {
                             <RoleBadge role={u.role} />
                           </td>
                             <td className="px-5 py-3.5">
-                                {["owner_empresa", "admin_empresa"].includes(u.role) ? (
+                                {isBypassRole(u.role) ? (
                                   <span className="inline-flex items-center rounded-full bg-purple-50 dark:bg-purple-500/10 px-2 py-0.5 text-xs font-medium text-purple-700 dark:text-purple-400">
-                                    Acceso trotal
+                                    Acceso total
                                   </span>
                                 ) : (
                                   <>
@@ -1404,7 +1507,12 @@ export function UsersPage() {
         roleOptions={roleOptions}
         companyRoles={companyRoles as Array<{ key: string; permissions: PermissionMap }>}
         originalPermissions={originalPermissionsSnapshot}
-        initialRole={editingUser ? undefined : deepLinkInitialRole}
+        restrictRoleToConductor={restrictRoleToConductor}
+        initialRole={
+          editingUser
+            ? undefined
+            : (restrictRoleToConductor ? "conductor" : deepLinkInitialRole)
+        }
         onClose={() => setModalOpen(false)}
         onCreate={async (input) => { await createUser(input); }}
         onUpdate={async (id, input) => { await updateUser(id, input); }}

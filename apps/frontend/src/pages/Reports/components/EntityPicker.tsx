@@ -14,8 +14,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, X, Check, Car, User } from "lucide-react";
-import { useAssets } from "../../../hooks/useAssets";
-import { useDrivers } from "../../../hooks/useDrivers";
+import { useReportsFormOptions } from "../../../hooks/useFormOptions";
 
 export type EntityKind = "asset" | "driver";
 
@@ -53,9 +52,10 @@ export function EntityPicker({
   onChange: (ids: number[]) => void;
   className?: string;
 }) {
-  const { assets, loading: loadingAssets } = useAssets();
-  const { drivers, loading: loadingDrivers } = useDrivers();
-  const loading = kind === "asset" ? loadingAssets : loadingDrivers;
+  const { data: formOptions } = useReportsFormOptions();
+  const assets = formOptions?.assets ?? [];
+  const drivers = formOptions?.drivers ?? [];
+  const loading = !formOptions;
 
   // Normalizamos a un shape común.
   const items = useMemo<Array<{ id: number; label: string; sub: string | null }>>(() => {

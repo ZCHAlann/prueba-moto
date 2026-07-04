@@ -10,6 +10,7 @@ import { db } from '../../db/client';
 import {
   companyMaintenanceRecords,
   companyMaintenanceItems,
+  companyMaintenanceReauthorizations,
   companyWorkshops,
   companySuppliers,
   companyAssets,
@@ -242,6 +243,89 @@ router.get(
         total: items.length,
         totalCost: items.reduce((acc, r) => acc + Number(r.i.subtotal), 0),
         range: { from: from?.toISOString() ?? null, to: to?.toISOString() ?? null },
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── GET /company/:id/reports/maintenance/reauthorizations.json ───────────────
+// Jun 2026 — Reporte de reautorizaciones de mantenimiento. Alimenta la pantalla
+// /reportes/reautorizaciones. Caller necesita permiso `mantenimiento.records.ver`
+// o `mantenimiento.reautorizaciones.editar` (los aprobadores).
+router.get(
+  '/maintenance/reauthorizations.json',
+  requireModule('mantenimiento'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const status = (req.query.status as string | undefined) ?? 'all';
+      const from   = (req.query.from   as string | undefined) ?? null;
+      const to     = (req.query.to     as string | undefined) ?? null;
+      const meId   = Number(req.user!.sub.split('-')[1] ?? '0') || null;
+      const meRole = req.user!.role ?? '';
+
+      const conds: any[] = [eq(companyMaintenanceReauthorizations.companyId, companyId)];
+
+      if (status !== 'all') {
+        conds.push(eq(companyMaintenanceReauthorizations.status, status as any));
+      }
+      if (from) conds.push(gte(companyMaintenanceReauthorizations.createdAt, new Date(from)));
+      if (to)   conds.push(lte(companyMaintenanceReauthorizations.createdAt, new Date(to)));
+
+      // No-aprobadores solo ven sus propias solicitudes. owner_empresa /
+      // admin_empresa / superadmin pasan por bypass en requirePermission (que
+      // en realidad no usamos acá — `requireModule('mantenimiento')` solo
+      // exige el módulo. El gate fino se hace acá.).
+      const isApprover =
+        meRole === 'superadmin' ||
+        meRole === 'owner_empresa' ||
+        meRole === 'admin_empresa';
+      if (!isApprover && meId != null) {
+        conds.push(eq(companyMaintenanceReauthorizations.requestedByUserId, meId));
+      }
+
+      const rows = await db
+        .select({
+          r:  companyMaintenanceReauthorizations,
+          assetName:  companyAssets.name,
+          assetPlate: companyAssets.plate,
+        })
+        .from(companyMaintenanceReauthorizations)
+        .leftJoin(
+          companyMaintenanceRecords,
+          eq(companyMaintenanceRecords.id, companyMaintenanceReauthorizations.maintenanceId),
+        )
+        .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
+        .where(and(...conds))
+        .orderBy(desc(companyMaintenanceReauthorizations.createdAt))
+        .limit(1000);
+
+      res.json({
+        data: rows.map((row) => ({
+          id:                       toId('reauth', row.r.id),
+          maintenanceId:            toId('maintenance', row.r.maintenanceId),
+          assetName:                row.assetName ?? null,
+          assetPlate:               row.assetPlate ?? null,
+          action:                   row.r.action,
+          status:                   row.r.status,
+          reason:                   row.r.reason,
+          requestedByUserId:        row.r.requestedByUserId ? toId('company-user', row.r.requestedByUserId) : null,
+          requestedByName:          row.r.requestedByName ?? null,
+          requestedByRole:          row.r.requestedByRole ?? null,
+          decidedByUserId:          row.r.decidedByUserId ? toId('company-user', row.r.decidedByUserId) : null,
+          decidedByName:            row.r.decidedByName ?? null,
+          decisionNotes:            row.r.decisionNotes ?? null,
+          decidedAt:                row.r.decidedAt ? row.r.decidedAt.toISOString() : null,
+          maintenanceScheduledFor:  row.r.maintenanceScheduledFor.toISOString(),
+          proposedScheduledFor:     row.r.proposedScheduledFor ? row.r.proposedScheduledFor.toISOString() : null,
+          appliedScheduledFor:      row.r.appliedScheduledFor ? row.r.appliedScheduledFor.toISOString() : null,
+          createdAt:                row.r.createdAt.toISOString(),
+        })),
+        total: rows.length,
+        range: { from, to },
+        filter: { status },
       });
     } catch (err) {
       next(err);

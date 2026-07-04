@@ -110,8 +110,6 @@ export function useChecklistReauth() {
     }
   }, [companyId]);
 
-  useEffect(() => { void fetchRequests(); }, [fetchRequests]);
-
   const createRequest = useCallback(
     async (input: { missedChecklistId: string; reason: string }) => {
       if (!companyId) throw new Error("companyId requerido");

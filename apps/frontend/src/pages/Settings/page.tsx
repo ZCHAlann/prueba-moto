@@ -5,9 +5,7 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { useSettings } from "@/hooks/useSettings";
-import { useSites } from "@/hooks/useSites";
-import { useAssets } from "@/hooks/useAssets";
-import { useDrivers } from "@/hooks/useDrivers";
+import { useSettingsFormOptions } from "../../hooks/useFormOptions";
 import type { CompanySettings } from "@/types/fleet";
 
 // ─── Iconos inline ────────────────────────────────────────────────────────────
@@ -252,9 +250,10 @@ export function SettingsPage() {
   const { session } = useAuth();
 
   const { settings, loading: loadingSettings, updateSettings } = useSettings();
-  const { sites }   = useSites();
-  const { assets }  = useAssets();
-  const { drivers } = useDrivers();
+  const { data: settingsOptions } = useSettingsFormOptions();
+  const sitesCount   = settingsOptions?.sitesCount   ?? 0;
+  const assetsCount  = settingsOptions?.assetsCount  ?? 0;
+  const driversCount = settingsOptions?.driversCount ?? 0;
 
   const [form, setForm]           = useState<CompanySettings | null>(null);
   const [savingOp,  setSavingOp]  = useState(false);
@@ -342,7 +341,7 @@ export function SettingsPage() {
         className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4"
       >
         <KpiCard label="Empresa activa" value={companyCode}                                           detail={companyName}                              tone="brand"   />
-        <KpiCard label="Sedes"          value={String(sites.length)}                                  detail="Catálogo de sedes"                        tone="success" />
+        <KpiCard label="Sedes"          value={String(sitesCount)}                                    detail="Catálogo de sedes"                        tone="success" />
         <KpiCard label="Lead time"      value={`${form.maintenanceLeadTimeDays}d`}                    detail="Días antes del mantenimiento"             tone="warning" />
         <KpiCard label="Checklist"      value={form.checklistRequired ? "Obligatorio" : "Opcional"}  detail="Requerido en operación"                   tone="danger"  />
       </motion.div>
@@ -362,8 +361,8 @@ export function SettingsPage() {
               <Field
                 label="Lead time mantenimiento (días)"
                 type="number"
-                value={String(form.maintenanceLeadTimeDays)}
-                onChange={(v) => setField("maintenanceLeadTimeDays", Number(v || 0))}
+                value={form.maintenanceLeadTimeDays === 0 ? "" : String(form.maintenanceLeadTimeDays)}
+                onChange={(v) => setField("maintenanceLeadTimeDays", v === "" ? 0 : Number(v))}
               />
               <Field
                 label="Moneda combustible"
@@ -407,9 +406,9 @@ export function SettingsPage() {
             {/* Stats grid */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {[
-                { label: "Sedes",       value: sites.length,   href: "/gestion/sedes" },
-                { label: "Activos",     value: assets.length,  href: "/flotas" },
-                { label: "Conductores", value: drivers.length, href: "/conductores" },
+                { label: "Sedes",       value: sitesCount,   href: "/gestion/sedes" },
+                { label: "Activos",     value: assetsCount,  href: "/flotas" },
+                { label: "Conductores", value: driversCount, href: "/conductores" },
               ].map((item) => (
                 <a
                   key={item.label}

@@ -9,7 +9,7 @@ import {
   PanelLeftClose, PanelLeftOpen, X, Clock, Wrench, Tag, Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useAssets } from "../../hooks/useAssets";
+import { useMaintenanceFormOptions } from "../../hooks/useFormOptions";
 import { useMaintenanceAgenda } from "../../hooks/useMaintenancesV2";
 import { useAuth } from "../../context/AuthContext";
 import { usePermissions } from "../../hooks/usePermissions";
@@ -383,7 +383,8 @@ export function MantenimientosAgendar() {
     return { from: toLocalDate(from), to: toLocalDate(to) };
   });
 
-  const { assets: assetsList = [] } = useAssets();
+  const { data: formOptions } = useMaintenanceFormOptions();
+  const assetsList = formOptions?.assets ?? [];
   const { data: agenda, isLoading } = useMaintenanceAgenda(viewRange);
 
   // ── Lookup por fecha ──────────────────────────────────────────────────────

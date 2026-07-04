@@ -5,20 +5,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, ChevronLeft, ChevronRight, Check, AlertTriangle, Car, User, Wrench, ArrowRight, ClipboardCheck, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../../../../context/AuthContext";
-import { useAssets, type Asset } from "../../../../hooks/useAssets";
+import { useChecklistFormOptions, type ChecklistOptionAsset } from "../../../../hooks/useFormOptions";
 import { useChecklistCategories, type ChecklistCategory } from "../../../../hooks/useChecklistCategories";
 import { useChecklists, type ChecklistInspectionItem, type ChecklistStatus } from "../../../../hooks/useChecklists";
 import IncorrectoModal from "./IncorrectoModal";
 
-type WizardAsset = {
-  id: string | number;
-  name?: string | null;
-  plate?: string | null;
-  code?: string | null;
-  brand?: string | null;
-  model?: string | null;
-  status?: string | null;
-};
+type WizardAsset = ChecklistOptionAsset;
 
 type Props = {
   open: boolean;
@@ -42,7 +34,8 @@ export default function ChecklistWizard({
   presetDriverId = null, reauthRequestId = null,
   restrictToAssetId = null,
 }: Props) {
-  const { assets: allAssets } = useAssets();
+  const { data: formOptions } = useChecklistFormOptions();
+  const allAssets: ChecklistOptionAsset[] = formOptions?.assets ?? [];
   const { categories } = useChecklistCategories();
   const { createChecklist } = useChecklists();
   const { session } = useAuth();
@@ -366,9 +359,9 @@ export default function ChecklistWizard({
 // ─── StepVehicle ─────────────────────────────────────────────────────────────
 
 function StepVehicle({ assets, selected, onSelect, isRestricted }: {
-  assets: Asset[];
+  assets: ChecklistOptionAsset[];
   selected: WizardAsset | null;
-  onSelect: (a: Asset) => void;
+  onSelect: (a: ChecklistOptionAsset) => void;
   isRestricted: boolean;
 }) {
   const [search, setSearch] = useState("");

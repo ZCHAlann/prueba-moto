@@ -2,6 +2,13 @@ import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import { useAssets } from "../../../hooks/useAssets";
+// TODO(audit-modulos): Garajes usa useAssets/useCompanyUsers para
+// filtrar assets por `garageId` y construir supervisorOptions.
+// Garaje no es un campo de companyAssets — el match con
+// `assets.find((a) => a.garageId === g.id)` solo tiene sentido acá.
+// El módulo Garajes debería tener su propio endpoint que devuelva
+// los assets ya con `garageId` resuelto, y los supervisors del
+// módulo. Pendiente.
 import { useGarages } from "../../../hooks/useGarages";
 import { useCompanyUsers } from "../../../hooks/useCompanyUsers";
 import { usePermissions } from "../../../hooks/usePermissions";

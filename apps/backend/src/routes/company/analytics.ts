@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { eq, and, gte, lte, desc, inArray } from 'drizzle-orm';
 import { db } from '../../db/client';
 import {
@@ -13,7 +13,6 @@ import {
   companySites,
   companyGarages,
   companyAssignments,
-  companyInventory,
   companyAcUnits,
   companyAcServices,
   companyOilChanges,
@@ -23,16 +22,16 @@ import { requireModule } from '../../middlewares/requireModule';
 
 const router = Router({ mergeParams: true });
 
-/* ── Helpers ─────────────────────────────────────────────────────────────── */
+/* â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
-/** "2024-03" → "Mar 2024" */
+/** "2024-03" â†’ "Mar 2024" */
 function monthLabel(yyyyMM: string): string {
   const [year, month] = yyyyMM.split('-');
   const d = new Date(Number(year), Number(month) - 1, 1);
   return d.toLocaleDateString('es-EC', { month: 'short', year: 'numeric' });
 }
 
-/** Date | string | null → "YYYY-MM" | null */
+/** Date | string | null â†’ "YYYY-MM" | null */
 function toYearMonth(d: Date | string | null | undefined): string | null {
   if (!d) return null;
   const date = typeof d === 'string' ? new Date(d) : d;
@@ -40,7 +39,7 @@ function toYearMonth(d: Date | string | null | undefined): string | null {
   return `${date.getFullYear()}-${mm}`;
 }
 
-/** Devuelve los últimos N meses como "YYYY-MM", ordenados asc */
+/** Devuelve los Ãºltimos N meses como "YYYY-MM", ordenados asc */
 function lastNMonths(n: number): string[] {
   const months: string[] = [];
   const now = new Date();
@@ -52,7 +51,7 @@ function lastNMonths(n: number): string[] {
   return months;
 }
 
-// ─── GET /company/:id/analytics/dashboard ────────────────────────────────────
+// â”€â”€â”€ GET /company/:id/analytics/dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.get('/dashboard', requireModule('dashboard'), async (req, res, next) => {
   try {
@@ -86,21 +85,21 @@ router.get('/dashboard', requireModule('dashboard'), async (req, res, next) => {
       db.select().from(companyAssignments).where(eq(companyAssignments.companyId, companyId)),
     ]);
 
-    /* ── KPIs ───────────────────────────────────────────────────────────── */
+    /* â”€â”€ KPIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     const totalAssets       = assetsRows.length;
     const operativeAssets   = assetsRows.filter(a => a.status === 'Operativo').length;
     const totalDrivers      = driversRows.length;
     const activeDrivers     = driversRows.filter(d => d.status === 'Activo').length;
     const openMaintenances  = maintenancesRows.filter(m => m.status !== 'Completado').length;
     const totalMaintenances = maintenancesRows.length;
-    const openAlerts        = alertsRows.filter(a => a.status === 'Abierta' || a.status === 'En revisión').length;
+    const openAlerts        = alertsRows.filter(a => a.status === 'Abierta' || a.status === 'En revisiÃ³n').length;
     const criticalAlerts    = alertsRows.filter(a => a.status === 'Abierta' && a.severity === 'Alta').length;
 const totalFuelGallons  = fuelRows.reduce((acc, f) => acc + Number(f.gallons), 0);
     const totalFuelCost     = fuelRows.filter(f => f.cost !== null).reduce((acc, f) => acc + Number(f.cost), 0);
     const activeAssignments = assignmentsRows.filter(a => a.status === 'Activa').length;
     const totalChecklists   = checklistsRows.length;
 
-    /* ── Charts ─────────────────────────────────────────────────────────── */
+    /* â”€â”€ Charts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     const months = lastNMonths(12);
 
     /* Combustible por mes (galones + costo) */
@@ -138,10 +137,10 @@ const totalFuelGallons  = fuelRows.reduce((acc, f) => acc + Number(f.gallons), 0
       }),
     };
 
-    /* Assets por categoría */
+    /* Assets por categorÃ­a */
     const byCategoryMap: Record<string, number> = {};
     for (const a of assetsRows) {
-      const cat = a.category ?? 'Sin categoría';
+      const cat = a.category ?? 'Sin categorÃ­a';
       byCategoryMap[cat] = (byCategoryMap[cat] ?? 0) + 1;
     }
     const assetsByCategory = Object.entries(byCategoryMap)
@@ -208,9 +207,9 @@ const totalFuelGallons  = fuelRows.reduce((acc, f) => acc + Number(f.gallons), 0
     const maintenancesByKind = Object.entries(byKindMap)
       .map(([name, value]) => ({ name, value }));
 
-    /* ── Fase 1: Vistas inteligentes basadas en relaciones ─────────────── */
+    /* â”€â”€ Fase 1: Vistas inteligentes basadas en relaciones â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
-    /* 1. Flota por sede (vehículos agrupados por site_id) */
+    /* 1. Flota por sede (vehÃ­culos agrupados por site_id) */
     const siteMap = new Map<number, { name: string; total: number; operative: number }>();
     for (const s of sitesRows) {
       siteMap.set(s.id, { name: s.name, total: 0, operative: 0 });
@@ -249,7 +248,7 @@ const totalFuelGallons  = fuelRows.reduce((acc, f) => acc + Number(f.gallons), 0
       .map(([id, g]) => ({ id, name: g.name, total: g.total, capacity: g.capacity }))
       .sort((a, b) => b.total - a.total);
 
-    /* 4. Ocupación de garajes (% usado vs capacidad) */
+    /* 4. OcupaciÃ³n de garajes (% usado vs capacidad) */
     const ocupacionGarajes = flotaPorGaraje
       .filter(g => g.capacity > 0)
       .map(g => ({
@@ -260,11 +259,11 @@ const totalFuelGallons  = fuelRows.reduce((acc, f) => acc + Number(f.gallons), 0
       }))
       .sort((a, b) => b.occupancy - a.occupancy);
 
-    /* 5. Consumo de combustible por vehículo (top 10) */
+    /* 5. Consumo de combustible por vehÃ­culo (top 10) */
     const consumoByAsset = new Map<number, { gallons: number; cost: number; plate: string; name: string }>();
     for (const f of fuelRows) {
       const a = assetsRows.find(x => x.id === f.assetId);
-      const entry = consumoByAsset.get(f.assetId) ?? { gallons: 0, cost: 0, plate: a?.plate ?? '—', name: a?.name ?? '—' };
+      const entry = consumoByAsset.get(f.assetId) ?? { gallons: 0, cost: 0, plate: a?.plate ?? 'â€”', name: a?.name ?? 'â€”' };
       entry.gallons += Number(f.gallons);
       entry.cost    += f.cost ? Number(f.cost) : 0;
       consumoByAsset.set(f.assetId, entry);
@@ -274,12 +273,12 @@ const totalFuelGallons  = fuelRows.reduce((acc, f) => acc + Number(f.gallons), 0
       .sort((a, b) => b.gallons - a.gallons)
       .slice(0, 10);
 
-    /* 6. Costo de combustible por vehículo (top 10) */
+    /* 6. Costo de combustible por vehÃ­culo (top 10) */
     const costoPorVehiculo = [...consumoPorVehiculo]
       .sort((a, b) => b.cost - a.cost)
       .slice(0, 10);
 
-    /* ── Recent activity (desde audit) ──────────────────────────────────── */
+    /* â”€â”€ Recent activity (desde audit) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     const recentActivity = auditRows.map(e => ({
       id:          String(e.id),
       action:      e.action,
@@ -290,7 +289,7 @@ const totalFuelGallons  = fuelRows.reduce((acc, f) => acc + Number(f.gallons), 0
       at:          e.createdAt,
     }));
 
-    /* ── Response ────────────────────────────────────────────────────────── */
+    /* â”€â”€ Response â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     res.json({
       kpis: {
         totalAssets,
@@ -318,7 +317,7 @@ const totalFuelGallons  = fuelRows.reduce((acc, f) => acc + Number(f.gallons), 0
         maintenancesByKind,
       },
       // Fase 1: Vistas inteligentes del dashboard.
-      // Cada uno alimenta un submódulo del dashboard controlado por permisos.
+      // Cada uno alimenta un submÃ³dulo del dashboard controlado por permisos.
       intelligent: {
         flotaPorSede,
         kpisPorSede,
@@ -334,7 +333,7 @@ const totalFuelGallons  = fuelRows.reduce((acc, f) => acc + Number(f.gallons), 0
   }
 });
 
-// ─── GET /company/:id/analytics/fleet ─────────────────────────────────────────
+// â”€â”€â”€ GET /company/:id/analytics/fleet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.get('/fleet', requireModule('flotas'), async (req, res, next) => {
   try {
@@ -345,7 +344,7 @@ router.get('/fleet', requireModule('flotas'), async (req, res, next) => {
       .from(companyAssets)
       .where(eq(companyAssets.companyId, companyId));
 
-    // Distribución por tipo
+    // DistribuciÃ³n por tipo
     const byType: Record<string, number> = {};
     const byStatus: Record<string, number> = {};
     const byCategory: Record<string, number> = {};
@@ -353,13 +352,13 @@ router.get('/fleet', requireModule('flotas'), async (req, res, next) => {
     for (const a of assets) {
       const type = a.assetType ?? 'Sin tipo';
       const status = a.status ?? 'Sin estado';
-      const category = a.category ?? 'Sin categoría';
+      const category = a.category ?? 'Sin categorÃ­a';
       byType[type] = (byType[type] ?? 0) + 1;
       byStatus[status] = (byStatus[status] ?? 0) + 1;
       byCategory[category] = (byCategory[category] ?? 0) + 1;
     }
 
-    // Activos sin asignación activa (query simplificada — se puede extender con join)
+    // Activos sin asignaciÃ³n activa (query simplificada â€” se puede extender con join)
     res.json({
       total: assets.length,
       byType: Object.entries(byType).map(([label, value]) => ({ label, value })),
@@ -371,7 +370,7 @@ router.get('/fleet', requireModule('flotas'), async (req, res, next) => {
   }
 });
 
-// ─── GET /company/:id/analytics/maintenance ───────────────────────────────────
+// â”€â”€â”€ GET /company/:id/analytics/maintenance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.get('/maintenance', requireModule('mantenimiento'), async (req, res, next) => {
   try {
@@ -396,7 +395,7 @@ router.get('/maintenance', requireModule('mantenimiento'), async (req, res, next
       byPriority[type] = (byPriority[type] ?? 0) + 1;
 
       if (m.totalCost && m.completedAt) {
-      const month = toYearMonth(m.completedAt);  // Date → "YYYY-MM"
+      const month = toYearMonth(m.completedAt);  // Date â†’ "YYYY-MM"
       if (month) costByMonth[month] = (costByMonth[month] ?? 0) + Number(m.totalCost);
     }
     }
@@ -420,7 +419,7 @@ router.get('/maintenance', requireModule('mantenimiento'), async (req, res, next
   }
 });
 
-// ─── GET /company/:id/analytics/fuel ─────────────────────────────────────────
+// â”€â”€â”€ GET /company/:id/analytics/fuel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 router.get('/fuel', requireModule('combustible'), async (req, res, next) => {
   try {
@@ -477,10 +476,10 @@ const byMonth: Record<string, { gallons: number; cost: number; entries: number }
   }
 });
 
-// ─── GET /company/:id/analytics/dashboard-extended ──────────────────────────
-// Endpoints adicionales para los submódulos "inteligentes" del dashboard que
+// â”€â”€â”€ GET /company/:id/analytics/dashboard-extended â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Endpoints adicionales para los submÃ³dulos "inteligentes" del dashboard que
 // necesitan queries dedicadas (no entran en el payload base de /dashboard).
-// Protegido por `requireModule('dashboard')` — el guard de submódulos se hace
+// Protegido por `requireModule('dashboard')` â€” el guard de submÃ³dulos se hace
 // en el frontend con `can("dashboard", "<submodulo>", "ver")`.
 
 /** GET /dashboard-extended/consumo-por-conductor */
@@ -554,7 +553,7 @@ router.get('/dashboard-extended/disponibilidad-conductores', requireModule('dash
       db.select().from(companyAssignments).where(eq(companyAssignments.companyId, companyId)),
     ]);
 
-    // IDs de conductores con asignación activa
+    // IDs de conductores con asignaciÃ³n activa
     const assignedActive = new Set(
       assignmentsRows.filter(a => a.status === 'Activa').map(a => a.driverId)
     );
@@ -595,7 +594,7 @@ router.get('/dashboard-extended/mis-vehiculos', requireModule('dashboard'), asyn
 
     if (!driver) return res.json({ data: null });
 
-    // Asignación activa del conductor
+    // AsignaciÃ³n activa del conductor
     const assignments = await db
       .select()
       .from(companyAssignments)
@@ -614,13 +613,13 @@ router.get('/dashboard-extended/mis-vehiculos', requireModule('dashboard'), asyn
   } catch (err) { next(err); }
 });
 
-// ────────────────────────────────────────────────────────────────────────
-//  Fase 3: 9 endpoints más para cubrir los 11 submódulos restantes
-//  (seguros, checklists, aceite, inventario, A/C, auditoría)
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+//  Fase 3: 9 endpoints mÃ¡s para cubrir los 11 submÃ³dulos restantes
+//  (seguros, checklists, aceite, inventario, A/C, auditorÃ­a)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** GET /dashboard-extended/polizas-por-vencer
- * Devuelve cuántas pólizas vencen en 30/60/90 días. */
+ * Devuelve cuÃ¡ntas pÃ³lizas vencen en 30/60/90 dÃ­as. */
 router.get('/dashboard-extended/polizas-por-vencer', requireModule('dashboard'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
@@ -669,9 +668,9 @@ router.get('/dashboard-extended/polizas-por-vencer', requireModule('dashboard'),
     res.json({
       data: [
         { name: 'Vencidas',         value: vencidas },
-        { name: 'Vence en 30 días',  value: d30 },
-        { name: 'Vence en 60 días',  value: d60 },
-        { name: 'Vence en 90 días',  value: d90 },
+        { name: 'Vence en 30 dÃ­as',  value: d30 },
+        { name: 'Vence en 60 dÃ­as',  value: d60 },
+        { name: 'Vence en 90 dÃ­as',  value: d90 },
         { name: 'Vigentes (+90d)',  value: vigentes },
       ],
       total: rows.length,
@@ -681,7 +680,7 @@ router.get('/dashboard-extended/polizas-por-vencer', requireModule('dashboard'),
 });
 
 /** GET /dashboard-extended/cobertura-activos
- * Porcentaje de activos que tienen al menos una póliza vigente. */
+ * Porcentaje de activos que tienen al menos una pÃ³liza vigente. */
 router.get('/dashboard-extended/cobertura-activos', requireModule('dashboard'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
@@ -726,14 +725,14 @@ router.get('/dashboard-extended/kpis-checklists', requireModule('dashboard'), as
       const isoDate = c.date instanceof Date ? c.date.toISOString().slice(0, 10) : String(c.date);
       if (isoDate === today) todayCount++;
       if (c.status === 'Aprobado') aprobadas++;
-      else if (c.status === 'Con anomalías' || c.status === 'Observado') observadas++;
+      else if (c.status === 'Con anomalÃ­as' || c.status === 'Observado') observadas++;
       else if (c.status === 'Pendiente') pendientes++;
     }
     res.json({
       data: [
         { name: 'Hoy',         value: todayCount },
         { name: 'Aprobadas',   value: aprobadas },
-        { name: 'Con anomalías', value: observadas },
+        { name: 'Con anomalÃ­as', value: observadas },
         { name: 'Pendientes',  value: pendientes },
       ],
       total,
@@ -778,7 +777,7 @@ router.get('/dashboard-extended/checklists-pendientes', requireModule('dashboard
 });
 
 /** GET /dashboard-extended/proximo-cambio-aceite
- * Vehículos cuyo último cambio de aceite está cerca del umbral de next_reading. */
+ * VehÃ­culos cuyo Ãºltimo cambio de aceite estÃ¡ cerca del umbral de next_reading. */
 router.get('/dashboard-extended/proximo-cambio-aceite', requireModule('dashboard'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
@@ -788,7 +787,7 @@ router.get('/dashboard-extended/proximo-cambio-aceite', requireModule('dashboard
     ]);
     const aMap = new Map(assets.map(a => [a.id, a]));
 
-    // Para cada asset, quedarse con el último cambio (mayor reading)
+    // Para cada asset, quedarse con el Ãºltimo cambio (mayor reading)
     const byAsset = new Map<number, typeof rows[number]>();
     for (const o of rows) {
       const cur = byAsset.get(o.assetId);
@@ -802,8 +801,8 @@ router.get('/dashboard-extended/proximo-cambio-aceite', requireModule('dashboard
       const diff = threshold - current;
       return {
         assetId: o.assetId,
-        plate: a?.plate ?? '—',
-        assetName: a?.name ?? '—',
+        plate: a?.plate ?? 'â€”',
+        assetName: a?.name ?? 'â€”',
         lastChange: o.date,
         lastReading: Number(o.reading),
         nextReading: threshold,
@@ -811,44 +810,9 @@ router.get('/dashboard-extended/proximo-cambio-aceite', requireModule('dashboard
         overdue: diff <= 0,
       };
     })
-    .filter(x => x.kmToNext <= 1000) // km para que aparezca como "próximo"
+    .filter(x => x.kmToNext <= 1000) // km para que aparezca como "prÃ³ximo"
     .sort((a, b) => a.kmToNext - b.kmToNext)
     .slice(0, 15);
-
-    res.json({
-      data: items,
-      total: items.length,
-    });
-  } catch (err) { next(err); }
-});
-
-/** GET /dashboard-extended/inventario-bajo */
-router.get('/dashboard-extended/inventario-bajo', requireModule('dashboard'), async (req, res, next) => {
-  try {
-    const companyId = req.companyId!;
-    const rows = await db
-      .select()
-      .from(companyInventory)
-      .where(eq(companyInventory.companyId, companyId));
-
-    const items = rows
-      .map(r => {
-        const stock = Number(r.stock ?? 0);
-        const min = Number(r.minStock ?? 0);
-        return {
-          id: r.id,
-          code: r.code,
-          name: r.name,
-          category: r.category,
-          stock,
-          minStock: min,
-          unit: r.unit,
-          location: r.location,
-          deficit: Math.max(0, min - stock),
-        };
-      })
-      .filter(x => x.minStock > 0 && x.stock < x.minStock)
-      .sort((a, b) => b.deficit - a.deficit);
 
     res.json({
       data: items,
@@ -871,7 +835,7 @@ router.get('/dashboard-extended/kpis-ac', requireModule('dashboard'), async (req
       db.select().from(companyAcServices).where(eq(companyAcServices.companyId, companyId)),
     ]);
 
-    // Por cada unidad, último servicio
+    // Por cada unidad, Ãºltimo servicio
     const lastByUnit = new Map<number, typeof services[number]>();
     for (const s of services) {
       const cur = lastByUnit.get(s.unitId);
@@ -894,7 +858,7 @@ router.get('/dashboard-extended/kpis-ac', requireModule('dashboard'), async (req
         { name: 'Operativos',         value: operativos },
         { name: 'En mantenimiento',   value: enMantenimiento },
         { name: 'Fuera de servicio',   value: fuera },
-        { name: 'Servicio próximo',   value: pendientesServicio },
+        { name: 'Servicio prÃ³ximo',   value: pendientesServicio },
       ],
       total: units.length,
     });
@@ -936,7 +900,7 @@ router.get('/dashboard-extended/servicios-ac-pendientes', requireModule('dashboa
 
 /** GET /dashboard-extended/actividad-por-usuario
  * Top N usuarios por cantidad de acciones en company_audit_entries.
- * Devuelve { actorName, count } — el frontend lo renderiza con tabla. */
+ * Devuelve { actorName, count } â€” el frontend lo renderiza con tabla. */
 router.get('/dashboard-extended/actividad-por-usuario', requireModule('dashboard'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
@@ -949,7 +913,7 @@ router.get('/dashboard-extended/actividad-por-usuario', requireModule('dashboard
     const byActor = new Map<string, { name: string; count: number }>();
     for (const r of rows) {
       const key = r.actorId?.toString() ?? 'anon';
-      const display = r.actorName ?? 'Anónimo';
+      const display = r.actorName ?? 'AnÃ³nimo';
       const cur = byActor.get(key) ?? { name: display, count: 0 };
       cur.count++;
       cur.name = display;
@@ -993,9 +957,9 @@ router.get('/dashboard-extended/actividad-por-entidad', requireModule('dashboard
   } catch (err) { next(err); }
 });
 
-// ─── GET /company/:id/analytics/maintenance-costs-by-workshop ──────────────────
+// â”€â”€â”€ GET /company/:id/analytics/maintenance-costs-by-workshop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Gasto en mano de obra agrupado por taller. Solo suma el `labor_cost`
-// (NO incluye repuestos — esos van en `maintenance-costs`).
+// (NO incluye repuestos â€” esos van en `maintenance-costs`).
 router.get('/maintenance-costs-by-workshop', requireModule('mantenimiento'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
@@ -1057,8 +1021,8 @@ router.get('/maintenance-costs-by-workshop', requireModule('mantenimiento'), asy
   } catch (err) { next(err); }
 });
 
-// ─── GET /company/:id/analytics/carwash-costs ─────────────────────────────────
-// Gasto en lavadas agrupado por vehículo y por mes.
+// â”€â”€â”€ GET /company/:id/analytics/carwash-costs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Gasto en lavadas agrupado por vehÃ­culo y por mes.
 // Suma el `totalCost` de los mantenimientos type='Lavada'.
 router.get('/carwash-costs', requireModule('mantenimiento'), async (req, res, next) => {
   try {
@@ -1091,7 +1055,7 @@ router.get('/carwash-costs', requireModule('mantenimiento'), async (req, res, ne
     for (const r of rows) {
       const key = r.assetId ? String(r.assetId) : 'sin-vehiculo';
       if (!byAsset[key]) {
-        byAsset[key] = { assetId: r.assetId, name: r.assetName ?? 'Sin vehículo', plate: r.assetPlate, total: 0, count: 0 };
+        byAsset[key] = { assetId: r.assetId, name: r.assetName ?? 'Sin vehÃ­culo', plate: r.assetPlate, total: 0, count: 0 };
       }
       byAsset[key].total += Number(r.totalCost ?? 0);
       byAsset[key].count += 1;
@@ -1120,7 +1084,7 @@ router.get('/carwash-costs', requireModule('mantenimiento'), async (req, res, ne
   } catch (err) { next(err); }
 });
 
-// ─── GET /company/:id/analytics/maintenance-costs-by-type ────────────────────
+// â”€â”€â”€ GET /company/:id/analytics/maintenance-costs-by-type â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Gasto total (mano de obra + repuestos) agrupado por tipo de mantenimiento
 // (Programado, Correctivo, Lavada) y por mes. Filtros: from, to.
 router.get('/maintenance-costs-by-type', requireModule('mantenimiento'), async (req, res, next) => {

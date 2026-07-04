@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useMotors } from "../../hooks/useMotors";
-import { useDrivers } from "../../hooks/useDrivers";
+import { useMotorFormOptions } from "../../hooks/useFormOptions";
 import { useAssignments } from "../../hooks/useAssignments";
 import { X, ChevronRight, ChevronLeft, Loader2 } from "lucide-react";
 import { DatePicker } from "../ui/date-picker/DatePicker";
@@ -68,7 +68,9 @@ type Props = { onClose: () => void };
 export function MotorCreateModal({ onClose }: Props) {
   const navigate = useNavigate();
   const { createMotor }      = useMotors();
-  const { drivers, loading: driversLoading } = useDrivers();
+  const { data: formOptions } = useMotorFormOptions();
+  const drivers = formOptions?.drivers ?? [];
+  const driversLoading = !formOptions;
   const { createAssignment } = useAssignments();
 
   const [step,   setStep]   = useState(0);

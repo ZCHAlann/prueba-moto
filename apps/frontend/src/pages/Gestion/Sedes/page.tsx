@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
-import { useSites, type EnrichedOperationalSite, type SiteLinkedAsset, type SiteLinkedDriver } from "@/hooks/useSites";
+import { useSites, type EnrichedOperationalSite, type SiteLinkedAsset, type SiteLinkedDriver, type SiteImpactPreview } from "@/hooks/useSites";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LocationPickerModal } from "@/components/ui/map/LocationPicker";
 import { RowActionMenu } from "@/components/ui/table/RowActionMenu";
@@ -636,13 +636,24 @@ function SiteDetailDrawer({
 
 export function SitesManagementPage() {
   // ✅ FIX: eliminados useAssets() y useDrivers() — toda la info viene de useSites()
-  const { sites, loading, createSite, updateSite } = useSites();
+  const { sites, loading, createSite, updateSite, getSiteImpact } = useSites();
   const { can } = usePermissions();
 
   const [query,       setQuery]       = useState("");
   const [modalOpen,   setModalOpen]   = useState(false);
   const [editingSite, setEditingSite] = useState<OperationalSite | null>(null);
   const [detailSite,  setDetailSite]  = useState<EnrichedSite | null>(null);
+
+  // ── Modal de confirmación de desactivación de sede (Fase 3.2) ─────
+  // Cuando se quiere pasar una sede de 'Activa' a 'Inactiva', primero
+  // pedimos el impact preview al backend (GET /:siteId/impact) y
+  // mostramos un modal con el conteo de conductores afectados. Solo
+  // si el admin confirma, ejecutamos el PUT.
+  const [confirmDeactivation, setConfirmDeactivation] = useState<{
+    site: EnrichedSite;
+    impact: SiteImpactPreview | null;
+    loading: boolean;
+  } | null>(null);
 
   // ✅ FIX: usamos assetCount/driverCount que ya vienen del backend en cada site
   const rows = useMemo<EnrichedSite[]>(() => {
@@ -672,14 +683,44 @@ export function SitesManagementPage() {
 
   const handleToggleStatus = async (site: EnrichedSite) => {
     const next: SiteStatus = site.status === "Activa" ? "Inactiva" : "Activa";
+
+    // Si se va a DESACTIVAR, mostrar modal de confirmación con impact preview.
+    // La reactivación no afecta a nadie bloqueado, así que va directo.
+    if (next === "Inactiva") {
+      setConfirmDeactivation({ site, impact: null, loading: true });
+      const impact = await getSiteImpact(site.id);
+      setConfirmDeactivation({ site, impact, loading: false });
+      return;
+    }
+
+    // Reactivación: sin confirmación
     try {
       await updateSite(site.id, { ...site, status: next });
-      toast.success(next === "Activa" ? "Sede reactivada" : "Sede inactivada", {
-        description: "El catálogo ya refleja el nuevo estado operativo.",
+      toast.success("Sede reactivada", {
+        description: "Los conductores con estado manual Activo recuperan el acceso automáticamente.",
       });
       setDetailSite((prev) => (prev?.id === site.id ? { ...prev, status: next } : prev));
     } catch {
       toast.error("Error al cambiar estado");
+    }
+  };
+
+  const handleConfirmDeactivation = async () => {
+    if (!confirmDeactivation) return;
+    const { site } = confirmDeactivation;
+    try {
+      await updateSite(site.id, { ...site, status: "Inactiva" });
+      const affected = confirmDeactivation.impact?.affectedDriversOnDeactivation ?? 0;
+      toast.success("Sede desactivada", {
+        description:
+          affected > 0
+            ? `${affected} conductor${affected !== 1 ? "es" : ""} quedará${affected !== 1 ? "n" : ""} sin acceso hasta que la sede se reactive.`
+            : "Sede desactivada correctamente. No había conductores activos asignados.",
+      });
+      setDetailSite((prev) => (prev?.id === site.id ? { ...prev, status: "Inactiva" } : prev));
+      setConfirmDeactivation(null);
+    } catch {
+      toast.error("Error al desactivar sede");
     }
   };
 
@@ -857,6 +898,126 @@ export function SitesManagementPage() {
         onEdit={(s) => openEdit(s)}
         onToggleStatus={handleToggleStatus}
       />
+
+      {/* Modal de confirmación de desactivación de sede (Fase 3.2) */}
+      <AnimatePresence>
+        {confirmDeactivation && (
+          <DeactivateSiteModal
+            site={confirmDeactivation.site}
+            impact={confirmDeactivation.impact}
+            loading={confirmDeactivation.loading}
+            onCancel={() => setConfirmDeactivation(null)}
+            onConfirm={handleConfirmDeactivation}
+          />
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
+// ─── Modal de confirmación para desactivar una sede ───────────────────────────
+
+function DeactivateSiteModal({
+  site,
+  impact,
+  loading,
+  onCancel,
+  onConfirm,
+}: {
+  site: EnrichedSite;
+  impact: SiteImpactPreview | null;
+  loading: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const affected = impact?.affectedDriversOnDeactivation ?? 0;
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
+        onClick={onCancel}
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        transition={{ duration: 0.18 }}
+        className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0d1320]"
+      >
+        <div className="border-b border-gray-100 px-6 py-4 dark:border-white/[0.06]">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-amber-600 dark:text-amber-400">
+            Acción con impacto
+          </p>
+          <h2 className="mt-1 text-lg font-black text-gray-800 dark:text-white">
+            Desactivar sede
+          </h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Vas a desactivar <span className="font-semibold text-gray-800 dark:text-white">"{site.name}"</span>.
+            Esto puede bloquear el acceso de conductores asignados.
+          </p>
+        </div>
+
+        <div className="px-6 py-5">
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.25" />
+                <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+              </svg>
+              Calculando conductores afectados…
+            </div>
+          ) : impact ? (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 dark:border-amber-500/20 dark:bg-amber-500/5">
+                <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                  {affected === 0
+                    ? "No hay conductores activos en esta sede."
+                    : `${affected} conductor${affected !== 1 ? "es" : ""} activo${affected !== 1 ? "s" : ""} quedará${affected !== 1 ? "n" : ""} sin acceso.`}
+                </p>
+                <p className="mt-1 text-xs text-amber-700 dark:text-amber-400/80">
+                  {affected === 0
+                    ? "La sede se desactivará sin afectar a nadie. Podrás reactivarla cuando quieras."
+                    : "No se elimina su estado manual: cuando reactives la sede, los que sigan como 'Activo' recuperan el acceso automáticamente."}
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="rounded-lg border border-gray-100 bg-gray-50 px-2 py-2 dark:border-white/[0.05] dark:bg-white/[0.03]">
+                  <p className="font-black text-emerald-600 dark:text-emerald-400">{impact.driversActivosCount}</p>
+                  <p className="text-gray-400">Conductores activos</p>
+                </div>
+                <div className="rounded-lg border border-gray-100 bg-gray-50 px-2 py-2 dark:border-white/[0.05] dark:bg-white/[0.03]">
+                  <p className="font-black text-gray-500">{impact.driversInactivosCount}</p>
+                  <p className="text-gray-400">Inactivos</p>
+                </div>
+                <div className="rounded-lg border border-gray-100 bg-gray-50 px-2 py-2 dark:border-white/[0.05] dark:bg-white/[0.03]">
+                  <p className="font-black text-gray-700 dark:text-gray-300">{impact.assetsCount}</p>
+                  <p className="text-gray-400">Vehículos</p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-rose-600 dark:text-rose-400">
+              No se pudo obtener el detalle de impacto. Inténtalo de nuevo.
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-col-reverse gap-2 border-t border-gray-100 px-6 py-4 sm:flex-row dark:border-white/[0.06]">
+          <button
+            onClick={onCancel}
+            className="flex-1 rounded-lg border border-gray-200 dark:border-white/[0.08] px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.04]"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading || !impact}
+            className="flex-1 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold text-white transition"
+          >
+            Desactivar sede
+          </button>
+        </div>
+      </motion.div>
     </>
   );
 }

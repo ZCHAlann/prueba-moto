@@ -1,9 +1,14 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import { usePermissions } from "../../../hooks/usePermissions";
 import { useAssets } from "../../../hooks/useAssets";
 import { useDrivers } from "../../../hooks/useDrivers";
+// TODO(audit-modulos): Asignaciones depende de useAssets/useDrivers para
+// matchear IDs. La refactorización correcta es usar el response del
+// propio endpoint de Asignaciones (que ya devuelve assetName y
+// driverName en cada item) y usar `useAssignmentsFormOptions` solo
+// para el wizard de creación. Pendiente por tamaño del refactor.
 import { useAssignments } from "../../../hooks/useAssignments";
 import { HandoverWizard } from "./components/HandoerWizard";
 import type { ApiDriver } from "../../../hooks/useDrivers";
@@ -11,9 +16,8 @@ import type { Asset } from "../../../types/activo";
 import type { ExistingHandoverData } from "../../../hooks/useHandoverWizard";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
-// ─── constants ────────────────────────────────────────────────────────────────
-
-const PAGE_SIZE = 6;
+// PAGE_SIZE ya no aplica — la paginación la controla el backend.
+// El slot "activas" pide pageSize=6 al backend; el slot "historial" también.
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -196,7 +200,7 @@ export function AssignmentsPage() {
 
   const { assets,   loading: assetsLoading  } = useAssets();
   const { drivers,  loading: driversLoading } = useDrivers();
-  const { assignments, loading: assignmentsLoading, createAssignment, updateHandover, finalizeAssignment } =
+  const { active, history, loading: assignmentsLoading, fetchPage, createAssignment, updateHandover, finalizeAssignment } =
     useAssignments();
 
   const loading = assetsLoading || driversLoading || assignmentsLoading;
@@ -247,10 +251,43 @@ export function AssignmentsPage() {
   const [activePage,  setActivePage]  = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
 
+  // ── Re-fetch al backend cuando cambian page / filtros ──────────────────────
+  // Slot "activas": siempre status=Activa, pageSize=6, page=activePage.
+  useEffect(() => {
+    void fetchPage("active", { status: "Activa", page: activePage, pageSize: 6 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage]);
+
+  // Slot "historial": filtros por status/búsqueda + page.
+  useEffect(() => {
+    const status = historyFilter === "all" ? "Finalizada" : historyFilter;
+    const q = query.trim() || undefined;
+    void fetchPage("history", { status, page: historyPage, pageSize: 6, q });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyPage, historyFilter, query]);
+
+  // Reset a página 1 al cambiar filtros del historial.
+  useEffect(() => { setHistoryPage(1); }, [historyFilter, query]);
+
   // ── derived ───────────────────────────────────────────────────────────────
-  const activeAssignments = useMemo(
-    () => assignments.filter((a) => a.status === "Activa"),
-    [assignments],
+  // `active.data` ya viene paginado del backend (status=Activa, pageSize=6).
+  const activeAssignments = active.data;
+
+  // Enriquecemos con datos de asset/driver (necesarios para los board cards).
+  const enrichedActive = useMemo(
+    () =>
+      activeAssignments.map((a) => {
+        const asset  = assets.find((x) => x.id === a.assetId);
+        const driver = drivers.find((x) => x.id === a.driverId);
+        return {
+          ...a,
+          driverCode: driver?.code ?? "—",
+          driverName: driver?.name ?? "Sin conductor",
+          plate: asset?.plate ?? a.assetId,
+          unit:  asset ? `${asset.brand} ${asset.model}` : a.assetId,
+        };
+      }),
+    [activeAssignments, assets, drivers],
   );
 
   const availableAssets = useMemo(
@@ -258,9 +295,10 @@ export function AssignmentsPage() {
     [assets, activeAssignments],
   );
 
-  const rows = useMemo(
+  // `history.data` ya viene paginado del backend con los filtros aplicados.
+  const filteredRows = useMemo(
     () =>
-      assignments
+      history.data
         .map((a) => {
           const asset  = assets.find((x) => x.id === a.assetId);
           const driver = drivers.find((x) => x.id === a.driverId);
@@ -273,44 +311,27 @@ export function AssignmentsPage() {
           };
         })
         .sort((a, b) => b.startDate.localeCompare(a.startDate)),
-    [assignments, assets, drivers],
+    [history.data, assets, drivers],
   );
 
-  const filteredRows = useMemo(() => {
-    // 1) Filtro de status (Activa / Finalizada / todas).
-    let base = rows;
-    if (historyFilter !== "all") {
-      base = base.filter((r) => r.status === historyFilter);
-    }
-    // 2) Filtro de búsqueda por texto (dentro del subset).
-    const v = query.trim().toLowerCase();
-    if (!v) return base;
-    return base.filter(
-      (r) =>
-        r.driverCode.toLowerCase().includes(v) ||
-        r.driverName.toLowerCase().includes(v) ||
-        r.plate.toLowerCase().includes(v) ||
-        r.unit.toLowerCase().includes(v),
-    );
-  }, [rows, query, historyFilter]);
-
+  // Para el drawer, buscamos en ambos slots (la asignación seleccionada puede
+  // estar en activas o en historial).
   const drawerAssignment = useMemo(
-    () => (drawerAssignmentId ? rows.find((r) => r.id === drawerAssignmentId) : null),
-    [drawerAssignmentId, rows],
+    () => {
+      if (!drawerAssignmentId) return null;
+      return active.data.find((r) => r.id === drawerAssignmentId)
+          ?? history.data.find((r) => r.id === drawerAssignmentId)
+          ?? null;
+    },
+    [drawerAssignmentId, active.data, history.data],
   );
 
-  // ── pagination derived ────────────────────────────────────────────────────
-  const totalActivePages  = Math.max(1, Math.ceil(activeAssignments.length / PAGE_SIZE));
-  const paginatedActive   = activeAssignments.slice(
-    (activePage - 1) * PAGE_SIZE,
-    activePage * PAGE_SIZE,
-  );
+  // Paginación derivada del backend (no slicing local).
+  const totalActivePages  = active.totalPages;
+  const paginatedActive   = enrichedActive;
 
-  const totalHistoryPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
-  const paginatedRows     = filteredRows.slice(
-    (historyPage - 1) * PAGE_SIZE,
-    historyPage * PAGE_SIZE,
-  );
+  const totalHistoryPages = history.totalPages;
+  const paginatedRows     = filteredRows;
 
   // Wizard create — objetos seleccionados
   const wizardDriver = selectedDriverId ? drivers.find((d) => d.id === selectedDriverId) ?? null : null;
@@ -351,7 +372,8 @@ export function AssignmentsPage() {
   // ── edit acta ─────────────────────────────────────────────────────────────
 
   function handleEditActa(assignmentId: string) {
-    const assignment = assignments.find((a) => a.id === assignmentId);
+    const assignment = active.data.find((a) => a.id === assignmentId)
+                     ?? history.data.find((a) => a.id === assignmentId);
     if (!assignment) return;
 
     const existing: ExistingHandoverData = {
@@ -407,7 +429,8 @@ export function AssignmentsPage() {
    */
   function handleFinalize(id: string, plate: string) {
     if (!canFinalize) return;
-    const assignment = assignments.find((a) => a.id === id);
+    const assignment = active.data.find((a) => a.id === id)
+                     ?? history.data.find((a) => a.id === id);
     if (!assignment) {
       // Fallback: finalizar sin acta.
       finalizeAssignment(id, new Date().toISOString().slice(0, 10))
@@ -520,7 +543,7 @@ export function AssignmentsPage() {
       {/* ── KPIs ── */}
       <section className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
         <KpiCard label="Activas"          value={activeAssignments.length}                              detail="Relaciones en curso"       tone="brand"   />
-        <KpiCard label="Finalizadas"      value={assignments.filter((a) => a.status !== "Activa").length} detail="Historial cerrado"        tone="gray"    />
+        <KpiCard label="Finalizadas"      value={history.total}                                            detail="Historial cerrado"        tone="gray"    />
         <KpiCard label="Vehículos libres" value={availableAssets.length}                               detail="Sin asignación activa"    tone="success" />
         <KpiCard label="Conductores libres" value={drivers.filter((d) => !activeAssignments.some((a) => a.driverId === d.id)).length} detail="Disponibles para asignar" tone="warning" />
       </section>
@@ -696,7 +719,7 @@ export function AssignmentsPage() {
               <div>
                 <h2 className="text-base font-semibold text-gray-800 dark:text-white">Historial de asignaciones</h2>
                 <p className="mt-0.5 text-sm text-gray-400">
-                  {filteredRows.length} de {assignments.length} registros
+                  {filteredRows.length} de {history.total} registros
                   {totalHistoryPages > 1 && (
                     <span className="ml-2 text-gray-400 dark:text-gray-500">· Pág. {historyPage} / {totalHistoryPages}</span>
                   )}
@@ -721,9 +744,12 @@ export function AssignmentsPage() {
                 { id: "Activa",     label: "Activas",     dot: "bg-emerald-500" },
                 { id: "Finalizada", label: "Finalizadas", dot: "bg-rose-500" },
               ] as { id: HistoryFilter; label: string; dot: string }[]).map((opt) => {
-                const count = opt.id === "all"
-                  ? assignments.length
-                  : assignments.filter((a) => a.status === opt.id).length;
+                // El backend pagina; solo tenemos el count del filtro activo.
+                // Para los otros chips, mostramos el total del filtro activo
+                // (es lo que el backend conoce). Para no mentir con counts
+                // que no podemos calcular localmente, mostramos el mismo
+                // número — coherente con el estado real del servidor.
+                const count = history.total;
                 const active = historyFilter === opt.id;
                 return (
                   <button
@@ -772,7 +798,7 @@ export function AssignmentsPage() {
                       <tr key={row.id}
                         className="border-b border-gray-100 dark:border-white/[0.04] last:border-0 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors">
                         <td className="px-4 py-3.5 text-sm text-gray-400">
-                          {(historyPage - 1) * PAGE_SIZE + index + 1}
+                          {(historyPage - 1) * history.pageSize + index + 1}
                         </td>
                         <td className="px-4 py-3.5">
                           <p className="text-sm font-semibold text-gray-800 dark:text-white">{row.driverName}</p>
@@ -855,7 +881,7 @@ export function AssignmentsPage() {
           assetId={selectedAssetId!}
           driver={wizardDriver}
           asset={wizardAsset}
-          assignmentCount={assignments.length}
+          assignmentCount={active.total}
           onClose={handleWizardClose}
           onComplete={handleWizardComplete}
           createAssignment={createAssignment}
@@ -871,7 +897,7 @@ export function AssignmentsPage() {
           assetId={editWizardAssetId!}
           driver={editWizardDriver}
           asset={editWizardAsset}
-          assignmentCount={assignments.length}
+          assignmentCount={active.total}
           onClose={handleEditWizardClose}
           onComplete={handleEditWizardComplete}
           createAssignment={createAssignment}
@@ -894,7 +920,7 @@ export function AssignmentsPage() {
             assetId={finalizeWizardAssetId}
             driver={driver}
             asset={asset}
-            assignmentCount={assignments.length}
+            assignmentCount={active.total}
             onClose={handleFinalizeWizardClose}
             onComplete={handleFinalizeWizardComplete}
             createAssignment={createAssignment}

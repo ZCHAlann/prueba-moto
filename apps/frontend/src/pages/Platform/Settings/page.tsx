@@ -498,8 +498,8 @@ export function PlatformSettingsPage() {
                       className={numInputCls} />
                   </Field>
                   <Field label="Expiración de contraseña (días)" hint="0 = nunca expira">
-                    <input type="number" min={0} max={365} value={val("passwordExpiryDays") ?? 0}
-                      onChange={e => set("passwordExpiryDays", Number(e.target.value))}
+                    <input type="number" min={0} max={365} value={val("passwordExpiryDays") === 0 ? "" : (val("passwordExpiryDays") ?? "")}
+                      onChange={e => set("passwordExpiryDays", e.target.value === "" ? 0 : Number(e.target.value))}
                       className={numInputCls} />
                   </Field>
                   <div className="sm:col-span-2 grid gap-3 sm:grid-cols-3">

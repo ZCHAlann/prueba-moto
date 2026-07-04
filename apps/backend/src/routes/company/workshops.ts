@@ -6,7 +6,7 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, ilike, or } from 'drizzle-orm';
+import { eq, and, ilike, or, desc, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyWorkshops } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
@@ -17,6 +17,7 @@ import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router({ mergeParams: true });
 
@@ -53,30 +54,28 @@ router.get(
     try {
       const companyId = req.companyId!;
       const q = (req.query.q as string | undefined)?.trim();
+      const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
-      let query = db
-        .select()
-        .from(companyWorkshops)
-        .where(eq(companyWorkshops.companyId, companyId))
-        .orderBy(companyWorkshops.name)
-        .$dynamic();
-
-      if (q) {
+      // WHERE compartido entre SELECT paginado y COUNT(*).
+      const conds = [eq(companyWorkshops.companyId, companyId)];
+      if (q && q.length > 0) {
         const needle = `%${q}%`;
-        query = query.where(
-          and(
-            eq(companyWorkshops.companyId, companyId),
-            or(
-              ilike(companyWorkshops.name, needle),
-              ilike(companyWorkshops.contactName, needle),
-              ilike(companyWorkshops.nit, needle),
-            )!,
-          ),
-        );
+        conds.push(or(
+          ilike(companyWorkshops.name, needle),
+          ilike(companyWorkshops.contactName, needle),
+          ilike(companyWorkshops.nit, needle),
+        )!);
       }
+      const where = and(...conds);
 
-      const rows = await query;
-      res.json({ data: rows.map(serializeWorkshop), total: rows.length });
+      const [rows, countRow] = await Promise.all([
+        db.select().from(companyWorkshops).where(where)
+          .orderBy(desc(companyWorkshops.name)).limit(pageSize).offset(offset),
+        db.select({ value: sql<number>`cast(count(*) as int)` }).from(companyWorkshops).where(where),
+      ]);
+
+      const total = countRow?.[0]?.value ?? 0;
+      res.json(buildPageResponse(rows.map(serializeWorkshop), total, page, pageSize));
     } catch (err) {
       next(err);
     }

@@ -4,9 +4,10 @@ import { toast } from "sonner";
 import { useDrivers, type ApiDriver, type AssignmentActa } from "../../../hooks/useDrivers";
 import { useAssignments } from "../../../hooks/useAssignments";
 import { useAssets } from "../../../hooks/useAssets";
-import { useSites } from "../../../hooks/useSites";
+import { useDriverFormOptions } from "../../../hooks/useFormOptions";
 import { usePermissions } from "../../../hooks/usePermissions";
 import { ModulePageHeader } from "../../../components/features/modules/ModulePageHeader";
+import { DriverActa } from "../../../components/features/drivers/DriverActa";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import { validationRules, digitsOnlyInputFilter, sanitizeString } from "../../../lib/form-validation";
 import {
@@ -23,6 +24,7 @@ import { useAuth } from "../../../context/AuthContext";
 import { useDriverReports, type ApiDriverReport, type DriverReportInvoice } from "../../../hooks/useDriverReports";
 import { fmtDateShortEc, fmtDateTimeEc, fmtTimeEc } from "@/lib/datetime";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../../../lib/mediaCompress";
+import { EffectiveStatusBadge } from "../../../components/features/drivers/EffectiveStatusBadge";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -202,8 +204,20 @@ function LicenseBadge({ expiry }: { expiry: string }) {
 // ─── KPI Row ──────────────────────────────────────────────────────────────────
 
 function KpiRow({ drivers }: { drivers: ApiDriver[] }) {
-  const activos   = drivers.filter(d => d.status === "Activo").length;
-  const inactivos = drivers.filter(d => d.status === "Inactivo").length;
+  // Fase 3.1: contar el estado EFECTIVO (manual + sede), no solo el manual.
+  // Si el backend no manda los nuevos campos (effectivelyActive cae
+  // undefined), caemos al filtro por status manual para mantener compat.
+  const activos = drivers.filter(d =>
+    typeof d.effectivelyActive === 'boolean'
+      ? d.effectivelyActive
+      : d.status === "Activo"
+  ).length;
+  const inactivos = drivers.filter(d =>
+    typeof d.effectivelyActive === 'boolean'
+      ? !d.effectivelyActive
+      : d.status === "Inactivo"
+  ).length;
+  const bloqueadosPorSede = drivers.filter(d => d.inactiveReason === 'site_inactive').length;
   const vencidos  = drivers.filter(d => daysUntil(d.licenseExpiry) <= 0).length;
 
   const cards = [
@@ -212,9 +226,19 @@ function KpiRow({ drivers }: { drivers: ApiDriver[] }) {
     { label: "Inactivos",         value: inactivos,       sub: "fuera de operación",   cls: "border-gray-200 bg-gray-50 dark:border-white/[0.06] dark:bg-white/[0.03]",                     valCls: "text-gray-500 dark:text-gray-400",       kpi: "Inactivos" },
     { label: "Licencias vencidas",value: vencidos,        sub: "requieren atención",   cls: "border-rose-200 bg-rose-50/60 dark:border-rose-500/20 dark:bg-rose-500/5",                     valCls: "text-rose-700 dark:text-rose-300",       kpi: "Licencias vencidas" },
   ];
+  if (bloqueadosPorSede > 0) {
+    cards.splice(2, 0, {
+      label: "Bloq. por sede",
+      value: bloqueadosPorSede,
+      sub:   "inactivos por sede inactiva",
+      cls:   "border-amber-200 bg-amber-50/60 dark:border-amber-500/20 dark:bg-amber-500/5",
+      valCls: "text-amber-700 dark:text-amber-300",
+      kpi:   "Bloqueados por sede",
+    });
+  }
 
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div className={`grid grid-cols-2 gap-3 ${bloqueadosPorSede > 0 ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
       {cards.map(c => (
         <div
           key={c.label}
@@ -269,9 +293,13 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
   onCreate: (form: DriverFormState) => Promise<void>;
   onUpdate: (id: string, form: DriverFormState) => Promise<void>;
 }) {
-  const { sites } = useSites();
+  const { data: formOptions } = useDriverFormOptions();
+  const sites = formOptions?.sites ?? [];
   const { session } = useAuth();
   const sessionCompanyId: number = session?.companyId ? Number(session.companyId) : 0;
+  // Solo admin_empresa/owner_empresa pueden cambiar la foto de un conductor.
+  // Coincide con el chequeo de rol en el backend (PUT /drivers/:driverId).
+  const canEditPhoto = session?.role === "admin_empresa" || session?.role === "owner_empresa";
   const [form, setForm] = useState<DriverFormState>(() => createDriverForm(driver ?? undefined));
   const [errors, setErrors] = useState<DriverFormErrors>({});
   const [saving, setSaving] = useState(false);
@@ -337,51 +365,53 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
 
         <div className="max-h-[65vh] overflow-y-auto px-6 py-5 space-y-4">
           {/* Foto del conductor */}
-          <div className="flex items-center gap-4">
-            <div className="h-20 w-20 overflow-hidden rounded-2xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.05]">
-              {form.photoUrl ? (
-                /* eslint-disable-next-line @next/next/no-img-element */
-                <img src={form.photoUrl} alt="Foto" className="h-full w-full object-cover" />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-[10px] text-gray-400">Sin foto</div>
-              )}
+          {canEditPhoto && (
+            <div className="flex items-center gap-4">
+              <div className="h-20 w-20 overflow-hidden rounded-2xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.05]">
+                {form.photoUrl ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img src={form.photoUrl} alt="Foto" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-[10px] text-gray-400">Sin foto</div>
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3.5 py-2 text-sm font-semibold text-gray-600 transition hover:border-brand-400 hover:text-brand-600 dark:border-white/[0.12] dark:bg-white/[0.04] dark:text-gray-300">
+                  Subir foto
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setSaving(true);
+                      try {
+                        const { uploadDriverPhoto } = await import("../../../hooks/useDrivers");
+                        const url = await uploadDriverPhoto(file, sessionCompanyId);
+                        set("photoUrl", url);
+                        toast.success("Foto subida");
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : "Error al subir");
+                      } finally {
+                        setSaving(false);
+                        e.target.value = "";
+                      }
+                    }}
+                  />
+                </label>
+                {form.photoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => set("photoUrl", null)}
+                    className="self-start text-xs font-semibold text-gray-500 hover:text-rose-500"
+                  >
+                    Quitar foto
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3.5 py-2 text-sm font-semibold text-gray-600 transition hover:border-brand-400 hover:text-brand-600 dark:border-white/[0.12] dark:bg-white/[0.04] dark:text-gray-300">
-                Subir foto
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    setSaving(true);
-                    try {
-                      const { uploadDriverPhoto } = await import("../../../hooks/useDrivers");
-                      const url = await uploadDriverPhoto(file, sessionCompanyId);
-                      set("photoUrl", url);
-                      toast.success("Foto subida");
-                    } catch (err) {
-                      toast.error(err instanceof Error ? err.message : "Error al subir");
-                    } finally {
-                      setSaving(false);
-                      e.target.value = "";
-                    }
-                  }}
-                />
-              </label>
-              {form.photoUrl && (
-                <button
-                  type="button"
-                  onClick={() => set("photoUrl", null)}
-                  className="self-start text-xs font-semibold text-gray-500 hover:text-rose-500"
-                >
-                  Quitar foto
-                </button>
-              )}
-            </div>
-          </div>
+          )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
@@ -477,7 +507,7 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Puntos</label>
-                <input type="number" min={0} max={30} className={inputCls} placeholder="30" value={form.licensePoints} onChange={e => set("licensePoints", Number(e.target.value))} />
+                <input type="number" min={0} max={30} className={inputCls} placeholder="30" value={form.licensePoints === 0 ? "" : form.licensePoints} onChange={e => set("licensePoints", e.target.value === "" ? 0 : Number(e.target.value))} />
               </div>
             </div>
           </div>
@@ -506,80 +536,6 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
 }
 
 // ─── Detail Drawer ────────────────────────────────────────────────────────────
-
-/**
- * Versión "driver" del acta. Muestra los campos más relevantes desde el
- * punto de vista del conductor: cuándo se firmó, dónde, vehículo, y enlaces
- * a las firmas / acta. La información completa ya está en la fila de
- * detalle del vehículo (no se duplica).
- */
-function DriverActa({ acta }: { acta: AssignmentActa }) {
-  const veh = acta.vehicleSnapshot;
-  const items: Array<{ label: string; value: string | null | undefined }> = [
-    { label: "Fecha del acta", value: fmtDate(acta.actaDate) },
-    { label: "Hora",           value: acta.actaTime || "—" },
-    { label: "Lugar",          value: acta.actaPlace || "—" },
-    { label: "Área",           value: acta.actaArea || "—" },
-    { label: "Inicio",         value: fmtDate(acta.startDate) },
-    { label: "Fin",            value: fmtDate(acta.endDate) },
-  ];
-  return (
-    <>
-      <div className="grid grid-cols-2 gap-2">
-        {items.map((it) => (
-          <div key={it.label} className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">{it.label}</p>
-            <p className="mt-0.5 truncate text-xs font-semibold text-gray-700 dark:text-gray-200">
-              {it.value ?? "—"}
-            </p>
-          </div>
-        ))}
-        {veh && (veh.plate || veh.name) && (
-          <div className="col-span-2 min-w-0 rounded-lg border border-gray-100 bg-white px-2.5 py-1.5 dark:border-white/[0.05] dark:bg-white/[0.02]">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Vehículo</p>
-            <p className="mt-0.5 truncate text-xs font-semibold text-gray-700 dark:text-gray-200">
-              {veh.plate || "—"}{veh.name ? ` · ${veh.name}` : ""}
-            </p>
-          </div>
-        )}
-      </div>
-      {(acta.handoverUrl || acta.signatureLogUrl || acta.signatureRespUrl) && (
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          {acta.handoverUrl && (
-            <a
-              href={acta.handoverUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-300"
-            >
-              <FileText size={11} /> Acta
-            </a>
-          )}
-          {acta.signatureLogUrl && (
-            <a
-              href={acta.signatureLogUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-[10px] font-bold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-            >
-              <Pencil size={11} /> Firma logística
-            </a>
-          )}
-          {acta.signatureRespUrl && (
-            <a
-              href={acta.signatureRespUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-[10px] font-bold text-gray-600 hover:bg-gray-100 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-            >
-              <Pencil size={11} /> Firma responsable
-            </a>
-          )}
-        </div>
-      )}
-    </>
-  );
-}
 
 function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, onAssign, onDelete }: {
   driver: ApiDriver;
@@ -653,7 +609,13 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
       <div ref={drawerRef}
         className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0d1320]"
         style={{ transform: "translateX(100%)" }}>
-        <div className={`h-1 w-full ${driver.status === "Activo" ? "bg-emerald-400" : "bg-gray-300"}`} />
+        <div className={`h-1 w-full ${
+          driver.effectivelyActive === false
+            ? driver.inactiveReason === 'site_inactive'
+              ? "bg-amber-400"
+              : "bg-gray-300"
+            : "bg-emerald-400"
+        }`} />
 
         <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
           <div className="flex items-center gap-3 min-w-0">
@@ -667,7 +629,13 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
             <div className="min-w-0">
               <p className="font-black text-gray-800 dark:text-white truncate">{driver.firstName} {driver.lastName}</p>
               <p className="text-xs text-gray-400">{driver.licenseNumber}</p>
-              <div className="mt-1"><StatusBadge status={driver.status} /></div>
+              <div className="mt-1">
+                <EffectiveStatusBadge
+                  status={driver.status}
+                  effectivelyActive={driver.effectivelyActive}
+                  inactiveReason={driver.inactiveReason}
+                />
+              </div>
             </div>
           </div>
           <button onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.08]">
@@ -1082,7 +1050,13 @@ function DriverRow({ driver, index, canEdit, canDelete, onView, onEdit, onReport
       <td className="px-4 py-3.5">
         <p className="text-sm text-gray-700 dark:text-gray-300">{driver.siteName ?? "—"}</p>
       </td>
-      <td className="px-4 py-3.5"><StatusBadge status={driver.status} /></td>
+      <td className="px-4 py-3.5">
+        <EffectiveStatusBadge
+          status={driver.status}
+          effectivelyActive={driver.effectivelyActive}
+          inactiveReason={driver.inactiveReason}
+        />
+      </td>
       <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
         <RowMenu driver={driver} canEdit={canEdit} canDelete={canDelete}
           onView={onView} onEdit={onEdit} onReport={onReport} onAssign={onAssign} onDelete={onDelete} />
@@ -1295,7 +1269,7 @@ function ReportDrawer({ report, onClose, onDeleted }: {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function DriversPage() {
-  const { drivers, loading, createDriver, updateDriver, deleteDriver } = useDrivers();
+  const { drivers, total, totalPages, pageSize, loading, fetchPage, createDriver, updateDriver, deleteDriver } = useDrivers();
   const { can } = usePermissions();
   const navigate = useNavigate();
 
@@ -1323,6 +1297,17 @@ export default function DriversPage() {
       setFilterStatus(status);
     }
   }, []);
+
+  // Re-fetch al backend cuando cambian page/search/filterStatus.
+  useEffect(() => {
+    const status = (filterStatus === "" ? undefined : (filterStatus as "Activo" | "Inactivo"));
+    void fetchPage({ search, status, page, pageSize: 7 });
+    // fetchPage solo depende de companyId; el resto son inputs explícitos.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, search, filterStatus]);
+
+  // Reset a página 1 cuando cambian los filtros.
+  useEffect(() => { setPage(1); }, [search, filterStatus]);
 
   const [drawerDriver, setDrawerDriver]           = useState<ApiDriver | null>(null);
   const [deleteTarget, setDeleteTarget]           = useState<ApiDriver | null>(null);
@@ -1352,19 +1337,6 @@ export default function DriversPage() {
 
   const setFilter = (fn: () => void) => { fn(); setPage(1); };
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return drivers.filter(d => {
-      const fullName = `${d.firstName} ${d.lastName}`.toLowerCase();
-      const siteName = d.siteName?.toLowerCase() ?? "";
-      const matchQ = !q || fullName.includes(q) || d.licenseNumber.toLowerCase().includes(q)
-        || d.email.toLowerCase().includes(q) || siteName.includes(q)
-        || d.phone.toLowerCase().includes(q) || d.licenseType.toLowerCase().includes(q);
-      const matchS = !filterStatus || d.status === filterStatus;
-      return matchQ && matchS;
-    });
-  }, [drivers, search, filterStatus]);
-
   const filteredReports = useMemo(() => {
     const q = reportSearch.trim().toLowerCase();
     return allReports.filter(r =>
@@ -1374,8 +1346,9 @@ export default function DriversPage() {
     );
   }, [allReports, reportSearch]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // `drivers` ya viene paginado del backend (search + filterStatus aplicados en WHERE).
+// `total`/`totalPages` vienen del backend en el hook. No hay slicing local.
+const paginated = drivers;
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -1452,7 +1425,7 @@ export default function DriversPage() {
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5 dark:border-white/[0.06]">
               <div>
                 <h3 className="text-sm font-semibold text-gray-800 dark:text-white">Listado de conductores</h3>
-                <p className="text-xs text-gray-400">{filtered.length} resultado{filtered.length !== 1 ? "s" : ""}</p>
+                <p className="text-xs text-gray-400">{total} resultado{total !== 1 ? "s" : ""}</p>
               </div>
               {totalPages > 1 && <span className="text-xs text-gray-400">Pág. {page} / {totalPages}</span>}
             </div>
@@ -1479,7 +1452,7 @@ export default function DriversPage() {
                     </thead>
                     <tbody>
                       {paginated.map((driver, index) => (
-                        <DriverRow key={driver.id} driver={driver} index={(page - 1) * PAGE_SIZE + index}
+                        <DriverRow key={driver.id} driver={driver} index={(page - 1) * pageSize + index}
                           canEdit={canEdit} canDelete={canDelete}
                           onView={() => setDrawerDriver(driver)}
                           onEdit={() => openEditModal(driver)}

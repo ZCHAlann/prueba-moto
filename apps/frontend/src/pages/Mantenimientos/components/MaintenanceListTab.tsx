@@ -4,6 +4,7 @@ import {
   Search, ChevronLeft, ChevronRight, ChevronDown, Plus, Download, Pencil, Trash2, X,
   Wrench, Package, User as UserIcon, FileDown,
   ClipboardList, Truck, Check, Calendar, AlertTriangle, RefreshCw, CheckCircle2,
+  HelpCircle, Unlock, AlertOctagon,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -18,6 +19,7 @@ import {
   useCancelRescheduleMaintenance,
   useRequestCorrection,
   useReauthorizeMaintenance,
+  useRequestMaintenanceReauth,
   useMaintenanceCategories,
   isMaintenanceOverdue,
   type Maintenance,
@@ -29,6 +31,7 @@ import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
 import { MaintenanceFormModal } from "./MaintenanceFormModal";
 import { MaintenanceDetailDrawer } from "./MaintenanceDetailDrawer";
 import { ReprogramDialog } from "./ReprogramDialog";
+import { RequestReauthModal } from "./RequestReauthModal";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 
 const STATUS_CFG: Record<MaintenanceStatus, { label: string; cls: string; dot: string }> = {
@@ -109,6 +112,27 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
   const [searchParams, setSearchParams] = useSearchParams();
   const assetIdFromUrl = searchParams.get("assetId") || "";
 
+  // El chip de "Filtrado por vehículo ABC-123" se renderiza a partir del
+  // campo `_filterAsset` que el backend devuelve en el response cuando
+  // el listado viene filtrado por `?assetId=X`. Eso evita que el
+  // frontend tenga que pegarle a otro endpoint (que requeriría permiso
+  // de `gestion/flotas` o `mantenimiento/execution` para ver la flota).
+  // _filterAsset puede ser null si el asset no existe o pertenece a
+  // otra empresa — en ese caso mostramos el id crudo como fallback.
+  const [filteredAsset, setFilteredAsset] = useState<
+    { id: string; plate: string | null; name: string; code?: string } | null
+  >(null);
+
+  // Texto que mostramos en el chip de "Filtrado por vehículo X". Si el
+  // backend devolvió `_filterAsset`, usamos su plate/name. Si no (id
+  // inválido, sin data todavía, o pertenece a otra empresa), caemos al
+  // id crudo como fallback visual.
+  const assetLabel = useMemo(() => {
+    if (!assetIdFromUrl) return "";
+    if (!filteredAsset) return assetIdFromUrl;
+    return filteredAsset.plate || filteredAsset.name || filteredAsset.code || assetIdFromUrl;
+  }, [assetIdFromUrl, filteredAsset]);
+
   // KPI click from EstadisticasTab: read ?from=&to=&kpi= params
   useEffect(() => {
     const f = searchParams.get("from");
@@ -155,6 +179,23 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
   const pageRows   = data?.data ?? [];
   const total      = data?.total ?? 0;
   const totalPages = Math.max(1, data?.totalPages ?? 1);
+  // Metadatos del filtro de asset (cuando el listado viene con ?assetId=X).
+  // El backend lo devuelve como `_filterAsset` en el response.
+  // Lo guardamos en el state local para que el chip se muestre apenas
+  // llegue el primer response (no en el segundo render).
+  const _filterAsset = (data as unknown as { _filterAsset?: { id: string; plate: string | null; name: string; code?: string } | null })?._filterAsset;
+  if (assetIdFromUrl && _filterAsset && filteredAsset?.id !== _filterAsset.id) {
+    // setState en render es aceptable aquí porque el branch es estable
+    // y se ejecuta solo cuando el id cambia — es la forma idiomática de
+    // derivar state desde props en React 18.
+    setFilteredAsset(_filterAsset);
+  } else if (assetIdFromUrl && !_filterAsset && filteredAsset !== null && data !== undefined) {
+    // El backend no devolvió metadata del asset (puede no existir o
+    // pertenecer a otra empresa) — caemos al id crudo.
+    setFilteredAsset(null);
+  } else if (!assetIdFromUrl && filteredAsset !== null) {
+    setFilteredAsset(null);
+  }
 
   // ── KPIs por estado ─────────────────────────────────────────────────
   // Para que el conteo por estado NO esté sesgado por el filtro de
@@ -291,12 +332,16 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
   const [correctionOpen, setCorrectionOpen]     = useState(false);
   const correctionMut = useRequestCorrection();
 
+  // jun 2026 — flujo de REAUTORIZACIÓN (operador pide, admin aprueba/rechaza).
+  const [reauthRequestTarget, setReauthRequestTarget] = useState<Maintenance | null>(null);
+
   const delMut        = useDeleteMaintenance();
   const takeMut       = useTakeMaintenance();
   const startMut      = useStartMaintenance();
   const finalizeMut   = useFinalizeMaintenance();
   const rescheduleMut = useCancelRescheduleMaintenance();
   const reauthorizeMut = useReauthorizeMaintenance();
+  const reauthRequestMut = useRequestMaintenanceReauth();
 
   const onDelete = (m: Maintenance) => setDeleteTarget(m);
 
@@ -445,7 +490,8 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
         <div className="flex items-center gap-2 rounded-xl border border-indigo-200/60 bg-indigo-50/80 px-3 py-2 text-xs text-indigo-700 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-200">
           <Truck size={13} />
           <span>
-            Filtrado por vehículo <code className="rounded bg-white/40 px-1.5 py-0.5 font-mono text-[11px] dark:bg-black/20">{assetIdFromUrl}</code>
+            Filtrado por vehículo{" "}
+            <strong className="font-semibold">{assetLabel}</strong>
           </span>
           <button
             type="button"
@@ -562,9 +608,9 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
             <p className="text-xs text-gray-400 dark:text-gray-500">Ajustá los filtros o creá un nuevo mantenimiento.</p>
           </div>
         ) : (
-          <div className="overflow-y-auto max-h-[400px]">
-            <div className="overflow-x-scroll">
-              <table className="w-full min-w-[960px] text-sm">
+           <div>
+             <div className="overflow-x-auto">
+               <table className="w-full min-w-[960px] text-sm">
                 <thead className="bg-gray-50 dark:bg-white/[0.02] text-[10px] uppercase tracking-widest text-gray-400 dark:text-gray-500">
                   <tr>
                     <th className="text-left px-4 py-3 font-semibold">Fecha</th>
@@ -610,9 +656,19 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
                       >
                         <td className="px-4 py-3 text-gray-600 dark:text-gray-300 whitespace-nowrap">
                           {fmtDate(m.scheduledFor)}
+                          {/* jun 2026 — badges de trazabilidad. "Reprog."
+                              viene del flujo clásico (cancelar + reprogramar).
+                              "Reautorizado" viene del flujo de atrasados
+                              (POST /:id/approve-reauth) — quedaron guardados
+                              en `last_reauthorization_id`. */}
                           {m.isReprogrammed && (
                             <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300" title={m.reprogramReason ?? ""}>
                               Reprog.
+                            </span>
+                          )}
+                          {m.lastReauthorizationId && (
+                            <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" title={`Reautorizado por ${m.lastReauthorizationId}`}>
+                              Reautorizado
                             </span>
                           )}
                         </td>
@@ -672,11 +728,11 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
                                 <CheckCircle2 size={13} />
                               </button>
                             )}
-                            {/* Reagendar (solo Atrasado): dispara el ReprogramDialog
-                                existente en modo reschedule. Mantenemos también
-                                la opción de reagendar para los casos en que el
-                                mantenimiento se mueve de fecha, no se reautoriza. */}
-                            {overdue && m.status !== "Completado" && (
+                            {/* Reagendar (solo Atrasado + admin): dispara el ReprogramDialog.
+                                Para operadores/conductor asignado, esto se reemplaza
+                                por "Pedir reautorización" (ver más abajo). El operador
+                                NO puede reagendar por su cuenta. */}
+                            {overdue && m.status !== "Completado" && isFullAccess && (
                               <button
                                 onClick={() => { setReprogramTarget(m); setReprogramOpen(true); }}
                                 className="p-1.5 rounded-md text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition"
@@ -685,7 +741,22 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
                                 <RefreshCw size={13} />
                               </button>
                             )}
-                            {canEdit && (
+                            {/* Pedir reautorización (jun 2026): solo atraso, NO full,
+                                y el caller es el asignado/creador. Abre el modal que
+                                envía POST /request-reauth. */}
+                            {overdue && m.status !== "Completado" && !isFullAccess && isOwnMaintenance && (
+                              <button
+                                onClick={() => setReauthRequestTarget(m)}
+                                className="p-1.5 rounded-md text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition"
+                                title="Pedir reautorización"
+                                aria-label="Pedir reautorización"
+                              >
+                                <HelpCircle size={13} />
+                              </button>
+                            )}
+                            {/* Editar: oculto cuando está atrasado para NO-admin. El
+                                operador debe pasar por el flujo de reautorización. */}
+                            {canEdit && !(overdue && !isFullAccess) && (
                               <button
                                 onClick={() => { setEditing(m); setModalOpen(true); }}
                                 className="p-1.5 rounded-md text-violet-600 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-500/10 transition"
@@ -794,6 +865,13 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
         tone="info"
         confirmLabel="Finalizar"
         description={finalizeTarget ? <>¿Marcar <strong className="text-gray-800 dark:text-white">{finalizeTarget.title}</strong> como completado?</> : null}
+      />
+
+      {/* jun 2026 — Modal de pedido de reautorización (operador/conductor). */}
+      <RequestReauthModal
+        open={!!reauthRequestTarget}
+        target={reauthRequestTarget}
+        onClose={() => setReauthRequestTarget(null)}
       />
 
       <ConfirmModal

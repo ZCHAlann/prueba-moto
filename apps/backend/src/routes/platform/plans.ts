@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
+import { eq, desc, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { validate } from '../../lib/validate';
 import { requireSuperadmin } from '../../middlewares/requireSuperadmin';
 import { NotFoundError } from '../../lib/errors';
 import { logAudit } from '../../lib/audit';
 import { platformPlans } from '../../db/schema/platform';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router();
 
@@ -48,8 +49,16 @@ function serializePlan(p: typeof platformPlans.$inferSelect) {
 
 router.get('/', async (req, res, next) => {
   try {
-    const rows = await db.select().from(platformPlans).orderBy(platformPlans.tier);
-    res.json({ data: rows.map(serializePlan), total: rows.length });
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
+
+    const [rows, countRow] = await Promise.all([
+      db.select().from(platformPlans)
+        .orderBy(desc(platformPlans.tier)).limit(pageSize).offset(offset),
+      db.select({ value: sql<number>`cast(count(*) as int)` }).from(platformPlans),
+    ]);
+
+    const total = countRow?.[0]?.value ?? 0;
+    res.json(buildPageResponse(rows.map(serializePlan), total, page, pageSize));
   } catch (err) {
     next(err);
   }

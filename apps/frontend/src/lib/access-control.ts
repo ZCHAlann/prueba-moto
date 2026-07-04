@@ -11,10 +11,6 @@ const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub
   // ── Sub-routes FIRST (most specific wins via find — first match wins) ─────────
   // A/C sub-routes
   { test: (h) => h === "/aires-acondicionados/mantenimientos",                                             mod: "ac", sub: "mantenimientos_ac" },
-  // Mantenimiento sub-routes
-  { test: (h) => h === "/mantenimiento/inventario",                                                         mod: "mantenimiento", sub: "inventario" },
-  // Motores sub-routes
-  { test: (h) => h === "/motores/historial",                                                               mod: "motores", sub: "historial_motor" },
   // ── Parent / catch-all routes ──────────────────────────────────────────────────
   { test: (h) => h === "/dashboard" || h.startsWith("/dashboard"),                                        mod: "dashboard",     sub: "dashboard" },
   { test: (h) => h === "/flotas" || h.startsWith("/flotas"),                                              mod: "gestion",       sub: "flotas" },
@@ -22,10 +18,9 @@ const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub
   { test: (h) => h.startsWith("/operaciones/asignaciones"),                                                 mod: "gestion",       sub: "asignaciones" },
   { test: (h) => h.startsWith("/gestion/sedes"),                                                          mod: "gestion",       sub: "sedes" },
   { test: (h) => h.startsWith("/gestion/garajes"),                                                        mod: "gestion",       sub: "garajes" },
-  { test: (h) => h.startsWith("/gestion/seguros"),                                                        mod: "gestion",       sub: "seguros" },
+  { test: (h) => h.startsWith("/gestion/seguros"),                                                        mod: "seguros",       sub: "polizas" },
   { test: (h) => h.startsWith("/gestion/talleres"),                                                       mod: "gestion",       sub: "talleres" },
   { test: (h) => h.startsWith("/gestion/proveedores"),                                                    mod: "gestion",       sub: "proveedores" },
-  { test: (h) => h === "/motores" || h.startsWith("/motores"),                                            mod: "motores",       sub: "lista_motores" },
   { test: (h) => h === "/generadores" || h.startsWith("/generadores"),                                    mod: "generadores",   sub: "generadores" },
   { test: (h) => h === "/aires-acondicionados" || h.startsWith("/aires-acondicionados"),                  mod: "ac",            sub: "lista_ac" },
   { test: (h) => h === "/mantenimiento" || h.startsWith("/mantenimiento"),                                 mod: "mantenimiento", sub: "agenda" },
@@ -38,7 +33,11 @@ const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub
   { test: (h) => h === "/peajes"      || h.startsWith("/peajes"),                                         mod: "peajes",        sub: "peajes"      },
   { test: (h) => h === "/geolocalizacion" || h.startsWith("/geolocalizacion"),                            mod: "geolocalizacion", sub: "geolocalizacion" },
   { test: (h) => h === "/autorizaciones" || h.startsWith("/autorizaciones"),                              mod: "autorizaciones", sub: "autorizaciones" },
-  { test: (h) => h === "/accesos" || h.startsWith("/accesos/"),                                            mod: "accesos",       sub: "accesos" },
+  // Accesos — jun 2026: split en `usuarios` + `roles`. Las sub-rutas
+  // específicas van ANTES del catch-all `/accesos/` para que ganen.
+  { test: (h) => h === "/accesos/usuarios" || h.startsWith("/accesos/usuarios"),                          mod: "accesos",       sub: "usuarios" },
+  { test: (h) => h === "/accesos/roles"    || h.startsWith("/accesos/roles"),                             mod: "accesos",       sub: "roles" },
+  { test: (h) => h === "/accesos" || h.startsWith("/accesos/"),                                            mod: "accesos",       sub: "usuarios" },
   { test: (h) => h === "/soporte" || h.startsWith("/soporte"),                                            mod: "soporte",       sub: "soporte" },
 ];
 
@@ -172,10 +171,7 @@ const reservedTopLevelSegments = new Set([
   "configuracion",
   "perfil",
   "accesos",
-  "gestion",
-  "flotas",
-  "activos",
-  "motores",
+"gestion",
   "generadores",
   "aires-acondicionados",
   "mantenimiento",
@@ -303,7 +299,6 @@ const rules: RouteRule[] = [
     test: (pathname) =>
       pathname.startsWith("/flotas") ||
       pathname.startsWith("/activos") ||
-      pathname.startsWith("/motores") ||
       pathname.startsWith("/generadores") ||
       pathname.startsWith("/aires-acondicionados") ||
       pathname.startsWith("/mantenimiento") ||
@@ -411,19 +406,6 @@ export function getDefaultRouteForSession(session: {
     "/gestion/sedes",
     "/gestion/garajes",
     "/gestion/seguros",
-    "/motores",
-    "/generadores",
-    "/aires-acondicionados",
-    "/mantenimiento",
-    "/mantenimiento/inventario",
-    "/checklist",
-    "/alertas",
-    "/reportes",
-    "/lienzo",
-    "/combustible",
-    "/geolocalizacion",
-    "/accesos/usuarios",
-    "/accesos/roles",
     "/perfil",
   ];
   for (const href of fallbackOrder) {
@@ -439,7 +421,11 @@ export function getDefaultRouteForSession(session: {
   return "/perfil";
 }
 
-export function canAccessPath(role: PlatformRole, pathname: string) {
+export function canAccessPath(
+  role: PlatformRole,
+  pathname: string,
+  modulePermissions: Record<string, Record<string, string[]>> = {},
+) {
   if (isPublicPath(pathname)) {
     return true;
   }
@@ -464,6 +450,59 @@ export function canAccessPath(role: PlatformRole, pathname: string) {
   // operacion; los dejamos pasar para que el gating granular de `canAccessItem`
   // decida por permisos.
   if (isUnknownOperationalRole(role) && !isPlatformRole(role)) return true;
+  // Excepción granular: ciertos paths se pueden abrir con permisos
+  // granulares aunque el role no esté en la lista hardcodeada del rule.
+  // Casos concretos:
+  //   - /accesos/usuarios: requiere `accesos.usuarios.*` (ver/crear/editar)
+  //     o `gestion.conductores.*` (ver/crear). El legacy `accesos.accesos.*`
+  //     también cuenta via shim.
+  //   - /accesos/roles:    requiere `accesos.roles.*` o legacy `accesos.accesos.*`.
+  // Ver hasSpecialGranularAccess.
+  if (hasSpecialGranularAccess(pathname, modulePermissions)) return true;
+  return false;
+}
+
+/**
+ * Paths con acceso habilitado por permisos granulares aunque el role del
+ * usuario no figure en el array `roles` de su rule.
+ *
+ * Mantener esta lista CHICA y AUDITABLE — solo paths donde el permiso
+ * granular es estrictamente necesario para el flujo funcional.
+ */
+function hasSpecialGranularAccess(
+  pathname: string,
+  modulePermissions: Record<string, Record<string, string[]>>,
+): boolean {
+  // /accesos/usuarios: dos flujos distintos habilitan la entrada, en
+  // paridad con `resolveUsersScope()` del backend (routes/company/user.ts):
+  //
+  //   1. El usuario tiene permiso granular de USUARIOS (`accesos.usuarios`
+  //      con ver/crear/editar) o el legacy `accesos.accesos.*` (shim de
+  //      tokens pre-jun 2026), aunque su `role` base (operador,
+  //      supervisor, custom, etc.) no esté en la lista hardcodeada de
+  //      la rule. Ej: un operador al que el admin le prendió "Usuarios"
+  //      a mano.
+  //   2. El usuario NO tiene `accesos.usuarios` pero sí `gestion.conductores`
+  //      (ver o crear) — flujo de "solo puede crear/ver conductores".
+  if (pathname === "/accesos/usuarios" || pathname.startsWith("/accesos/usuarios")) {
+    const usuariosActs   = modulePermissions?.accesos?.usuarios ?? [];
+    const accesosLegacy  = modulePermissions?.accesos?.accesos ?? [];
+    const combinedAcc    = [...usuariosActs, ...accesosLegacy];
+    if (combinedAcc.includes("ver") || combinedAcc.includes("crear") || combinedAcc.includes("editar")) {
+      return true;
+    }
+    const conductorActs = modulePermissions?.gestion?.conductores ?? [];
+    return conductorActs.includes("ver") || conductorActs.includes("crear");
+  }
+
+  // /accesos/roles: permiso granular de ROLES (o legacy `accesos.accesos.*`).
+  if (pathname === "/accesos/roles" || pathname.startsWith("/accesos/roles")) {
+    const rolesActs      = modulePermissions?.accesos?.roles ?? [];
+    const accesosLegacy  = modulePermissions?.accesos?.accesos ?? [];
+    const combined       = [...rolesActs, ...accesosLegacy];
+    return combined.includes("ver") || combined.includes("crear") || combined.includes("editar");
+  }
+
   return false;
 }
 
@@ -510,8 +549,11 @@ export function getAccessMessage(role: PlatformRole, pathname: string) {
 const SECTION_MODULE_MAP: Record<string, string[]> = {
   "dashboard":       ["dashboard"],
   "accesos":         ["accesos"],
-  "gestion":          ["gestion"],
-  "motores":          ["motores"],
+  // Jun 2026: `seguros` migró de submódulo de gestion a módulo top-level
+  // (alineado con el backend `requireModule('seguros')`). Como el sidebar
+  // lo sigue agrupando visualmente bajo la sección "Gestion", el filtro
+  // de visibilidad de la sección acepta tanto `gestion` como `seguros`.
+  "gestion":          ["gestion", "seguros"],
   "generadores":      ["generadores"],
   "ac":               ["ac"],                        // "aires acondicionados" en navigation → "ac" en MODULE_TREE
   "mantenimiento":    ["mantenimiento"],
@@ -603,7 +645,12 @@ export function canAccessHref(
   // /perfil es un recurso personal del usuario autenticado: cualquier role
   // del scope operación puede acceder (incluso roles personalizados).
   if (isPersonalProfilePath(href) && !isPlatformRole(role)) return true;
-  if (!canAccessPath(role, href)) return false;
+  // Antes no se pasaba `modulePermissions` a canAccessPath acá, así que
+  // hasSpecialGranularAccess (dentro de canAccessPath) siempre recibía el
+  // default `{}` y nunca detectaba el permiso granular `accesos.accesos`
+  // ni `gestion.conductores`, aunque el usuario sí lo tuviera asignado.
+  // Ese era el bug que provocaba el redirect fuera de /accesos/usuarios.
+  if (!canAccessPath(role, href, modulePermissions)) return false;
   if (isCompanyAdminRole(role)) return true;
   return canAccessItem(role, href, modulePermissions);
 }

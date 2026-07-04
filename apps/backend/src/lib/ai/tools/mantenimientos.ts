@@ -8,14 +8,14 @@ import { and, eq, gte, inArray, lte, desc, ilike, sql } from 'drizzle-orm';
 import { db } from '../../../db/client';
 import { companyMaintenanceRecords, companyAssets } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
-import { tolerantString, tolerantNumber, tolerantDateString, enumOrList } from '../schema-helpers';
+import { tolerantString, tolerantNumber, tolerantAssetId, tolerantDateString, enumOrList } from '../schema-helpers';
 
 const argsSchema = z.object({
   desde:        tolerantDateString().optional(),
   hasta:        tolerantDateString().optional(),
   estado:       enumOrList(['Programado', 'En curso', 'PendienteAtencion', 'Completado', 'Cancelado', 'Correccion']).optional(),
   tipo:         enumOrList(['Correctivo', 'Programado', 'Lavada']).optional(),
-  assetId:      tolerantNumber().int().positive().optional(),
+  assetId:      tolerantAssetId(),
   placa:        tolerantString().optional(),
   // limit removido del schema público — ver nota en vehiculos.ts.
 });

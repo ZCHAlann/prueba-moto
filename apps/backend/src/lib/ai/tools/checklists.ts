@@ -16,11 +16,11 @@ import {
   companyDrivers,
 } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
-import { tolerantString, tolerantNumber, tolerantBoolean, tolerantDateString, enumOrList } from '../schema-helpers';
+import { tolerantString, tolerantNumber, tolerantAssetId, tolerantBoolean, tolerantDateString, enumOrList } from '../schema-helpers';
 
 const argsSchema = z.object({
   estado:    enumOrList(['Aprobado', 'Observado', 'Pendiente', 'Rechazado']).optional(),
-  assetId:   tolerantNumber().int().positive().optional(),
+  assetId:   tolerantAssetId(),
   placa:     tolerantString().optional(),
   driverId:  tolerantNumber().int().positive().optional(),
   desde:     tolerantDateString().optional(),

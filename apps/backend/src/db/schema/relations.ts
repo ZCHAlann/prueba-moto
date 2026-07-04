@@ -29,7 +29,6 @@ import {
   companyAlerts,
   companyChecklists,
   companyChecklistCategories,
-  companyInventory,
   companyGarages,
   companyAcUnits,
   companyAcServices,
@@ -292,11 +291,7 @@ export const companyAlertsRelations = relations(companyAlerts, ({ one }) => ({
   asset:   one(companyAssets, { fields: [companyAlerts.assetId],   references: [companyAssets.id] }),
 }));
 
-// ── Inventory / Garages ──
-export const companyInventoryRelations = relations(companyInventory, ({ one }) => ({
-  company: one(companies, { fields: [companyInventory.companyId], references: [companies.id] }),
-}));
-
+// ── Garages ──
 export const companyGaragesRelations = relations(companyGarages, ({ one }) => ({
   company: one(companies, { fields: [companyGarages.companyId], references: [companies.id] }),
 }));

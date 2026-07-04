@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, Inbox, History, Loader2, AlertTriangle, AlertCircle,
@@ -41,7 +41,7 @@ export function AutorizacionesPage() {
   const isConductor = role === "conductor";
   const canDecide = ["supervisor", "admin_empresa", "owner_empresa"].includes(role);
 
-  const { items, loading, fetchList, fetchConductorContext, decide, remove, wsChangeCount, wsCorrectionsCount, wsLastDecidedId, wsLastAiAptoId, wsLastFailedId, lastAnalysisError } = useExitAuthorizations();
+  const { items, total, pageSize, totalPages, loading, fetchList, fetchConductorContext, decide, remove, wsChangeCount, wsCorrectionsCount, wsLastDecidedId, wsLastAiAptoId, wsLastFailedId, lastAnalysisError } = useExitAuthorizations();
 
   const [conductorCtx, setConductorCtx] = useState<ConductorContext | null>(null);
 
@@ -92,13 +92,10 @@ export function AutorizacionesPage() {
         const decided = ctx.authorizations.find(
           (a) => a.status !== "Pendiente" && !shownIds.has(a.id)
         );
-      
+
       });
-      void fetchList();
-    } else {
-      void fetchList();
     }
-  }, [isConductor, fetchConductorContext, fetchList]);
+  }, [isConductor, fetchConductorContext]);
 
   // ── Cuando llega un evento WS nuevo → refetch y evaluar popup
   const prevWsCount = useRef(0);
@@ -264,26 +261,39 @@ export function AutorizacionesPage() {
   const [q, setQ] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  // Page local por subtab (entrantes / historial). Reset a 1 al cambiar filtros.
+  const [entrantesPage, setEntrantesPage] = useState(1);
+  const [historialPage, setHistorialPage] = useState(1);
 
-  const filtered = useMemo(() => {
-    const statusMap: Record<HistorialFilter, ExitAuthStatus> = {
-      "Autorizadas": "Autorizada",
-      "Rechazadas":  "Rechazada",
-    };
-    let list = items.filter((a) => a.status === statusMap[historialFilter]);
-    if (q.trim()) {
-      const Q = q.toLowerCase();
-      list = list.filter((a) =>
-        (a.assetPlate ?? "").toLowerCase().includes(Q) ||
-        (a.driverName ?? "").toLowerCase().includes(Q) ||
-        (a.decidedByName ?? "").toLowerCase().includes(Q) ||
-        (a.notes ?? "").toLowerCase().includes(Q),
-      );
+  // ── Carga al backend cuando cambian subTab / filtros / página ─────────────
+  // El backend pagina y filtra. La lista `items` que llega al hook ya es la
+  // página actual del universo filtrado.
+  const statusMap: Record<HistorialFilter, ExitAuthStatus> = {
+    "Autorizadas": "Autorizada",
+    "Rechazadas":  "Rechazada",
+  };
+  useEffect(() => {
+    if (subTab === "entrantes") {
+      void fetchList({ status: "Pendiente", page: entrantesPage, pageSize: 7 });
+    } else {
+      void fetchList({
+        status: statusMap[historialFilter],
+        q: q.trim() || undefined,
+        from: dateFrom || undefined,
+        to:   dateTo   || undefined,
+        page: historialPage,
+        pageSize: 7,
+      });
     }
-    if (dateFrom) list = list.filter((a) => (a.decidedAt ?? a.requestedAt) >= dateFrom);
-    if (dateTo)   list = list.filter((a) => (a.decidedAt ?? a.requestedAt) <= dateTo + "T23:59:59");
-    return list;
-  }, [items, historialFilter, q, dateFrom, dateTo]);
+    // fetchList no se incluye en deps: companyIdStr es la única dep estable
+    // y el resto son inputs explícitos del efecto.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subTab, historialFilter, q, dateFrom, dateTo, entrantesPage, historialPage]);
+
+  // Reset a página 1 cuando cambian los filtros del historial.
+  useEffect(() => { setHistorialPage(1); }, [historialFilter, q, dateFrom, dateTo]);
+  // Reset a página 1 al cambiar de tab.
+  useEffect(() => { setEntrantesPage(1); setHistorialPage(1); }, [subTab]);
 
   // ── Render conductor
   if (isConductor) {
@@ -396,8 +406,12 @@ export function AutorizacionesPage() {
         {subTab === "entrantes" && (
           <motion.div key="ent" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.18 }}>
             <EntrantesTab
-              items={items.filter((a) => a.status === "Pendiente")}
+              items={items}
               loading={loading}
+              total={total}
+              totalPages={totalPages}
+              page={entrantesPage}
+              onChangePage={setEntrantesPage}
               onOpen={(a) => openDetail(a, canDecide ? "operator" : "viewer")}
             />
           </motion.div>
@@ -405,7 +419,7 @@ export function AutorizacionesPage() {
         {subTab === "historial" && (
           <motion.div key="hist" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.18 }}>
             <HistorialTab
-              items={filtered}
+              items={items}
               filter={historialFilter}
               onChangeFilter={setHistorialFilter}
               q={q}
@@ -414,6 +428,10 @@ export function AutorizacionesPage() {
               dateTo={dateTo}
               onChangeDateFrom={setDateFrom}
               onChangeDateTo={setDateTo}
+              total={total}
+              totalPages={totalPages}
+              page={historialPage}
+              onChangePage={setHistorialPage}
               onOpen={(a) => openDetail(a, canDecide ? "operator" : "viewer")}
             />
           </motion.div>
@@ -489,19 +507,15 @@ function SubTabs({ value, onChange }: { value: SubTab; onChange: (v: SubTab) => 
 
 // ─── Entrantes tab ────────────────────────────────────────────────────────────
 
-function EntrantesTab({ items, loading, onOpen }: {
+function EntrantesTab({ items, loading, total, totalPages, page, onChangePage, onOpen }: {
   items: ExitAuthorization[];
   loading: boolean;
+  total: number;
+  totalPages: number;
+  page: number;
+  onChangePage: (p: number) => void;
   onOpen: (a: ExitAuthorization) => void;
 }) {
-  const [page, setPage] = useState(1);
-  const PAGE_SIZE = 7;
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
-  const paged = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  // Reset página si cambian los items
-  useEffect(() => { setPage(1); }, [items.length]);
-
   if (loading && items.length === 0) return <CenteredLoader label="Buscando solicitudes entrantes…" />;
   if (items.length === 0) return <EmptyState icon={<Inbox size={18} />} title="Sin solicitudes entrantes" subtitle="Las nuevas solicitudes se mostrarán aquí en tiempo real." />;
   return (
@@ -528,7 +542,7 @@ function EntrantesTab({ items, loading, onOpen }: {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-            {paged.map((a) => (
+            {items.map((a) => (
               <tr key={a.id} className="group cursor-pointer hover:bg-gray-50/60 dark:hover:bg-white/[0.02] transition" onClick={() => onOpen(a)}>
                 <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300 whitespace-nowrap">{fmtDate(a.requestedAt)}</td>
                 <td className="px-5 py-3.5 font-semibold text-gray-800 dark:text-gray-200">{a.assetPlate ?? a.assetLabel ?? "—"}</td>
@@ -540,14 +554,14 @@ function EntrantesTab({ items, loading, onOpen }: {
           </tbody>
         </table>
       </div>
-      <Paginator page={page} totalPages={totalPages} total={items.length} onChange={setPage} />
+      <Paginator page={page} totalPages={totalPages} total={total} onChange={onChangePage} />
     </div>
   );
 }
 
 // ─── Historial tab ────────────────────────────────────────────────────────────
 
-function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, dateTo, onChangeDateFrom, onChangeDateTo, onOpen }: {
+function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, dateTo, onChangeDateFrom, onChangeDateTo, total, totalPages, page, onChangePage, onOpen }: {
   items: ExitAuthorization[];
   filter: HistorialFilter;
   onChangeFilter: (f: HistorialFilter) => void;
@@ -557,16 +571,12 @@ function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, d
   dateTo: string;
   onChangeDateFrom: (s: string) => void;
   onChangeDateTo: (s: string) => void;
+  total: number;
+  totalPages: number;
+  page: number;
+  onChangePage: (p: number) => void;
   onOpen: (a: ExitAuthorization) => void;
 }) {
-  const [page, setPage] = useState(1);
-  const PAGE_SIZE = 7;
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
-  const paged = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  // Reset a página 1 cuando cambian filtros o items
-  useEffect(() => { setPage(1); }, [items.length, filter, q, dateFrom, dateTo]);
-
   return (
     <div className="space-y-3">
       <div className="flex flex-col gap-3 rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] p-3 sm:flex-row sm:flex-wrap sm:items-center">
@@ -621,7 +631,7 @@ function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, d
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                {paged.map((a) => (
+                {items.map((a) => (
                   <tr key={a.id} className="group cursor-pointer hover:bg-gray-50/60 dark:hover:bg-white/[0.02] transition" onClick={() => onOpen(a)}>
                     <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300 whitespace-nowrap">{fmtDate(a.decidedAt ?? a.requestedAt)}</td>
                     <td className="px-5 py-3.5 font-semibold text-gray-800 dark:text-gray-200">{a.assetPlate ?? a.assetLabel ?? "—"}</td>
@@ -642,7 +652,7 @@ function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, d
               </tbody>
             </table>
           </div>
-          <Paginator page={page} totalPages={totalPages} total={items.length} onChange={setPage} />
+          <Paginator page={page} totalPages={totalPages} total={total} onChange={onChangePage} />
         </>
       )}
     </div>

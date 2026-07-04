@@ -18,6 +18,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and, gte, lte, sql, desc, or, ilike, isNull } from 'drizzle-orm';
 import { db } from '../../db/client';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 import {
   getExitAuthorizationAnalyses,
   getExitAuthorizationEffectiveStatuses,
@@ -309,6 +310,7 @@ router.get('/', requireModule('autorizaciones'), async (req, res, next) => {
       throw new AppError(400, 'Parámetros de filtro inválidos.');
     }
     const { status, driverId, assetId, decidedBy, date, from, to } = parsed.data;
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
     let effectiveDriverId: number | undefined = driverId;
     if (role === 'conductor') {
@@ -319,11 +321,12 @@ router.get('/', requireModule('autorizaciones'), async (req, res, next) => {
         .where(and(eq(companyDrivers.companyId, companyId), eq(companyDrivers.userId, userId)))
         .limit(1);
       if (!driverRow) {
-        return res.json({ data: [], total: 0 });
+        return res.json(buildPageResponse<unknown>([], 0, page, pageSize));
       }
       effectiveDriverId = driverRow.id;
     }
 
+    // WHERE compartido entre la query de datos y la query de count.
     const whereParts: ReturnType<typeof sql>[] = [
       sql`a.company_id = ${companyId}`,
     ];
@@ -334,59 +337,82 @@ router.get('/', requireModule('autorizaciones'), async (req, res, next) => {
     if (date)                              whereParts.push(sql`a.requested_at::date = ${date}`);
     if (from)                              whereParts.push(sql`a.requested_at >= ${from}`);
     if (to)                                whereParts.push(sql`a.requested_at <= ${to}::date + interval '1 day' - interval '1 millisecond'`);
+    const whereClause = sql.join(whereParts, sql` AND `);
 
-    const rawRows = await db.execute<{
-      id: number; company_id: number; asset_id: number; driver_id: number;
-      status: 'Pendiente' | 'Autorizada' | 'Rechazada';
-      oil_bayoneta_video_url: string | null; oil_bayoneta_video_thumb_url: string | null;
-      coolant_photo_url: string | null; brake_fluid_photo_url: string | null;
-      tire_photos_url: string[] | null;
-      windshield_washer_photo_url: string | null;
-      lights_photo_url: string | null; battery_photo_url: string | null; jack_photo_url: string | null;
-      notes: string | null; decision_notes: string | null;
-      decision_by_user_id: number | null; decided_at: string | null;
-      requested_at: string; created_at: string; updated_at: string;
-      asset_name: string | null; asset_plate: string | null; asset_label: string | null;
-      driver_name: string | null; decided_by_name: string | null;
-      ai_analysis_status: string | null; corrections_sent_at: string | null; corrections_round: number | null;
-    }>(sql`
-      SELECT
-        a.id, a.company_id, a.asset_id, a.driver_id, a.status,
-        a.oil_bayoneta_video_url, a.oil_bayoneta_video_thumb_url,
-        a.coolant_photo_url, a.brake_fluid_photo_url, a.tire_photos_url,
-        a.windshield_washer_photo_url, a.lights_photo_url, a.battery_photo_url, a.jack_photo_url,
-        a.notes, a.decision_notes, a.decision_by_user_id, a.decided_at,
-        a.requested_at, a.created_at, a.updated_at,
-        a.ai_analysis_status, a.corrections_sent_at, a.corrections_round,
-        ast.name  AS asset_name,
-        ast.plate AS asset_plate,
-        ast.code  AS asset_label,
-        TRIM(COALESCE(d.first_name,'') || ' ' || COALESCE(d.last_name,'')) AS driver_name,
-        cu.username AS decided_by_name
-      FROM company_exit_authorizations a
-      LEFT JOIN company_assets   ast ON ast.id = a.asset_id
-      LEFT JOIN company_drivers  d   ON d.id   = a.driver_id
-      LEFT JOIN company_users    cu  ON cu.id  = a.decision_by_user_id
-      WHERE ${sql.join(whereParts, sql` AND `)}
-      ORDER BY a.requested_at DESC
-    `);
-
-    const rows = (Array.isArray(rawRows) ? rawRows : (rawRows as any).rows ?? []) as any[];
-
-    res.json({
-      data: rows.map((r) => serializeAuthorization(r as any, {
-        assetLabel:  r.asset_label,
-        assetName:   r.asset_name,
-        assetPlate:  r.asset_plate,
-        driverName:  r.driver_name,
-        decidedByName: r.decided_by_name,
-      })),
-      total: rows.length,
-      assets: (await db
+    // Paginación SQL real: LIMIT/OFFSET en la query de datos, y un COUNT(*)
+    // paralelo con el MISMO whereClause. Si el universo filtrado es 0, el
+    // count devuelve 0 y la query de datos devuelve [] sin error.
+    const [rawRows, countResult, assetsRows, driversRows] = await Promise.all([
+      db.execute<{
+        id: number; company_id: number; asset_id: number; driver_id: number;
+        status: 'Pendiente' | 'Autorizada' | 'Rechazada';
+        oil_bayoneta_video_url: string | null; oil_bayoneta_video_thumb_url: string | null;
+        coolant_photo_url: string | null; brake_fluid_photo_url: string | null;
+        tire_photos_url: string[] | null;
+        windshield_washer_photo_url: string | null;
+        lights_photo_url: string | null; battery_photo_url: string | null; jack_photo_url: string | null;
+        notes: string | null; decision_notes: string | null;
+        decision_by_user_id: number | null; decided_at: string | null;
+        requested_at: string; created_at: string; updated_at: string;
+        asset_name: string | null; asset_plate: string | null; asset_label: string | null;
+        driver_name: string | null; decided_by_name: string | null;
+        ai_analysis_status: string | null; corrections_sent_at: string | null; corrections_round: number | null;
+      }>(sql`
+        SELECT
+          a.id, a.company_id, a.asset_id, a.driver_id, a.status,
+          a.oil_bayoneta_video_url, a.oil_bayoneta_video_thumb_url,
+          a.coolant_photo_url, a.brake_fluid_photo_url, a.tire_photos_url,
+          a.windshield_washer_photo_url, a.lights_photo_url, a.battery_photo_url, a.jack_photo_url,
+          a.notes, a.decision_notes, a.decision_by_user_id, a.decided_at,
+          a.requested_at, a.created_at, a.updated_at,
+          a.ai_analysis_status, a.corrections_sent_at, a.corrections_round,
+          ast.name  AS asset_name,
+          ast.plate AS asset_plate,
+          ast.code  AS asset_label,
+          TRIM(COALESCE(d.first_name,'') || ' ' || COALESCE(d.last_name,'')) AS driver_name,
+          cu.username AS decided_by_name
+        FROM company_exit_authorizations a
+        LEFT JOIN company_assets   ast ON ast.id = a.asset_id
+        LEFT JOIN company_drivers  d   ON d.id   = a.driver_id
+        LEFT JOIN company_users    cu  ON cu.id  = a.decision_by_user_id
+        WHERE ${whereClause}
+        ORDER BY a.requested_at DESC
+        LIMIT ${pageSize} OFFSET ${offset}
+      `),
+      db.execute<{ value: number }>(sql`
+        SELECT cast(count(*) as int) AS value
+        FROM company_exit_authorizations a
+        WHERE ${whereClause}
+      `),
+      // Catálogos auxiliares (no paginados — son dropdowns de filtro).
+      db
         .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate, code: companyAssets.code, brand: companyAssets.brand, model: companyAssets.model })
         .from(companyAssets)
-        .where(eq(companyAssets.companyId, companyId))
-      ).map((a) => ({
+        .where(eq(companyAssets.companyId, companyId)),
+      db
+        .select({ id: companyDrivers.id, firstName: companyDrivers.firstName, lastName: companyDrivers.lastName, code: companyDrivers.code })
+        .from(companyDrivers)
+        .where(eq(companyDrivers.companyId, companyId)),
+    ]);
+
+    const rows = (Array.isArray(rawRows) ? rawRows : (rawRows as any).rows ?? []) as any[];
+    const totalRaw = Array.isArray(countResult) ? countResult[0]?.value : (countResult as any)?.rows?.[0]?.value;
+    const total = typeof totalRaw === "number" ? totalRaw : Number(totalRaw ?? 0);
+
+    res.json({
+      ...buildPageResponse(
+        rows.map((r) => serializeAuthorization(r as any, {
+          assetLabel:  r.asset_label,
+          assetName:   r.asset_name,
+          assetPlate:  r.asset_plate,
+          driverName:  r.driver_name,
+          decidedByName: r.decided_by_name,
+        })),
+        total,
+        page,
+        pageSize,
+      ),
+      assets: assetsRows.map((a) => ({
         id: toId('asset', a.id),
         name: a.name,
         plate: a.plate,
@@ -394,11 +420,7 @@ router.get('/', requireModule('autorizaciones'), async (req, res, next) => {
         brand: a.brand,
         model: a.model,
       })),
-      drivers: (await db
-        .select({ id: companyDrivers.id, firstName: companyDrivers.firstName, lastName: companyDrivers.lastName, code: companyDrivers.code })
-        .from(companyDrivers)
-        .where(eq(companyDrivers.companyId, companyId))
-      ).map((d) => ({
+      drivers: driversRows.map((d) => ({
         id: toId('driver', d.id),
         firstName: d.firstName,
         lastName: d.lastName,

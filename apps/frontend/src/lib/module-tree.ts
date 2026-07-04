@@ -48,9 +48,8 @@ export const MODULE_TREE = {
       kpis_checklists:               "KPIs de inspecciones",
       checklists_pendientes:         "Inspecciones pendientes",
 
-      // ── Aceite e inventario ──
+      // ── Aceite ──
       proximo_cambio_aceite:         "Próximos cambios de aceite",
-      inventario_bajo:               "Inventario bajo mínimo",
 
       // ── Aires acondicionados ──
       kpis_ac:                       "KPIs de aires acondicionados",
@@ -67,10 +66,26 @@ export const MODULE_TREE = {
       flotas:           "Flotas",
       conductores:      "Conductores",
       sedes:            "Sedes",
+      // Jun 2026 — `garajes` faltaba en el MODULE_TREE aunque la ruta
+      // backend `garages.ts` lo usa y el sidebar expone /gestion/garajes.
+      garajes:          "Garajes",
       asignaciones:     "Asignar vehículo",
-      seguros:          "Seguros vehiculares",
+      // Jun 2026 — alineado al backend. Las rutas suppliers.ts y
+      // workshops.ts usan los keys en inglés `suppliers` y `workshops`,
+      // pero los shims en requirePermission.ts ahora aceptan también
+      // las keys en español del MODULE_TREE.
       talleres:         "Talleres",
       proveedores:      "Proveedores",
+    },
+  },
+  // Jun 2026 — antes estaba como submódulo de `gestion` (`gestion.seguros`),
+  // pero el backend usa `requireModule('seguros')` (módulo top-level).
+  // Se extrajo a módulo propio para que el editor de permisos y los gates
+  // coincidan con el backend.
+  seguros: {
+    label: "Seguros",
+    submodules: {
+      polizas: "Pólizas de seguro",
     },
   },
   generadores: {
@@ -92,6 +107,10 @@ export const MODULE_TREE = {
       agenda:       "Agendar",
       execution:    "Preventivo y correctivo",
       records:      "Histórico de mantenimientos",
+      // Jun 2026 — reautorización de mantenimientos atrasados (flujo
+      // pedir/aprobar/rechazar, similar al de checklist.reautorizaciones).
+      // Backend lo usa en maintenances.ts:1612.
+      reautorizaciones: "Reautorización de atrasados",
     },
   },
   checklist: {
@@ -157,13 +176,32 @@ export const MODULE_TREE = {
   accesos: {
     label: "Accesos",
     submodules: {
-      accesos: "Usuarios y roles",
+      // Jun 2026 — split: antes era un único submódulo `accesos` que
+      // tapaba "usuarios" y "roles" juntos. Ahora son dos separados
+      // para poder dar permiso de uno sin el otro.
+      //
+      // Nota de compat: tokens viejos pueden seguir trayendo
+      // `accesos.accesos.*`; el shim en `requirePermission` (backend)
+      // y el helper `expandLegacyAccessPerms` (frontend) los mapean.
+      usuarios: "Usuarios",
+      roles:    "Roles y permisos",
     },
   },
   autorizaciones: {
     label: "Autorizaciones",
     submodules: {
       autorizaciones: "Autorizaciones de salida",
+    },
+  },
+  jarvis: {
+    label: "Asistente IA",
+    submodules: {
+      // Acción: 'ver' (semántica = "puede usar el asistente").
+      // Bypass admin/owner incorporado en requirePermission, así que por
+      // defecto solo admin_empresa / owner_empresa pueden usarlo. Un
+      // superadmin puede extender 'ver' a roles granulares vía el
+      // editor de permisos.
+      asistente: "Asistente IA",
     },
   },
 } as const;

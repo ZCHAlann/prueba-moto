@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, ClipboardCheck, ListChecks, AlertTriangle, ClipboardList, Inbox } from "lucide-react";
 import { useChecklistCategories, type ChecklistCategory } from "../../hooks/useChecklistCategories";
@@ -59,6 +60,29 @@ export function ChecklistPage() {
     () => (ADMIN_ROLES.includes(role) || can("checklist", "inspecciones", "ver")) ? "pendientes" : "realizar"
   );
   // (el inicial se queda con "inspecciones" porque "Pendientes" no requiere "historial")
+
+  // Deep-link desde otras páginas (ej. ProfilePage → "Mis inspecciones
+  // pendientes"). Si llegamos con `?assetId=X` y la pestaña actual no es
+  // compatible, saltamos a "pendientes" para que el conductor aterrice en
+  // el lugar correcto sin tener que buscar la pestaña a mano.
+  //
+  // OJO: NO incluir `tab` en las deps. Si lo incluimos, cualquier click
+  // del usuario en otra pestaña (p.ej. "Realizar") re-dispara este effect
+  // y vuelve a forzar "pendientes" — el usuario no puede cambiar de tab
+  // mientras el `?assetId=` siga en la URL. Hacemos el setTab solo cuando
+  // el deep-link aparece por primera vez (o cambia a un valor distinto).
+  const [searchParams] = useSearchParams();
+  const deepLinkedAssetId = searchParams.get("assetId");
+  const handledDeepLink = useRef<string | null>(null);
+  useEffect(() => {
+    if (!deepLinkedAssetId) return;
+    if (!canSeeInspecciones) return;
+    if (handledDeepLink.current === deepLinkedAssetId) return;
+    if (tab !== "pendientes") {
+      setTab("pendientes");
+    }
+    handledDeepLink.current = deepLinkedAssetId;
+  }, [deepLinkedAssetId, canSeeInspecciones, tab]);
 
   // Wizard: controlamos apertura + plantilla preseleccionada
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -134,6 +158,7 @@ export function ChecklistPage() {
             transition={{ duration: 0.18 }}>
             <ChecklistPendientes
               categories={categories}
+              deepLinkedAssetId={deepLinkedAssetId}
               onOpenWizard={(id) => {
                 if (id) {
                   const c = categories.find((x) => x.id === id);

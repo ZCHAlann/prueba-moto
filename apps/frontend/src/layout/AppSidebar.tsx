@@ -55,7 +55,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ sections: sectionsProp, homeHre
       filterOperationalNavigation(
         navigationSections,
         session?.role ?? null,
-        (session?.modulePermissions ?? {}) as Record<string, string[]>,
+        (session?.modulePermissions ?? {}) as Record<string, Record<string, string[]>>,
         session?.companyModules ?? [],
       ),
     [session?.role, session?.modulePermissions, session?.companyModules]

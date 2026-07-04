@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { eq, and, gte, lte, sql, desc, inArray } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyChecklists, companyChecklistCategories, companyAssets, companyDrivers, companyAssignments, companySites, companyChecklistReauthRequests } from '../../db/schema/operational';
+import { companyUsers } from '../../db/schema/platform';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requirePermission } from '../../middlewares/requirePermission';
@@ -42,7 +43,7 @@ const categoryShape = {
   // Periodicidad
   cadenceKind: z.enum(CADENCE_KINDS).default('none'),
   cadenceDays: z.number().int().min(1).max(365).nullable().optional(),
-  windowDays: z.number().int().min(1).max(60).default(7),
+  windowDays: z.number().int().min(1).max(60).nullable().optional(),
   // Alcance
   scopeKind: z.enum(SCOPE_KINDS).default('pick'),
   scopeAssetType: z.enum(CHECKLIST_TARGET_KINDS).nullable().optional(),
@@ -139,6 +140,9 @@ router.post(
         targetUserIds: body.targetUserIds ?? [],
         cadenceKind: body.cadenceKind ?? 'none',
         cadenceDays: body.cadenceKind === 'days' ? body.cadenceDays ?? null : null,
+        // Si no viene windowDays o viene null, caemos al default histórico
+        // de 7 días. Mantener el fallback aquí preserva la compatibilidad
+        // con clientes viejos que no mandaban el campo.
         windowDays: body.windowDays ?? 7,
         scopeKind: body.scopeKind ?? 'pick',
         scopeAssetType: body.scopeKind === 'asset_type' ? body.scopeAssetType ?? null : null,
@@ -774,7 +778,7 @@ router.post(
 // ─── PUT /company/:id/checklists/:checkId ─────────────────────────────────────
 
 router.put(
-  '/checklists/:checkId',
+  '/:checkId',
   requireModule('checklist'),
   requirePermission('checklist', 'inspecciones', 'editar'),
   validate(updateChecklistSchema),
@@ -954,6 +958,21 @@ router.get('/pendientes', requireModule('checklist'), requirePermission('checkli
     const user = req.user!;
     const userSiteId = await getUserSiteId(companyId, user.sub);
 
+    // Filtro opcional por assetId (deep-link desde Profile u otros módulos).
+    // Si viene, sólo dejamos pasar categorías que tengan ese vehículo en
+    // `pendingItems`, y dentro de cada categoría dejamos solo ese item.
+    // Aplicado al final del cálculo para no tocar la lógica de scoping.
+    const rawAssetId = req.query.assetId;
+    let filterAssetIdNum: number | null = null;
+    if (typeof rawAssetId === 'string' && rawAssetId.trim().length > 0) {
+      try {
+        filterAssetIdNum = parseIdFlexible('asset', rawAssetId);
+      } catch {
+        // assetId malformado ⇒ ignorar filtro en vez de 400 (deep-link roto).
+        filterAssetIdNum = null;
+      }
+    }
+
     // ── Si el usuario es Conductor, resolver su driverId + assetId de asignación
     //    activa UNA sola vez. Luego filtramos `assets` por ese asset en cada
     //    categoría, de modo que el chofer solo vea su propio vehículo.
@@ -1104,7 +1123,23 @@ const visible = filterCategoriesForUser(allCats, user.role, user.sub);
       });
     }
 
-    res.json({ data: result, total: result.length });
+    // ── Filtro final por assetId (deep-link) ──────────────────────────────
+    const finalResult = filterAssetIdNum == null
+      ? result
+      : result
+          .map((entry) => ({
+            ...entry,
+            pendingItems: entry.pendingItems.filter((it) => {
+              try {
+                return parseIdFlexible('asset', it.assetId) === filterAssetIdNum;
+              } catch {
+                return false;
+              }
+            }),
+          }))
+          .filter((entry) => entry.pendingItems.length > 0);
+
+    res.json({ data: finalResult, total: finalResult.length });
   } catch (err) {
     next(err);
   }
@@ -1187,6 +1222,11 @@ router.get('/vencidos', requireModule('checklist'), requirePermission('checklist
         eq(companyChecklists.companyId, companyId),
         eq(companyChecklists.status, 'Vencido'),
         sql`${companyChecklists.cycleEnd} IS NOT NULL AND ${companyChecklists.cycleEnd} <= ${now.toISOString()}`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM company_checklist_reauth_requests r
+          WHERE r.missed_checklist_id = ${companyChecklists.id}
+            AND r.completed_checklist_id IS NOT NULL
+        )`,
       ))
       .orderBy(sql`${companyChecklists.cycleEnd} DESC`);
 
@@ -1487,5 +1527,75 @@ function serializeChecklist(
     updatedAt: c.updatedAt,
   };
 }
+
+// ─── GET /checklists/form-options ────────────────────────────────────────────
+// jun 2026 — el frontend (PlantillasManager de Checklist) llama a este
+// endpoint para listar usuarios + assets al construir el wizard de
+// plantillas. Hasta hoy el endpoint NO existía y el hook devolvía `[]`,
+// por lo que el buscador de usuarios en el editor de plantillas estaba
+// vacío (cualquier query daba "Sin resultados.").
+//
+// Gate fino: requiere permiso granular `checklist.overdue.ver` OR
+// `accesos.usuarios.ver` (los aprobadores / admins). Lógica equivalente
+// al patrón de `MaintenanceFormOptions` (no se filtra por Accesos/Usuarios
+// estricto — cualquiera con permiso de operar checklists puede asignárselas).
+router.get(
+  '/form-options',
+  requireModule('checklist'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+
+      const [usersRows, assetsRows] = await Promise.all([
+        db
+          .select({
+            id:        companyUsers.id,
+            username:  companyUsers.username,
+            role:      companyUsers.role,
+            firstName: sql<string>`${companyUsers.profileData}->>'firstName'`,
+            lastName:  sql<string>`${companyUsers.profileData}->>'lastName'`,
+          })
+          .from(companyUsers)
+          .where(eq(companyUsers.companyId, companyId)),
+        db
+          .select({
+            id:     companyAssets.id,
+            name:   companyAssets.name,
+            plate:  companyAssets.plate,
+            code:   companyAssets.code,
+            brand:  companyAssets.brand,
+            model:  companyAssets.model,
+            status: companyAssets.status,
+          })
+          .from(companyAssets)
+          .where(eq(companyAssets.companyId, companyId))
+          .limit(500),
+      ]);
+
+      res.json({
+        users: usersRows.map((u) => ({
+          id:        toId('company-user', u.id),
+          username:  u.username,
+          role:      u.role,
+          firstName: u.firstName ?? null,
+          lastName:  u.lastName  ?? null,
+          // Si el perfil no trae firstName/lastName, caemos al username.
+          fullName:  [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.username,
+        })),
+        assets: assetsRows.map((a) => ({
+          id:     toId('asset', a.id),
+          name:   a.name,
+          plate:  a.plate,
+          code:   a.code,
+          brand:  a.brand,
+          model:  a.model,
+          status: a.status,
+        })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 export default router;

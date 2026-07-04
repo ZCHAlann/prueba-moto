@@ -9,11 +9,23 @@ const BYPASS_ROLES = ['superadmin', 'owner_empresa', 'admin_empresa'] as const;
  * la acción, intenta el path viejo.
  *
  *  - `lienzo.lienzo.*`  → fallback a `reportes.lienzo.*`  (jun 2026)
+ *  - `accesos.usuarios` → fallback a `accesos.accesos.*` (jun 2026)
+ *  - `accesos.roles`    → fallback a `accesos.accesos.*` (jun 2026)
+ *  - `gestion.proveedores` → fallback a `gestion.suppliers` (jun 2026)
+ *  - `gestion.talleres`    → fallback a `gestion.workshops` (jun 2026)
  *
  * Si en el futuro se migra otro módulo, agregar acá.
  */
 const LEGACY_FALLBACK: Record<string, Record<string, string>> = {
-  lienzo: { lienzo: "reportes.lienzo" },
+  lienzo:  { lienzo:  "reportes.lienzo" },
+  accesos: {
+    usuarios: "accesos.accesos",
+    roles:    "accesos.accesos",
+  },
+  gestion: {
+    proveedores: "gestion.suppliers",
+    talleres:    "gestion.workshops",
+  },
 };
 
 function resolveModuleSub(

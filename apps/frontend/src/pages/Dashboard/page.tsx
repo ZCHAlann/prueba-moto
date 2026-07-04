@@ -47,7 +47,6 @@ import {
   CoberturaActivosCard,
   KpisChecklistsCard,
   ChecklistsPendientesCard,
-  InventarioBajoCard,
   KpisAcCard,
   ServiciosAcPendientesCard,
   ActividadPorUsuarioCard,
@@ -279,7 +278,6 @@ function useDashboardVisibility() {
         kpisChecklists:        v("kpis_checklists"),
         checklistsPendientes:  v("checklists_pendientes"),
         proximoCambioAceite:   v("proximo_cambio_aceite"),
-        inventarioBajo:        v("inventario_bajo"),
         polizasPorVencer:      v("polizas_por_vencer"),
         coberturaActivos:      v("cobertura_activos"),
       } as BoolGroup,
@@ -697,7 +695,6 @@ export function DashboardOverview() {
               {vis.sections.recursos.serviciosAcPendientes && <ServiciosAcPendientesCard />}
               {vis.sections.recursos.kpisChecklists        && <KpisChecklistsCard />}
               {vis.sections.recursos.checklistsPendientes  && <ChecklistsPendientesCard />}
-              {vis.sections.recursos.inventarioBajo        && <InventarioBajoCard />}
               {vis.sections.recursos.polizasPorVencer      && <PolizasPorVencerCard />}
               {vis.sections.recursos.coberturaActivos      && <CoberturaActivosCard />}
             </AutoGrid>

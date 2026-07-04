@@ -24,7 +24,6 @@ import { calculateFlotas }        from "../routes/company/stats/flotas";
 import { calculateConductores }   from "../routes/company/stats/conductores";
 import { calculateChecklists }    from "../routes/company/stats/checklists";
 import { calculateAlertas }       from "../routes/company/stats/alertas";
-import { calculateInventario }    from "../routes/company/stats/inventario";
 import { calculateAc }            from "../routes/company/stats/ac";
 import { calculateSeguros }       from "../routes/company/stats/seguros";
 import { calculatePeajes }        from "../routes/company/stats/peajes";
@@ -86,7 +85,7 @@ const COLORS = ["#3b82f6","#10b981","#f97316","#8b5cf6","#f43f5e","#06b6d4"];
 
 const MODULOS_VALIDOS = [
   "mantenimiento", "combustible", "flotas", "conductores",
-  "checklists", "alertas", "inventario", "ac", "seguros",
+  "checklists", "alertas", "ac", "seguros",
   "peajes", "asignaciones",
 ] as const;
 
@@ -100,7 +99,6 @@ function calculatorFor(modulo: ModuloKey) {
     case "conductores":   return calculateConductores;
     case "checklists":    return calculateChecklists;
     case "alertas":       return calculateAlertas;
-    case "inventario":    return calculateInventario;
     case "ac":            return calculateAc;
     case "seguros":       return calculateSeguros;
     case "peajes":        return calculatePeajes;

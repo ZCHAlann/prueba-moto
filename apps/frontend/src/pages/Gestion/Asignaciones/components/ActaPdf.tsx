@@ -71,7 +71,18 @@ const s = StyleSheet.create({
   },
   annexTitle: { fontSize: 12, fontFamily: "Helvetica-Bold", textAlign: "center", marginBottom: 16 },
   photoGrid:  { flexDirection: "row", flexWrap: "wrap", gap: 14 },   // más separación
-  photo:      { width: "46%", height: 110, objectFit: "cover" },
+  // Contenedor con fondo/borde: la foto se ve COMPLETA adentro (sin recorte),
+  // aunque queden pequeños espacios si la proporción no coincide.
+  photoBox: {
+    width: "46%",
+    height: 130,
+    border: "0.75pt solid #ccc",
+    backgroundColor: "#f5f5f5",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  photo:      { width: "100%", height: "100%", objectFit: "contain" },
 });
 
 // ─── CheckRow ─────────────────────────────────────────────────────────────────
@@ -340,13 +351,15 @@ function ActaPdfDocument({
         <Text style={s.footer}>Documento de control vehicular | Uso interno de la empresa</Text>
       </Page>
 
-      {/* ══ PÁGINA 2+: Fotos más separadas ══ */}
+      {/* ══ PÁGINA 2+: Fotos completas, sin recorte (objectFit: contain) ══ */}
       {photoDataUrls.length > 0 && (
         <Page size="A4" style={s.annexPage}>
           <Text style={s.annexTitle}>ANEXOS — Estado del vehículo</Text>
           <View style={s.photoGrid}>
             {photoDataUrls.map((uri, i) => (
-              <Image key={i} src={uri} style={s.photo} />
+              <View key={i} style={s.photoBox}>
+                <Image src={uri} style={s.photo} />
+              </View>
             ))}
           </View>
         </Page>

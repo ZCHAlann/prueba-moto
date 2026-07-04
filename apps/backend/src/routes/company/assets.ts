@@ -10,6 +10,7 @@ import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { validators, safeString } from '../../lib/validators';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router({ mergeParams: true });
 
@@ -61,38 +62,39 @@ router.get('/', requireModuleAny([
   try {
     const companyId = req.companyId!;
     const { status, siteId, search, assetType } = req.query;
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
     const conditions = [eq(companyAssets.companyId, companyId)];
 
     if (status && typeof status === 'string') {
       conditions.push(eq(companyAssets.status, status as typeof ASSET_STATUSES[number]));
     }
-
     if (assetType && typeof assetType === 'string') {
       conditions.push(eq(companyAssets.assetType, assetType as typeof ASSET_TYPES[number]));
     }
-
     if (siteId && typeof siteId === 'string') {
-      const parsedSiteId = parseId('site', siteId);
-      conditions.push(eq(companyAssets.siteId, parsedSiteId));
+      try {
+        const parsedSiteId = parseId('site', siteId);
+        conditions.push(eq(companyAssets.siteId, parsedSiteId));
+      } catch {
+        conditions.push(eq(companyAssets.id, -1));
+      }
     }
-
-    let rows = await db
-      .select()
-      .from(companyAssets)
-      .where(and(...conditions))
-      .orderBy(companyAssets.name);
-
-    // Filtro de búsqueda en memoria (placa, nombre, código)
-    if (search && typeof search === 'string') {
-      const q = search.toLowerCase();
-      rows = rows.filter(
-        (a) =>
-          a.name.toLowerCase().includes(q) ||
-          a.code.toLowerCase().includes(q) ||
-          a.plate?.toLowerCase().includes(q)
-      );
+    if (search && typeof search === 'string' && search.trim().length > 0) {
+      const q = `%${search.trim().toLowerCase()}%`;
+      conditions.push(sql`(
+        lower(${companyAssets.name}) like ${q}
+        or lower(${companyAssets.code}) like ${q}
+        or lower(coalesce(${companyAssets.plate}, '')) like ${q}
+      )`);
     }
+    const where = and(...conditions);
+
+    const [rows, countRow] = await Promise.all([
+      db.select().from(companyAssets).where(where)
+        .orderBy(companyAssets.name).limit(pageSize).offset(offset),
+      db.select({ value: sql<number>`cast(count(*) as int)` }).from(companyAssets).where(where),
+    ]);
 
     // ── Enrichment: cargar conductor actual via asignación activa ──────────────
     const activeAssignments = await db
@@ -109,7 +111,6 @@ router.get('/', requireModuleAny([
       ))
       .orderBy(desc(companyAssignments.createdAt));
 
-    // Quedarse con la asignación más reciente por assetId
     const driverMap = new Map<number, { id: string; firstName: string; lastName: string; phone: string | null }>();
     for (const a of activeAssignments) {
       if (a.assetId && !driverMap.has(a.assetId)) {
@@ -123,10 +124,11 @@ router.get('/', requireModuleAny([
       }
     }
 
-    res.json({
-      data: rows.map((a) => serializeAsset(a, driverMap.get(a.id))),
-      total: rows.length,
-    });
+    const total = countRow?.[0]?.value ?? 0;
+    res.json(buildPageResponse(
+      rows.map((a) => serializeAsset(a, driverMap.get(a.id))),
+      total, page, pageSize,
+    ));
   } catch (err) {
     next(err);
   }

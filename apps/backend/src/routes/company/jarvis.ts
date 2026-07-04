@@ -12,9 +12,13 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
+import multer from 'multer';
+import ffmpeg from 'fluent-ffmpeg';
+import { PassThrough } from 'stream';
 import { and, eq, desc, sql } from 'drizzle-orm';
 import { ForbiddenError, AppError } from '../../lib/errors';
 import { requireAdminOwner } from '../../middlewares/requireAdminOwner';
+import { requirePermission } from '../../middlewares/requirePermission';
 import { rateLimitJarvis } from '../../middlewares/rateLimitJarvis';
 import { validate } from '../../lib/validate';
 import { db } from '../../db/client';
@@ -37,6 +41,9 @@ import {
   getTtsStats,
   type VoiceId,
 } from '../../lib/ai/tts';
+import { getClient as getGroqClient, maybeRecoverPrimary as maybeRecoverGroqKey } from '../../lib/ai/groq-client';
+import { getCurrentApiKey } from '../../lib/ai/keys';
+import { toFile as groqToFile } from 'groq-sdk';
 import { triggerWeeklySummaryNow } from '../../scheduled/weekly-summary';
 import { getRateLimitStats } from '../../lib/ai/rate-limit';
 
@@ -62,7 +69,7 @@ const ttsSchema = z.object({
 
 router.post(
   '/tts',
-  requireAdminOwner,
+  requirePermission('jarvis', 'asistente', 'ver'),
   rateLimitJarvis,
   validate(ttsSchema),
   async (req, res, next) => {
@@ -96,7 +103,7 @@ router.post(
 
 router.get(
   '/tts/voices',
-  requireAdminOwner,
+  requirePermission('jarvis', 'asistente', 'ver'),
   async (_req, res) => {
     res.json({
       voices: TTS_VOICES,
@@ -110,7 +117,7 @@ router.get(
 
 router.post(
   '/chat',
-  requireAdminOwner,
+  requirePermission('jarvis', 'asistente', 'ver'),
   rateLimitJarvis,
   validate(chatSchema),
   async (req, res, next) => {
@@ -161,7 +168,7 @@ router.post(
 
 router.get(
   '/conversations',
-  requireAdminOwner,
+  requirePermission('jarvis', 'asistente', 'ver'),
   async (req, res, next) => {
     try {
       const empresaId = req.companyId!;
@@ -245,7 +252,7 @@ router.get(
 
 router.get(
   '/conversations/:cid/messages',
-  requireAdminOwner,
+  requirePermission('jarvis', 'asistente', 'ver'),
   async (req, res, next) => {
     try {
       const empresaId = req.companyId!;
@@ -268,7 +275,7 @@ const patchSchema = z.object({
 
 router.patch(
   '/conversations/:cid',
-  requireAdminOwner,
+  requirePermission('jarvis', 'asistente', 'ver'),
   validate(patchSchema),
   async (req, res, next) => {
     try {
@@ -305,7 +312,7 @@ router.patch(
 
 router.delete(
   '/conversations/:cid',
-  requireAdminOwner,
+  requirePermission('jarvis', 'asistente', 'ver'),
   async (req, res, next) => {
     try {
       const empresaId = req.companyId!;
@@ -337,7 +344,7 @@ router.delete(
 
 router.get(
   '/tools',
-  requireAdminOwner,
+  requirePermission('jarvis', 'asistente', 'ver'),
   async (req, res) => {
     const rol = req.user!.role;
     const tools = (rol === 'admin_empresa' || rol === 'owner_empresa')
@@ -379,7 +386,7 @@ router.delete(
 
 router.get(
   '/conversations/:cid/export',
-  requireAdminOwner,
+  requirePermission('jarvis', 'asistente', 'ver'),
   async (req, res, next) => {
     try {
       const empresaId = req.companyId!;
@@ -547,7 +554,7 @@ const streamSchema = z.object({
 
 router.post(
   '/chat/stream',
-  requireAdminOwner,
+  requirePermission('jarvis', 'asistente', 'ver'),
   rateLimitJarvis,
   validate(streamSchema),
   async (req, res, next) => {
@@ -624,6 +631,219 @@ router.post(
     } catch (err) {
       // Este catch es para errores ANTES de enviar headers SSE (auth,
       // validate, isJarvisEnabled). Ahí sí podemos delegar a Express.
+      next(err);
+    }
+  },
+);
+
+// ─── POST /voice ──────────────────────────────────────────────────────────────
+// Recibe audio crudo del navegador (webm/wav/ogg) desde el hold-to-talk,
+// transcribe con Whisper (Groq), pasa el texto por la cascada de chat
+// (jarvisChat) y devuelve la respuesta en texto + audio MP3 (ElevenLabs).
+
+/**
+ * Transcodifica un buffer de audio (webm/opus/mp4/ogg) a WAV PCM 16 kHz
+ * mono usando ffmpeg (vía fluent-ffmpeg). Lo usamos porque Whisper a
+ * veces rechaza contenedores webm truncados (header EBML presente pero
+ * sin samples), especialmente cuando el usuario suelta el hold-to-talk
+ * muy rápido. WAV PCM crudo siempre es válido para Whisper.
+ *
+ * Devuelve `Buffer` con el WAV (header RIFF + data). Lanza si ffmpeg
+ * falla.
+ */
+function transcodeToWavPcm16k(input: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const out = new PassThrough();
+    out.on('data', (c: Buffer) => chunks.push(c));
+    out.on('end',  () => resolve(Buffer.concat(chunks)));
+    out.on('error', reject);
+
+    const cmd = ffmpeg()
+      .input(input)
+      .inputFormat('auto')
+      .audioFrequency(16000)
+      .audioChannels(1)
+      .audioCodec('pcm_s16le')
+      .format('wav')
+      .on('error', (err) => reject(err))
+      .on('end',  () => { /* el stream 'out' ya disparó end */ })
+      .pipe(out, { end: true });
+
+    // Si el pipe se cierra prematuramente por error, reject.
+    cmd.on('error', () => { /* ya manejado arriba */ });
+  });
+}
+//
+// Request:  multipart/form-data
+//   - audio           Blob (webm/opus/wav/ogg/mp4). Máx 8 MB.
+//   - conversationId  (opcional) string|number
+//   - voice           (opcional) VoiceId ElevenLabs
+//
+// Response: 200
+//   {
+//     transcript:     "texto transcrito por Whisper",
+//     answer:         "respuesta de Jarvis",
+//     conversationId: "string|null",
+//     audioBase64:    "base64(mp3)" | null,
+//     audioMime:      "audio/mpeg" | null,
+//     latencyMs:      1234,
+//     healedKey:      boolean,
+//   }
+
+const voiceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 }, // 8 MB — chunks cortos
+  fileFilter: (_req, file, cb) => {
+    const ok = [
+      'audio/webm',
+      'audio/ogg',
+      'audio/opus',
+      'audio/wav',
+      'audio/wave',
+      'audio/x-wav',
+      'audio/mpeg',
+      'audio/mp4',
+      'audio/m4a',
+      'audio/x-m4a',
+      '',
+    ].includes(file.mimetype);
+    if (ok) cb(null, true);
+    else cb(new AppError(400, `Mime de audio no soportado: ${file.mimetype || '(vacío)'}.`));
+  },
+});
+
+router.post(
+  '/voice',
+  requirePermission('jarvis', 'asistente', 'ver'),
+  rateLimitJarvis,
+  voiceUpload.single('audio'),
+  async (req, res, next) => {
+    const t0 = Date.now();
+    try {
+      const empresaId = req.companyId!;
+      const userId    = Number(String(req.user!.sub).replace(/\D/g, ''));
+      if (!userId) throw new ForbiddenError('Sesión sin company-user id.');
+
+      if (!isJarvisEnabled()) {
+        res.status(503).json({
+          transcript: '',
+          answer: 'El asistente IA no está disponible en este momento.',
+          noData: true,
+        });
+        return;
+      }
+
+      const file = (req as any).file as Express.Multer.File | undefined;
+      if (!file || !file.buffer || file.size === 0) {
+        throw new AppError(400, 'Falta el archivo "audio" (multipart).');
+      }
+
+      // 1) STT: Whisper large-v3. Idioma fijo 'es' (decisión producto).
+      const groq = getGroqClient();
+      if (!groq) throw new AppError(503, 'GROQ_API_KEY no configurada.');
+
+      // Whisper a veces rechaza webm/opus si el contenedor quedó truncado
+      // (header EBML presente pero cluster de samples vacío — típico
+      // cuando el usuario suelta el botón a los ~200-300ms). Para blindar
+      // esto, transcodificamos SIEMPRE a WAV PCM 16k mono con ffmpeg
+      // antes de mandar a Whisper. Si ffmpeg falla por algún motivo,
+      // caemos al envío directo del contenedor original.
+      const inputMime = file.mimetype || '';
+      const inputExt = (file.originalname?.split('.').pop() || '').toLowerCase();
+      const isLikelyContainer =
+        inputMime.startsWith('audio/webm') ||
+        inputMime.startsWith('audio/ogg') ||
+        inputMime.startsWith('audio/opus') ||
+        inputMime.startsWith('audio/mp4') ||
+        inputMime.startsWith('audio/m4a') ||
+        ['webm','ogg','opus','mp4','m4a','3gp','mkv','mov'].includes(inputExt);
+
+      let sttBuffer: Buffer = file.buffer;
+      let sttFilename = file.originalname || 'voice.bin';
+      let sttMime     = inputMime || 'audio/wav';
+
+      if (isLikelyContainer) {
+        try {
+          const wavBuf = await transcodeToWavPcm16k(file.buffer);
+          if (wavBuf && wavBuf.length > 44) { // 44 bytes = header mínimo WAV
+            sttBuffer  = wavBuf;
+            sttFilename = 'voice.wav';
+            sttMime     = 'audio/wav';
+          }
+        } catch (tcErr) {
+          // eslint-disable-next-line no-console
+          console.warn('[jarvis/voice] ffmpeg transcode falló, enviando contenedor original:', tcErr);
+        }
+      }
+
+      // SDK 0.13: pasamos un FileLike (el helper toFile acepta Buffer + name).
+      const audioFile = await groqToFile(sttBuffer, sttFilename, { type: sttMime });
+      const transcription = await groq.audio.transcriptions.create({
+        file: audioFile,
+        model:    'whisper-large-v3',
+        language: 'es',
+        response_format: 'json',
+      });
+
+      const transcript = (transcription?.text ?? '').trim();
+      if (!transcript) {
+        throw new AppError(400, 'Whisper no devolvió texto.');
+      }
+
+      // 2) Chat: cascada completa via jarvisChat (tools, persistencia, etc).
+      // conversationId puede venir en body (multipart text) o query.
+      const convIdRaw =
+        (typeof req.body?.conversationId === 'string' && req.body.conversationId) ||
+        (typeof req.query.conversationId === 'string' && req.query.conversationId) ||
+        (typeof req.query.cid === 'string' && req.query.cid) ||
+        undefined;
+      const voiceRaw =
+        (typeof req.body?.voice === 'string' && req.body.voice) ||
+        (typeof req.query.voice === 'string' && req.query.voice) ||
+        undefined;
+
+      const chatResult = await jarvisChat({
+        empresaId,
+        userId,
+        userName:  req.user!.name ?? 'Usuario',
+        rol:       req.user!.role,
+        empresaNombre: req.user!.companyName ?? 'Tu empresa',
+        message:   transcript,
+        conversationId: convIdRaw ?? null,
+      });
+
+      const answerText = chatResult.answer ?? '';
+
+      // 3) TTS: ElevenLabs. Si falla, devolvemos answer sin audio y la app
+      // hace fallback a Web Speech API en el cliente.
+      let audioBase64: string | null = null;
+      let audioMime:  string | null = null;
+      try {
+        const voiceId: VoiceId =
+          voiceRaw && isValidVoice(voiceRaw) ? voiceRaw : DEFAULT_VOICE;
+        const tts = await synthesizeSpeech(answerText, voiceId);
+        audioBase64 = tts.buffer.toString('base64');
+        audioMime   = 'audio/mpeg';
+      } catch (ttsErr) {
+        // eslint-disable-next-line no-console
+        console.warn('[jarvis/voice] TTS falló, devolviendo solo texto:', ttsErr);
+      }
+
+      // 4) Auto-rotación: si la última llamada a Groq (Whisper) fue OK,
+      // intentamos volver a la key primaria tras el período de gracia.
+      const healed = maybeRecoverGroqKey();
+
+      res.json({
+        transcript,
+        answer:         answerText,
+        conversationId: chatResult.conversationId ?? null,
+        audioBase64,
+        audioMime,
+        latencyMs:      Date.now() - t0,
+        healedKey:      healed,
+      });
+    } catch (err) {
       next(err);
     }
   },

@@ -41,7 +41,7 @@ import {
   type CarwashPhotoInput,
   type MaintenanceAttachment,
 } from "../../../hooks/useMaintenancesV2";
-import { useCompanyUsers } from "../../../hooks/useCompanyUsers";
+import { useMaintenanceFormOptions } from "../../../hooks/useFormOptions";
 import { useSuppliers } from "../../../hooks/useSuppliers";
 import { useAuth } from "../../../context/AuthContext";
 import { EditDatesInline } from "../../../components/features/maintenances/EditDatesInline";
@@ -230,11 +230,14 @@ export function MaintenanceDetailDrawer({
   const { data: carwashExtras = [] } = useCarwashExtras(itemId);
   const { data: carwashPhotos = [] } = useCarwashPhotos(itemId);
 
-  // Usuarios de la empresa para el selector de reasignación
-  const { users: companyUsers } = useCompanyUsers();
+  // Usuarios de la empresa para el selector de reasignación. Se
+  // consumen del endpoint del módulo de Mantenimiento (no del de
+  // Accesos/Usuarios) para que un usuario con permiso de Mantenimiento
+  // pero NO de Accesos pueda igual reasignar.
+  const { data: formOptions } = useMaintenanceFormOptions();
   const operadores = useMemo(
-    () => companyUsers.filter((u) => u.role === "operador" && u.status === "active"),
-    [companyUsers],
+    () => (formOptions?.users ?? []).filter((u) => u.role === "operador"),
+    [formOptions],
   );
 
   const [newNote, setNewNote] = useState("");
@@ -577,8 +580,8 @@ export function MaintenanceDetailDrawer({
                               <input
                                 type="number"
                                 min={0}
-                                value={laborCostDraft}
-                                onChange={(e) => setLaborCostDraft(Number(e.target.value))}
+                                value={laborCostDraft === 0 ? "" : laborCostDraft}
+                                onChange={(e) => setLaborCostDraft(e.target.value === "" ? 0 : Number(e.target.value))}
                                 onBlur={() => saveLaborCost(laborCostDraft)}
                                 className="w-full min-w-0 rounded-md border border-violet-200 dark:border-violet-500/30 bg-white dark:bg-white/[0.04] px-2 py-1 text-sm font-bold text-violet-700 dark:text-violet-200 focus:outline-none focus:ring-2 focus:ring-violet-400/30 transition"
                               />
@@ -1016,8 +1019,8 @@ export function MaintenanceDetailDrawer({
                             className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
                           />
                           <input
-                            type="number" min={0} placeholder="Costo unit." value={newExtra.unitCost}
-                            onChange={(e) => setNewExtra((p) => ({ ...p, unitCost: Number(e.target.value) }))}
+                            type="number" min={0} placeholder="Costo unit." value={newExtra.unitCost === 0 ? "" : newExtra.unitCost}
+                            onChange={(e) => setNewExtra((p) => ({ ...p, unitCost: e.target.value === "" ? 0 : Number(e.target.value) }))}
                             className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
                           />
                           <input
@@ -1190,7 +1193,7 @@ export function MaintenanceDetailDrawer({
                           <option value="">— Sin asignar (libre) —</option>
                           {operadores.map((u) => (
                             <option key={u.id} value={u.id}>
-                              {u.username}{u.email ? ` — ${u.email}` : ""}
+                              {u.fullName || u.username}
                             </option>
                           ))}
                         </select>

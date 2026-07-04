@@ -41,7 +41,23 @@ type UseSitesReturn = {
   refresh: () => void;
   createSite: (input: CreateSiteInput) => Promise<string | null>;
   updateSite: (id: string, input: UpdateSiteInput) => Promise<boolean>;
+  /**
+   * Vista previa del impacto de desactivar una sede.
+   * Devuelve conteos de conductores/vehículos afectados. Usado por
+   * el modal de confirmación antes del PUT.
+   */
+  getSiteImpact: (id: string) => Promise<SiteImpactPreview | null>;
 };
+
+/** Shape de la respuesta de GET /:siteId/impact (Fase 2.4). */
+export interface SiteImpactPreview {
+  site: { id: string; name: string; status: string };
+  /** Conductores manualmente Activos que se bloquearían al desactivar la sede */
+  affectedDriversOnDeactivation: number;
+  driversActivosCount: number;
+  driversInactivosCount: number;
+  assetsCount: number;
+}
 
 function mapApiToSite(data: Record<string, unknown>, companyId: string): EnrichedOperationalSite {
   return {
@@ -172,5 +188,34 @@ export function useSites(): UseSitesReturn {
     [companyId]
   );
 
-  return { sites, loading, error, refresh, createSite, updateSite };
+  // ── Vista previa del impacto de desactivar una sede (Fase 2.4) ─────────
+  const getSiteImpact = useCallback(
+    async (id: string): Promise<SiteImpactPreview | null> => {
+      if (!companyId) return null;
+      try {
+        const res = await fetch(
+          `/api/company/${companyId}/sites/${id}/impact`,
+          { credentials: "include" },
+        );
+        if (!res.ok) return null;
+        const data = await res.json() as Record<string, unknown>;
+        return {
+          site: {
+            id: String((data.site as Record<string, unknown>)?.id ?? id),
+            name: String((data.site as Record<string, unknown>)?.name ?? ""),
+            status: String((data.site as Record<string, unknown>)?.status ?? "Activa"),
+          },
+          affectedDriversOnDeactivation: Number(data.affectedDriversOnDeactivation ?? 0),
+          driversActivosCount:          Number(data.driversActivosCount ?? 0),
+          driversInactivosCount:         Number(data.driversInactivosCount ?? 0),
+          assetsCount:                   Number(data.assetsCount ?? 0),
+        };
+      } catch {
+        return null;
+      }
+    },
+    [companyId]
+  );
+
+  return { sites, loading, error, refresh, createSite, updateSite, getSiteImpact };
 }

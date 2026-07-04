@@ -239,6 +239,8 @@ export const companyWorkshops = pgTable('company_workshops', {
   contactName:  varchar('contact_name', { length: 120 }),
   nit:          varchar('nit', { length: 40 }),
   notes:        text('notes'),
+  latitude:     doublePrecision('latitude'),
+  longitude:    doublePrecision('longitude'),
   createdAt:    timestamp('created_at').notNull().defaultNow(),
   updatedAt:    timestamp('updated_at').notNull().defaultNow(),
 });
@@ -361,6 +363,10 @@ export const companyMaintenanceRecords = pgTable('company_maintenance_records', 
   reprogramCount:  integer('reprogram_count').notNull().default(0),
   correctionReason:    text('correction_reason'),
   correctionRequestedAt: timestamp('correction_requested_at'),
+  // jun 2026 — vínculo a la última solicitud de reautorización aprobada
+  // que reabrió este mantenimiento. Permite trazabilidad rápida para
+  // auditoría / reportes sin re-leer company_maintenance_events.
+  lastReauthorizationId: integer('last_reauthorization_id'),
   createdAt:       timestamp('created_at').notNull().defaultNow(),
   updatedAt:       timestamp('updated_at').notNull().defaultNow(),
 });
@@ -378,6 +384,62 @@ export const companyMaintenanceEvents = pgTable('company_maintenance_events', {
   payload:        jsonb('payload').notNull().default({}),
   createdAt:      timestamp('created_at').notNull().defaultNow(),
 });
+
+// ── Reautorizaciones de mantenimiento (jun 2026) ──────────────────────────────
+//
+// Cuando un mantenimiento Programado se atrasa, el operador/conductor
+// asignado NO puede editarlo, reprogramarlo ni pasarlo a En proceso por
+// su cuenta. Solo puede pedir una reautorización creando un registro acá.
+//
+// Bandeja del admin:
+//   - Filtra por `status = 'Pendiente'` y muestra el motivo + mantenimiento.
+//   - Aprobar (open)        → status=Programado, scheduledFor=HOY.
+//   - Aprobar (reschedule)  → status=Programado, scheduledFor=fecha elegida
+//                             por el admin (no la propuesta por el operador).
+//   - Rechazar              → status=Rechazada, motivo queda en decision_notes.
+//                             El mantenimiento queda Atrasado como estaba.
+//
+// Esta tabla NO es fuente de verdad del mantenimiento: el mantenimiento
+// sigue siendo `company_maintenance_records`. Esto es solo el "workflow"
+// de aprobación.
+export const maintenanceReauthorizationStatusEnum = pgEnum(
+  'maintenance_reauthorization_status_enum',
+  ['Pendiente', 'Aprobada', 'Rechazada'],
+);
+
+export const companyMaintenanceReauthorizations = pgTable(
+  'company_maintenance_reauthorizations',
+  {
+    id:                       serial('id').primaryKey(),
+    companyId:                integer('company_id').notNull()
+                                .references(() => companies.id, { onDelete: 'cascade' }),
+    maintenanceId:            integer('maintenance_id').notNull()
+                                .references(() => companyMaintenanceRecords.id, { onDelete: 'cascade' }),
+    // Snapshot al momento del pedido (para no re-leer la fila principal
+    // cada vez que la bandeja se renderiza):
+    maintenanceStatus:        varchar('maintenance_status', { length: 40 }).notNull(),
+    maintenanceScheduledFor:  timestamp('maintenance_scheduled_for').notNull(),
+    // 'open' → al aprobar, scheduledFor=HOY.
+    // 'reschedule' → al aprobar, el admin elige nueva fecha (applied_scheduled_for).
+    action:                   varchar('action', { length: 20 }).notNull(),
+    status:                   maintenanceReauthorizationStatusEnum('status')
+                                .notNull().default('Pendiente'),
+    reason:                   text('reason').notNull(),
+    proposedScheduledFor:     timestamp('proposed_scheduled_for'),
+    requestedByUserId:        integer('requested_by_user_id')
+                                .references(() => companyUsers.id, { onDelete: 'set null' }),
+    requestedByName:          varchar('requested_by_name', { length: 160 }),
+    requestedByRole:          varchar('requested_by_role', { length: 60 }),
+    decidedByUserId:          integer('decided_by_user_id')
+                                .references(() => companyUsers.id, { onDelete: 'set null' }),
+    decidedByName:            varchar('decided_by_name', { length: 160 }),
+    decisionNotes:            text('decision_notes'),
+    decidedAt:                timestamp('decided_at'),
+    appliedScheduledFor:      timestamp('applied_scheduled_for'),
+    createdAt:                timestamp('created_at').notNull().defaultNow(),
+    updatedAt:                timestamp('updated_at').notNull().defaultNow(),
+  },
+);
 
 // ── Categorías de mantenimiento por empresa (custom) ─────────────────────────
 export const companyMaintenanceCategories = pgTable('company_maintenance_categories', {
@@ -842,31 +904,6 @@ export const companyExitAuthorizations = pgTable(
     createdAt:   timestamp('created_at').notNull().defaultNow(),
     updatedAt:   timestamp('updated_at').notNull().defaultNow(),
   },
-);
-
-// ─────────────────────────────────────────────
-// Inventario
-// ─────────────────────────────────────────────
-
-export const companyInventory = pgTable(
-  'company_inventory',
-  {
-    id: serial('id').primaryKey(),
-    companyId: serial('company_id')
-      .notNull()
-      .references(() => companies.id, { onDelete: 'cascade' }),
-    code: varchar('code', { length: 80 }).notNull(),
-    name: varchar('name', { length: 160 }).notNull(),
-    category: varchar('category', { length: 80 }),
-    stock: numeric('stock', { precision: 12, scale: 2 }),
-    minStock: numeric('min_stock', { precision: 12, scale: 2 }),
-    location: varchar('location', { length: 160 }),
-    unit: varchar('unit', { length: 40 }),
-    notes: text('notes'),
-    createdAt: timestamp('created_at').notNull().defaultNow(),
-    updatedAt: timestamp('updated_at').notNull().defaultNow(),
-  },
-  (table) => [unique('company_inventory_company_id_code').on(table.companyId, table.code)]
 );
 
 // ─────────────────────────────────────────────

@@ -1,6 +1,9 @@
 import { useState, useMemo, lazy, Suspense } from "react";
 import { useMaintenancesListLegacy } from "../../hooks/useMaintenances";
 import { useAssets } from "../../hooks/useAssets";
+// TODO(audit-modulos): dashboard usa useAssets para matchear assetId.
+// El backend de Mantenimientos ya devuelve assetPlate/assetName en cada
+// item, así que el match con `assets.find()` es redundante.
 import { Search, Loader2, Wrench, Zap, Clock, AlertTriangle, RotateCcw, ChevronLeft, ChevronRight } from "lucide-react";
 
 // Lazy-load del modal real de mantenimiento

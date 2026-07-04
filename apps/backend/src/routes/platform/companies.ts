@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
+import { eq, desc, sql } from 'drizzle-orm';
 import { db, type DB } from '../../db/client';
 import { validate } from '../../lib/validate';
 import { requireSuperadmin } from '../../middlewares/requireSuperadmin';
@@ -9,6 +9,7 @@ import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { companies, companyUsers, platformPlans } from '../../db/schema/platform';
 import { hashPassword } from '../../services/auth.service';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router();
 
@@ -75,11 +76,16 @@ function serializeCompany(c: typeof companies.$inferSelect) {
 
 router.get('/', async (req, res, next) => {
   try {
-    const rows = await db
-      .select()
-      .from(companies)
-      .orderBy(companies.name);
-    res.json({ data: rows.map(serializeCompany), total: rows.length });
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
+
+    const [rows, countRow] = await Promise.all([
+      db.select().from(companies)
+        .orderBy(desc(companies.name)).limit(pageSize).offset(offset),
+      db.select({ value: sql<number>`cast(count(*) as int)` }).from(companies),
+    ]);
+
+    const total = countRow?.[0]?.value ?? 0;
+    res.json(buildPageResponse(rows.map(serializeCompany), total, page, pageSize));
   } catch (err) {
     next(err);
   }

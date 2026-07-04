@@ -123,6 +123,44 @@ export interface Maintenance {
    *  response de la API; el frontend puede tolerar que llegue o no el
    *  flag explícito y caer al status. Ver `isMaintenanceOverdue()`. */
   isOverdue?: boolean;
+  /** jun 2026 — FK a la última solicitud de reautorización aprobada
+   *  que reabrió este mantenimiento. Permite trazabilidad sin releer
+   *  la tabla de eventos. NULL si nunca fue reautorizado. */
+  lastReauthorizationId?: string | null;
+}
+
+/** Acción solicitada en una reautorización:
+ *  - 'open'       → reabrir (scheduledFor=HOY, status='Programado').
+ *  - 'reschedule' → reprogramar (el admin elige la nueva fecha al aprobar).
+ */
+export type MaintenanceReauthAction = "open" | "reschedule";
+
+/** Estados de una solicitud de reautorización (jun 2026). */
+export type MaintenanceReauthStatus = "Pendiente" | "Aprobada" | "Rechazada";
+
+/** Una fila de `company_maintenance_reauthorizations` tal como llega al
+ *  frontend (ids serializados como 'reauth-N'). */
+export interface MaintenanceReauthorization {
+  id:                       string;
+  companyId:                string;
+  maintenanceId:            string;
+  /** Snapshot al pedir: status original (siempre 'Atrasado' al pedir). */
+  maintenanceStatus:        string;
+  maintenanceScheduledFor:  string;
+  action:                   MaintenanceReauthAction;
+  status:                   MaintenanceReauthStatus;
+  reason:                   string;
+  proposedScheduledFor:     string | null;
+  requestedByUserId:        string | null;
+  requestedByName:          string | null;
+  requestedByRole:          string | null;
+  decidedByUserId:          string | null;
+  decidedByName:            string | null;
+  decisionNotes:            string | null;
+  decidedAt:                string | null;
+  appliedScheduledFor:      string | null;
+  createdAt:                string;
+  updatedAt:                string;
 }
 
 /** Helper local: devuelve si un mantenimiento está atrasado. Prefiere el
@@ -559,6 +597,138 @@ export function useReauthorizeMaintenance() {
       qc.invalidateQueries({ queryKey: ['maintenances'] });
       qc.invalidateQueries({ queryKey: ['maintenance'] });
       qc.invalidateQueries({ queryKey: ['maintenances-agenda'] });
+    },
+  });
+}
+
+// ─── jun 2026 — Flujo de reautorización (request → approve/deny) ──────────────
+
+/** Operador/conductor pide una reautorización. Solo válido si el mantenimiento
+ *  está 'Atrasado' + 'Programado' y él es asignado o creador. */
+export function useRequestMaintenanceReauth() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      id: string;
+      action: MaintenanceReauthAction;
+      reason: string;
+      proposedScheduledFor?: string | null;
+    }) => {
+      return jsonFetch<MaintenanceReauthorization>(
+        `/api/company/${companyId}/maintenances/${input.id}/request-reauth`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            action:               input.action,
+            reason:               input.reason,
+            proposedScheduledFor: input.proposedScheduledFor ?? null,
+          }),
+        },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenance-reauths'] });
+      qc.invalidateQueries({ queryKey: ['maintenances'] });
+      qc.invalidateQueries({ queryKey: ['maintenance'] });
+    },
+  });
+}
+
+/** Bandeja global: lista solicitudes (default 'Pendiente').
+ *  Backend ya filtra por scope: full ve TODAS, operador solo las suyas. */
+export function useMaintenanceReauths(opts?: { status?: MaintenanceReauthStatus | 'all' }) {
+  const { companyId } = useAuth();
+  return useQuery({
+    queryKey: ['maintenance-reauths', companyId, opts?.status ?? 'Pendiente'],
+    queryFn: async () => {
+      const qs = new URLSearchParams();
+      qs.set('status', opts?.status ?? 'Pendiente');
+      const res = await jsonFetch<MaintenanceReauthorization[]>(
+        `/api/company/${companyId}/maintenances/reauths?${qs.toString()}`,
+      );
+      return res ?? [];
+    },
+    enabled: !!companyId,
+    refetchInterval: 30_000, // la bandeja se refresca sola cada 30s
+  });
+}
+
+/** Bandeja por mantenimiento (historial). */
+export function useMaintenanceReauthsFor(maintenanceId: string | null) {
+  const { companyId } = useAuth();
+  return useQuery({
+    queryKey: ['maintenance-reauths', companyId, 'by-maint', maintenanceId],
+    queryFn: async () => {
+      if (!maintenanceId) return [];
+      const res = await jsonFetch<MaintenanceReauthorization[]>(
+        `/api/company/${companyId}/maintenances/${maintenanceId}/reauths`,
+      );
+      return res ?? [];
+    },
+    enabled: !!companyId && !!maintenanceId,
+  });
+}
+
+/** Admin/supervisor aprueba. action de la solicitud se respeta:
+ *  'open' → backend fuerza scheduledFor=HOY.
+ *  'reschedule' → backend usa newScheduledFor o la propuesta. */
+export function useApproveMaintenanceReauth() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      maintenanceId: string;
+      reauthId: string;
+      newScheduledFor?: string | null;
+      decisionNotes?: string | null;
+    }) => {
+      return jsonFetch<MaintenanceReauthorization>(
+        `/api/company/${companyId}/maintenances/${input.maintenanceId}/approve-reauth`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            reauthId:         input.reauthId,
+            newScheduledFor:  input.newScheduledFor ?? null,
+            decisionNotes:    input.decisionNotes ?? null,
+          }),
+        },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenance-reauths'] });
+      qc.invalidateQueries({ queryKey: ['maintenances'] });
+      qc.invalidateQueries({ queryKey: ['maintenance'] });
+      qc.invalidateQueries({ queryKey: ['maintenances-agenda'] });
+    },
+  });
+}
+
+/** Admin/supervisor rechaza. decisionNotes obligatorio (regla de UI y backend). */
+export function useDenyMaintenanceReauth() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      maintenanceId: string;
+      reauthId: string;
+      decisionNotes: string;
+    }) => {
+      return jsonFetch<MaintenanceReauthorization>(
+        `/api/company/${companyId}/maintenances/${input.maintenanceId}/deny-reauth`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            reauthId:      input.reauthId,
+            decisionNotes: input.decisionNotes,
+          }),
+        },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenance-reauths'] });
+      qc.invalidateQueries({ queryKey: ['maintenances'] });
+      qc.invalidateQueries({ queryKey: ['maintenance'] });
     },
   });
 }

@@ -115,26 +115,84 @@ function mapApi(raw: Record<string, unknown>): ApiAssignment {
   };
 }
 
+export type AssignmentsPage = {
+  data: ApiAssignment[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export type AssignmentsFilters = {
+  status?: "Activa" | "Inactiva" | "Finalizada";
+  assetId?: string;
+  driverId?: string;
+  page?: number;
+  pageSize?: number;
+  q?: string;
+  from?: string;
+  to?: string;
+};
+
+/**
+ * Hook para gestión de asignaciones con DOS slots de paginación independientes
+ * (la página de Asignaciones renderiza una lista de "Activas" y otra de
+ * "Historial" — cada una con sus propios filtros, página y universo).
+ *
+ * Mutaciones (createAssignment, updateHandover, finalizeAssignment)
+ * actualizan AMBOS slots para mantener la UI coherente (si se finaliza una
+ * asignación activa, sale de la lista de activas y entra en la de historial).
+ */
 export function useAssignments() {
   const { session } = useAuth();
   const companyId = session?.companyId;
 
-  const [assignments, setAssignments] = useState<ApiAssignment[]>([]);
+  // Slot "activas" (status=Activa)
+  const [active, setActive] = useState<AssignmentsPage>({
+    data: [], total: 0, page: 1, pageSize: 6, totalPages: 1,
+  });
+  // Slot "historial" (status=Finalizada o Activa según filtro, + q/fechas)
+  const [history, setHistory] = useState<AssignmentsPage>({
+    data: [], total: 0, page: 1, pageSize: 6, totalPages: 1,
+  });
+  // Catálogos auxiliares (no paginados)
   const [assets, setAssets] = useState<Array<{ id: string; name: string | null; plate: string | null; brand: string | null }>>([]);
   const [drivers, setDrivers] = useState<Array<{ id: string; firstName: string; lastName: string; code: string | null; name: string }>>([]);
-  const [loading, setLoading]         = useState(true);
-  const [error, setError]             = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  /**
+   * Fetch genérico con cualquier combinación de filtros. El caller decide
+   * qué slot actualizar (activas / historial) pasando `slot`.
+   */
+  const fetchPage = useCallback(async (slot: "active" | "history", filters: AssignmentsFilters = {}) => {
     if (!companyId) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/company/${companyId}/assignments`);
+      const params = new URLSearchParams();
+      if (filters.status)   params.set("status",   filters.status);
+      if (filters.assetId)  params.set("assetId",  filters.assetId);
+      if (filters.driverId) params.set("driverId", filters.driverId);
+      if (filters.page)     params.set("page",     String(filters.page));
+      if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
+      if (filters.q)        params.set("q",        filters.q);
+      if (filters.from)     params.set("from",     filters.from);
+      if (filters.to)       params.set("to",       filters.to);
+      const qs = params.toString();
+      const res = await fetch(`/api/company/${companyId}/assignments${qs ? `?${qs}` : ""}`);
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const json = await res.json();
-      setAssignments((json.data ?? json).map(mapApi));
-      if (Array.isArray(json.assets)) setAssets(json.assets);
+      const next: AssignmentsPage = {
+        data: (json.data ?? []).map(mapApi),
+        total: typeof json.total === "number" ? json.total : 0,
+        page: typeof json.page === "number" ? json.page : 1,
+        pageSize: typeof json.pageSize === "number" ? json.pageSize : 20,
+        totalPages: typeof json.totalPages === "number" ? json.totalPages : 1,
+      };
+      if (slot === "active") setActive(next);
+      else                   setHistory(next);
+      if (Array.isArray(json.assets))  setAssets(json.assets);
       if (Array.isArray(json.drivers)) setDrivers(json.drivers);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar asignaciones");
@@ -143,7 +201,13 @@ export function useAssignments() {
     }
   }, [companyId]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  // Fetch inicial: slot activas (la página de historial es opcional y la
+  // dispara el componente con sus filtros).
+  useEffect(() => { void fetchPage("active", { status: "Activa", pageSize: 6 }); }, [fetchPage]);
+
+  // Compatibilidad: `assignments` apunta al slot "active" (lo que la mayoría
+  // de call sites asume), y `refresh` recarga el slot activo.
+  const refresh = useCallback(() => fetchPage("active", { status: "Activa", pageSize: 6 }), [fetchPage]);
 
   const createAssignment = useCallback(
     async (payload: CreateAssignmentPayload): Promise<ApiAssignment> => {
@@ -163,7 +227,8 @@ export function useAssignments() {
         throw new Error(err.message ?? `Error ${res.status}`);
       }
       const created = mapApi(await res.json());
-      setAssignments((prev) => [created, ...prev]);
+      // Optimistic: aparece al inicio de la lista de activas.
+      setActive((prev) => ({ ...prev, data: [created, ...prev.data], total: prev.total + 1 }));
       return created;
     },
     [companyId],
@@ -181,7 +246,9 @@ export function useAssignments() {
         throw new Error(err.message ?? `Error ${res.status}`);
       }
       const updated = mapApi(await res.json());
-      setAssignments((prev) => prev.map((a) => (a.id === id ? updated : a)));
+      // Reemplaza en cualquier slot donde esté presente.
+      setActive((prev) => ({ ...prev, data: prev.data.map((a) => (a.id === id ? updated : a)) }));
+      setHistory((prev) => ({ ...prev, data: prev.data.map((a) => (a.id === id ? updated : a)) }));
       return updated;
     },
     [companyId],
@@ -205,11 +272,31 @@ export function useAssignments() {
       });
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const updated = mapApi(await res.json());
-      setAssignments((prev) => prev.map((a) => (a.id === id ? updated : a)));
+      // Sale de activas (status cambió) y entra a historial.
+      setActive((prev) => ({
+        ...prev,
+        data: prev.data.filter((a) => a.id !== id),
+        total: Math.max(0, prev.total - 1),
+      }));
+      setHistory((prev) => ({ ...prev, data: [updated, ...prev.data], total: prev.total + 1 }));
       return updated;
     },
     [companyId],
   );
 
-  return { assignments, assets, drivers, loading, error, refresh, createAssignment, updateHandover, finalizeAssignment };
+  return {
+    // Compatibilidad: `assignments` = activas (lo que la mayoría asume).
+    assignments: active.data,
+    active,
+    history,
+    assets,
+    drivers,
+    loading,
+    error,
+    fetchPage,
+    refresh,
+    createAssignment,
+    updateHandover,
+    finalizeAssignment,
+  };
 }

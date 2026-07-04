@@ -38,14 +38,16 @@ import { alias } from 'drizzle-orm/pg-core';
 import { db } from '../../db/client';
 import {
   companyMaintenanceRecords,
-  companyMaintenanceItems,
+  companyMaintenanceAssets,
   companyMaintenanceEvents,
+  companyMaintenanceReauthorizations,
+  companyAssets,
   companyMaintenanceCategories,
+  companyMaintenanceItems,
   companyMaintenanceCarwashExtras,
   companyMaintenanceCarwashPhotos,
   companyWorkshops,
   companySuppliers,
-  companyAssets,
 } from '../../db/schema/operational';
 import { companyUsers } from '../../db/schema/platform'
 
@@ -168,6 +170,35 @@ const cancelRescheduleSchema = z.object({
 
 const reauthorizeSchema = z.object({
   reason: z.string().min(1).max(500).optional(),
+});
+
+// ── jun 2026 — schemas para el flujo de reautorización (pedir / aprobar / rechazar) ──
+
+/** POST /:id/request-reauth — pedido del operador/conductor asignado. */
+const requestReauthSchema = z.object({
+  /** 'open' → al aprobar, scheduledFor=HOY. 'reschedule' → el admin
+   *  elige nueva fecha al aprobar. */
+  action: z.enum(['open', 'reschedule']),
+  /** Motivo obligatorio. */
+  reason: safeString({ min: 3, max: 1000, fieldLabel: 'Motivo', allowEmpty: false }),
+  /** Solo si action='reschedule'. Si no viene, el admin elige al aprobar. */
+  proposedScheduledFor: z.string().optional().nullable(),
+});
+
+/** POST /:id/approve-reauth — aprobación por admin/supervisor. */
+const approveReauthSchema = z.object({
+  /** ID serializado de la solicitud (reauth-N). */
+  reauthId: z.string().min(1),
+  /** Solo si la solicitud es action='reschedule'. Si no viene, se usa
+   *  la fecha propuesta por el operador. */
+  newScheduledFor: z.string().optional().nullable(),
+  decisionNotes: safeString({ min: 0, max: 1000, fieldLabel: 'Nota', allowEmpty: true }).optional().nullable(),
+});
+
+/** POST /:id/deny-reauth — rechazo por admin/supervisor. */
+const denyReauthSchema = z.object({
+  reauthId: z.string().min(1),
+  decisionNotes: safeString({ min: 3, max: 1000, fieldLabel: 'Motivo del rechazo', allowEmpty: false }),
 });
 
 const requestCorrectionSchema = z.object({
@@ -435,6 +466,42 @@ function serializeMaintenance(m: any, items: any[], events: any[] = []) {
   };
 }
 
+/** Jun 2026 — serializa una fila de `company_maintenance_reauthorizations`
+ *  al shape que el frontend consume en la Bandeja. */
+function serializeReauth(r: typeof companyMaintenanceReauthorizations.$inferSelect) {
+  return {
+    id:                       toId('reauth', r.id),
+    companyId:                toId('company', r.companyId),
+    maintenanceId:            toId('maintenance', r.maintenanceId),
+    maintenanceStatus:        r.maintenanceStatus,
+    maintenanceScheduledFor:  r.maintenanceScheduledFor instanceof Date
+                                ? r.maintenanceScheduledFor.toISOString()
+                                : String(r.maintenanceScheduledFor),
+    action:                   r.action,
+    status:                   r.status,
+    reason:                   r.reason,
+    proposedScheduledFor:     r.proposedScheduledFor
+                                ? (r.proposedScheduledFor instanceof Date
+                                    ? r.proposedScheduledFor.toISOString()
+                                    : String(r.proposedScheduledFor))
+                                : null,
+    requestedByUserId:        r.requestedByUserId != null ? toId('company-user', r.requestedByUserId) : null,
+    requestedByName:          r.requestedByName ?? null,
+    requestedByRole:          r.requestedByRole ?? null,
+    decidedByUserId:          r.decidedByUserId != null ? toId('company-user', r.decidedByUserId) : null,
+    decidedByName:            r.decidedByName ?? null,
+    decisionNotes:            r.decisionNotes ?? null,
+    decidedAt:                r.decidedAt ? (r.decidedAt instanceof Date ? r.decidedAt.toISOString() : String(r.decidedAt)) : null,
+    appliedScheduledFor:      r.appliedScheduledFor
+                                ? (r.appliedScheduledFor instanceof Date
+                                    ? r.appliedScheduledFor.toISOString()
+                                    : String(r.appliedScheduledFor))
+                                : null,
+    createdAt:                r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+    updatedAt:                r.updatedAt instanceof Date ? r.updatedAt.toISOString() : String(r.updatedAt),
+  };
+}
+
 async function recordEvent(
   companyId: number,
   maintenanceId: number,
@@ -535,6 +602,13 @@ router.get(
       if (category)  conditions.push(eq(companyMaintenanceRecords.category, category));
       if (workshopId) conditions.push(eq(companyMaintenanceRecords.workshopId, parseId('workshop', workshopId)));
       if (assetId)   conditions.push(eq(companyMaintenanceRecords.assetId, parseId('asset', assetId)));
+      // Numérico para usar en _filterAsset (la response). Try/catch porque
+      // parseId tira error si el formato no es válido — en ese caso caemos
+      // a null (el frontend no mostrará chip si el id era inválido).
+      const assetIdNum = (() => {
+        if (!assetId) return null;
+        try { return parseId('asset', assetId); } catch { return null; }
+      })();
       if (from)      conditions.push(gte(companyMaintenanceRecords.scheduledFor, new Date(from)));
       if (to)        conditions.push(lte(companyMaintenanceRecords.scheduledFor, new Date(to)));
       if (q && q.trim().length > 0) {
@@ -597,9 +671,18 @@ router.get(
       // Lookups (no son parte del WHERE — son datos display-only para los
       // filtros del frontend). Se conservan como claves hermanas de la
       // respuesta paginada (compatibilidad con `useMaintenancesList`).
-      const [assetsRows, workshopsRows, suppliersRows] = await Promise.all([
+      //
+      // `users` se filtra a roles que pueden ser asignados a un
+      // mantenimiento: operador y supervisor. NO se devuelven los
+      // owners/admins de la empresa — esos no son asignables.
+      const [assetsRows, workshopsRows, suppliersRows, usersRows] = await Promise.all([
         db
-          .select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate, brand: companyAssets.brand, model: companyAssets.model })
+          .select({
+            id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate,
+            brand: companyAssets.brand, model: companyAssets.model,
+            code: companyAssets.code, status: companyAssets.status,
+            siteId: companyAssets.siteId,
+          })
           .from(companyAssets)
           .where(eq(companyAssets.companyId, companyId)),
         db
@@ -610,13 +693,61 @@ router.get(
           .select({ id: companySuppliers.id, name: companySuppliers.name })
           .from(companySuppliers)
           .where(eq(companySuppliers.companyId, companyId)),
+        db
+          .select({
+            id:        companyUsers.id,
+            username:  companyUsers.username,
+            role:      companyUsers.role,
+            firstName: sql<string>`${companyUsers.profileData}->>'firstName'`,
+            lastName:  sql<string>`${companyUsers.profileData}->>'lastName'`,
+          })
+          .from(companyUsers)
+          .where(and(
+            eq(companyUsers.companyId, companyId),
+            inArray(companyUsers.role, ['operador', 'supervisor', 'conductor']),
+          )),
       ]);
 
       res.json({
         ...buildPageResponse(data, total, page, pageSize),
-        assets:   assetsRows.map((a) => ({ id: toId('asset',    a.id), name: a.name, plate: a.plate, brand: a.brand, model: a.model })),
+        assets:   assetsRows.map((a) => ({
+          id:     toId('asset', a.id),
+          name:   a.name,
+          plate:  a.plate,
+          brand:  a.brand,
+          model:  a.model,
+          code:   a.code,
+          status: a.status,
+          siteId: a.siteId ? toId('site', a.siteId) : null,
+        })),
         workshops: workshopsRows.map((w) => ({ id: toId('workshop', w.id), name: w.name })),
         suppliers: suppliersRows.map((s) => ({ id: toId('supplier', s.id), name: s.name })),
+        // Usuarios asignables. Mismo permiso (mantenimiento.execution.ver)
+        // — no se filtra por módulo de Accesos/Usuarios.
+        users: usersRows.map((u) => ({
+          id:        toId('company-user', u.id),
+          username:  u.username,
+          role:      u.role,
+          firstName: u.firstName ?? null,
+          lastName:  u.lastName  ?? null,
+          fullName:  [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.username,
+        })),
+        // Cuando el listado viene filtrado por ?assetId=X, devolvemos
+        // además los metadatos del asset usado como filtro. El frontend
+        // los usa para mostrar el chip de "Filtrado por vehículo ABC-123"
+        // SIN tener que pegarle al endpoint de Flotas (que requiere
+        // permiso de `gestion/flotas`). El módulo de Mantenimiento ya
+        // validó su propio permiso acá.
+        ...(assetIdNum
+          ? {
+              _filterAsset: (() => {
+                const a = assetsRows.find((x) => x.id === assetIdNum);
+                return a
+                  ? { id: toId('asset', a.id), name: a.name, plate: a.plate, code: a.code }
+                  : null;
+              })(),
+            }
+          : {}),
       });
     } catch (err) {
       next(err);
@@ -916,6 +1047,51 @@ router.get(
   },
 );
 
+// ─── GET /reauths ─────────────────────────────────────────────────────────────
+// Bandeja global (todas las pendientes de la empresa). El front la usa
+// con filtro `?status=Pendiente`. Caller debe tener permiso editar para
+// ver TODAS; si no, ve solo las suyas.
+//
+// IMPORTANTE: esta ruta está ANTES de `GET /:id` (líneas abajo) porque
+// Express matchea en orden. Si va después, `GET /reauths` cae en el
+// handler de `/:id` (que valida con regex `^maintenance-\d+$` y termina
+// devolviendo 404 "Mantenimiento con id reauths no encontrado").
+router.get(
+  '/reauths',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'reautorizaciones', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const meId      = getUserIdFromSub(req.user!.sub);
+      const meRole    = req.user!.role ?? '';
+      const isFull    = hasFullAccess(meRole);
+      const statusFilter = (req.query.status as string | undefined) ?? 'Pendiente';
+
+      const conds: any[] = [
+        eq(companyMaintenanceReauthorizations.companyId, companyId),
+      ];
+      if (statusFilter !== 'all') {
+        conds.push(eq(companyMaintenanceReauthorizations.status, statusFilter as any));
+      }
+      if (!isFull && meId != null) {
+        conds.push(eq(companyMaintenanceReauthorizations.requestedByUserId, meId));
+      }
+
+      const rows = await db
+        .select()
+        .from(companyMaintenanceReauthorizations)
+        .where(and(...conds))
+        .orderBy(desc(companyMaintenanceReauthorizations.createdAt))
+        .limit(500);
+
+      res.json(rows.map(serializeReauth));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // ─── GET /:id ──────────────────────────────────────────────────────────────────
 router.get(
   '/:id',
@@ -1116,6 +1292,16 @@ router.put(
         if (meId == null || (existing.assignedUserId !== meId && existing.createdBy !== meId)) {
           throw new NotFoundError('Mantenimiento', req.params.id);
         }
+      }
+
+      // Regla (jun 2026): un mantenimiento Atrasado SOLO lo puede editar
+      // alguien con scope full (admin/owner/supervisor). El operador o
+      // conductor asignado NO puede auto-escalarse: tiene que pedir que
+      // se lo reabran / reprogramen a través del flujo de reautorización.
+      if (existing.status === 'Atrasado' && !isFull) {
+        throw new ForbiddenError(
+          'Este mantenimiento está atrasado. No podés editarlo directamente — pedí que lo reautoricen o reprogramen.',
+        );
       }
 
       const updateData: Record<string, unknown> = { updatedAt: new Date() };
@@ -1666,6 +1852,353 @@ router.post(
       await syncAssetMaintenanceStatus(existing.assetId, companyId);
 
       res.json({ ok: true, status: 'Programado' });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── POST /:id/request-reauth ──────────────────────────────────────────────────
+// Jun 2026 — flujo de reautorización de mantenimiento atrasado.
+// El operador/conductor ASIGNADO no puede auto-escalarse: tiene que
+// crear una solicitud pendiente acá. La bandeja de los aprobadores
+// (admin/supervisor con permiso `mantenimiento.reautorizaciones.editar`)
+// la resuelve luego.
+router.post(
+  '/:id/request-reauth',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'editar'),
+  validate(requestReauthSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id        = parseId('maintenance', req.params.id);
+      const meId      = getUserIdFromSub(req.user!.sub);
+      const meRole    = req.user!.role ?? '';
+      const body      = req.body as z.infer<typeof requestReauthSchema>;
+
+      const [existing] = await db
+        .select()
+        .from(companyMaintenanceRecords)
+        .where(and(
+          eq(companyMaintenanceRecords.id, id),
+          eq(companyMaintenanceRecords.companyId, companyId),
+        ))
+        .limit(1);
+      if (!existing) throw new NotFoundError('Mantenimiento', req.params.id);
+
+      if (existing.status !== 'Atrasado') {
+        throw new ForbiddenError(
+          'Solo se pueden reautorizar mantenimientos atrasados.',
+        );
+      }
+      if (existing.type !== 'Programado') {
+        throw new ForbiddenError(
+          'Solo mantenimientos Programados soportan reautorización.',
+        );
+      }
+      // Si el caller es full (admin/owner/supervisor), ya tiene
+      // acceso directo al endpoint viejo de reautorizar — no debería
+      // estar pasando por acá. Igual lo dejamos pasar por consistencia.
+      const isFull = hasFullAccess(meRole);
+      if (!isFull) {
+        // Igual que en POST /:id/reauthorize: el asignado / creador NO se
+        // auto-aprueba (regla fuerte para evitar fraude). Como acá solo
+        // está PIDIENDO la reapertura, sí le permitimos.
+        if (meId == null) {
+          throw new ForbiddenError('No se pudo identificar tu usuario.');
+        }
+        if (existing.assignedUserId !== meId && existing.createdBy !== meId) {
+          throw new ForbiddenError(
+            'Solo el usuario asignado o el creador del mantenimiento puede pedir una reautorización.',
+          );
+        }
+      }
+
+      // Bloquea si ya hay una solicitud Pendiente abierta (idempotencia
+      // de UX: el operador no debería spamear el botón).
+      const [pending] = await db
+        .select({ id: companyMaintenanceReauthorizations.id })
+        .from(companyMaintenanceReauthorizations)
+        .where(and(
+          eq(companyMaintenanceReauthorizations.maintenanceId, id),
+          eq(companyMaintenanceReauthorizations.companyId, companyId),
+          eq(companyMaintenanceReauthorizations.status, 'Pendiente'),
+        ))
+        .limit(1);
+      if (pending) {
+        throw new AppError(
+          409,
+          'Ya hay una solicitud pendiente para este mantenimiento. Esperá a que la aprueben o la rechacen.',
+        );
+      }
+
+      const [created] = await db
+        .insert(companyMaintenanceReauthorizations)
+        .values({
+          companyId,
+          maintenanceId:           id,
+          maintenanceStatus:       existing.status,
+          maintenanceScheduledFor: existing.scheduledFor,
+          action:                  body.action,
+          status:                  'Pendiente',
+          reason:                  body.reason,
+          proposedScheduledFor:    body.action === 'reschedule' && body.proposedScheduledFor
+                                    ? new Date(body.proposedScheduledFor)
+                                    : null,
+          requestedByUserId:       meId ?? null,
+          requestedByName:         req.user!.name ?? null,
+          requestedByRole:         meRole,
+        })
+        .returning();
+
+      // Auditoría timeline del mantenimiento (para reportes / drawer).
+      await recordEvent(companyId, id, 'reauth_requested', {
+        userId: meId,
+        name:   req.user!.name ?? null,
+      }, {
+        reauthId: toId('reauth', created.id),
+        action:   body.action,
+        reason:   body.reason,
+      });
+
+      res.status(201).json(serializeReauth(created));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── GET /:id/reauths ─────────────────────────────────────────────────────────
+// Bandeja: lista solicitudes. Si el caller es full, ve TODAS las de la
+// empresa. Si no, ve solo las SUYAS (las que pidió).
+router.get(
+  '/:id/reauths',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'reautorizaciones', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id        = parseId('maintenance', req.params.id);
+      const meId      = getUserIdFromSub(req.user!.sub);
+      const meRole    = req.user!.role ?? '';
+      const isFull    = hasFullAccess(meRole);
+
+      const conds = [
+        eq(companyMaintenanceReauthorizations.companyId, companyId),
+        eq(companyMaintenanceReauthorizations.maintenanceId, id),
+      ];
+      if (!isFull && meId != null) {
+        conds.push(eq(companyMaintenanceReauthorizations.requestedByUserId, meId));
+      }
+
+      const rows = await db
+        .select()
+        .from(companyMaintenanceReauthorizations)
+        .where(and(...conds))
+        .orderBy(desc(companyMaintenanceReauthorizations.createdAt));
+
+      res.json(rows.map(serializeReauth));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── POST /:id/approve-reauth ─────────────────────────────────────────────────
+// Aprueba una solicitud Pendiente. Caller debe tener `reautorizaciones.editar`.
+// Si la solicitud.action === 'open' → status=Programado, scheduledFor=HOY.
+// Si 'reschedule' → status=Programado, scheduledFor=newScheduledFor
+//                  (o la propuesta si no vino).
+router.post(
+  '/:id/approve-reauth',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'reautorizaciones', 'editar'),
+  validate(approveReauthSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id        = parseId('maintenance', req.params.id);
+      const meId      = getUserIdFromSub(req.user!.sub);
+      const body      = req.body as z.infer<typeof approveReauthSchema>;
+
+      const reauthIdNum = parseId('reauth', body.reauthId);
+
+      const [reauth] = await db
+        .select()
+        .from(companyMaintenanceReauthorizations)
+        .where(and(
+          eq(companyMaintenanceReauthorizations.id, reauthIdNum),
+          eq(companyMaintenanceReauthorizations.companyId, companyId),
+        ))
+        .limit(1);
+      if (!reauth) throw new NotFoundError('Solicitud de reautorización', body.reauthId);
+      if (reauth.status !== 'Pendiente') {
+        throw new AppError(409, `La solicitud ya está ${reauth.status}.`);
+      }
+      if (reauth.maintenanceId !== id) {
+        throw new AppError(400, 'La solicitud no corresponde a este mantenimiento.');
+      }
+
+      const [existing] = await db
+        .select()
+        .from(companyMaintenanceRecords)
+        .where(and(
+          eq(companyMaintenanceRecords.id, id),
+          eq(companyMaintenanceRecords.companyId, companyId),
+        ))
+        .limit(1);
+      if (!existing) throw new NotFoundError('Mantenimiento', req.params.id);
+      if (existing.status !== 'Atrasado') {
+        throw new AppError(409, 'Este mantenimiento ya no está atrasado. Cancelá la solicitud y reintentá.');
+      }
+
+      // Resolver nueva fecha.
+      let appliedDate: Date;
+      if (reauth.action === 'open') {
+        // 'open' = HOY. Forzamos, ignoramos newScheduledFor.
+        appliedDate = new Date();
+      } else {
+        // 'reschedule' = el admin (o el operador) eligió una fecha.
+        if (body.newScheduledFor) {
+          appliedDate = new Date(body.newScheduledFor);
+        } else if (reauth.proposedScheduledFor) {
+          appliedDate = reauth.proposedScheduledFor instanceof Date
+            ? reauth.proposedScheduledFor
+            : new Date(String(reauth.proposedScheduledFor));
+        } else {
+          throw new ForbiddenError(
+            'Para reprogramar, indicá la nueva fecha (newScheduledFor) o pedísela al operador.',
+          );
+        }
+      }
+
+      const now = new Date();
+
+      // 1) Marcar la solicitud como Aprobada.
+      const [updatedReauth] = await db
+        .update(companyMaintenanceReauthorizations)
+        .set({
+          status:               'Aprobada',
+          decidedByUserId:      meId ?? null,
+          decidedByName:        req.user!.name ?? null,
+          decisionNotes:        body.decisionNotes ?? null,
+          decidedAt:            now,
+          appliedScheduledFor:  appliedDate,
+          updatedAt:            now,
+        })
+        .where(eq(companyMaintenanceReauthorizations.id, reauth.id))
+        .returning();
+
+      // 2) Reabrir el mantenimiento.
+      //    Status siempre 'Programado' (no auto-pasar a 'En proceso').
+      //    Limpia `isOverdue` implícito: el status ya no es Atrasado.
+      //    Si la acción era 'reschedule', también marca isReprogrammed=true.
+      const isReschedule = reauth.action === 'reschedule';
+      await db
+        .update(companyMaintenanceRecords)
+        .set({
+          status:               'Programado',
+          scheduledFor:         appliedDate,
+          // Si era reprogramación, marcamos el flag.
+          ...(isReschedule ? {
+            isReprogrammed:    true,
+            reprogramReason:   body.decisionNotes ?? reauth.reason,
+            reprogrammedAt:    now,
+            reprogramCount:    (existing.reprogramCount ?? 0) + 1,
+          } : {}),
+          // Trazabilidad del último request aprobado.
+          lastReauthorizationId: reauth.id,
+          updatedAt:            now,
+        })
+        .where(and(
+          eq(companyMaintenanceRecords.id, id),
+          eq(companyMaintenanceRecords.companyId, companyId),
+        ));
+
+      // 3) Auditoría timeline del mantenimiento.
+      await recordEvent(companyId, id, 'reauthorized', {
+        userId: meId,
+        name:   req.user!.name ?? null,
+      }, {
+        reauthId:     toId('reauth', reauth.id),
+        action:       reauth.action,
+        newScheduledFor: appliedDate.toISOString(),
+        previousStatus:  existing.status,
+        newStatus:    'Programado',
+        notes:        body.decisionNotes ?? null,
+      });
+
+      // 4) Sincronizar el status del asset (porque el mantenimiento
+      //    ya no está Atrasado, el asset podría habilitarse).
+      await syncAssetMaintenanceStatus(existing.assetId, companyId);
+
+      res.json(serializeReauth(updatedReauth));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── POST /:id/deny-reauth ────────────────────────────────────────────────────
+// Rechaza una solicitud Pendiente. Caller debe tener `reautorizaciones.editar`.
+// El mantenimiento queda Atrasado como estaba. Solo se registra el rechazo
+// en la tabla + timeline.
+router.post(
+  '/:id/deny-reauth',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'reautorizaciones', 'editar'),
+  validate(denyReauthSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id        = parseId('maintenance', req.params.id);
+      const meId      = getUserIdFromSub(req.user!.sub);
+      const body      = req.body as z.infer<typeof denyReauthSchema>;
+
+      const reauthIdNum = parseId('reauth', body.reauthId);
+
+      const [reauth] = await db
+        .select()
+        .from(companyMaintenanceReauthorizations)
+        .where(and(
+          eq(companyMaintenanceReauthorizations.id, reauthIdNum),
+          eq(companyMaintenanceReauthorizations.companyId, companyId),
+        ))
+        .limit(1);
+      if (!reauth) throw new NotFoundError('Solicitud de reautorización', body.reauthId);
+      if (reauth.status !== 'Pendiente') {
+        throw new AppError(409, `La solicitud ya está ${reauth.status}.`);
+      }
+      if (reauth.maintenanceId !== id) {
+        throw new AppError(400, 'La solicitud no corresponde a este mantenimiento.');
+      }
+
+      const now = new Date();
+
+      const [updatedReauth] = await db
+        .update(companyMaintenanceReauthorizations)
+        .set({
+          status:          'Rechazada',
+          decidedByUserId: meId ?? null,
+          decidedByName:   req.user!.name ?? null,
+          decisionNotes:   body.decisionNotes,
+          decidedAt:       now,
+          updatedAt:       now,
+        })
+        .where(eq(companyMaintenanceReauthorizations.id, reauth.id))
+        .returning();
+
+      // Auditoría timeline.
+      await recordEvent(companyId, id, 'reauth_denied', {
+        userId: meId,
+        name:   req.user!.name ?? null,
+      }, {
+        reauthId: toId('reauth', reauth.id),
+        notes:    body.decisionNotes,
+      });
+
+      res.json(serializeReauth(updatedReauth));
     } catch (err) {
       next(err);
     }

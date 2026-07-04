@@ -16,6 +16,7 @@ import PlatformLayout from "./layout/PlatformLayout";
 import { ScrollToTop } from "./components/common/ScrollToTop";
 import { DashboardOverview } from "./pages/Dashboard/page";
 import MaintenanceGeneralPage from "./pages/Mantenimientos/page";
+import ReauthReportPage from "./pages/Mantenimientos/ReauthReportPage";
 import AcPage from "./pages/AiresAcondicionados/page";
 import AcMaintenancesPage from "./pages/AiresAcondicionados/Mantenimientos/page";
 import { ChecklistPage } from "./pages/Checklist/page";
@@ -176,6 +177,7 @@ export default function App() {
         <Route element={<RequireOperacion />}>
           <Route path="/dashboard" element={<DashboardOverview />} />
           <Route path="/mantenimiento" element={<MaintenanceGeneralPage />} />
+          <Route path="/mantenimiento/reportes/reautorizaciones" element={<ReauthReportPage />} />
           <Route path="/checklist" element={<ChecklistPage />} />
           <Route path="/alertas" element={<AlertsPage />} />
           <Route path="/reportes" element={<ReportsPage />} />

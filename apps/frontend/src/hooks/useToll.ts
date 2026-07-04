@@ -76,24 +76,67 @@ function mapApi(raw: Record<string, unknown>): ApiTollEntry {
   };
 }
 
+export type TollPageState = {
+  data: ApiTollEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export type TollFilters = {
+  assetId?: string;
+  driverId?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+/**
+ * Hook con DOS slots independientes:
+ *   - `page`        → paginado al backend (la TABLA)
+ *   - `allEntries`  → SIN paginar (KPIs `totalAmount` y `monthAmount` del componente)
+ */
 export function useToll() {
   const { session } = useAuth();
   const companyId = session?.companyId;
 
-  const [tollEntries, setTollEntries] = useState<ApiTollEntry[]>([]);
+  // Slot paginado.
+  const [page, setPageState] = useState<TollPageState>({
+    data: [], total: 0, page: 1, pageSize: 20, totalPages: 1,
+  });
+  // Slot "all".
+  const [allEntries, setAllEntries] = useState<ApiTollEntry[]>([]);
+  const [allTotal, setAllTotal]       = useState(0);
   const [assets, setAssets] = useState<TollLookupAsset[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError]     = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  /** Fetch PAGINADO para la tabla. */
+  const fetchPage = useCallback(async (filters: TollFilters = {}) => {
     if (!companyId) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/company/${companyId}/toll`);
+      const params = new URLSearchParams();
+      if (filters.assetId)  params.set("assetId",  filters.assetId);
+      if (filters.driverId) params.set("driverId", filters.driverId);
+      if (filters.from)     params.set("from",     filters.from);
+      if (filters.to)       params.set("to",       filters.to);
+      if (filters.page)     params.set("page",     String(filters.page));
+      if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
+      const qs = params.toString();
+      const res = await fetch(`/api/company/${companyId}/toll${qs ? `?${qs}` : ""}`);
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const json = await res.json();
-      setTollEntries((json.data ?? json).map(mapApi));
+      setPageState({
+        data: (json.data ?? []).map(mapApi),
+        total: typeof json.total === "number" ? json.total : 0,
+        page: typeof json.page === "number" ? json.page : 1,
+        pageSize: typeof json.pageSize === "number" ? json.pageSize : 20,
+        totalPages: typeof json.totalPages === "number" ? json.totalPages : 1,
+      });
       if (Array.isArray(json.assets)) setAssets(json.assets);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar peajes");
@@ -102,7 +145,33 @@ export function useToll() {
     }
   }, [companyId]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  /** Fetch SIN paginar (para KPIs del componente). */
+  const fetchAll = useCallback(async (filters: Omit<TollFilters, "page" | "pageSize"> = {}) => {
+    if (!companyId) return;
+    try {
+      const params = new URLSearchParams();
+      if (filters.assetId)  params.set("assetId",  filters.assetId);
+      if (filters.driverId) params.set("driverId", filters.driverId);
+      if (filters.from)     params.set("from",     filters.from);
+      if (filters.to)       params.set("to",       filters.to);
+      params.set("nopage", "true");
+      const qs = params.toString();
+      const res = await fetch(`/api/company/${companyId}/toll${qs ? `?${qs}` : ""}`);
+      if (!res.ok) return;
+      const json = await res.json();
+      setAllEntries((json.data ?? []).map(mapApi));
+      setAllTotal(typeof json.total === "number" ? json.total : 0);
+      if (Array.isArray(json.assets)) setAssets(json.assets);
+    } catch {
+      // silencioso
+    }
+  }, [companyId]);
+
+  useEffect(() => { void fetchPage(); }, [fetchPage]);
+
+  // Compatibilidad: `tollEntries` = data de la página actual, `refresh` = refetch page.
+  const tollEntries = page.data;
+  const refresh = useCallback(() => fetchPage(), [fetchPage]);
 
   const createTollEntry = useCallback(async (payload: CreateTollPayload): Promise<ApiTollEntry> => {
     const res = await fetch(`/api/company/${companyId}/toll`, {
@@ -126,7 +195,9 @@ export function useToll() {
     });
     if (!res.ok) throw new Error(`Error ${res.status}`);
     const created = mapApi(await res.json());
-    setTollEntries((prev) => [created, ...prev]);
+    setPageState((prev) => ({ ...prev, data: [created, ...prev.data], total: prev.total + 1 }));
+    setAllEntries((prev) => [created, ...prev]);
+    setAllTotal((t) => t + 1);
     return created;
   }, [companyId]);
 
@@ -152,7 +223,8 @@ export function useToll() {
     });
     if (!res.ok) throw new Error(`Error ${res.status}`);
     const updated = mapApi(await res.json());
-    setTollEntries((prev) => prev.map((t) => (t.id === id ? updated : t)));
+    setPageState((prev) => ({ ...prev, data: prev.data.map((t) => (t.id === id ? updated : t)) }));
+    setAllEntries((prev) => prev.map((t) => (t.id === id ? updated : t)));
     return updated;
   }, [companyId]);
 
@@ -162,20 +234,33 @@ export function useToll() {
       credentials: "include",
     });
     if (!res.ok) throw new Error(`Error ${res.status}`);
-    setTollEntries((prev) => prev.filter((t) => t.id !== id));
+    setPageState((prev) => ({ ...prev, data: prev.data.filter((t) => t.id !== id), total: Math.max(0, prev.total - 1) }));
+    setAllEntries((prev) => prev.filter((t) => t.id !== id));
+    setAllTotal((t) => Math.max(0, t - 1));
   }, [companyId]);
 
   return {
+    // Slot paginado.
     tollEntries,
+    total: page.total,
+    page: page.page,
+    pageSize: page.pageSize,
+    totalPages: page.totalPages,
+    // Slot "all".
+    allEntries,
+    allTotal,
     assets,
     loading,
     error,
     refresh,
+    fetchPage,
+    fetchAll,
     createTollEntry,
     updateTollEntry,
     deleteTollEntry,
   };
 }
+
 
 /** Sube 1 foto de peaje al endpoint correspondiente y devuelve la URL pública. */
 export async function uploadTollPhoto(file: File, companyId: number): Promise<string> {

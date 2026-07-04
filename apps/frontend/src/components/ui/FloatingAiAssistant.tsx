@@ -43,17 +43,59 @@ function BotAvatar() {
   );
 }
 
-// ─── Waveform (mic activo) ────────────────────────────────────────────
-function VoiceWave() {
+// ─── Ola animada estilo Siri (multibar) ────────────────────────────────
+// SVG con barras verticales que reaccionan a `voiceLevel` (0..1) y a
+// una animación de respiración cuando el nivel es bajo. Colores tipo
+// Siri (cyan/azul/violeta/rosa) con gradiente.
+function SiriWave({ level }: { level: number }) {
+  // 24 barras, alturas pseudo-aleatorias pero determinísticas.
+  const BARS = 24;
+  const basePattern = [
+    0.18, 0.30, 0.50, 0.72, 0.95, 0.78, 0.55, 0.34,
+    0.22, 0.45, 0.78, 1.00, 0.85, 0.62, 0.40, 0.25,
+    0.18, 0.36, 0.60, 0.88, 0.92, 0.70, 0.45, 0.28,
+  ];
   return (
-    <div className="flex items-center gap-[3px] h-4">
-      {[0.4, 0.7, 1, 0.7, 0.4, 0.8, 0.5].map((h, i) => (
-        <div
-          key={i}
-          className="w-[2px] rounded-full bg-rose-400"
-          style={{ height: `${h * 100}%`, animation: `voiceBar 0.6s ease-in-out ${i * 0.07}s infinite alternate` }}
-        />
-      ))}
+    <div className="flex items-center justify-center w-full h-9">
+      <svg
+        viewBox={`0 0 ${BARS * 6} 40`}
+        preserveAspectRatio="none"
+        className="h-full w-full"
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient id="siriWaveGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%"   stopColor="#22d3ee" />
+            <stop offset="33%"  stopColor="#6366f1" />
+            <stop offset="66%"  stopColor="#a855f7" />
+            <stop offset="100%" stopColor="#ec4899" />
+          </linearGradient>
+        </defs>
+        {Array.from({ length: BARS }).map((_, i) => {
+          const base = basePattern[i % basePattern.length];
+          // Altura efectiva = base × nivel_de_voz + respiración mínima.
+          const breathing = 0.12 + 0.08 * Math.sin(Date.now() / 240 + i * 0.4);
+          const heightFrac = Math.min(1, base * (0.35 + level * 0.85) + breathing * 0.4);
+          const h = Math.max(2, heightFrac * 36);
+          const x = i * 6 + 1;
+          const y = (40 - h) / 2;
+          return (
+            <rect
+              key={i}
+              x={x}
+              y={y}
+              width={4}
+              height={h}
+              rx={2}
+              fill="url(#siriWaveGradient)"
+              style={{
+                transition: "height 90ms ease-out, y 90ms ease-out",
+                opacity: 0.85 + level * 0.15,
+              }}
+            />
+          );
+        })}
+      </svg>
     </div>
   );
 }
@@ -423,6 +465,8 @@ export function FloatingAiAssistant() {
   }
 
   function toggleListening() {
+    // Deprecated en favor del hold-to-talk (MediaRecorder → /voice).
+    // Lo mantenemos como fallback si MediaRecorder no está disponible.
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) { setError("Tu navegador no soporta reconocimiento de voz. Usa Chrome."); return; }
     if (listening) { recognitionRef.current?.stop(); setListening(false); return; }
@@ -432,6 +476,235 @@ export function FloatingAiAssistant() {
     rec.onerror  = (e: any) => { setError(`Error de voz: ${e.error}`); setListening(false); };
     rec.onend    = () => setListening(false);
     recognitionRef.current = rec; rec.start(); setListening(true);
+  }
+
+  // ─── Hold-to-talk (MediaRecorder → /voice) ─────────────────────────────────
+  // Reemplaza el botón Mic estático por una mini-bolita tipo Siri:
+  // el usuario MANTIENE presionado para grabar; al soltar, el blob se
+  // envía al backend (`/api/company/:id/ai/voice`) que devuelve texto
+  // transcripto + respuesta + audio MP3 base64.
+  //
+  // Refs:
+  //   mediaRecorderRef: instancia actual de MediaRecorder.
+  //   streamRef:        MediaStream del mic (lo cerramos al terminar).
+  //   chunksRef:        chunks del Blob acumulado.
+  //   pressTimerRef:    timeout para distinguir tap vs hold (no usamos).
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef        = useRef<MediaStream | null>(null);
+  const chunksRef        = useRef<Blob[]>([]);
+  const [voiceLevel, setVoiceLevel] = useState(0); // 0..1 (RMS-ish)
+  const [, setWaveTick]              = useState(0); // ticker para re-renderizar la ola Siri
+  const voiceAnalyserRef = useRef<{ analyser: AnalyserNode; raf: number } | null>(null);
+
+  function pickRecorderMime(): { mimeType: string; ext: string } {
+    // Probamos webm/opus (Chrome/Firefox). Safari no siempre lo soporta,
+    // pero el fallback a Web Speech sigue disponible vía el botón textual.
+    const candidates = [
+      { mimeType: "audio/webm;codecs=opus", ext: "webm" },
+      { mimeType: "audio/webm",             ext: "webm" },
+      { mimeType: "audio/mp4",              ext: "mp4" },
+      { mimeType: "",                       ext: "webm" }, // default del browser
+    ];
+    for (const c of candidates) {
+      if (!c.mimeType || (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(c.mimeType))) {
+        return c;
+      }
+    }
+    return { mimeType: "audio/webm", ext: "webm" };
+  }
+
+  async function startVoiceRecording() {
+    if (!companyId) return;
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setError("Tu navegador no soporta grabación de audio.");
+      return;
+    }
+    if (typeof MediaRecorder === "undefined") {
+      setError("Tu navegador no soporta MediaRecorder. Usa Chrome.");
+      return;
+    }
+    setError(null);
+    setVoiceLevel(0);
+    chunksRef.current = [];
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl:  true,
+        },
+      });
+      streamRef.current = stream;
+
+      // Analizador de volumen (RMS) para la animación de la bolita.
+      try {
+        const AC: typeof AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
+        const ctx = new AC();
+        const src = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        src.connect(analyser);
+        const buf = new Uint8Array(analyser.fftSize);
+        const tick = () => {
+          analyser.getByteTimeDomainData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) {
+            const v = (buf[i] - 128) / 128;
+            sum += v * v;
+          }
+          const rms = Math.sqrt(sum / buf.length);
+          setVoiceLevel(Math.min(1, rms * 2.5));
+          voiceAnalyserRef.current!.raf = requestAnimationFrame(tick);
+        };
+        voiceAnalyserRef.current = { analyser, raf: 0 };
+        tick();
+        // Guardamos el ctx en streamRef.userData para cerrarlo luego.
+        (streamRef.current as any).__ctx = ctx;
+      } catch (e) {
+        // Análisis opcional — no bloquea la grabación.
+      }
+
+      const { mimeType } = pickRecorderMime();
+      const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      mediaRecorderRef.current = rec;
+      rec.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      rec.onerror = (e: any) => {
+        // eslint-disable-next-line no-console
+        console.warn("[jarvis] MediaRecorder error:", e);
+        setError("Error durante la grabación.");
+        cleanupVoiceRecording();
+      };
+      rec.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: mimeType || "audio/webm" });
+        cleanupVoiceRecording();
+        if (blob.size > 0) void sendVoiceBlob(blob);
+        else setError("No se capturó audio. Intenta de nuevo.");
+      };
+      rec.start(100); // chunks cada 100ms
+      setListening(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "No pude acceder al micrófono.";
+      setError(msg);
+      cleanupVoiceRecording();
+    }
+  }
+
+  function cleanupVoiceRecording() {
+    try { mediaRecorderRef.current?.state === "recording" && mediaRecorderRef.current.stop(); } catch {}
+    mediaRecorderRef.current = null;
+    if (streamRef.current) {
+      try { streamRef.current.getTracks().forEach((t) => t.stop()); } catch {}
+      streamRef.current = null;
+    }
+    const v = voiceAnalyserRef.current;
+    if (v) {
+      try { cancelAnimationFrame(v.raf); } catch {}
+      voiceAnalyserRef.current = null;
+    }
+    const ctx = (streamRef.current as any)?.__ctx;
+    if (ctx && typeof ctx.close === "function") {
+      try { ctx.close(); } catch {}
+    }
+    setListening(false);
+    setVoiceLevel(0);
+  }
+
+  function stopVoiceRecording() {
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state !== "inactive") {
+      try { rec.stop(); } catch {}
+    } else {
+      // Nunca llegó a empezar — limpiar igual.
+      cleanupVoiceRecording();
+    }
+  }
+
+  async function sendVoiceBlob(blob: Blob) {
+    if (!companyId) return;
+    setSending(true);
+    setError(null);
+
+    try {
+      const fd = new FormData();
+      const ext = pickRecorderMime().ext;
+      const filename = `voice.${ext}`;
+      fd.append("audio", blob, filename);
+      if (conversationId) fd.append("conversationId", conversationId);
+      if (voice)         fd.append("voice", voice);
+
+      const res = await fetch(`/api/company/${companyId}/ai/voice`, {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.message ?? errBody.error ?? `Error ${res.status}`);
+      }
+      const body = (await res.json()) as {
+        transcript: string;
+        answer: string;
+        conversationId: string | null;
+        audioBase64: string | null;
+        audioMime: string | null;
+        latencyMs: number;
+        healedKey?: boolean;
+      };
+
+      // Insertar el par user + assistant en bloque, SIN placeholder
+      // intermedio ("transcribiendo..."). El usuario solo ve aparecer
+      // su texto + respuesta cuando todo está listo.
+      const userMsg: ChatMessage = {
+        id: `u-voice-${Date.now()}`,
+        role: "user",
+        content: body.transcript ?? "",
+        ts: Date.now(),
+      };
+      const assistantMsg: ChatMessage = {
+        id: `a-voice-${Date.now()}`,
+        role: "assistant",
+        content: body.answer ?? "",
+        ts: Date.now(),
+      };
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+      // Actualizar conversationId si el backend devolvió uno nuevo.
+      if (body.conversationId) setConversationId(String(body.conversationId));
+
+      // Reproducir el MP3 devuelto por el backend. Si no hay audio,
+      // caemos a Web Speech para que igual se escuche la respuesta.
+      const answer = body.answer ?? "";
+      if (body.audioBase64 && body.audioMime) {
+        try {
+          if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
+          const bytes = Uint8Array.from(atob(body.audioBase64), (c) => c.charCodeAt(0));
+          const mp3 = new Blob([bytes], { type: body.audioMime });
+          const url = URL.createObjectURL(mp3);
+          const audio = new Audio(url);
+          audio.onended = () => { URL.revokeObjectURL(url); setSpeaking(false); };
+          audio.onerror = () => { URL.revokeObjectURL(url); setSpeaking(false); };
+          audioRef.current = audio;
+          await audio.play();
+          setSpeaking(true);
+          setVoiceEnabled(true);
+        } catch (playErr) {
+          // eslint-disable-next-line no-console
+          console.warn("[jarvis/voice] no pude reproducir MP3, fallback WebSpeech:", playErr);
+          if (answer.trim()) speakText(answer);
+        }
+      } else if (autoPlay && answer.trim()) {
+        speakText(answer);
+      }
+
+      void loadConversations();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error desconocido";
+      setError(msg);
+    } finally {
+      setSending(false);
+    }
   }
 
 function speakLastResponse() {
@@ -547,8 +820,112 @@ function speakLastResponse() {
       }
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
       recognitionRef.current?.abort?.();
+      cleanupVoiceRecording();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ─── Ticker para la ola Siri ─────────────────────────────────────────
+  // Mientras `listening` esté activo, forzamos un re-render cada ~50ms
+  // para que la animación de respiración (sin(Date.now()/240 + i*0.4))
+  // se vea fluida. Cuando NO escucha, no tickeamos (ahorra CPU).
+  useEffect(() => {
+    if (!listening) return;
+    const id = window.setInterval(() => setWaveTick((t) => (t + 1) & 0xffff), 50);
+    return () => window.clearInterval(id);
+  }, [listening]);
+
+  // ─── Space hold-to-talk ────────────────────────────────────────────────
+  // Si el chat está abierto y el foco NO está en el textarea/input, el
+  // usuario puede mantener la barra espaciadora para hablar. Esto entra
+  // en conflicto con el comportamiento natural de space (insertar un
+  // espacio), así que usamos un debounce: la grabación NO arranca hasta
+  // que space lleva presionado ≥ SPACE_HOLD_MS. Si el usuario suelta
+  // antes, no pasa nada — sigue siendo un espacio normal.
+  //
+  // El truco: capturamos keydown SIN preventDefault cuando el debounce
+  // aún no disparó, así que el browser aún puede procesar el espacio
+  // si el foco estuviera en un input (no es nuestro caso porque ya
+  // validamos que el foco no esté en input/textarea, pero es defensivo).
+  const SPACE_HOLD_MS = 200;
+  const spaceDownAtRef  = useRef<number>(0);
+  const spaceHoldTimerRef = useRef<number | null>(null);
+
+  function isTextEditingTarget(t: EventTarget | null): boolean {
+    if (!(t instanceof HTMLElement)) return false;
+    const tag = t.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (t.isContentEditable) return true;
+    return false;
+  }
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || e.repeat) return;
+      if (isTextEditingTarget(e.target)) return;
+      if (sending || listening) return;
+
+      // Solo nos interesa space cuando NO hay nada en el textarea.
+      // Si el textarea tiene texto, preferimos que el usuario edite
+      // antes de hablar (evitamos pisar lo escrito).
+      if (message.trim().length > 0) return;
+
+      e.preventDefault();
+      const downAt = Date.now();
+      spaceDownAtRef.current = downAt;
+
+      // Armar timer: si a SPACE_HOLD_MS seguimos presionados, arrancamos.
+      if (spaceHoldTimerRef.current != null) {
+        window.clearTimeout(spaceHoldTimerRef.current);
+      }
+      spaceHoldTimerRef.current = window.setTimeout(() => {
+        // Solo arrancar si seguimos presionados y nadie nos ganó de mano.
+        if (spaceDownAtRef.current === downAt && !listening && !sending) {
+          void startVoiceRecording();
+        }
+      }, SPACE_HOLD_MS);
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      // Si había timer pendiente, lo cancelamos (era un tap rápido de space).
+      if (spaceHoldTimerRef.current != null) {
+        window.clearTimeout(spaceHoldTimerRef.current);
+        spaceHoldTimerRef.current = null;
+      }
+      const wasListening = listening;
+      spaceDownAtRef.current = 0;
+      // Si estamos escuchando, soltar space = stop+send.
+      if (wasListening) stopVoiceRecording();
+    };
+
+    const onBlur = () => {
+      // Si el chat pierde el foco mientras escuchamos, soltamos el envío
+      // para no acumular audio con la ventana en background.
+      if (listening) stopVoiceRecording();
+      if (spaceHoldTimerRef.current != null) {
+        window.clearTimeout(spaceHoldTimerRef.current);
+        spaceHoldTimerRef.current = null;
+      }
+      spaceDownAtRef.current = 0;
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup",   onKeyUp);
+    window.addEventListener("blur",    onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup",   onKeyUp);
+      window.removeEventListener("blur",    onBlur);
+      if (spaceHoldTimerRef.current != null) {
+        window.clearTimeout(spaceHoldTimerRef.current);
+        spaceHoldTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, listening, sending, message]);
 
   function relativeTime(iso: string): string {
     const diff = Date.now() - new Date(iso).getTime();
@@ -959,49 +1336,106 @@ function speakLastResponse() {
             <div className="px-3 pb-3 pt-2.5 shrink-0 border-t border-gray-100 dark:border-white/[0.06]">
               <div className="flex items-end gap-2">
                 <div className="flex-1 relative">
-                  <textarea
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    rows={1}
-                    maxLength={2000}
-                    placeholder={listening ? "Escuchando…" : "Pregúntale algo a Jarvis…"}
-                    className={[
-                      "w-full resize-none outline-none text-sm transition-colors rounded-xl px-3.5 py-2.5",
-                      "bg-gray-50 border border-gray-200 text-gray-800 placeholder-gray-400",
-                      "focus:border-blue-400 focus:bg-white",
-                      "dark:bg-white/[0.04] dark:border-white/[0.06] dark:text-white/85 dark:placeholder-white/25",
-                      "dark:focus:border-blue-500/40 dark:focus:bg-white/[0.06]",
-                    ].join(" ")}
-                    style={{
-                      minHeight: "40px",
-                      maxHeight: "120px",
-                      scrollbarWidth: "thin",
-                      height: `${Math.min(120, 40 + message.split("\n").length * 20)}px`,
-                    }}
-                  />
-                  {listening && (
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                      <VoiceWave />
+                  {listening ? (
+                    // ── Ola animada estilo Siri mientras escucha ─────────────
+                    // Reemplaza visualmente el textarea: muestra la barra de
+                    // ondas multicolor (cyan → indigo → violeta → rosa) con
+                    // alturas que reaccionan al RMS del mic.
+                    <div
+                      className={[
+                        "w-full rounded-xl px-3.5 py-2.5 flex items-center",
+                        "bg-gray-50 border border-indigo-300 dark:bg-white/[0.04] dark:border-indigo-500/40",
+                      ].join(" ")}
+                      style={{ height: "40px" }}
+                    >
+                      <SiriWave level={voiceLevel} />
                     </div>
+                  ) : (
+                    <textarea
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      rows={1}
+                      maxLength={2000}
+                      placeholder="Pregúntale algo a Jarvis…"
+                      className={[
+                        "w-full resize-none outline-none text-sm transition-colors rounded-xl px-3.5 py-2.5",
+                        "bg-gray-50 border border-gray-200 text-gray-800 placeholder-gray-400",
+                        "focus:border-blue-400 focus:bg-white",
+                        "dark:bg-white/[0.04] dark:border-white/[0.06] dark:text-white/85 dark:placeholder-white/25",
+                        "dark:focus:border-blue-500/40 dark:focus:bg-white/[0.06]",
+                      ].join(" ")}
+                      style={{
+                        minHeight: "40px",
+                        maxHeight: "120px",
+                        scrollbarWidth: "thin",
+                        height: `${Math.min(120, 40 + message.split("\n").length * 20)}px`,
+                      }}
+                    />
                   )}
                 </div>
 
-                {/* Mic */}
-                <button
-                  type="button"
-                  onClick={toggleListening}
+                {/* Mini-bolita Siri — hold-to-talk (MediaRecorder → /voice).
+                    Mantén presionado para grabar, suelta para enviar.
+                    Tambien funciona con la barra espaciadora (ver useEffect). */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-label={sending ? "Procesando…" : listening ? "Grabando. Suelta para enviar." : "Mantén presionado o la barra espaciadora para hablar"}
+                  aria-pressed={listening}
                   className={[
-                    "h-10 w-10 shrink-0 rounded-xl flex items-center justify-center transition-all",
-                    listening
-                      ? "bg-red-50 border border-red-300 text-red-500 dark:bg-red-500/10 dark:border-red-500/30 dark:text-red-400"
-                      : "bg-gray-100 border border-gray-200 text-gray-500 hover:bg-gray-200 dark:bg-white/[0.05] dark:border-white/[0.06] dark:text-white/40 dark:hover:bg-white/[0.08]",
+                    "relative h-10 w-10 shrink-0 rounded-full flex items-center justify-center cursor-pointer select-none touch-none",
+                    "transition-transform",
+                    listening ? "scale-110" : "hover:scale-105 active:scale-95",
                   ].join(" ")}
-                  style={listening ? { animation: "micPulse 1.5s ease-in-out infinite" } : undefined}
-                  aria-label={listening ? "Detener" : "Grabar"}
+                  style={{
+                    background: listening
+                      ? "radial-gradient(circle at 30% 30%, #fda4af 0%, #f43f5e 60%, #be123c 100%)"
+                      : "radial-gradient(circle at 30% 30%, #a5b4fc 0%, #6366f1 60%, #4338ca 100%)",
+                    boxShadow: listening
+                      ? `0 0 ${10 + voiceLevel * 22}px rgba(244,63,94,${0.5 + voiceLevel * 0.5}), 0 0 ${20 + voiceLevel * 36}px rgba(190,18,60,${0.25 + voiceLevel * 0.4})`
+                      : "0 2px 8px rgba(99,102,241,0.25)",
+                    border: "2px solid rgba(255,255,255,0.25)",
+                  }}
+                  onPointerDown={(e) => {
+                    // Evita que el textarea robe el focus.
+                    e.preventDefault();
+                    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+                    void startVoiceRecording();
+                  }}
+                  onPointerUp={(e) => {
+                    try { (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId); } catch {}
+                    if (listening) stopVoiceRecording();
+                  }}
+                  onPointerCancel={(e) => {
+                    try { (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId); } catch {}
+                    if (listening) {
+                      // Cancelar sin enviar (sin rec.stop dispararía onstop → sendVoiceBlob).
+                      cleanupVoiceRecording();
+                      setError("Grabación cancelada.");
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    // Accesibilidad: Enter = toggle con Web Speech fallback.
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (listening) stopVoiceRecording();
+                      else toggleListening(); // fallback si MediaRecorder no estaba disponible
+                    }
+                  }}
                 >
-                  {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                </button>
+                  <Mic
+                    className={[
+                      "h-4 w-4 relative z-10 transition-colors",
+                      "text-white",
+                    ].join(" ")}
+                  />
+                  {sending && (
+                    <span className="absolute inset-0 rounded-full bg-black/30 flex items-center justify-center">
+                      <Loader2 className="h-3.5 w-3.5 text-white animate-spin" />
+                    </span>
+                  )}
+                </div>
 
                 {/* Speaker: leer / detener */}
                 <button
@@ -1089,6 +1523,10 @@ function speakLastResponse() {
         @keyframes micPulse {
           0%, 100% { box-shadow: 0 0 6px rgba(239,68,68,0.2); }
           50%       { box-shadow: 0 0 14px rgba(239,68,68,0.4); }
+        }
+        @keyframes ringPulse {
+          0%   { transform: scale(1);    opacity: 0.6; }
+          100% { transform: scale(2.1);  opacity: 0; }
         }
         .jarvis-fab:hover {
           transform: scale(1.08) rotate(5deg);

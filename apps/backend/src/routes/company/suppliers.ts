@@ -4,7 +4,7 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, ilike, or } from 'drizzle-orm';
+import { eq, and, ilike, or, desc, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companySuppliers } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
@@ -15,6 +15,7 @@ import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router({ mergeParams: true });
 
@@ -52,30 +53,27 @@ router.get(
     try {
       const companyId = req.companyId!;
       const q = (req.query.q as string | undefined)?.trim();
+      const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
-      let query = db
-        .select()
-        .from(companySuppliers)
-        .where(eq(companySuppliers.companyId, companyId))
-        .orderBy(companySuppliers.name)
-        .$dynamic();
-
-      if (q) {
+      const conds = [eq(companySuppliers.companyId, companyId)];
+      if (q && q.length > 0) {
         const needle = `%${q}%`;
-        query = query.where(
-          and(
-            eq(companySuppliers.companyId, companyId),
-            or(
-              ilike(companySuppliers.name, needle),
-              ilike(companySuppliers.contactName, needle),
-              ilike(companySuppliers.nit, needle),
-            )!,
-          ),
-        );
+        conds.push(or(
+          ilike(companySuppliers.name, needle),
+          ilike(companySuppliers.contactName, needle),
+          ilike(companySuppliers.nit, needle),
+        )!);
       }
+      const where = and(...conds);
 
-      const rows = await query;
-      res.json({ data: rows.map(serializeSupplier), total: rows.length });
+      const [rows, countRow] = await Promise.all([
+        db.select().from(companySuppliers).where(where)
+          .orderBy(desc(companySuppliers.name)).limit(pageSize).offset(offset),
+        db.select({ value: sql<number>`cast(count(*) as int)` }).from(companySuppliers).where(where),
+      ]);
+
+      const total = countRow?.[0]?.value ?? 0;
+      res.json(buildPageResponse(rows.map(serializeSupplier), total, page, pageSize));
     } catch (err) {
       next(err);
     }

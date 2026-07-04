@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect } from "react";
-import type { InventoryItem, OilType, Asset } from "./types";
+﻿import { useState, useRef, useEffect } from "react";
+import type { OilType, Asset } from "./types";
 import type { ApiDriver } from "../../../hooks/useDrivers";
 import { createPortal } from "react-dom";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import { todayEcuador } from "@/lib/datetime";
 
-// ─── Shared ───────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Shared â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface OverlayProps {
   children: React.ReactNode;
@@ -41,7 +41,7 @@ function Overlay({ children, onClose }: OverlayProps) {
   );
 }
 
-// ─── Custom Select ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Custom Select â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface SelectOption {
   value: string;
@@ -110,7 +110,7 @@ function CustomSelect({ options, value, onChange, placeholder }: CustomSelectPro
   );
 }
 
-// ─── Field ────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Field â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const inputCls =
   "h-10 w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/20 focus:border-emerald-500/50 focus:outline-none transition";
@@ -133,7 +133,7 @@ function Field({ label, required, children }: FieldProps) {
   );
 }
 
-// ─── Close button ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Close button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function CloseBtn({ onClose }: { onClose: () => void }) {
   return (
@@ -148,94 +148,7 @@ function CloseBtn({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ─── ItemDetailModal ──────────────────────────────────────────────────────────
-
-interface ItemDetailModalProps {
-  item: InventoryItem | null;
-  onClose: () => void;
-  onEdit?: () => void;
-}
-
-export function ItemDetailModal({ item, onClose, onEdit }: ItemDetailModalProps) {
-  if (!item) return null;
-
-  const isCritical = item.stock === 0;
-  const isLow = item.stock <= item.minStock;
-  const statusLabel = isCritical ? "Sin stock" : isLow ? "Stock bajo" : "Disponible";
-  const accentColor = isCritical ? "bg-rose-500" : isLow ? "bg-amber-400" : "bg-emerald-500";
-  const statusColor = isCritical
-    ? "text-rose-400 bg-rose-500/10 border-rose-500/20"
-    : isLow
-    ? "text-amber-400 bg-amber-500/10 border-amber-500/20"
-    : "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
-  const stockPct = Math.min(100, Math.round((item.stock / Math.max((item.minStock ?? 0) * 2, item.stock, 1)) * 100));
-
-  return (
-    <Overlay onClose={onClose}>
-      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0d1117] shadow-2xl">
-        <div className={`h-0.5 w-full ${accentColor}`} />
-        <div className="flex items-start justify-between gap-4 px-6 pb-4 pt-5">
-          <div>
-            <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${statusColor}`}>
-              {statusLabel}
-            </span>
-            <h2 className="mt-2 text-base font-bold text-white">{item.name}</h2>
-          </div>
-          <CloseBtn onClose={onClose} />
-        </div>
-
-        <div className="mx-6 mb-4 rounded-xl border border-white/[0.06] bg-white/[0.03] p-4">
-          <div className="flex items-baseline justify-between">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-white/30">Stock actual</p>
-              <div className="mt-1 flex items-baseline gap-1.5">
-                <span className="text-3xl font-black tabular-nums text-white">{item.stock}</span>
-                <span className="text-sm text-white/40">{item.unit}</span>
-              </div>
-            </div>
-            <div className="text-right">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-white/30">Mínimo</p>
-              <p className="mt-1 text-sm font-bold text-white/50">{item.minStock} {item.unit}</p>
-            </div>
-          </div>
-          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.08]">
-            <div
-              className={`h-full rounded-full ${isCritical ? "bg-rose-500" : isLow ? "bg-amber-400" : "bg-emerald-500"}`}
-              style={{ width: `${stockPct}%` }}
-            />
-          </div>
-        </div>
-
-        <div className="mx-6 mb-4 divide-y divide-white/[0.05] overflow-hidden rounded-xl border border-white/[0.06]">
-          {[
-            { label: "Código", value: item.code, mono: true },
-            { label: "Categoría", value: item.category ?? "—" },
-            { label: "Unidad", value: item.unit ?? "—" },
-            { label: "Ubicación", value: item.location ?? "—" },
-          ].map(({ label, value, mono }) => (
-            <div key={label} className="flex items-center justify-between px-4 py-2.5">
-              <span className="text-xs text-white/40">{label}</span>
-              <span className={`text-xs font-semibold ${mono ? "font-mono text-emerald-400" : "text-white/80"}`}>{value}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="flex gap-3 border-t border-white/[0.06] px-6 py-4">
-          <button onClick={onClose} className="flex-1 rounded-xl border border-white/[0.08] py-2.5 text-sm font-semibold text-white/50 transition hover:bg-white/[0.05] hover:text-white">
-            Cerrar
-          </button>
-          {onEdit && (
-            <button onClick={() => { onEdit(); onClose(); }} className="flex-1 rounded-xl bg-emerald-500 py-2.5 text-sm font-bold text-black transition hover:bg-emerald-400 active:scale-95">
-              Editar repuesto
-            </button>
-          )}
-        </div>
-      </div>
-    </Overlay>
-  );
-}
-
-// ─── OilChangeModal ───────────────────────────────────────────────────────────
+// â”€â”€â”€ OilChangeModal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface OilChangeForm {
   assetId: string;
@@ -283,7 +196,7 @@ export function OilChangeModal({ oilTypes, assets, drivers, preselectedOil, onCl
 
   const assetOptions: SelectOption[] = assets.map((a) => ({
     value: a.id,
-    label: `${a.code} — ${a.name}`,
+    label: `${a.code} â€” ${a.name}`,
   }));
 
   const oilOptions: SelectOption[] = oilTypes.map((o) => ({
@@ -310,16 +223,16 @@ export function OilChangeModal({ oilTypes, assets, drivers, preselectedOil, onCl
 
         <div className="flex items-center justify-between border-b border-white/[0.06] px-6 pb-4 pt-5">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-500">Lubricación</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-500">LubricaciÃ³n</p>
             <h2 className="mt-0.5 text-base font-bold text-white">
-              {preselectedOil ? `Cambio — ${preselectedOil.name}` : "Nuevo cambio de aceite"}
+              {preselectedOil ? `Cambio â€” ${preselectedOil.name}` : "Nuevo cambio de aceite"}
             </h2>
           </div>
           <CloseBtn onClose={onClose} />
         </div>
 
         <div className="max-h-[65vh] space-y-4 overflow-y-auto px-6 py-5">
-          <Field label="Activo / Vehículo" required>
+          <Field label="Activo / VehÃ­culo" required>
             <CustomSelect
               options={assetOptions}
               value={form.assetId}
@@ -354,7 +267,7 @@ export function OilChangeModal({ oilTypes, assets, drivers, preselectedOil, onCl
             <Field label="Lectura km" required>
               <input className={inputCls} type="number" placeholder="45200" value={form.reading} onChange={(e) => set("reading", e.target.value)} />
             </Field>
-            <Field label="Próxima">
+            <Field label="PrÃ³xima">
               <input className={inputCls} type="number" placeholder="50200" value={form.nextReading} onChange={(e) => set("nextReading", e.target.value)} />
             </Field>
             <Field label={`Cantidad (${selectedOil?.unit ?? "un"})`} required>
@@ -362,12 +275,12 @@ export function OilChangeModal({ oilTypes, assets, drivers, preselectedOil, onCl
             </Field>
           </div>
 
-          <Field label="Técnico responsable">
+          <Field label="TÃ©cnico responsable">
             <CustomSelect
               options={driverOptions}
               value={form.technician}
               onChange={(v) => set("technician", v)}
-              placeholder="Seleccionar técnico..."
+              placeholder="Seleccionar tÃ©cnico..."
             />
           </Field>
 

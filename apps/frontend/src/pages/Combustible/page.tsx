@@ -47,7 +47,9 @@ const EXPORT_COLS: ExportColumn[] = [
   { key: "odometer", label: "Odómetro" },
 ];
 
-const PAGE_SIZE = 7;
+// PAGE_SIZE ya no aplica — la paginación la controla el backend.
+// La tabla pide pageSize=7 al backend (en el useEffect de fetchPage).
+// El "universo" para stats/charts/exports se pide con nopage=true.
 
 // ─── Palette ───────────────────────────────────────────────────────────────
 const CHART_COLORS = [
@@ -815,7 +817,11 @@ function ExportModal({ allRows, currentRows, title, subtitle, filename, columns,
 // ─── Main page ─────────────────────────────────────────────────────────────────
 
 export function FuelPage() {
-  const { fuelEntries, assets, loading: fuelLoading, createFuelEntry, updateFuelEntry, deleteFuelEntry } = useFuel();
+  const {
+    fuelEntries, total: pageTotal, totalPages, loading: fuelLoading,
+    allEntries, fetchPage, fetchAll,
+    assets, createFuelEntry, updateFuelEntry, deleteFuelEntry,
+  } = useFuel();
   const { can } = usePermissions();
   const { session } = useAuth();
 
@@ -849,14 +855,33 @@ export function FuelPage() {
   const [deleteTarget, setDeleteTarget] = useState<ApiFuelEntry | null>(null);
   const [exportOpen,   setExportOpen]   = useState(false);
 
-  // ── Stats ──────────────────────────────────────────────────────────────────
+  // ── Re-fetch al backend cuando cambian page/fechas ──────────────────────────
+  // Slot "paginada": la tabla. Recibe el page actual (default 7).
+  useEffect(() => {
+    void fetchPage({ page, from: dateFrom || undefined, to: dateTo || undefined, pageSize: 7 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, dateFrom, dateTo]);
 
-  const totalGallons = fuelEntries.reduce((s, e) => s + e.gallons, 0);
-  const totalCost    = fuelEntries.reduce((s, e) => s + e.cost,   0);
+  // Slot "all": charts, calendario, exports. Se re-fetchea SOLO cuando
+  // cambian los filtros de fecha (la búsqueda de texto es local, no afecta
+  // al universo). Sin este fetch, los KPIs/charts no se actualizarían.
+  useEffect(() => {
+    void fetchAll({ from: dateFrom || undefined, to: dateTo || undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateFrom, dateTo]);
+
+  // Reset a página 1 cuando cambian las fechas.
+  useEffect(() => { setPage(1); }, [dateFrom, dateTo]);
+
+  // ── Stats — usan el slot "all" (universo real, no la página actual) ──────
+  const totalGallons = allEntries.reduce((s, e) => s + e.gallons, 0);
+  const totalCost    = allEntries.reduce((s, e) => s + e.cost,   0);
   const avgCostPerGal = totalGallons > 0 ? totalCost / totalGallons : 0;
 
   // ── Table rows ─────────────────────────────────────────────────────────────
-
+  // `fuelEntries` ya viene paginado del backend. El `search` de texto sigue
+  // siendo local (no hay `q` en el backend de fuel — el universo filtrado
+  // por fechas ya es chico después de paginar).
   const tableRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return fuelEntries
@@ -876,25 +901,23 @@ gallons:  `${fmt(e.gallons, 2)} gal`,
       })
       .sort((a, b) => b.date.localeCompare(a.date))
       .filter((r) => {
-        const matchQ    = !q || r.plate.toLowerCase().includes(q) || r.unit.toLowerCase().includes(q) || r.station.toLowerCase().includes(q) || (r.entry.invoiceNumber ?? "").toLowerCase().includes(q);
-        const matchFrom = !dateFrom || r.date >= dateFrom;
-        const matchTo   = !dateTo   || r.date <= dateTo;
-        return matchQ && matchFrom && matchTo;
+        const matchQ = !q || r.plate.toLowerCase().includes(q) || r.unit.toLowerCase().includes(q) || r.station.toLowerCase().includes(q) || (r.entry.invoiceNumber ?? "").toLowerCase().includes(q);
+        return matchQ;
       });
-  }, [fuelEntries, assets, search, dateFrom, dateTo]);
+  }, [fuelEntries, assets, search]);
 
   const handleSearch   = (v: string) => { setSearch(v);   setPage(1); };
   const handleDateFrom = (v: string) => { setDateFrom(v); setPage(1); };
   const handleDateTo   = (v: string) => { setDateTo(v);   setPage(1); };
 
-  const paginatedRows = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE;
-    return tableRows.slice(start, start + PAGE_SIZE);
-  }, [tableRows, page]);
+  // `paginatedRows` ya viene paginado del backend — sin slicing local.
+  const paginatedRows = tableRows;
 
-  const allExportRows: ExportRow[] = useMemo(() => fuelEntries
+  // `allExportRows` se calcula sobre el slot "all" (universo completo filtrado
+  // por fechas). El export a PDF/Excel debe incluir TODOS los entries del
+  // rango, no solo los 7 de la página actual.
+  const allExportRows: ExportRow[] = useMemo(() => allEntries
     .map((e) => {
-      // BUG FIX: mismo fix de comparación
       const asset = assets.find((a) => String(a.id) === String(e.assetId));
       return {
         id:       e.id,
@@ -909,7 +932,7 @@ gallons:  `${fmt(e.gallons, 2)} gal`,
       };
     })
     .sort((a, b) => (b.date as string).localeCompare(a.date as string)),
-  [fuelEntries, assets]);
+  [allEntries, assets]);
 
   const currentExportRows: ExportRow[] = tableRows.map((r) => ({ ...r }));
 
@@ -1007,14 +1030,14 @@ gallons:  `${fmt(e.gallons, 2)} gal`,
               </p>
             </div>
           </div>
-          <FuelCharts fuelEntries={fuelEntries} assets={assets} />
+          <FuelCharts fuelEntries={allEntries} assets={assets} />
 
           {/* Insights automáticos — usa el mismo rango de fechas del historial */}
           <FuelInsights from={dateFrom} to={dateTo} />
 
           {/* Calendario con heatmap + timeline del día seleccionado */}
           <div className="max-w-sm">
-            <FuelCalendarBreakdown entries={fuelEntries} isAdmin={isAdminOrOwner} />
+            <FuelCalendarBreakdown entries={allEntries} isAdmin={isAdminOrOwner} />
           </div>
         </div>
       )}
@@ -1134,7 +1157,7 @@ gallons:  `${fmt(e.gallons, 2)} gal`,
                 </tbody>
               </table>
             </div>
-            <Pagination page={page} total={tableRows.length} pageSize={PAGE_SIZE} onChange={setPage} />
+            <Pagination page={page} total={pageTotal} pageSize={7} onChange={setPage} />
           </>
         )}
       </div>

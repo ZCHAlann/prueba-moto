@@ -2,9 +2,11 @@ import {
   createContext, useCallback, useContext,
   useEffect, useMemo, useState, type ReactNode,
 } from "react";
+import { toast } from "sonner";
 import { canAccessPath, getDefaultRouteForSession } from "../lib/access-control";
 import type { PlatformRole } from "../types/platform";
 import type { PermissionMap } from "../lib/module-tree";
+import { onAuthInvalidated, defaultMessageForCode } from "../lib/authEvents";
 
 const roleLabelMap: Record<string, string> = {
   superadmin:    "Administrador master",
@@ -110,6 +112,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // useLocation() aquí porque el provider se monta afuera del Router.
   // (ver: src/App.tsx → <SessionRefresher />).
 
+  // ── Listener global de auth:invalidated (Fase 3.4) ─────────────────────
+  // Cuando cualquier apiFetch (en cualquier hook) recibe 401/403 con
+  // un code de inactividad, dispatcha este evento. Acá lo capturamos
+  // para hacer logout + mostrar toast + redirigir.
+  useEffect(() => {
+    return onAuthInvalidated((detail) => {
+      // Limpia la sesión local
+      setSession(null);
+      // Toast con el motivo
+      toast.error(defaultMessageForCode(detail.code), {
+        description: "Tu sesión fue cerrada por un cambio de estado administrativo.",
+        duration: 8000,
+      });
+      // Redirige a login con el motivo en query para que el form lo muestre
+      const qs = new URLSearchParams({ reason: detail.code }).toString();
+      // Solo redirigir si no estamos ya en /signin (evita loop)
+      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/signin")) {
+        window.location.assign(`/signin?${qs}`);
+      }
+    });
+  }, []);
+
   // Login operadores (scope: operacion)
   const login = useCallback(async ({ email, password, remember }: LoginInput): Promise<LoginResult> => {
     try {
@@ -122,7 +146,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        return { ok: false, title: "Acceso denegado", description: (err as {message?: string}).message ?? "Credenciales inválidas." };
+        const code = typeof (err as { code?: unknown }).code === "string"
+          ? (err as { code: string }).code
+          : null;
+        // Si el backend indica inactividad, el título es más específico
+        // (Fase 3.3). El form de login ya muestra `description` tal cual.
+        const titleByCode: Record<string, string> = {
+          USER_INACTIVE:   "Cuenta inactiva",
+          DRIVER_INACTIVE: "Conductor inactivo",
+          SITE_INACTIVE:   "Sede inactiva",
+        };
+        const title = (code && titleByCode[code]) || "Acceso denegado";
+        const description = (err as {message?: string}).message ?? "Credenciales inválidas.";
+        return { ok: false, title, description };
       }
 
       const data = await res.json();
@@ -193,7 +229,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const canAccessCurrentPath = useCallback(
-    (pathname: string) => session ? canAccessPath(session.role, pathname) : false,
+    (pathname: string) =>
+      session
+        ? canAccessPath(session.role, pathname, (session.modulePermissions ?? {}) as Record<string, Record<string, string[]>>)
+        : false,
     [session]
   );
 

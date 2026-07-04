@@ -13,21 +13,6 @@ export interface OilType {
   updatedAt: string;
 }
 
-export interface InventoryItem {
-  id: string;
-  companyId: string;
-  code: string;
-  name: string;
-  category: string | null;
-  stock: number;
-  minStock: number;
-  unit: string | null;
-  location: string | null;
-  notes: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface OilChange {
   id: string;
   companyId: string;
@@ -51,4 +36,4 @@ export interface Asset {
   name: string;
 }
 
-export type TabKey = "aceites" | "inventario" | "historial";
+export type TabKey = "aceites" | "historial";

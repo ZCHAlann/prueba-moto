@@ -1,11 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import { ExternalLink, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { useProfile } from "@/hooks/useProfile";
 import type { UpdateProfileInput, ChangePasswordInput } from "@/hooks/useProfile";
+import { useMyDriverAssignment } from "@/hooks/useMyDriverAssignment";
+import { DriverActa } from "@/components/features/drivers/DriverActa";
 import { fmtDateLongEc } from "@/lib/datetime";
 import { compressIfImage, COMPRESS_OPTS_STANDARD } from "@/lib/mediaCompress";
 
@@ -249,6 +253,14 @@ export function ProfilePage() {
     profile, isLoading, isSaving, isChangingPwd,
     displayName, initials, updateProfile, changePassword,
   } = useProfile();
+  const canEditPhoto = session?.role === "admin_empresa" || session?.role === "owner_empresa";
+
+
+  // Acta de asignación del conductor (solo si el companyUser logueado está
+  // asociado a un perfil de conductor). `null` o `notFound` → la card no se
+  // muestra, sin lanzar errores.
+  const driverAssignment = useMyDriverAssignment();
+  const navigate = useNavigate();
 
   const [form, setForm] = useState<UpdateProfileInput>({});
   const [showPwdModal, setShowPwdModal] = useState(false);
@@ -350,7 +362,7 @@ export function ProfilePage() {
     e.preventDefault();
     await updateProfile({
       ...form,
-      photoUrl: photoPreview,   // null = eliminar foto, string = nueva foto
+      ...(canEditPhoto ? { photoUrl: photoPreview } : {}),
     });
   }
 
@@ -444,14 +456,18 @@ export function ProfilePage() {
                 </div>
 
                 {/* Botón subir foto */}
-                <button type="button" onClick={() => fileRef.current?.click()}
-                  className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-white/[0.06] flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-brand-500 dark:hover:text-brand-400 transition-colors shadow-sm"
-                  title="Cambiar foto">
-                  <IconCamera className="w-3.5 h-3.5" />
-                </button>
+                {canEditPhoto && (
+                  <button type="button" onClick={() => fileRef.current?.click()}
+                    className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-white/[0.06] flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-brand-500 dark:hover:text-brand-400 transition-colors shadow-sm"
+                    title="Cambiar foto">
+                    <IconCamera className="w-3.5 h-3.5" />
+                  </button>
+                )}
 
-                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
-              </div>
+                {canEditPhoto && (
+                  <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
+                )}
+                </div>
 
               {/* Nombre y rol */}
               <div className="text-center space-y-1">
@@ -466,20 +482,22 @@ export function ProfilePage() {
               </div>
 
               {/* Botones de foto */}
-              <div className="flex gap-2 w-full">
-                <button type="button" onClick={() => fileRef.current?.click()}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 dark:border-white/[0.06] text-xs font-medium text-gray-600 dark:text-gray-300 hover:border-brand-300 dark:hover:border-brand-500/40 hover:text-brand-600 dark:hover:text-brand-400 transition-all">
-                  <IconCamera className="w-3.5 h-3.5" />
-                  {currentPhoto ? "Cambiar" : "Subir foto"}
-                </button>
-                {currentPhoto && (
-                  <button type="button" onClick={handleRemovePhoto}
-                    className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 dark:border-white/[0.06] text-xs font-medium text-gray-500 dark:text-gray-400 hover:border-red-300 dark:hover:border-red-500/40 hover:text-red-500 dark:hover:text-red-400 transition-all"
-                    title="Quitar foto">
-                    <IconTrash className="w-3.5 h-3.5" />
+              {canEditPhoto && (
+                <div className="flex gap-2 w-full">
+                  <button type="button" onClick={() => fileRef.current?.click()}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 dark:border-white/[0.06] text-xs font-medium text-gray-600 dark:text-gray-300 hover:border-brand-300 dark:hover:border-brand-500/40 hover:text-brand-600 dark:hover:text-brand-400 transition-all">
+                    <IconCamera className="w-3.5 h-3.5" />
+                    {currentPhoto ? "Cambiar" : "Subir foto"}
                   </button>
-                )}
-              </div>
+                  {currentPhoto && (
+                    <button type="button" onClick={handleRemovePhoto}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 dark:border-white/[0.06] text-xs font-medium text-gray-500 dark:text-gray-400 hover:border-red-300 dark:hover:border-red-500/40 hover:text-red-500 dark:hover:text-red-400 transition-all"
+                      title="Quitar foto">
+                      <IconTrash className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Indicador de cambio pendiente */}
               {photoChanged && (
@@ -488,9 +506,11 @@ export function ProfilePage() {
                 </p>
               )}
 
-              <p className="text-[10px] text-gray-400 dark:text-gray-600 text-center">
-                JPG, PNG o WebP · máx. 2 MB
-              </p>
+              {canEditPhoto && (
+                <p className="text-[10px] text-gray-400 dark:text-gray-600 text-center">
+                  JPG, PNG o WebP · máx. 2 MB
+                </p>
+              )}
             </div>
 
             {/* Resumen de acceso */}
@@ -508,6 +528,74 @@ export function ProfilePage() {
                 </div>
               ))}
             </div>
+
+            {/* Acta de asignación (solo si soy conductor) */}
+            {!driverAssignment.loading && driverAssignment.acta && (() => {
+              const acta = driverAssignment.acta!;
+              const isActive = acta.startDate && !acta.endDate;
+              // `status` del acta no viene en ActaCardData; inferimos por endDate.
+              const label = acta.actaNumber
+                ? `Acta #${acta.actaNumber}`
+                : isActive ? "Asignación activa" : "Última asignación";
+
+              const vehicleId = acta.vehicleSnapshot?.id ?? null;
+              const hasVehicle = !!vehicleId;
+
+              return (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.32, delay: 0.05 }}
+                  className="rounded-2xl border border-indigo-200/60 dark:border-indigo-500/20 bg-white dark:bg-white/[0.03] p-4 space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-2 px-1">
+                    <p className="text-xs font-semibold tracking-widest uppercase text-indigo-600 dark:text-indigo-400">
+                      {label}
+                    </p>
+                    <span className={`text-[10px] font-bold uppercase tracking-wide ${
+                      isActive
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-gray-500 dark:text-gray-400"
+                    }`}>
+                      {isActive ? "Vigente" : "Cerrada"}
+                    </span>
+                  </div>
+
+                  <DriverActa acta={acta} />
+
+                  {/* Acción contextual: deep-link a Mis inspecciones. Si hay
+                      vehículo activo, pasamos el assetId como query param
+                      para que la página de Checklist filtre por él al cargar. */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate(
+                        isActive && hasVehicle
+                          ? `/checklist?assetId=${vehicleId}`
+                          : "/checklist"
+                      )
+                    }
+                    className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition active:scale-95"
+                  >
+                    <ClipboardList size={12} />
+                    {isActive && hasVehicle
+                      ? "Mis inspecciones pendientes"
+                      : "Ir a inspecciones"}
+                    <ExternalLink size={10} className="opacity-70" />
+                  </button>
+
+                  {/* Recordatorio del vehículo asignado, si aplica. */}
+                  {isActive && hasVehicle && acta.vehicleSnapshot && (
+                    <p className="text-center text-[10px] text-gray-500 dark:text-gray-400">
+                      Vehículo:{" "}
+                      <span className="font-semibold text-gray-700 dark:text-gray-200">
+                        {acta.vehicleSnapshot.plate ?? acta.vehicleSnapshot.name ?? "—"}
+                      </span>
+                    </p>
+                  )}
+                </motion.div>
+              );
+            })()}
           </motion.div>
 
           {/* Columna derecha: formulario */}

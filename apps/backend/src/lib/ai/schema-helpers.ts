@@ -102,6 +102,37 @@ export function tolerantDateString() {
 export const tolerantNumber = () => z.coerce.number();
 
 /**
+ * Number tolerante ESPECÍFICO para IDs de assets/vehículos (assetId).
+ *
+ * Igual que tolerantNumber(), pero además trata `0` como "campo ausente"
+ * en vez de dejar que falle la validación .positive().
+ *
+ * POR QUÉ EXISTE: el LLM (llama-3.3-70b/llama-3.1-8b) a veces manda
+ * `assetId: 0` como placeholder cuando no conoce el id real del vehículo
+ * pero sí mandó `placa` en el mismo tool call. Sin este helper, el `0`
+ * hace fallar TODO el objeto de argumentos en Zod (.positive() rechaza
+ * 0), y el orquestador cae al rescate más agresivo (args vacíos {}),
+ * perdiendo también `placa`, `estado` y cualquier otro filtro válido
+ * que sí vino bien. Con este helper, `0` se convierte en `undefined`
+ * ANTES de validar, entonces el resto de los campos pasan normal y la
+ * tool resuelve el vehículo por `placa` como ya hace el código.
+ *
+ * Uso: `assetId: tolerantAssetId()` (reemplaza a
+ * `tolerantNumber().int().positive().optional()`)
+ */
+export function tolerantAssetId() {
+  return z.preprocess(
+    (val) => {
+      if (val == null) return undefined;
+      const n = typeof val === 'string' ? Number(val) : val;
+      if (n === 0) return undefined;
+      return val;
+    },
+    z.coerce.number().int().positive(),
+  ).optional();
+}
+
+/**
  * Boolean tolerante. Acepta `true`/`false` nativos O strings tipo
  * `"true"`/`"false"`/`"1"`/`"0"`. Si el LLM manda un string en vez
  * de boolean (lo cual hace seguido el modelo chico llama-3.1-8b-instant),

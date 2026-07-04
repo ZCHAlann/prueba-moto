@@ -40,7 +40,13 @@ export type MissedCategory = {
   missedItems: MissedItem[];
 };
 
-export function useChecklistPendientes() {
+/**
+ * @param filterAssetId Si viene, el backend pasa solo pendientes cuyo
+ *   `pendingItems[].assetId` coincide con este valor. Pensado para
+ *   deep-links tipo "Mis inspecciones pendientes" desde ProfilePage.
+ *   No romper nada si viene `null` (compatibilidad backwards).
+ */
+export function useChecklistPendientes(filterAssetId?: string | null) {
   const { session } = useAuth();
   const companyId = session?.companyId ? String(session.companyId) : null;
 
@@ -54,8 +60,11 @@ export function useChecklistPendientes() {
     setLoading(true);
     setError(null);
     try {
+      const params = filterAssetId
+        ? `?assetId=${encodeURIComponent(filterAssetId)}`
+        : "";
       const [resPend, resVenc] = await Promise.all([
-        fetch(`/api/company/${companyId}/checklists/pendientes`),
+        fetch(`/api/company/${companyId}/checklists/pendientes${params}`),
         fetch(`/api/company/${companyId}/checklists/vencidos`),
       ]);
       if (!resPend.ok) throw new Error("Error al cargar pendientes");
@@ -69,7 +78,7 @@ export function useChecklistPendientes() {
     } finally {
       setLoading(false);
     }
-  }, [companyId]);
+  }, [companyId, filterAssetId]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 

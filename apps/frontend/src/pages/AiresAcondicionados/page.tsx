@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAcUnits } from "../../hooks/useAcUnits";
 import { usePermissions } from "../../hooks/usePermissions";
-import { useSites } from "../../hooks/useSites";
+import { useACFormOptions } from "../../hooks/useFormOptions";
 import { ModulePageHeader } from "../../components/features/modules/ModulePageHeader";
 import { StatusPill } from "../../components/common/StatusPill";
 import { AcCreateModal } from "../../components/ac/ac-create-modal";
@@ -99,7 +99,8 @@ function EmptyState({ hasFilters }: { hasFilters: boolean }) {
 /* ── Página principal ──────────────────────────────────────────────────── */
 export default function AcPage() {
   const { units, deleteUnit, getUnitDetail } = useAcUnits();
-  const { sites } = useSites();
+  const { data: formOptions } = useACFormOptions();
+  const sites = formOptions?.sites ?? [];
   const { can } = usePermissions();
 
   const canCreate = can("ac", "lista_ac", "crear");

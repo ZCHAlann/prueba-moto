@@ -1,8 +1,7 @@
 import { useRef, useState } from "react";
 import { X, Loader2, ImagePlus, Trash2 } from "lucide-react";
 import { useAcUnits } from "../../hooks/useAcUnits";
-import { useSites } from "../../hooks/useSites";
-import { useCompanyUsers, type CompanyUser } from "../../hooks/useCompanyUsers";
+import { useACFormOptions } from "../../hooks/useFormOptions";
 import { DatePicker } from "../ui/date-picker/DatePicker";
 import type {
   AirConditioningType,
@@ -70,11 +69,10 @@ const STATUS_OPTIONS: AirConditioningStatus[] = [
   "Operativo", "En revision", "Fuera de servicio", "Pendiente revision",
 ];
 
-function userDisplayName(u: CompanyUser): string {
-  const profile = u.profileData as { name?: string; firstName?: string; lastName?: string };
-  if (profile?.name) return profile.name;
-  if (profile?.firstName || profile?.lastName) {
-    return `${profile.firstName ?? ""} ${profile.lastName ?? ""}`.trim();
+function userDisplayName(u: { username: string; firstName?: string | null; lastName?: string | null; fullName?: string }): string {
+  if (u.fullName) return u.fullName;
+  if (u.firstName || u.lastName) {
+    return `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim();
   }
   return u.username;
 }
@@ -102,8 +100,9 @@ function Field({
 
 export function AcCreateModal({ onClose }: Props) {
   const { createUnit, uploadAcPhotos } = useAcUnits();
-  const { sites } = useSites();
-  const { users } = useCompanyUsers();
+  const { data: formOptions } = useACFormOptions();
+  const sites = formOptions?.sites ?? [];
+  const users = formOptions?.users ?? [];
   const fileRef = useRef<HTMLInputElement>(null);
   const [values, setValues] = useState<FormValues>(getInitialValues);
   const [errors, setErrors] = useState<Partial<Record<keyof FormValues, string>>>({});

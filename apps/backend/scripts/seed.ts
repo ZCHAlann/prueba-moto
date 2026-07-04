@@ -1,4 +1,4 @@
-import postgres from 'postgres';
+﻿import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { hash } from 'bcryptjs';
 import * as platformSchema from '../src/db/schema/platform';
@@ -14,7 +14,7 @@ const {
   companySettings, companySites, companyAssets, companyDrivers,
   companyAssignments, companyMaintenances, companyFuelEntries,
   companyAlerts, companyChecklistCategories, companyChecklists,
-  companyInventory, companyGarages, companyAcUnits, companyAcServices,
+  companyGarages, companyAcUnits, companyAcServices,
   companyAcRefrigerantLogs, companyAuditEntries, oilChecks,
   companyOilTypes, companyOilChanges, companyInsurancePolicies,
   assetNotes, assetRoutes, companyDriverReports,
@@ -29,11 +29,11 @@ async function main() {
   );
   const db = drizzle(client);
 
-  console.log('🌱 Iniciando seed...\n');
+  console.log('ðŸŒ± Iniciando seed...\n');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 1. Platform settings (singleton)
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(platformSettings).values({
     id: 1,
     platformName: 'ApliSmart Motors',
@@ -55,11 +55,11 @@ async function main() {
     notifyOnTrialExpiring: true,
     notifyOnLoginFailure: false,
   }).onConflictDoNothing();
-  console.log('✅ platform_settings');
+  console.log('âœ… platform_settings');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 2. Planes
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(platformPlans).values([
     {
       id: 'free',
@@ -93,7 +93,7 @@ async function main() {
       maxAssets: 200,
       allowedModules: [
         'activos', 'conductores', 'mantenimiento', 'combustible',
-        'alertas', 'checklist', 'inventario', 'garajes', 'ac', 'seguros',
+        'alertas', 'checklist', 'garajes', 'ac', 'seguros',
       ],
       isActive: true,
     },
@@ -107,16 +107,16 @@ async function main() {
       maxAssets: null,
       allowedModules: [
         'activos', 'conductores', 'mantenimiento', 'combustible',
-        'alertas', 'checklist', 'inventario', 'garajes', 'ac', 'seguros', 'auditoria',
+        'alertas', 'checklist', 'garajes', 'ac', 'seguros', 'auditoria',
       ],
       isActive: true,
     },
   ]).onConflictDoNothing();
-  console.log('✅ platform_plans');
+  console.log('âœ… platform_plans');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 3. SuperAdmin (platform user)
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [superAdmin] = await db.insert(platformUsers).values({
     email: 'admin@aplismart.io',
     username: 'superadmin',
@@ -125,11 +125,11 @@ async function main() {
     status: 'active',
     failedLoginAttempts: 0,
   }).returning();
-  console.log('✅ platform_users (superadmin)');
+  console.log('âœ… platform_users (superadmin)');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 4. Empresa demo
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [empresa] = await db.insert(companies).values({
     name: 'Transportes Ecuavial S.A.',
     slug: 'ecuavial',
@@ -137,7 +137,7 @@ async function main() {
     status: 'active',
     enabledModules: [
       'activos', 'conductores', 'mantenimiento', 'combustible',
-      'alertas', 'checklist', 'inventario', 'garajes', 'ac', 'seguros',
+      'alertas', 'checklist', 'garajes', 'ac', 'seguros',
     ],
     industry: 'transporte',
     country: 'Ecuador',
@@ -149,11 +149,11 @@ async function main() {
     contractStartAt: '2024-01-01',
     contractEndAt: '2025-12-31',
   }).returning();
-  console.log('✅ companies');
+  console.log('âœ… companies');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 5. Company settings
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(companySettings).values({
     companyId: empresa.id,
     maintenanceLeadTimeDays: 7,
@@ -162,11 +162,11 @@ async function main() {
     alertEmail: 'alertas@ecuavial.com',
     alertConfigs: [],
   }).onConflictDoNothing();
-  console.log('✅ company_settings');
+  console.log('âœ… company_settings');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 6. Usuarios de empresa
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [adminUser, ownerUser, operadorUser] = await db.insert(companyUsers).values([
     {
       companyId: empresa.id,
@@ -197,16 +197,16 @@ async function main() {
       passwordHash: await hashPassword('Operador123!'),
       role: 'operador',
       status: 'active',
-      profileData: { firstName: 'Pedro', lastName: 'Guzmán' },
+      profileData: { firstName: 'Pedro', lastName: 'GuzmÃ¡n' },
       modulePermissions: {},
       failedLoginAttempts: 0,
     },
   ]).returning();
-  console.log('✅ company_users');
+  console.log('âœ… company_users');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 7. Sedes
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [sedeGye, sedeUio] = await db.insert(companySites).values([
     {
       companyId: empresa.id,
@@ -223,15 +223,15 @@ async function main() {
       name: 'Sede Quito',
       city: 'Quito',
       address: 'Av. Eloy Alfaro N32-500',
-      contact: 'Lucía Ramírez',
+      contact: 'LucÃ­a RamÃ­rez',
       status: 'Activa',
     },
   ]).returning();
-  console.log('✅ company_sites');
+  console.log('âœ… company_sites');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 8. Garajes (antes de activos por FK garageId)
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [garGye, garUio] = await db.insert(companyGarages).values([
     {
       companyId: empresa.id,
@@ -239,7 +239,7 @@ async function main() {
       name: 'Garaje Central Guayaquil',
       location: 'Av. Juan Tanca Marengo km 3.5',
       capacity: 20,
-      supervisor: 'Pedro Guzmán',
+      supervisor: 'Pedro GuzmÃ¡n',
       status: 'Activo',
       latitude: -2.1894,
       longitude: -79.8891,
@@ -256,18 +256,18 @@ async function main() {
       longitude: -78.4678,
     },
   ]).returning();
-  console.log('✅ company_garages');
+  console.log('âœ… company_garages');
 
-  // ─────────────────────────────────────────────
-  // 9. Activos (con campos de telemática y GPS)
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // 9. Activos (con campos de telemÃ¡tica y GPS)
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [activo1, activo2, activo3, activo4] = await db.insert(companyAssets).values([
     {
       companyId: empresa.id,
       siteId: sedeGye.id,
       garageId: garGye.id,
       code: 'VH-001',
-      name: 'Camión Hino GH 2021',
+      name: 'CamiÃ³n Hino GH 2021',
       assetType: 'Vehiculo',
       category: 'Camion',
       status: 'Operativo',
@@ -282,9 +282,9 @@ async function main() {
       oilType: '15W-40',
       oilCapacity: '11 lts',
       availability: 'Disponible',
-      responsible: 'Pedro Guzmán',
+      responsible: 'Pedro GuzmÃ¡n',
       photoUrls: [],
-      // Telemática
+      // TelemÃ¡tica
       engineOn: false,
       locked: true,
       lastLat: -2.1500,
@@ -312,7 +312,7 @@ async function main() {
       availability: 'En ruta',
       responsible: 'Ana Torres',
       photoUrls: [],
-      // Telemática
+      // TelemÃ¡tica
       engineOn: true,
       locked: false,
       lastLat: -2.2200,
@@ -337,7 +337,7 @@ async function main() {
       fuelType: 'Diesel',
       availability: 'No disponible',
       photoUrls: [],
-      // Telemática
+      // TelemÃ¡tica
       engineOn: false,
       locked: true,
       lastLat: -0.1807,
@@ -365,18 +365,18 @@ async function main() {
       locked: false,
     },
   ]).returning();
-  console.log('✅ company_assets');
+  console.log('âœ… company_assets');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 10. Conductores
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [conductor1, conductor2, conductor3] = await db.insert(companyDrivers).values([
     {
       companyId: empresa.id,
       siteId: sedeGye.id,
       code: 'DRV-001',
       firstName: 'Roberto',
-      lastName: 'Villacís',
+      lastName: 'VillacÃ­s',
       email: 'rvillacis@ecuavial.com',
       phone: '+593 98 765 4321',
       licenseNumber: '1704567890',
@@ -389,7 +389,7 @@ async function main() {
       companyId: empresa.id,
       siteId: sedeGye.id,
       code: 'DRV-002',
-      firstName: 'María',
+      firstName: 'MarÃ­a',
       lastName: 'Cevallos',
       email: 'mcevallos@ecuavial.com',
       phone: '+593 97 654 3210',
@@ -414,11 +414,11 @@ async function main() {
       status: 'Activo',
     },
   ]).returning();
-  console.log('✅ company_drivers');
+  console.log('âœ… company_drivers');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 11. Asignaciones (con campos de acta de entrega)
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [asign1] = await db.insert(companyAssignments).values([
     {
       companyId: empresa.id,
@@ -426,13 +426,13 @@ async function main() {
       driverId: conductor1.id,
       startDate: '2024-01-15',
       status: 'Activa',
-      notes: 'Asignación permanente ruta Guayaquil-Quito',
+      notes: 'AsignaciÃ³n permanente ruta Guayaquil-Quito',
       // Acta de entrega
       actaNumber: 'ACTA-2024-001',
       actaDate: '2024-01-15',
       actaTime: '08:00',
       actaPlace: 'Sede Guayaquil - Oficina de Operaciones',
-      actaArea: 'Logística',
+      actaArea: 'LogÃ­stica',
       driverDni: '1704567890',
       driverPhone: '+593 98 765 4321',
       driverRole: 'Conductor de Ruta',
@@ -441,7 +441,7 @@ async function main() {
       vehicleCondition: 'Bueno',
       novedades: { frenos: 'OK', llantas: 'OK', luces: 'OK' },
       accesorios: { gato: true, llanta_repuesto: true, triangulo: true, extintor: true },
-      novedadesText: 'Vehículo en buen estado general al momento de la entrega.',
+      novedadesText: 'VehÃ­culo en buen estado general al momento de la entrega.',
       vehiclePhotoUrls: [],
     },
     {
@@ -466,11 +466,11 @@ async function main() {
       vehiclePhotoUrls: [],
     },
   ]).returning();
-  console.log('✅ company_assignments');
+  console.log('âœ… company_assignments');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 12. Mantenimientos
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(companyMaintenances).values([
     {
       companyId: empresa.id,
@@ -481,23 +481,23 @@ async function main() {
       status: 'Completado',
       scheduledDate: '2024-11-10',
       completedDate: '2024-11-10',
-      technician: 'Pedro Guzmán',
+      technician: 'Pedro GuzmÃ¡n',
       cost: '180.00',
       laborCost: '60.00',
       partsCost: '120.00',
-      notes: 'Se cambió filtro de aceite, aire y combustible.',
+      notes: 'Se cambiÃ³ filtro de aceite, aire y combustible.',
       photoUrls: [],
     },
     {
       companyId: empresa.id,
       assetId: activo3.id,
-      title: 'Revisión de frenos',
+      title: 'RevisiÃ³n de frenos',
       kind: 'Correctivo',
       priority: 'Alta',
       status: 'En proceso',
       scheduledDate: '2025-05-20',
       dueDate: '2025-05-25',
-      technician: 'Pedro Guzmán',
+      technician: 'Pedro GuzmÃ¡n',
       cost: '350.00',
       laborCost: '100.00',
       partsCost: '250.00',
@@ -506,20 +506,20 @@ async function main() {
     {
       companyId: empresa.id,
       assetId: activo2.id,
-      title: 'Revisión preventiva 30.000 km',
+      title: 'RevisiÃ³n preventiva 30.000 km',
       kind: 'Preventivo',
       priority: 'Baja',
       status: 'Pendiente',
       scheduledDate: '2025-07-01',
-      technician: 'Pedro Guzmán',
+      technician: 'Pedro GuzmÃ¡n',
       photoUrls: [],
     },
   ]);
-  console.log('✅ company_maintenances');
+  console.log('âœ… company_maintenances');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 13. Combustible
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(companyFuelEntries).values([
     {
       companyId: empresa.id,
@@ -553,11 +553,11 @@ async function main() {
       fuelType: 'Diesel',
     },
   ]);
-  console.log('✅ company_fuel_entries');
+  console.log('âœ… company_fuel_entries');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 14. Alertas
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(companyAlerts).values([
     {
       companyId: empresa.id,
@@ -567,12 +567,12 @@ async function main() {
       severity: 'media',
       status: 'Abierta',
       dueDate: '2025-11-20',
-      notes: 'Licencia del conductor María Cevallos vence en noviembre.',
+      notes: 'Licencia del conductor MarÃ­a Cevallos vence en noviembre.',
     },
     {
       companyId: empresa.id,
       assetId: activo1.id,
-      title: 'Mantenimiento preventivo próximo',
+      title: 'Mantenimiento preventivo prÃ³ximo',
       type: 'Mantenimiento',
       severity: 'baja',
       status: 'Abierta',
@@ -581,36 +581,36 @@ async function main() {
     {
       companyId: empresa.id,
       assetId: activo3.id,
-      title: 'Vehículo en mantenimiento no programado',
+      title: 'VehÃ­culo en mantenimiento no programado',
       type: 'Operativo',
       severity: 'alta',
       status: 'Abierta',
     },
   ]);
-  console.log('✅ company_alerts');
+  console.log('âœ… company_alerts');
 
-  // ─────────────────────────────────────────────
-  // 15. Checklist categorías
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // 15. Checklist categorÃ­as
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [catPre, catPost] = await db.insert(companyChecklistCategories).values([
     {
       companyId: empresa.id,
-      name: 'Inspección pre-viaje',
-      description: 'Revisión antes de salir a ruta',
-      items: ['Nivel de aceite', 'Presión de neumáticos', 'Luces', 'Frenos', 'Cinturones', 'Documentos'],
+      name: 'InspecciÃ³n pre-viaje',
+      description: 'RevisiÃ³n antes de salir a ruta',
+      items: ['Nivel de aceite', 'PresiÃ³n de neumÃ¡ticos', 'Luces', 'Frenos', 'Cinturones', 'Documentos'],
     },
     {
       companyId: empresa.id,
-      name: 'Inspección post-viaje',
-      description: 'Revisión al retornar de ruta',
-      items: ['Carrocería sin daños', 'Nivel de combustible', 'Limpieza interna', 'Reporte de novedades'],
+      name: 'InspecciÃ³n post-viaje',
+      description: 'RevisiÃ³n al retornar de ruta',
+      items: ['CarrocerÃ­a sin daÃ±os', 'Nivel de combustible', 'Limpieza interna', 'Reporte de novedades'],
     },
   ]).returning();
-  console.log('✅ company_checklist_categories');
+  console.log('âœ… company_checklist_categories');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 16. Checklists
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(companyChecklists).values([
     {
       companyId: empresa.id,
@@ -619,13 +619,13 @@ async function main() {
       driverId: conductor1.id,
       inspectorId: adminUser.id,
       targetKind: 'Vehiculo',
-      targetLabel: 'Camión Hino GH - ABC-1234',
+      targetLabel: 'CamiÃ³n Hino GH - ABC-1234',
       date: '2025-05-30',
       status: 'Completado',
-      summary: 'Vehículo en buen estado',
+      summary: 'VehÃ­culo en buen estado',
       items: [
         { name: 'Nivel de aceite', result: 'OK' },
-        { name: 'Presión de neumáticos', result: 'OK' },
+        { name: 'PresiÃ³n de neumÃ¡ticos', result: 'OK' },
         { name: 'Luces', result: 'OK' },
         { name: 'Frenos', result: 'OK' },
         { name: 'Cinturones', result: 'OK' },
@@ -645,7 +645,7 @@ async function main() {
       status: 'Completado',
       summary: 'Sin novedades al retorno',
       items: [
-        { name: 'Carrocería sin daños', result: 'OK' },
+        { name: 'CarrocerÃ­a sin daÃ±os', result: 'OK' },
         { name: 'Nivel de combustible', result: 'Bajo' },
         { name: 'Limpieza interna', result: 'OK' },
         { name: 'Reporte de novedades', result: 'Sin novedades' },
@@ -656,65 +656,7 @@ async function main() {
   console.log('✅ company_checklists');
 
   // ─────────────────────────────────────────────
-  // 17. Inventario
-  // ─────────────────────────────────────────────
-  await db.insert(companyInventory).values([
-    {
-      companyId: empresa.id,
-      code: 'INV-001',
-      name: 'Filtro de aceite Hino GH',
-      category: 'Filtros',
-      stock: '12.00',
-      minStock: '4.00',
-      unit: 'unidad',
-      location: 'Bodega A - Estante 1',
-    },
-    {
-      companyId: empresa.id,
-      code: 'INV-002',
-      name: 'Aceite motor 15W-40 (galón)',
-      category: 'Lubricantes',
-      stock: '24.00',
-      minStock: '8.00',
-      unit: 'galón',
-      location: 'Bodega A - Estante 2',
-    },
-    {
-      companyId: empresa.id,
-      code: 'INV-003',
-      name: 'Pastillas de freno Toyota Hilux',
-      category: 'Frenos',
-      stock: '3.00',
-      minStock: '4.00',
-      unit: 'juego',
-      location: 'Bodega B - Estante 1',
-      notes: 'Stock bajo — requiere reposición',
-    },
-    {
-      companyId: empresa.id,
-      code: 'INV-004',
-      name: 'Neumático 11R22.5 (Hino)',
-      category: 'Neumáticos',
-      stock: '6.00',
-      minStock: '2.00',
-      unit: 'unidad',
-      location: 'Bodega B - Zona neumáticos',
-    },
-    {
-      companyId: empresa.id,
-      code: 'INV-005',
-      name: 'Filtro de aire Caterpillar C4.4',
-      category: 'Filtros',
-      stock: '4.00',
-      minStock: '2.00',
-      unit: 'unidad',
-      location: 'Bodega A - Estante 3',
-    },
-  ]);
-  console.log('✅ company_inventory');
-
-  // ─────────────────────────────────────────────
-  // 18. Unidades AC
+  // 17. Unidades AC
   // ─────────────────────────────────────────────
   const [ac1, ac2] = await db.insert(companyAcUnits).values([
     {
@@ -732,7 +674,7 @@ async function main() {
       voltage: '220V',
       refrigerantType: 'R410A',
       installDate: '2022-01-10',
-      technician: 'Servicio Técnico LG',
+      technician: 'Servicio TÃ©cnico LG',
       status: 'Operativo',
       lastService: '2025-01-15',
       nextService: '2025-07-15',
@@ -756,18 +698,18 @@ async function main() {
       photoUrls: [],
     },
   ]).returning();
-  console.log('✅ company_ac_units');
+  console.log('âœ… company_ac_units');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 19. Servicios AC
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(companyAcServices).values([
     {
       companyId: empresa.id,
       unitId: ac1.id,
       date: '2025-01-15',
       kind: 'Mantenimiento preventivo',
-      technician: 'Servicio Técnico LG',
+      technician: 'Servicio TÃ©cnico LG',
       cost: '85.00',
       findings: 'Limpieza de filtros y evaporador. Sin novedades.',
       photoUrls: [],
@@ -777,17 +719,17 @@ async function main() {
       unitId: ac2.id,
       date: '2024-11-20',
       kind: 'Mantenimiento preventivo',
-      technician: 'Servicio Técnico Midea',
+      technician: 'Servicio TÃ©cnico Midea',
       cost: '65.00',
       findings: 'Limpieza general. Filtros en buen estado.',
       photoUrls: [],
     },
   ]);
-  console.log('✅ company_ac_services');
+  console.log('âœ… company_ac_services');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 20. Refrigerante logs
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(companyAcRefrigerantLogs).values([
     {
       companyId: empresa.id,
@@ -796,15 +738,15 @@ async function main() {
       refrigerantType: 'R410A',
       quantity: '0.50',
       unit: 'kg',
-      technician: 'Servicio Técnico LG',
-      reason: 'Recarga por baja presión detectada en mantenimiento preventivo.',
+      technician: 'Servicio TÃ©cnico LG',
+      reason: 'Recarga por baja presiÃ³n detectada en mantenimiento preventivo.',
     },
   ]);
-  console.log('✅ company_ac_refrigerant_logs');
+  console.log('âœ… company_ac_refrigerant_logs');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 21. Tipos de aceite
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [oilType1, oilType2] = await db.insert(companyOilTypes).values([
     {
       companyId: empresa.id,
@@ -827,11 +769,11 @@ async function main() {
       minStock: 4,
     },
   ]).returning();
-  console.log('✅ company_oil_types');
+  console.log('âœ… company_oil_types');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 22. Cambios de aceite
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(companyOilChanges).values([
     {
       companyId: empresa.id,
@@ -841,7 +783,7 @@ async function main() {
       reading: 154000,
       nextReading: 159000,
       quantity: 3,
-      technician: 'Pedro Guzmán',
+      technician: 'Pedro GuzmÃ¡n',
       notes: 'Cambio rutinario cada 5.000 km',
     },
     {
@@ -852,7 +794,7 @@ async function main() {
       reading: 89000,
       nextReading: 94000,
       quantity: 2,
-      technician: 'Pedro Guzmán',
+      technician: 'Pedro GuzmÃ¡n',
     },
     {
       companyId: empresa.id,
@@ -862,15 +804,15 @@ async function main() {
       reading: 3200,
       nextReading: 3700,
       quantity: 3,
-      technician: 'Pedro Guzmán',
+      technician: 'Pedro GuzmÃ¡n',
       notes: 'Cambio preventivo generador',
     },
   ]);
-  console.log('✅ company_oil_changes');
+  console.log('âœ… company_oil_changes');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 23. Oil checks IA
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(oilChecks).values([
     {
       companyId: empresa.id,
@@ -881,7 +823,7 @@ async function main() {
       confianza: '92%',
       puedeSalir: true,
       observaciones: 'Aceite oscuro pero dentro del rango operativo.',
-      accionRecomendada: 'Programar cambio en el próximo mantenimiento.',
+      accionRecomendada: 'Programar cambio en el prÃ³ximo mantenimiento.',
     },
     {
       companyId: empresa.id,
@@ -892,14 +834,14 @@ async function main() {
       confianza: '97%',
       puedeSalir: true,
       observaciones: 'Aceite en buen estado, cambio reciente.',
-      accionRecomendada: 'Sin acción requerida.',
+      accionRecomendada: 'Sin acciÃ³n requerida.',
     },
   ]);
-  console.log('✅ oil_checks');
+  console.log('âœ… oil_checks');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 24. Seguros
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(companyInsurancePolicies).values([
     {
       companyId: empresa.id,
@@ -936,52 +878,52 @@ async function main() {
       assetId: activo4.id,
       insurer: 'Chubb Ecuador',
       policyNumber: 'POL-2025-01010',
-      coverage: 'Equipo electrónico y maquinaria',
+      coverage: 'Equipo electrÃ³nico y maquinaria',
       startDate: '2025-01-15',
       endDate: '2026-01-15',
       status: 'Vigente',
     },
   ]);
-  console.log('✅ company_insurance_policies');
+  console.log('âœ… company_insurance_policies');
 
-  // ─────────────────────────────────────────────
-  // 25. Asset Notes (notas del cockpit) — NUEVO
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // 25. Asset Notes (notas del cockpit) â€” NUEVO
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(assetNotes).values([
     {
       companyId: empresa.id,
       assetId: activo1.id,
       authorId: adminUser.id,
       authorName: 'Carlos Mendoza',
-      body: 'Revisar el estado del sistema de escape en el próximo ingreso a taller. El conductor reportó ruido inusual en carretera.',
+      body: 'Revisar el estado del sistema de escape en el prÃ³ximo ingreso a taller. El conductor reportÃ³ ruido inusual en carretera.',
     },
     {
       companyId: empresa.id,
       assetId: activo1.id,
       authorId: operadorUser.id,
-      authorName: 'Pedro Guzmán',
-      body: 'Se ajustaron los espejos retrovisores y se verificó el buen funcionamiento del sistema de iluminación trasero.',
+      authorName: 'Pedro GuzmÃ¡n',
+      body: 'Se ajustaron los espejos retrovisores y se verificÃ³ el buen funcionamiento del sistema de iluminaciÃ³n trasero.',
     },
     {
       companyId: empresa.id,
       assetId: activo2.id,
       authorId: adminUser.id,
       authorName: 'Carlos Mendoza',
-      body: 'Pendiente renovación de la póliza de seguro antes del 15 de diciembre de 2025.',
+      body: 'Pendiente renovaciÃ³n de la pÃ³liza de seguro antes del 15 de diciembre de 2025.',
     },
     {
       companyId: empresa.id,
       assetId: activo3.id,
       authorId: adminUser.id,
       authorName: 'Carlos Mendoza',
-      body: 'Vehículo en mantenimiento correctivo por falla en sistema de frenos. Estimado de retorno: 26 de mayo de 2025.',
+      body: 'VehÃ­culo en mantenimiento correctivo por falla en sistema de frenos. Estimado de retorno: 26 de mayo de 2025.',
     },
   ]);
-  console.log('✅ asset_notes');
+  console.log('âœ… asset_notes');
 
-  // ─────────────────────────────────────────────
-  // 26. Asset Routes (rutas registradas) — NUEVO
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // 26. Asset Routes (rutas registradas) â€” NUEVO
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(assetRoutes).values([
     {
       companyId: empresa.id,
@@ -989,7 +931,7 @@ async function main() {
       driverId: conductor1.id,
       date: '2025-05-28',
       origin: 'Guayaquil - Sede Principal',
-      destination: 'Quito - Centro de Distribución Norte',
+      destination: 'Quito - Centro de DistribuciÃ³n Norte',
       distanceKm: 421.5,
       durationMin: 285,
       coordinates: [
@@ -1006,7 +948,7 @@ async function main() {
       driverId: conductor2.id,
       date: '2025-05-29',
       origin: 'Sede Guayaquil',
-      destination: 'Puerto Marítimo Guayaquil',
+      destination: 'Puerto MarÃ­timo Guayaquil',
       distanceKm: 12.3,
       durationMin: 35,
       coordinates: [
@@ -1021,7 +963,7 @@ async function main() {
       assetId: activo1.id,
       driverId: conductor1.id,
       date: '2025-05-30',
-      origin: 'Quito - Centro de Distribución Norte',
+      origin: 'Quito - Centro de DistribuciÃ³n Norte',
       destination: 'Guayaquil - Sede Principal',
       distanceKm: 421.5,
       durationMin: 290,
@@ -1031,32 +973,32 @@ async function main() {
         [-1.8000, -79.5000],
         [-2.1500, -79.8800],
       ],
-      notes: 'Retorno a base. Conductor reportó tráfico en Riobamba (+20 min).',
+      notes: 'Retorno a base. Conductor reportÃ³ trÃ¡fico en Riobamba (+20 min).',
     },
   ]);
-  console.log('✅ asset_routes');
+  console.log('âœ… asset_routes');
 
-  // ─────────────────────────────────────────────
-  // 27. Driver Reports — NUEVO
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // 27. Driver Reports â€” NUEVO
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(companyDriverReports).values([
     {
       companyId: empresa.id,
       driverId: conductor1.id,
-      driverName: 'Roberto Villacís',
+      driverName: 'Roberto VillacÃ­s',
       fuelLevel: '3/4',
       oilLevel: 'Normal',
-      vehicleFaults: 'Ruido leve en sistema de escape. Pendiente revisión en taller.',
+      vehicleFaults: 'Ruido leve en sistema de escape. Pendiente revisiÃ³n en taller.',
       invoices: [
         { description: 'Peaje Riobamba', amount: 2.50, date: '2025-05-28' },
-        { description: 'Alimentación en ruta', amount: 8.00, date: '2025-05-28' },
+        { description: 'AlimentaciÃ³n en ruta', amount: 8.00, date: '2025-05-28' },
       ],
       fileUrls: [],
     },
     {
       companyId: empresa.id,
       driverId: conductor2.id,
-      driverName: 'María Cevallos',
+      driverName: 'MarÃ­a Cevallos',
       fuelLevel: '1/4',
       oilLevel: 'Normal',
       vehicleFaults: null,
@@ -1071,16 +1013,16 @@ async function main() {
       driverName: 'Jorge Naranjo',
       fuelLevel: '1/2',
       oilLevel: 'Bajo',
-      vehicleFaults: 'Nivel de aceite bajo. Se agregó 1 litro preventivamente.',
+      vehicleFaults: 'Nivel de aceite bajo. Se agregÃ³ 1 litro preventivamente.',
       invoices: [],
       fileUrls: [],
     },
   ]);
-  console.log('✅ company_driver_reports');
+  console.log('âœ… company_driver_reports');
 
-  // ─────────────────────────────────────────────
-  // 28. Auditoría empresa
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // 28. AuditorÃ­a empresa
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(companyAuditEntries).values([
     {
       companyId: empresa.id,
@@ -1119,22 +1061,22 @@ async function main() {
       action: 'create',
       actorId: adminUser.id,
       actorName: 'Carlos Mendoza',
-      description: 'Asignación VH-001 → Roberto Villacís creada',
+      description: 'AsignaciÃ³n VH-001 â†’ Roberto VillacÃ­s creada',
       metadata: { actaNumber: 'ACTA-2024-001' },
     },
   ]);
-  console.log('✅ company_audit_entries');
+  console.log('âœ… company_audit_entries');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 29. Lead demo
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(platformLeads).values([
     {
-      companyName: 'Logística del Pacífico S.A.',
-      contactName: 'Andrés Moreira',
+      companyName: 'LogÃ­stica del PacÃ­fico S.A.',
+      contactName: 'AndrÃ©s Moreira',
       contactEmail: 'amoreira@logpac.com',
       contactPhone: '+593 99 888 7766',
-      industry: 'logística',
+      industry: 'logÃ­stica',
       country: 'Ecuador',
       city: 'Guayaquil',
       status: 'demo_agendada',
@@ -1143,25 +1085,25 @@ async function main() {
       estimatedValue: '1200.00',
     },
     {
-      companyName: 'Constructora Andina Cía. Ltda.',
-      contactName: 'Verónica Salazar',
+      companyName: 'Constructora Andina CÃ­a. Ltda.',
+      contactName: 'VerÃ³nica Salazar',
       contactEmail: 'vsalazar@constructoraandina.com',
       contactPhone: '+593 98 111 2233',
-      industry: 'construcción',
+      industry: 'construcciÃ³n',
       country: 'Ecuador',
       city: 'Cuenca',
       status: 'contactado',
       source: 'referido',
       assignedTo: superAdmin.id,
       estimatedValue: '2500.00',
-      notes: 'Interesada en módulo de maquinaria pesada.',
+      notes: 'Interesada en mÃ³dulo de maquinaria pesada.',
     },
   ]);
-  console.log('✅ platform_leads');
+  console.log('âœ… platform_leads');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 30. Facturas demo
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(platformInvoices).values([
     {
       companyId: empresa.id,
@@ -1202,11 +1144,11 @@ async function main() {
       dueAt: '2025-06-10',
     },
   ]);
-  console.log('✅ platform_invoices');
+  console.log('âœ… platform_invoices');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // 31. Tickets de soporte
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [ticket1, ticket2] = await db.insert(platformTickets).values([
     {
       companyId: empresa.id,
@@ -1224,14 +1166,14 @@ async function main() {
       createdBy: ownerUser.id,
       assignedTo: superAdmin.id,
       ticketNumber: 'TKT-2025-0002',
-      title: 'Consulta sobre módulo de telemática GPS',
-      description: '¿El plan Pro incluye actualización de GPS en tiempo real o es un módulo adicional?',
+      title: 'Consulta sobre mÃ³dulo de telemÃ¡tica GPS',
+      description: 'Â¿El plan Pro incluye actualizaciÃ³n de GPS en tiempo real o es un mÃ³dulo adicional?',
       status: 'open',
       priority: 'medium',
       category: 'consulta',
     },
   ]).returning();
-  console.log('✅ platform_tickets');
+  console.log('âœ… platform_tickets');
 
   await db.insert(platformTicketMessages).values([
     {
@@ -1239,14 +1181,14 @@ async function main() {
       authorCompanyUserId: adminUser.id,
       authorName: 'Carlos Mendoza',
       authorRole: 'company',
-      body: 'Buenos días, el error ocurre específicamente cuando el rango de fechas supera los 3 meses. El resto funciona bien.',
+      body: 'Buenos dÃ­as, el error ocurre especÃ­ficamente cuando el rango de fechas supera los 3 meses. El resto funciona bien.',
     },
     {
       ticketId: ticket1.id,
       authorPlatformUserId: superAdmin.id,
       authorName: 'Admin ApliSmart',
       authorRole: 'platform',
-      body: 'Gracias por el detalle. Reproducimos el error. Será resuelto en el próximo deploy (estimado 24-48h).',
+      body: 'Gracias por el detalle. Reproducimos el error. SerÃ¡ resuelto en el prÃ³ximo deploy (estimado 24-48h).',
     },
     {
       ticketId: ticket2.id,
@@ -1260,14 +1202,14 @@ async function main() {
       authorPlatformUserId: superAdmin.id,
       authorName: 'Admin ApliSmart',
       authorRole: 'platform',
-      body: 'Hola Ana, el módulo GPS en tiempo real está incluido en el plan Pro. Los campos ya están activos en su cuenta. Le envío la guía de activación.',
+      body: 'Hola Ana, el mÃ³dulo GPS en tiempo real estÃ¡ incluido en el plan Pro. Los campos ya estÃ¡n activos en su cuenta. Le envÃ­o la guÃ­a de activaciÃ³n.',
     },
   ]);
-  console.log('✅ platform_ticket_messages');
+  console.log('âœ… platform_ticket_messages');
 
-  // ─────────────────────────────────────────────
-  // 32. Auditoría plataforma
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // 32. AuditorÃ­a plataforma
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await db.insert(platformAuditEntries).values([
     {
       actorId: superAdmin.id,
@@ -1288,34 +1230,34 @@ async function main() {
       metadata: { planId: 'pro', cycle: 'monthly' },
     },
   ]);
-  console.log('✅ platform_audit_entries');
+  console.log('âœ… platform_audit_entries');
 
-  // ─────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Resumen
-  // ─────────────────────────────────────────────
-  console.log('\n🎉 Seed completado exitosamente!');
-  console.log('\n📋 Tablas pobladas:');
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  console.log('\nðŸŽ‰ Seed completado exitosamente!');
+  console.log('\nðŸ“‹ Tablas pobladas:');
   console.log('  Platform:    platform_settings, platform_plans, platform_users');
   console.log('               platform_leads, platform_invoices, platform_tickets');
   console.log('               platform_ticket_messages, platform_audit_entries');
   console.log('  Operational: companies, company_settings, company_sites, company_garages');
-  console.log('               company_assets (con GPS/telemática), company_drivers');
+  console.log('               company_assets (con GPS/telemÃ¡tica), company_drivers');
   console.log('               company_assignments (con acta de entrega), company_maintenances');
   console.log('               company_fuel_entries, company_alerts');
   console.log('               company_checklist_categories, company_checklists');
   console.log('               company_inventory, company_ac_units, company_ac_services');
   console.log('               company_ac_refrigerant_logs, company_oil_types, company_oil_changes');
   console.log('               oil_checks, company_insurance_policies, company_audit_entries');
-  console.log('  Nuevas:      asset_notes, asset_routes, company_driver_reports ✨');
-  console.log('\n📋 Credenciales de acceso:');
-  console.log('  SuperAdmin   → admin@aplismart.io      / Admin123!');
-  console.log('  Admin emp.   → admin@ecuavial.com      / Admin123!');
-  console.log('  Owner emp.   → owner@ecuavial.com      / Owner123!');
-  console.log('  Operador     → operador@ecuavial.com   / Operador123!');
+  console.log('  Nuevas:      asset_notes, asset_routes, company_driver_reports âœ¨');
+  console.log('\nðŸ“‹ Credenciales de acceso:');
+  console.log('  SuperAdmin   â†’ admin@aplismart.io      / Admin123!');
+  console.log('  Admin emp.   â†’ admin@ecuavial.com      / Admin123!');
+  console.log('  Owner emp.   â†’ owner@ecuavial.com      / Owner123!');
+  console.log('  Operador     â†’ operador@ecuavial.com   / Operador123!');
 
   await client.end();
 }
 
 main().catch((err) => {
-  console.error('❌ Error en seed:', err);
+  console.error('âŒ Error en seed:', err);
 });

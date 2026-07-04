@@ -1,14 +1,14 @@
-// pages/Dashboard/DashboardIntelligent.tsx
+﻿// pages/Dashboard/DashboardIntelligent.tsx
 //
-// Componentes para los 24 submódulos del dashboard que se renderizan
-// condicionalmente según los permisos `can("dashboard", "<submodulo>", "ver")`.
+// Componentes para los 24 submÃ³dulos del dashboard que se renderizan
+// condicionalmente segÃºn los permisos `can("dashboard", "<submodulo>", "ver")`.
 // La parte de Fase 1 (data que viene en `/analytics/dashboard.intelligent`)
 // y Fase 2 (data que viene en endpoints extendidos `/dashboard-extended/...`)
-// está cubierta aquí.
+// estÃ¡ cubierta aquÃ­.
 //
-// Patrón visual: cada componente es un ChartCard (consistente con el resto
-// del dashboard) con un gráfico o tabla. Loading = ChartSkeleton. Empty
-// state = texto pequeño centrado.
+// PatrÃ³n visual: cada componente es un ChartCard (consistente con el resto
+// del dashboard) con un grÃ¡fico o tabla. Loading = ChartSkeleton. Empty
+// state = texto pequeÃ±o centrado.
 
 import { lazy, Suspense, useState, useEffect } from "react";
 import { Truck, User } from "lucide-react";
@@ -21,7 +21,6 @@ import {
   useKpisChecklists,
   useChecklistsPendientes,
   useProximoCambioAceite,
-  useInventarioBajo,
   useKpisAc,
   useServiciosAcPendientes,
   useActividadPorUsuario,
@@ -34,7 +33,6 @@ import {
   type PolizaPorVencer,
   type ChecklistPendiente,
   type ProximoCambioAceite,
-  type InventarioBajo,
   type ServicioAcPendiente,
 } from "../../hooks/useDashboardAnalytics";
 import { useAuth } from "../../context/AuthContext";
@@ -105,7 +103,7 @@ function ChartCard({ title, subtitle, icon, accent = "slate", href, badge, child
           )}
           {href && !onClick && (
             <a href={href} onClick={e => e.stopPropagation()} className="text-[10px] font-semibold text-violet-400 hover:text-violet-300 transition-colors whitespace-nowrap">
-              Ver más →
+              Ver mÃ¡s â†’
             </a>
           )}
         </div>
@@ -248,13 +246,13 @@ function Table({ headers, rows }: { headers: string[]; rows: TableCell[][] }) {
   );
 }
 
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //  1. Flota por sede
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function FlotaPorSedeCard({ data, loading }: { data: FlotaPorSede[]; loading: boolean }) {
   const theme = useTheme();
   return (
-    <ChartCard title="Flota por sede" subtitle="Vehículos asignados a cada sede" href="/flotas">
+    <ChartCard title="Flota por sede" subtitle="VehÃ­culos asignados a cada sede" href="/flotas">
       {loading || data.length === 0
         ? <ChartSkeleton height="h-[220px]" />
         : <Suspense fallback={<ChartSkeleton height="h-[220px]" />}>
@@ -272,9 +270,9 @@ export function FlotaPorSedeCard({ data, loading }: { data: FlotaPorSede[]; load
   );
 }
 
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //  2. KPIs por sede (tabla)
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function KpisPorSedeCard({ data, loading }: { data: KpisPorSede[]; loading: boolean }) {
   return (
     <ChartCard title="KPIs por sede" subtitle="Disponibilidad operativa" href="/flotas">
@@ -291,19 +289,19 @@ export function KpisPorSedeCard({ data, loading }: { data: KpisPorSede[]; loadin
   );
 }
 
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //  3. Flota por garaje
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function FlotaPorGarajeCard({ data, loading }: { data: FlotaPorGaraje[]; loading: boolean }) {
   const theme = useTheme();
   return (
-    <ChartCard title="Flota por garaje" subtitle="Vehículos asignados por garaje" href="/flotas">
+    <ChartCard title="Flota por garaje" subtitle="VehÃ­culos asignados por garaje" href="/flotas">
       {loading || data.length === 0
         ? <ChartSkeleton height="h-[220px]" />
         : <Suspense fallback={<ChartSkeleton height="h-[220px]" />}>
             <ReactApexChart
               options={makeBarOptions(data.map(d => d.name), theme)}
-              series={[{ name: "Vehículos", data: data.map(d => d.total) }]}
+              series={[{ name: "VehÃ­culos", data: data.map(d => d.total) }]}
               type="bar" height={220}
             />
           </Suspense>
@@ -312,14 +310,14 @@ export function FlotaPorGarajeCard({ data, loading }: { data: FlotaPorGaraje[]; 
   );
 }
 
-// ────────────────────────────────────────────────────────────────────────
-//  4. Ocupación de garajes
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+//  4. OcupaciÃ³n de garajes
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function OcupacionGarajesCard({ data, loading }: { data: OcupacionGaraje[]; loading: boolean }) {
   const theme = useTheme();
   const colorOf = (occ: number) => occ >= 90 ? "#ef4444" : occ >= 65 ? "#f59e0b" : "#10b981";
   return (
-    <ChartCard title="Ocupación de garajes" subtitle="% usado vs capacidad" href="/flotas">
+    <ChartCard title="OcupaciÃ³n de garajes" subtitle="% usado vs capacidad" href="/flotas">
       {loading || data.length === 0
         ? <ChartSkeleton height="h-[220px]" />
         : <Suspense fallback={<ChartSkeleton height="h-[220px]" />}>
@@ -329,7 +327,7 @@ export function OcupacionGarajesCard({ data, loading }: { data: OcupacionGaraje[
                 data.map(d => colorOf(d.occupancy)),
                 theme,
               )}
-              series={[{ name: "Ocupación %", data: data.map(d => d.occupancy) }]}
+              series={[{ name: "OcupaciÃ³n %", data: data.map(d => d.occupancy) }]}
               type="bar" height={220}
             />
           </Suspense>
@@ -338,18 +336,18 @@ export function OcupacionGarajesCard({ data, loading }: { data: OcupacionGaraje[
   );
 }
 
-// ────────────────────────────────────────────────────────────────────────
-//  5. Consumo de combustible por vehículo (top 10)
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+//  5. Consumo de combustible por vehÃ­culo (top 10)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function ConsumoPorVehiculoCard({ data, loading }: { data: CombustiblePorVehiculo[]; loading: boolean }) {
   return (
-    <ChartCard title="Consumo por vehículo" subtitle="Top 10 por galones cargados" href="/combustible">
+    <ChartCard title="Consumo por vehÃ­culo" subtitle="Top 10 por galones cargados" href="/combustible">
       {loading
         ? <ChartSkeleton height="h-[220px]" />
         : data.length === 0
           ? <p className="text-xs text-gray-400 py-8 text-center">Sin datos de consumo</p>
           : <Table
-              headers={["Placa", "Vehículo", "Galones", "Costo"]}
+              headers={["Placa", "VehÃ­culo", "Galones", "Costo"]}
               rows={data.map(d => [d.plate, d.name, `${d.gallons.toLocaleString()} gal`, `$${d.cost.toLocaleString()}`])}
             />
       }
@@ -357,18 +355,18 @@ export function ConsumoPorVehiculoCard({ data, loading }: { data: CombustiblePor
   );
 }
 
-// ────────────────────────────────────────────────────────────────────────
-//  6. Costo de combustible por vehículo (top 10)
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+//  6. Costo de combustible por vehÃ­culo (top 10)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function CostoPorVehiculoCard({ data, loading }: { data: CombustiblePorVehiculo[]; loading: boolean }) {
   return (
-    <ChartCard title="Costo por vehículo" subtitle="Top 10 por costo de combustible" href="/combustible">
+    <ChartCard title="Costo por vehÃ­culo" subtitle="Top 10 por costo de combustible" href="/combustible">
       {loading
         ? <ChartSkeleton height="h-[220px]" />
         : data.length === 0
           ? <p className="text-xs text-gray-400 py-8 text-center">Sin datos de costo</p>
           : <Table
-              headers={["Placa", "Vehículo", "Costo", "Galones"]}
+              headers={["Placa", "VehÃ­culo", "Costo", "Galones"]}
               rows={data.map(d => [d.plate, d.name, `$${d.cost.toLocaleString()}`, `${d.gallons.toLocaleString()} gal`])}
             />
       }
@@ -376,9 +374,9 @@ export function CostoPorVehiculoCard({ data, loading }: { data: CombustiblePorVe
   );
 }
 
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //  7. Consumo de combustible por conductor (Fase 2, hook propio)
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function ConsumoPorConductorCard() {
   const { session } = useAuth();
   const companyId = session?.companyId ?? null;
@@ -403,9 +401,9 @@ export function ConsumoPorConductorCard() {
   );
 }
 
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //  8. Estado de asignaciones (Fase 2)
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function EstadoAsignacionesCard() {
   const { session } = useAuth();
   const companyId = session?.companyId ?? null;
@@ -430,9 +428,9 @@ export function EstadoAsignacionesCard() {
   );
 }
 
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //  9. Disponibilidad de conductores (Fase 2)
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function DisponibilidadConductoresCard() {
   const { session } = useAuth();
   const companyId = session?.companyId ?? null;
@@ -457,11 +455,11 @@ export function DisponibilidadConductoresCard() {
   );
 }
 
-// ────────────────────────────────────────────────────────────────────────
-//  Fase 3: 9 componentes más para los 11 submódulos restantes
-// ────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+//  Fase 3: 9 componentes mÃ¡s para los 11 submÃ³dulos restantes
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-// 8.b Mis vehículos (solo Conductor) — usa el endpoint /driver-assignment
+// 8.b Mis vehÃ­culos (solo Conductor) â€” usa el endpoint /driver-assignment
 export function KpisMisVehiculosCard() {
   const { session } = useAuth();
   const companyId = session?.companyId ?? null;
@@ -480,11 +478,11 @@ export function KpisMisVehiculosCard() {
 
   const a = data?.assignment;
   const veh = a?.asset;
-  const startDate = a?.startDate ? fmtDateShortEc(a.startDate) : "—";
+  const startDate = a?.startDate ? fmtDateShortEc(a.startDate) : "â€”";
 
   return (
     <ChartCard
-      title="Mi vehículo asignado"
+      title="Mi vehÃ­culo asignado"
       subtitle="Vista de Conductor"
       icon={<IconUser />}
       accent="cyan"
@@ -495,15 +493,15 @@ export function KpisMisVehiculosCard() {
           ? (
             <div className="flex flex-col items-center justify-center gap-1 py-6 text-center">
               <IconTruck size={28} className="text-gray-400" />
-              <p className="text-sm text-gray-500 dark:text-gray-400">Sin vehículo asignado actualmente</p>
-              <p className="text-xs text-gray-400">Contacta a tu supervisor para más detalles</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Sin vehÃ­culo asignado actualmente</p>
+              <p className="text-xs text-gray-400">Contacta a tu supervisor para mÃ¡s detalles</p>
             </div>
           )
           : (
             <div className="space-y-3">
               <div className="rounded-xl bg-gradient-to-br from-cyan-500/10 to-sky-500/10 border border-cyan-500/20 p-4">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-cyan-400">Placa</p>
-                <p className="mt-0.5 text-2xl font-black text-gray-800 dark:text-white font-mono">{veh?.plate ?? "—"}</p>
+                <p className="mt-0.5 text-2xl font-black text-gray-800 dark:text-white font-mono">{veh?.plate ?? "â€”"}</p>
                 <p className="mt-1 text-sm text-gray-700 dark:text-gray-200">{veh?.brand} {veh?.model} {veh?.year ?? ""}</p>
                 <p className="text-xs text-gray-500 dark:text-gray-400 font-mono">{veh?.code}</p>
               </div>
@@ -532,11 +530,11 @@ export function PolizasPorVencerCard() {
   const { data, loading } = usePolizasPorVencer(companyId);
   const theme = useTheme();
   return (
-    <ChartCard title="Pólizas por vencer" subtitle={`${data?.total ?? 0} pólizas en total`} href="/gestion/seguros">
+    <ChartCard title="PÃ³lizas por vencer" subtitle={`${data?.total ?? 0} pÃ³lizas en total`} href="/gestion/seguros">
       {loading || !data
         ? <ChartSkeleton height="h-[220px]" />
         : data.data.length === 0
-          ? <p className="text-xs text-gray-400 py-8 text-center">Sin pólizas registradas</p>
+          ? <p className="text-xs text-gray-400 py-8 text-center">Sin pÃ³lizas registradas</p>
           : <Suspense fallback={<ChartSkeleton height="h-[220px]" />}>
               <ReactApexChart
                 options={makeDonutOptions(data.data.map(d => d.name), theme)}
@@ -547,11 +545,11 @@ export function PolizasPorVencerCard() {
       }
       {data && data.proximas.length > 0 && (
         <div className="mt-3 border-t border-white/[0.04] pt-3">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">Próximas a vencer</p>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">PrÃ³ximas a vencer</p>
           <Table
-            headers={["Placa", "Aseguradora", "Póliza", "Días"]}
+            headers={["Placa", "Aseguradora", "PÃ³liza", "DÃ­as"]}
             rows={data.proximas.map((p: PolizaPorVencer) => [
-              p.plate ?? "—",
+              p.plate ?? "â€”",
               p.insurer,
               p.policyNumber,
               p.daysLeft <= 0 ? "VENCIDA" : `${p.daysLeft}d`,
@@ -574,7 +572,7 @@ export function CoberturaActivosCard() {
       {loading || !data
         ? <ChartSkeleton height="h-[220px]" />
         : data.data.length === 0
-          ? <p className="text-xs text-gray-400 py-8 text-center">Sin datos de pólizas</p>
+          ? <p className="text-xs text-gray-400 py-8 text-center">Sin datos de pÃ³lizas</p>
           : <Suspense fallback={<ChartSkeleton height="h-[220px]" />}>
               <ReactApexChart
                 options={makeDonutOptions(data.data.map(d => d.name), theme)}
@@ -623,12 +621,12 @@ export function ChecklistsPendientesCard() {
         : data.data.length === 0
           ? <p className="text-xs text-gray-400 py-8 text-center">Sin inspecciones pendientes</p>
           : <Table
-              headers={["Fecha", "Objetivo", "Vehículo", "Resumen"]}
+              headers={["Fecha", "Objetivo", "VehÃ­culo", "Resumen"]}
               rows={data.data.map((c: ChecklistPendiente) => [
                 c.date,
                 c.targetLabel,
-                c.plate ?? "—",
-                c.summary ?? "—",
+                c.plate ?? "â€”",
+                c.summary ?? "â€”",
               ])}
             />
       }
@@ -636,31 +634,6 @@ export function ChecklistsPendientesCard() {
   );
 }
 
-// 14. Inventario bajo mínimo
-export function InventarioBajoCard() {
-  const { session } = useAuth();
-  const companyId = session?.companyId ?? null;
-  const { data, loading } = useInventarioBajo(companyId);
-  return (
-    <ChartCard title="Inventario bajo mínimo" subtitle={`${data?.total ?? 0} items por reponer`} href="/mantenimiento">
-      {loading || !data
-        ? <ChartSkeleton height="h-[220px]" />
-        : data.data.length === 0
-          ? <p className="text-xs text-gray-400 py-8 text-center">Sin items bajo mínimo</p>
-          : <Table
-              headers={["Código", "Item", "Stock", "Mínimo", "Faltan"]}
-              rows={data.data.map((i: InventarioBajo) => [
-                i.code,
-                i.name,
-                `${i.stock} ${i.unit ?? ""}`.trim(),
-                `${i.minStock} ${i.unit ?? ""}`.trim(),
-                `${i.deficit} ${i.unit ?? ""}`.trim(),
-              ])}
-            />
-      }
-    </ChartCard>
-  );
-}
 
 // 16. KPIs de A/C
 export function KpisAcCard() {
@@ -692,19 +665,19 @@ export function ServiciosAcPendientesCard() {
   const companyId = session?.companyId ?? null;
   const { data, loading } = useServiciosAcPendientes(companyId);
   return (
-    <ChartCard title="Servicios de A/C pendientes" subtitle={`${data?.total ?? 0} unidades con servicio próximo`} href="/aires-acondicionados">
+    <ChartCard title="Servicios de A/C pendientes" subtitle={`${data?.total ?? 0} unidades con servicio prÃ³ximo`} href="/aires-acondicionados">
       {loading || !data
         ? <ChartSkeleton height="h-[220px]" />
         : data.data.length === 0
-          ? <p className="text-xs text-gray-400 py-8 text-center">Sin servicios próximos</p>
+          ? <p className="text-xs text-gray-400 py-8 text-center">Sin servicios prÃ³ximos</p>
           : <Table
-              headers={["Código", "Unidad", "Marca/Modelo", "Próximo servicio", "Estado"]}
+              headers={["CÃ³digo", "Unidad", "Marca/Modelo", "PrÃ³ximo servicio", "Estado"]}
               rows={data.data.map((u: ServicioAcPendiente) => [
                 u.code,
                 u.name,
-                `${u.brand ?? ""} ${u.model ?? ""}`.trim() || "—",
+                `${u.brand ?? ""} ${u.model ?? ""}`.trim() || "â€”",
                 String(u.nextService),
-                u.status ?? "—",
+                u.status ?? "â€”",
               ])}
             />
       }
@@ -754,7 +727,7 @@ export function ActividadPorEntidadCard() {
         : items.length === 0
           ? <p className="text-xs text-gray-400 py-8 text-center">Sin actividad registrada</p>
           : <Table
-              headers={["#", "Entidad", "Acción", "Cantidad"]}
+              headers={["#", "Entidad", "AcciÃ³n", "Cantidad"]}
               rows={items.map((e, i) => {
                 const meta = getEntityMeta(e.entity);
                 return [

@@ -69,6 +69,16 @@ export type ListExitAuthorizationsParams = {
   date?: string;
   from?: string;
   to?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+export type ExitAuthPage = {
+  data: ExitAuthorization[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 };
 
 function mapRow(raw: Record<string, unknown>): ExitAuthorization {
@@ -115,6 +125,10 @@ export function useExitAuthorizations() {
   const companyId = session?.companyId ?? null;
   const companyIdStr = companyId ? String(companyId) : null;
   const [items, setItems]   = useState<ExitAuthorization[]>([]);
+  const [total, setTotal]   = useState(0);
+  const [page, setPage]     = useState(1);
+  const [pageSize, setPageSize] = useState(7);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const [wsChangeCount, setWsChangeCount] = useState(0);
@@ -156,6 +170,8 @@ export function useExitAuthorizations() {
         if (params.date)      qs.set("date",      params.date);
         if (params.from)      qs.set("from",      params.from);
         if (params.to)        qs.set("to",        params.to);
+        qs.set("page",     String(params.page ?? 1));
+        qs.set("pageSize", String(params.pageSize ?? 7));
         const res = await fetch(`/api/company/${companyIdStr}/exit-authorizations?${qs.toString()}`, {
           credentials: "include",
         });
@@ -165,6 +181,10 @@ export function useExitAuthorizations() {
           (raw: Record<string, unknown>) => mapRow(raw),
         );
         setItems(arr);
+        setTotal(typeof json.total === "number" ? json.total : 0);
+        setPage(typeof json.page === "number" ? json.page : 1);
+        setPageSize(typeof json.pageSize === "number" ? json.pageSize : 7);
+        setTotalPages(typeof json.totalPages === "number" ? json.totalPages : 1);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error desconocido");
       } finally {
@@ -186,6 +206,8 @@ export function useExitAuthorizations() {
         if (params.date)      qs.set("date",      params.date);
         if (params.from)      qs.set("from",      params.from);
         if (params.to)        qs.set("to",        params.to);
+        qs.set("page",     String(params.page ?? 1));
+        qs.set("pageSize", String(params.pageSize ?? 7));
         const res = await fetch(`/api/company/${companyIdStr}/exit-authorizations?${qs.toString()}`, {
           credentials: "include",
         });
@@ -195,6 +217,10 @@ export function useExitAuthorizations() {
           (raw: Record<string, unknown>) => mapRow(raw),
         );
         setItems(arr);
+        setTotal(typeof json.total === "number" ? json.total : 0);
+        setPage(typeof json.page === "number" ? json.page : 1);
+        setPageSize(typeof json.pageSize === "number" ? json.pageSize : 7);
+        setTotalPages(typeof json.totalPages === "number" ? json.totalPages : 1);
       } catch {
         // Silencioso
       }
@@ -370,7 +396,7 @@ export function useExitAuthorizations() {
   );
 
   return {
-    items, loading, error,
+    items, total, page, pageSize, totalPages, loading, error,
     fetchList, fetchListSilent, fetchConductorContext, create, decide, remove,
     refetch: () => fetchList(),
     wsChangeCount, wsCorrectionsCount,

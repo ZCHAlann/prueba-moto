@@ -68,6 +68,23 @@ export type ApiDriver = {
    * asignaciones. El drawer la pinta sin depender de hooks externos.
    */
   currentAssignment: AssignmentActa | null;
+  // ── Estado efectivo (Fase 3.1) ─────────────────────────────────────────────
+  /** status del site al que pertenece (español con tilde). null si no tiene sede. */
+  siteStatus: string | null;
+  /**
+   * Estado efectivo calculado por el backend (Fase 1):
+   * true  → user.status='active' && driverStatus='Activo' && (siteStatus='Activa' || sin sede)
+   * false → alguno falla
+   */
+  effectivelyActive: boolean;
+  /**
+   * Razón de inactividad efectiva (si effectivelyActive=false):
+   * - 'user_inactive'   → companyUsers.status !== 'active'
+   * - 'driver_inactive' → companyDrivers.status !== 'Activo'
+   * - 'site_inactive'   → companySites.status !== 'Activa' (cascada)
+   * - null              → está activo
+   */
+  inactiveReason: 'user_inactive' | 'driver_inactive' | 'site_inactive' | null;
 };
 
 type CreateDriverPayload = {
@@ -115,27 +132,66 @@ function mapApi(raw: Record<string, unknown>): ApiDriver {
     // ── Backend enrichment ──────────────────────────────────────────────────────
     siteName: (raw.siteName as string | null) ?? null,
     currentAssignment: (raw.currentAssignment as AssignmentActa | null) ?? null,
+    // ── Estado efectivo (Fase 3.1) ─────────────────────────────────────────────
+    siteStatus: (raw.siteStatus as string | null) ?? null,
+    // Si el backend no manda estos campos (backward compat con responses
+    // antiguos), derivamos del `status` manual para no romper la UI.
+    effectivelyActive: typeof raw.effectivelyActive === 'boolean'
+      ? (raw.effectivelyActive as boolean)
+      : ((raw.status as string) === 'Activo'),
+    inactiveReason: (raw.inactiveReason as ApiDriver['inactiveReason']) ?? null,
   };
 }
+
+export type DriversPage = {
+  data: ApiDriver[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export type DriversFilters = {
+  status?: "Activo" | "Inactivo";
+  siteId?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+};
 
 export function useDrivers() {
   const { session } = useAuth();
   const companyId = session?.companyId;
 
-  const [drivers, setDrivers] = useState<ApiDriver[]>([]);
+  const [page, setPageState] = useState<DriversPage>({
+    data: [], total: 0, page: 1, pageSize: 20, totalPages: 1,
+  });
   const [sites, setSites] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const fetchPage = useCallback(async (filters: DriversFilters = {}) => {
     if (!companyId) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/company/${companyId}/drivers`);
+      const params = new URLSearchParams();
+      if (filters.status)   params.set("status",   filters.status);
+      if (filters.siteId)   params.set("siteId",   filters.siteId);
+      if (filters.search)   params.set("search",   filters.search);
+      if (filters.page)     params.set("page",     String(filters.page));
+      if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
+      const qs = params.toString();
+      const res = await fetch(`/api/company/${companyId}/drivers${qs ? `?${qs}` : ""}`);
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const json = await res.json();
-      setDrivers((json.data ?? json).map(mapApi));
+      setPageState({
+        data: (json.data ?? []).map(mapApi),
+        total: typeof json.total === "number" ? json.total : 0,
+        page: typeof json.page === "number" ? json.page : 1,
+        pageSize: typeof json.pageSize === "number" ? json.pageSize : 20,
+        totalPages: typeof json.totalPages === "number" ? json.totalPages : 1,
+      });
       if (Array.isArray(json.sites)) setSites(json.sites);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar conductores");
@@ -144,7 +200,11 @@ export function useDrivers() {
     }
   }, [companyId]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { void fetchPage(); }, [fetchPage]);
+
+  // Compatibilidad: `drivers` = data, `refresh` = refetch.
+  const drivers = page.data;
+  const refresh = useCallback(() => fetchPage(), [fetchPage]);
 
   const createDriver = useCallback(async (payload: CreateDriverPayload): Promise<ApiDriver> => {
     const res = await fetch(`/api/company/${companyId}/drivers`, {
@@ -168,7 +228,7 @@ export function useDrivers() {
     });
     if (!res.ok) throw new Error(`Error ${res.status}`);
     const created = mapApi(await res.json());
-    setDrivers((prev) => [created, ...prev]);
+    setPageState((prev) => ({ ...prev, data: [created, ...prev.data], total: prev.total + 1 }));
     return created;
   }, [companyId]);
 
@@ -195,17 +255,31 @@ export function useDrivers() {
     });
     if (!res.ok) throw new Error(`Error ${res.status}`);
     const updated = mapApi(await res.json());
-    setDrivers((prev) => prev.map((d) => (d.id === id ? updated : d)));
+    setPageState((prev) => ({ ...prev, data: prev.data.map((d) => (d.id === id ? updated : d)) }));
     return updated;
   }, [companyId]);
 
   const deleteDriver = useCallback(async (id: string): Promise<void> => {
     const res = await fetch(`/api/company/${companyId}/drivers/${id}`, { method: "DELETE" });
     if (!res.ok) throw new Error(`Error ${res.status}`);
-    setDrivers((prev) => prev.filter((d) => d.id !== id));
+    setPageState((prev) => ({ ...prev, data: prev.data.filter((d) => d.id !== id), total: Math.max(0, prev.total - 1) }));
   }, [companyId]);
 
-  return { drivers, sites, loading, error, refresh, createDriver, updateDriver, deleteDriver };
+  return {
+    drivers,
+    total: page.total,
+    page: page.page,
+    pageSize: page.pageSize,
+    totalPages: page.totalPages,
+    sites,
+    loading,
+    error,
+    refresh,
+    fetchPage,
+    createDriver,
+    updateDriver,
+    deleteDriver,
+  };
 }
 
 /** Sube 1 foto al endpoint de conductores y devuelve la URL pública. */

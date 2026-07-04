@@ -1,17 +1,21 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, sql, or, ilike } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyDrivers, companySites, companyAssignments, companyAssets } from '../../db/schema/operational';
 import { companyUsers } from '../../db/schema/platform';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
-import { NotFoundError, AppError } from '../../lib/errors';
+import { NotFoundError, AppError, ForbiddenError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { companyDriverReports } from '../../db/schema/operational';
 import { validators, safeString } from '../../lib/validators';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
+import { requirePermission } from '../../middlewares/requirePermission';
+import { isUserEffectivelyActive } from '../../lib/userStatus';
+import { invalidateUserStatusCache } from '../../lib/userStatus.db';
 
 const router = Router({ mergeParams: true });
 
@@ -36,81 +40,161 @@ const createDriverSchema = z.object({
 
 const updateDriverSchema = createDriverSchema.partial();
 
+/**
+ * Carga el "acta" de asignación visible de un conductor:
+ * primero su asignación activa, si no hay, la última cerrada. Devuelve null
+ * si nunca tuvo asignaciones. Reusado tanto por GET /:driverId (admin) como
+ * por GET /me/acta (el propio conductor).
+ */
+async function resolveDriverActa(
+  companyId: number,
+  driver: typeof companyDrivers.$inferSelect,
+  driverInfo?: { firstName: string | null; lastName: string | null; phone: string | null },
+) {
+  const [activeAsg] = await db
+    .select({
+      assignment: companyAssignments,
+      assetName:  companyAssets.name,
+      assetPlate: companyAssets.plate,
+    })
+    .from(companyAssignments)
+    .leftJoin(companyAssets, eq(companyAssets.id, companyAssignments.assetId))
+    .where(and(
+      eq(companyAssignments.driverId, driver.id),
+      eq(companyAssignments.companyId, companyId),
+      eq(companyAssignments.status, 'Activa'),
+    ))
+    .orderBy(desc(companyAssignments.createdAt))
+    .limit(1);
+
+  let target = activeAsg;
+  if (!target) {
+    const [lastAsg] = await db
+      .select({
+        assignment: companyAssignments,
+        assetName:  companyAssets.name,
+        assetPlate: companyAssets.plate,
+      })
+      .from(companyAssignments)
+      .leftJoin(companyAssets, eq(companyAssets.id, companyAssignments.assetId))
+      .where(and(
+        eq(companyAssignments.driverId, driver.id),
+        eq(companyAssignments.companyId, companyId),
+      ))
+      .orderBy(desc(companyAssignments.createdAt))
+      .limit(1);
+    target = lastAsg;
+  }
+
+  if (!target) return null;
+
+  return serializeAssignment(target.assignment, driverInfo ?? null, {
+    id:    target.assetName ? toId('asset', target.assignment.assetId) : null,
+    name:  target.assetName  ?? null,
+    plate: target.assetPlate ?? null,
+  });
+}
+
 // ─── GET /company/:id/drivers ─────────────────────────────────────────────────
 
 router.get('/', requireModule('gestion', 'conductores'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const { status, siteId, search } = req.query;
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
-    // LEFT JOIN con companyUsers para enriquecer con profileData (datos
-    // personales: firstName, lastName, phone, documentNumber, siteId).
-    // La fila de drivers puede tener datos viejos si el admin editó al
-    // user desde Accesos, así que el profileData es la fuente de verdad
-    // para los datos personales.
-    let rows = await db
-      .select({
-        driver: companyDrivers,
-        user:   {
-          id:          companyUsers.id,
-          email:       companyUsers.email,
-          photoUrl:    companyUsers.photoUrl,
-          status:      companyUsers.status,
-          profileData: companyUsers.profileData,
-        },
-      })
-      .from(companyDrivers)
-      .leftJoin(
-        companyUsers,
-        and(
-          eq(companyUsers.id, companyDrivers.userId),
-          eq(companyUsers.companyId, companyId),
-        ),
-      )
-      .where(eq(companyDrivers.companyId, companyId))
-      .orderBy(companyDrivers.lastName);
-
+    // WHERE compartido entre SELECT paginado y COUNT(*).
+    const conds = [eq(companyDrivers.companyId, companyId)];
     if (status && typeof status === 'string') {
-      rows = rows.filter((r) => r.driver.status === status);
+      conds.push(eq(companyDrivers.status, status as 'Activo'));
     }
-
     if (siteId && typeof siteId === 'string') {
-      const parsedSiteId = parseId('site', siteId);
-      rows = rows.filter((r) => r.driver.siteId === parsedSiteId);
+      try {
+        const parsedSiteId = parseId('site', siteId);
+        conds.push(eq(companyDrivers.siteId, parsedSiteId));
+      } catch {
+        conds.push(eq(companyDrivers.id, -1));
+      }
     }
-
-    if (search && typeof search === 'string') {
-      const q = search.toLowerCase();
-      rows = rows.filter((r) => {
-        const d = r.driver;
-        if (
-          d.firstName.toLowerCase().includes(q) ||
-          d.lastName.toLowerCase().includes(q) ||
-          d.code.toLowerCase().includes(q) ||
-          d.licenseNumber?.toLowerCase().includes(q)
-        ) {
-          return true;
-        }
-        // Buscar también en los datos del profile del user asociado
-        const p = (r.user?.profileData as Record<string, unknown> | null) ?? {};
-        const pFirst = String(p.firstName ?? "").toLowerCase();
-        const pLast  = String(p.lastName  ?? "").toLowerCase();
-        const pDoc   = String(p.documentNumber ?? "").toLowerCase();
-        return pFirst.includes(q) || pLast.includes(q) || pDoc.includes(q);
-      });
+    if (search && typeof search === 'string' && search.trim().length > 0) {
+      const q = `%${search.trim().toLowerCase()}%`;
+      conds.push(sql`(
+        lower(${companyDrivers.firstName}) like ${q}
+        or lower(${companyDrivers.lastName})  like ${q}
+        or lower(${companyDrivers.code})       like ${q}
+        or lower(coalesce(${companyDrivers.licenseNumber}, '')) like ${q}
+        or lower(coalesce(${companyUsers.profileData}->>'firstName', '')) like ${q}
+        or lower(coalesce(${companyUsers.profileData}->>'lastName', ''))  like ${q}
+        or lower(coalesce(${companyUsers.profileData}->>'documentNumber', '')) like ${q}
+      )`);
     }
+    const where = and(...conds);
 
-    // ── Enrichment: cargar nombres de sedes ────────────────────────────────────
-    const sitesRows = await db
-      .select({ id: companySites.id, name: companySites.name })
-      .from(companySites)
-      .where(eq(companySites.companyId, companyId));
+    const [rows, countRow, sitesRows] = await Promise.all([
+      db
+        .select({
+          driver: companyDrivers,
+          user:   {
+            id:          companyUsers.id,
+            email:       companyUsers.email,
+            photoUrl:    companyUsers.photoUrl,
+            status:      companyUsers.status,
+            profileData: companyUsers.profileData,
+          },
+          // JOIN a companySites para poder calcular el estado efectivo
+          // (status del conductor + status de la sede).
+          siteStatus: companySites.status,
+        })
+        .from(companyDrivers)
+        .leftJoin(
+          companyUsers,
+          and(
+            eq(companyUsers.id, companyDrivers.userId),
+            eq(companyUsers.companyId, companyId),
+          ),
+        )
+        .leftJoin(
+          companySites,
+          eq(companySites.id, companyDrivers.siteId),
+        )
+        .where(where)
+        .orderBy(companyDrivers.lastName)
+        .limit(pageSize)
+        .offset(offset),
+      db
+        .select({ value: sql<number>`cast(count(*) as int)` })
+        .from(companyDrivers)
+        .leftJoin(
+          companyUsers,
+          and(
+            eq(companyUsers.id, companyDrivers.userId),
+            eq(companyUsers.companyId, companyId),
+          ),
+        )
+        .where(where),
+      // Catálogo auxiliar.
+      db
+        .select({ id: companySites.id, name: companySites.name })
+        .from(companySites)
+        .where(eq(companySites.companyId, companyId)),
+    ]);
 
+    const total = countRow?.[0]?.value ?? 0;
     const siteMap = new Map(sitesRows.map(s => [s.id, s.name]));
 
     res.json({
-      data: rows.map(r => serializeDriver(r.driver, siteMap.get(r.driver.siteId) ?? null, r.user)),
-      total: rows.length,
+      ...buildPageResponse(
+        rows.map(r => serializeDriver(
+          r.driver,
+          siteMap.get(r.driver.siteId) ?? null,
+          r.user,
+          null, // currentAssignment solo en GET /:driverId
+          r.siteStatus, // pasamos siteStatus para calcular effectivelyActive
+        )),
+        total,
+        page,
+        pageSize,
+      ),
       sites: sitesRows,
     });
   } catch (err) {
@@ -135,6 +219,7 @@ router.get('/:driverId', requireModule('gestion', 'conductores'), async (req, re
           status:      companyUsers.status,
           profileData: companyUsers.profileData,
         },
+        siteStatus: companySites.status,
       })
       .from(companyDrivers)
       .leftJoin(
@@ -144,12 +229,16 @@ router.get('/:driverId', requireModule('gestion', 'conductores'), async (req, re
           eq(companyUsers.companyId, companyId),
         ),
       )
+      .leftJoin(
+        companySites,
+        eq(companySites.id, companyDrivers.siteId),
+      )
       .where(and(eq(companyDrivers.id, driverId), eq(companyDrivers.companyId, companyId)))
       .limit(1);
 
     if (!rows.length) throw new NotFoundError('Conductor', req.params.driverId);
 
-    const { driver, user } = rows[0];
+    const { driver, user, siteStatus } = rows[0];
 
     // ── Enrichment: cargar nombre de sede ──────────────────────────────────────
     let siteName: string | null = null;
@@ -162,58 +251,51 @@ router.get('/:driverId', requireModule('gestion', 'conductores'), async (req, re
       siteName = site?.name ?? null;
     }
 
-    // ── Enrichment: acta de asignación activa del conductor ────────────────────
-    // Buscamos primero la activa; si no hay, la última cerrada, para que el
-    // drawer siempre tenga qué mostrar (cuando el conductor está libre, ve
-    // el historial reciente).
-    const [activeAsg] = await db
-      .select({
-        assignment: companyAssignments,
-        assetName:  companyAssets.name,
-        assetPlate: companyAssets.plate,
-      })
-      .from(companyAssignments)
-      .leftJoin(companyAssets, eq(companyAssets.id, companyAssignments.assetId))
+    // ── Enrichment: acta de asignación activa (o la última cerrada) ────────────
+    const currentAssignment = await resolveDriverActa(companyId, driver, {
+      firstName: driver.firstName,
+      lastName:  driver.lastName,
+      phone:     driver.phone,
+    });
+
+    res.json(serializeDriver(driver, siteName, user, currentAssignment, siteStatus ?? null));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── GET /company/:id/drivers/me/acta ─────────────────────────────────────────
+// Devuelve el acta de asignación del conductor logueado, sin requerir el módulo
+// `gestion.conductores` (pensado para ProfilePage: el conductor consulta su
+// propia acta aunque no tenga permisos administrativos sobre el módulo).
+// Resuelve el driver vía `companyUsers.id = req.user.sub → driver.userId`.
+
+router.get('/me/acta', async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const userSub = req.user?.sub;
+    if (!userSub) throw new NotFoundError('Conductor no asociado al usuario');
+
+    const userId = parseId('company-user', userSub);
+
+    const [driver] = await db
+      .select()
+      .from(companyDrivers)
       .where(and(
-        eq(companyAssignments.driverId, driverId),
-        eq(companyAssignments.companyId, companyId),
-        eq(companyAssignments.status, 'Activa'),
+        eq(companyDrivers.companyId, companyId),
+        eq(companyDrivers.userId, userId),
       ))
-      .orderBy(desc(companyAssignments.createdAt))
       .limit(1);
 
-    let assignmentForActa = activeAsg;
-    if (!assignmentForActa) {
-      const [lastAsg] = await db
-        .select({
-          assignment: companyAssignments,
-          assetName:  companyAssets.name,
-          assetPlate: companyAssets.plate,
-        })
-        .from(companyAssignments)
-        .leftJoin(companyAssets, eq(companyAssets.id, companyAssignments.assetId))
-        .where(and(
-          eq(companyAssignments.driverId, driverId),
-          eq(companyAssignments.companyId, companyId),
-        ))
-        .orderBy(desc(companyAssignments.createdAt))
-        .limit(1);
-      assignmentForActa = lastAsg;
-    }
+    if (!driver) throw new NotFoundError('No tienes un perfil de conductor en esta empresa');
 
-    const currentAssignment = assignmentForActa?.assignment
-      ? serializeAssignment(assignmentForActa.assignment, {
-          firstName: driver.firstName,
-          lastName:  driver.lastName,
-          phone:     driver.phone,
-        }, {
-          id:    assignmentForActa.assetName ? toId('asset', assignmentForActa.assignment.assetId) : null,
-          name:  assignmentForActa.assetName  ?? null,
-          plate: assignmentForActa.assetPlate ?? null,
-        })
-      : null;
+    const acta = await resolveDriverActa(companyId, driver, {
+      firstName: driver.firstName,
+      lastName:  driver.lastName,
+      phone:     driver.phone,
+    });
 
-    res.json(serializeDriver(driver, siteName, user, currentAssignment));
+    res.json({ data: { driverId: toId('driver', driver.id), acta } });
   } catch (err) {
     next(err);
   }
@@ -224,7 +306,7 @@ router.get('/:driverId', requireModule('gestion', 'conductores'), async (req, re
 router.post(
   '/',
   requireModule('gestion', 'conductores'),
-  requireAdmin,
+  requirePermission('gestion', 'conductores', 'crear'),
   validate(createDriverSchema),
   async (req, res, next) => {
     try {
@@ -298,13 +380,12 @@ router.post(
 
 router.put(
   '/:driverId',
-  requireModule('gestion', 'conductores'),
-  requireAdmin,
-  validate(updateDriverSchema),
+requireModule('gestion', 'conductores'),
+  requirePermission('gestion', 'conductores', 'editar'),
+  validate(createDriverSchema),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
-      const driverId = parseId('driver', req.params.driverId);
       const body = req.body as z.infer<typeof updateDriverSchema>;
 
       const existing = await db
@@ -315,15 +396,33 @@ router.put(
 
       if (!existing.length) throw new NotFoundError('Conductor', req.params.driverId);
 
+      // Regla: solo admin_empresa/owner_empresa pueden cambiar la foto de
+      // un conductor. Coincide con el chequeo en PUT /users/:userId.
+      const isAdminOrOwner =
+        req.user!.role === 'admin_empresa' || req.user!.role === 'owner_empresa';
+      if (!isAdminOrOwner && body.photoUrl !== undefined) {
+        throw new ForbiddenError('No tienes permiso para cambiar fotos de perfil.');
+      }
+
       const updateData: Record<string, unknown> = { ...body, updatedAt: new Date() };
       if (body.siteId !== undefined) updateData.siteId = body.siteId ? parseId('site', body.siteId) : null;
       if (body.userId !== undefined) updateData.userId = body.userId ? parseId('company-user', body.userId) : null;
+
+      const previousStatus = existing[0]!.status;
+      const newStatus      = body.status ?? previousStatus;
 
       const [updated] = await db
         .update(companyDrivers)
         .set(updateData)
         .where(and(eq(companyDrivers.id, driverId), eq(companyDrivers.companyId, companyId)))
         .returning();
+
+      // Si cambió el status del conductor, invalidar el cache de
+      // statusEffectivo para que la próxima request del conductor
+      // (o el middleware) vea el cambio sin esperar al TTL de 60s.
+      if (previousStatus !== newStatus && updated.userId) {
+        invalidateUserStatusCache(updated.userId, companyId);
+      }
 
       // ── Sync: si el driver está vinculado a un company_user y vino
       //    photoUrl en el body, propagar el cambio también a companyUsers.
@@ -390,7 +489,7 @@ router.put(
 router.delete(
   '/:driverId',
   requireModule('gestion', 'conductores'),
-  requireAdmin,
+  requirePermission('gestion', 'conductores', 'eliminar'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -439,6 +538,7 @@ function serializeDriver(
   siteNameParam?: string | null,
   user: UserEnrichment = null,
   currentAssignment?: ReturnType<typeof serializeAssignment> | null,
+  siteStatusParam?: string | null,
 ) {
   // Si el driver está vinculado a un company_user, los datos personales
   // (firstName/lastName/phone/email/photo) se leen del profileData (fuente
@@ -462,6 +562,15 @@ function serializeDriver(
   const email     = user?.email ?? d.email;
   const photoUrl  = user?.photoUrl ?? d.photoUrl;
 
+  // Estado efectivo = user.status + driver.status + site.status.
+  // Se calcula en cada response (no se persiste) para que togglear
+  // sedes se refleje sin tocar filas de company_drivers.
+  const { effectivelyActive, inactiveReason } = isUserEffectivelyActive({
+    userStatus:   user?.status ?? null,
+    driverStatus: d.status,
+    siteStatus:   siteStatusParam ?? null,
+  });
+
   return {
     id: toId('driver', d.id),
     companyId: toId('company', d.companyId),
@@ -481,6 +590,15 @@ function serializeDriver(
     licensePoints: d.licensePoints,
     status: d.status,
     siteName: siteNameParam ?? null,
+    // Estado del site (puede ser null si el conductor no tiene sede).
+    siteStatus: siteStatusParam ?? null,
+    // ── Estado efectivo calculado. El frontend usa esto para:
+    //   - mostrar el badge correcto (gris "Inactivo" vs ámbar "Inactivo por sede")
+    //   - deshabilitar el toggle manual si está bloqueado por sede
+    //   - decidir si un conductor efectivamente bloqueado puede asignarse
+    // `status` sigue siendo el estado manual, sin cambios.
+    effectivelyActive,
+    inactiveReason,
     notes: d.notes,
     photoUrl,
     createdAt: d.createdAt,

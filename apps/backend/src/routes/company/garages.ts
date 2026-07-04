@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyGarages } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
@@ -10,6 +10,7 @@ import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router({ mergeParams: true });
 
@@ -34,14 +35,18 @@ const updateGarageSchema = createGarageSchema.partial();
 router.get('/', requireModule('gestion', 'garages'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
-    const rows = await db
-      .select()
-      .from(companyGarages)
-      .where(eq(companyGarages.companyId, companyId))
-      .orderBy(companyGarages.name);
+    const where = eq(companyGarages.companyId, companyId);
 
-    res.json({ data: rows.map(serializeGarage), total: rows.length });
+    const [rows, countRow] = await Promise.all([
+      db.select().from(companyGarages).where(where)
+        .orderBy(desc(companyGarages.name)).limit(pageSize).offset(offset),
+      db.select({ value: sql<number>`cast(count(*) as int)` }).from(companyGarages).where(where),
+    ]);
+
+    const total = countRow?.[0]?.value ?? 0;
+    res.json(buildPageResponse(rows.map(serializeGarage), total, page, pageSize));
   } catch (err) {
     next(err);
   }

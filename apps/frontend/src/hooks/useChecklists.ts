@@ -190,12 +190,39 @@ export function useChecklists() {
     [companyId, fetchChecklists]
   );
 
+  /**
+   * Actualiza campos parciales de un checklist ya creado. Hoy se usa para
+   * `EditChecklistDateInline` (cambiar la fecha en retrospectiva) — el
+   * backend ya soporta `updateChecklistSchema.partial()`, así que pasamos
+   * sólo el campo que cambió. El `reason` no se persiste todavía (ticket
+   * abierto: agregar `dateEditReason` al audit log).
+   */
+  const updateChecklist = useCallback(
+    async (id: string, patch: { date?: string }): Promise<void> => {
+      if (!companyId) throw new Error("companyId requerido");
+      const numericId = parseNumericId(id) ?? Number(id);
+      const res = await fetch(`/api/company/${companyId}/checklists/checklist-${numericId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? `Error al actualizar checklist (HTTP ${res.status})`);
+      }
+      await fetchChecklists();
+    },
+    [companyId, fetchChecklists]
+  );
+
   return {
     checklists,
     loading,
     error,
     fetchChecklists,
     createChecklist,
+    updateChecklist,
     deleteChecklist,
     refetch: () => fetchChecklists(),
   };

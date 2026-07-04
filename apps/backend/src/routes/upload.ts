@@ -151,8 +151,26 @@ function uploadHandler(category: UploadCategory) {
 
 router.post('/asset-photos', uploadHandler('assets'));
 router.post('/maintenance-photos', uploadHandler('maintenance'));
-router.post('/assignment-photos', uploadHandler('assignments'));
 router.post('/ac-photos', uploadHandler('ac'));
+
+router.post('/assignment-photos', (req: Request, res: Response, next: NextFunction) => {
+  const companyId = req.query.companyId as string | undefined;
+  const folder = companyId ? `assignments/${companyId}` : 'assignments';
+
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: MAX_FILE_SIZE },
+    fileFilter: imageFilter,
+  }).any();
+
+  upload(req, res, async (err) => {
+    if (err) return next(err);
+    const files = req.files as Express.Multer.File[];
+    if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+    await Promise.allSettled(files.map((f) => optimizeImageIfNeeded(f)));
+    res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
+  });
+});
 
 router.post('/toll-photos', (req: Request, res: Response, next: NextFunction) => {
   const companyId = req.query.companyId as string | undefined;

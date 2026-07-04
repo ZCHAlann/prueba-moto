@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Banknote, Plus, X, Truck, DollarSign, MapPin,
@@ -19,7 +19,7 @@ import { TollDetailDrawer } from "./components/TollDetailDrawer";
 import { TollFormModal } from "./components/TollFormModal";
 import { DeleteConfirm } from "./components/DeleteConfirm";
 
-const PAGE_SIZE = 8;
+// PAGE_SIZE ya no aplica — el backend pagina con pageSize=8.
 
 function fmtMoney(n: number) {
   return new Intl.NumberFormat("es-EC", { style: "currency", currency: "USD" }).format(n);
@@ -71,7 +71,12 @@ function KpiCard({ icon, label, value, detail, accent }: KpiProps) {
 
 export function PeajesPage() {
   const { session } = useAuth();
-  const { tollEntries, assets, loading, createTollEntry, updateTollEntry, deleteTollEntry } = useToll();
+  const {
+    tollEntries, total: pageTotal, totalPages,
+    allEntries, allTotal,
+    loading, fetchPage, fetchAll,
+    assets, createTollEntry, updateTollEntry, deleteTollEntry,
+  } = useToll();
   const { can } = usePermissions();
   const canCreate = can("peajes", "peajes", "crear");
   const canEdit   = can("peajes", "peajes", "editar");
@@ -89,15 +94,27 @@ export function PeajesPage() {
   const [detailEntry, setDetailEntry]   = useState<ApiTollEntry | null>(null);
   const [saving, setSaving]     = useState(false);
 
-  // ── Stats ──
-  const totalAmount = tollEntries.reduce((s, t) => s + t.amount, 0);
-  const totalCount  = tollEntries.length;
+  // ── Re-fetch al backend cuando cambian page/fechas ──────────────────────────
+  useEffect(() => {
+    void fetchPage({ page, from: dateFrom || undefined, to: dateTo || undefined, pageSize: 8 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, dateFrom, dateTo]);
+  useEffect(() => {
+    void fetchAll({ from: dateFrom || undefined, to: dateTo || undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateFrom, dateTo]);
+  useEffect(() => { setPage(1); }, [dateFrom, dateTo]);
+
+  // ── Stats — usan `allEntries` (universo real, no la página actual) ──────
+  const totalAmount = allEntries.reduce((s, t) => s + t.amount, 0);
+  const totalCount  = allTotal;
   const todayIso    = new Date().toISOString().slice(0, 10);
-  const todayCount  = tollEntries.filter((t) => t.date === todayIso).length;
+  const todayCount  = allEntries.filter((t) => t.date === todayIso).length;
   const monthIso    = todayIso.slice(0, 7);
-  const monthAmount = tollEntries.filter((t) => t.date.startsWith(monthIso)).reduce((s, t) => s + t.amount, 0);
+  const monthAmount = allEntries.filter((t) => t.date.startsWith(monthIso)).reduce((s, t) => s + t.amount, 0);
 
   // ── Filtered rows ──
+  // `tollEntries` ya viene paginado del backend. El `search` de texto es local.
   const filtered = useMemo(() => {
     let base = tollEntries;
     if (search) {
@@ -109,13 +126,11 @@ export function PeajesPage() {
         (t.notes ?? "").toLowerCase().includes(q)
       );
     }
-    if (dateFrom) base = base.filter((t) => t.date >= dateFrom);
-    if (dateTo)   base = base.filter((t) => t.date <= dateTo);
     return base;
-  }, [tollEntries, search, dateFrom, dateTo]);
+  }, [tollEntries, search]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageRows   = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // `pageRows` ya viene paginado del backend (sin slicing local).
+  const pageRows = filtered;
 
   // ── Handlers ──
   const handleSave = async (payload: CreateTollPayload) => {
@@ -344,7 +359,7 @@ export function PeajesPage() {
             {totalPages > 1 && (
               <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3 dark:border-white/[0.06]">
                 <span className="text-xs text-gray-500 dark:text-gray-400">
-                  {filtered.length} resultado{filtered.length !== 1 ? "s" : ""} · Pág. {page} / {totalPages}
+                  {pageTotal} resultado{pageTotal !== 1 ? "s" : ""} · Pág. {page} / {totalPages}
                 </span>
                 <div className="flex items-center gap-1">
                   <button

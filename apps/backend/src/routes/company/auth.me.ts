@@ -118,6 +118,10 @@ router.patch('/', async (req, res, next) => {
     }
 
     const data = parsed.data;
+    const isAdminOrOwner = req.user!.role === 'admin_empresa' || req.user!.role === 'owner_empresa';
+    if (!isAdminOrOwner && data.photoUrl !== undefined) {
+      throw new AppError(403, 'No tienes permiso para cambiar tu foto de perfil. Solicita el cambio a un administrador.');
+    }
 
     const [existing] = await db
       .select()

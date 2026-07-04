@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, desc, sql, isNull } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyAssignments, companyAssets, companyDrivers } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
@@ -10,6 +10,7 @@ import { NotFoundError, AppError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router({ mergeParams: true });
 
@@ -80,35 +81,54 @@ const handoverSchema = z.object({
 });
 
 // ─── GET /company/:id/assignments ─────────────────────────────────────────────
-// Query: ?status=Activa &assetId=asset-1 &driverId=driver-1
+// Query: ?status=Activa &assetId=asset-1 &driverId=driver-1 &page=1 &pageSize=20
+//
+// Paginación SQL real: WHERE compartido entre la query de datos y el
+// count(*). `assets`/`drivers` son catálogos auxiliares (dropdowns), no se
+// paginan.
 
 router.get('/', requireModule('gestion', 'asignaciones'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const { status, assetId, driverId } = req.query;
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
-    let rows = await db
-      .select()
-      .from(companyAssignments)
-      .where(eq(companyAssignments.companyId, companyId))
-      .orderBy(companyAssignments.createdAt);
-
+    // WHERE compartido entre SELECT paginado y COUNT(*).
+    const conds = [eq(companyAssignments.companyId, companyId)];
     if (status && typeof status === 'string') {
-      rows = rows.filter((a) => a.status === status);
+      conds.push(eq(companyAssignments.status, status as 'Activa'));
     }
-
     if (assetId && typeof assetId === 'string') {
-      const parsedAssetId = parseId('asset', assetId);
-      rows = rows.filter((a) => a.assetId === parsedAssetId);
+      try {
+        const parsedAssetId = parseId('asset', assetId);
+        conds.push(eq(companyAssignments.assetId, parsedAssetId));
+      } catch {
+        conds.push(eq(companyAssignments.id, -1));
+      }
     }
-
     if (driverId && typeof driverId === 'string') {
-      const parsedDriverId = parseId('driver', driverId);
-      rows = rows.filter((a) => a.driverId === parsedDriverId);
+      try {
+        const parsedDriverId = parseId('driver', driverId);
+        conds.push(eq(companyAssignments.driverId, parsedDriverId));
+      } catch {
+        conds.push(eq(companyAssignments.id, -1));
+      }
     }
+    const where = and(...conds);
 
-    // ── Enrichment: cargar nombres de activo y conductor ────────────────────
-    const [assetsRows, driversRows] = await Promise.all([
+    const [rows, countRow, assetsRows, driversRows] = await Promise.all([
+      db
+        .select()
+        .from(companyAssignments)
+        .where(where)
+        .orderBy(desc(companyAssignments.createdAt))
+        .limit(pageSize)
+        .offset(offset),
+      db
+        .select({ value: sql<number>`cast(count(*) as int)` })
+        .from(companyAssignments)
+        .where(where),
+      // Catálogos auxiliares (no paginados).
       db.select({ id: companyAssets.id, name: companyAssets.name, plate: companyAssets.plate, brand: companyAssets.brand })
         .from(companyAssets)
         .where(eq(companyAssets.companyId, companyId)),
@@ -117,12 +137,17 @@ router.get('/', requireModule('gestion', 'asignaciones'), async (req, res, next)
         .where(eq(companyDrivers.companyId, companyId)),
     ]);
 
+    const total = countRow?.[0]?.value ?? 0;
     const assetMap  = new Map(assetsRows.map(a  => [a.id, { name: a.name, plate: a.plate, brand: a.brand }]));
     const driverMap = new Map(driversRows.map(d => [d.id, { firstName: d.firstName, lastName: d.lastName, code: d.code }]));
 
     res.json({
-      data: rows.map((a) => serializeAssignment(a, assetMap.get(a.assetId), driverMap.get(a.driverId))),
-      total: rows.length,
+      ...buildPageResponse(
+        rows.map((a) => serializeAssignment(a, assetMap.get(a.assetId), driverMap.get(a.driverId))),
+        total,
+        page,
+        pageSize,
+      ),
       assets: assetsRows,
       drivers: driversRows,
     });

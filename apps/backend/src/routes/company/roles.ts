@@ -7,23 +7,28 @@
 // DELETE /api/company/:id/roles/:roleId → elimina (no se pueden borrar is_system)
 // POST   /api/company/:id/roles/seed   → fuerza el seed de los 3 default (idempotente)
 //
-// Permisos:
-//  - GET:    cualquier usuario autenticado de la empresa
-//  - resto:  admin/owner_empresa (requireAdmin)
+// Permisos (jun 2026 — split accesos en `usuarios` + `roles`):
+//  - GET:    requirePermission('accesos', 'roles', 'ver')
+//            → superadmin / owner / admin_empresa pasan por bypass.
+//            → Legacy `accesos.accesos.ver` también sirve (shim).
+//  - resto:  mismo submódulo pero con acción crear/editar/eliminar.
+//  - seed:   solo admin/owner_empresa (acción peligrosa, no granularizable).
 //
 // `company_users.role` sigue siendo string (key). Esta tabla es la
 // fuente de verdad de los permisos por defecto por key.
 
 import { Router } from "express";
 import { z } from "zod";
-import { eq, and, asc, sql } from "drizzle-orm";
+import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import { companyRoles, companyUsers } from "../../db/schema/platform";
 import { validate } from "../../lib/validate";
 import { requireAdmin } from "../../middlewares/requireAdmin";
+import { requirePermission } from "../../middlewares/requirePermission";
 import { NotFoundError, AppError, ConflictError } from "../../lib/errors";
 import { toId, parseId } from "../../lib/ids";
 import { logAudit } from "../../lib/audit";
+import { parsePageParams, buildPageResponse } from "../../lib/pagination";
 import {
   ensureDefaultRolesForCompany,
   getPermissionsForRole,
@@ -83,22 +88,27 @@ function serializeRole(r: typeof companyRoles.$inferSelect) {
 }
 
 // ── GET / (todos los roles de la empresa) ────────────────────────────────────
-// Cualquier usuario autenticado puede ver la lista (la necesita para
-// poblar el select de "Rol" en el módulo de usuarios).
+// Cualquier usuario con permiso `accesos.roles.ver` (o legacy
+// `accesos.accesos.ver`). Admin/owner pasan por bypass.
 
-router.get("/", async (req, res, next) => {
+router.get("/", requirePermission("accesos", "roles", "ver"), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     // Idempotente: si la empresa no tiene los default, los sembramos.
     await ensureDefaultRolesForCompany(companyId);
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
-    const rows = await db
-      .select()
-      .from(companyRoles)
-      .where(eq(companyRoles.companyId, companyId))
-      .orderBy(asc(companyRoles.isSystem), asc(companyRoles.label));
+    const where = eq(companyRoles.companyId, companyId);
 
-    res.json({ data: rows.map(serializeRole), total: rows.length });
+    const [rows, countRow] = await Promise.all([
+      db.select().from(companyRoles).where(where)
+        .orderBy(asc(companyRoles.isSystem), asc(companyRoles.label))
+        .limit(pageSize).offset(offset),
+      db.select({ value: sql<number>`cast(count(*) as int)` }).from(companyRoles).where(where),
+    ]);
+
+    const total = countRow?.[0]?.value ?? 0;
+    res.json(buildPageResponse(rows.map(serializeRole), total, page, pageSize));
   } catch (err) {
     next(err);
   }
@@ -106,7 +116,7 @@ router.get("/", async (req, res, next) => {
 
 // ── POST / (crear rol custom) ────────────────────────────────────────────────
 
-router.post("/", requireAdmin, validate(createRoleSchema), async (req, res, next) => {
+router.post("/", requirePermission("accesos", "roles", "crear"), validate(createRoleSchema), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const body = req.body as z.infer<typeof createRoleSchema>;
@@ -160,7 +170,7 @@ router.post("/", requireAdmin, validate(createRoleSchema), async (req, res, next
 
 // ── PATCH /:roleId ───────────────────────────────────────────────────────────
 
-router.patch("/:roleId", requireAdmin, validate(updateRoleSchema), async (req, res, next) => {
+router.patch("/:roleId", requirePermission("accesos", "roles", "editar"), validate(updateRoleSchema), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const roleId = parseId("company-role", req.params.roleId);
@@ -205,7 +215,7 @@ router.patch("/:roleId", requireAdmin, validate(updateRoleSchema), async (req, r
 
 // ── DELETE /:roleId ──────────────────────────────────────────────────────────
 
-router.delete("/:roleId", requireAdmin, async (req, res, next) => {
+router.delete("/:roleId", requirePermission("accesos", "roles", "eliminar"), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     const roleId = parseId("company-role", req.params.roleId);
@@ -260,14 +270,19 @@ router.post("/seed", requireAdmin, async (req, res, next) => {
   try {
     const companyId = req.companyId!;
     await ensureDefaultRolesForCompany(companyId);
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
-    const rows = await db
-      .select()
-      .from(companyRoles)
-      .where(eq(companyRoles.companyId, companyId))
-      .orderBy(asc(companyRoles.isSystem), asc(companyRoles.label));
+    const where = eq(companyRoles.companyId, companyId);
 
-    res.json({ data: rows.map(serializeRole), total: rows.length });
+    const [rows, countRow] = await Promise.all([
+      db.select().from(companyRoles).where(where)
+        .orderBy(asc(companyRoles.isSystem), asc(companyRoles.label))
+        .limit(pageSize).offset(offset),
+      db.select({ value: sql<number>`cast(count(*) as int)` }).from(companyRoles).where(where),
+    ]);
+
+    const total = countRow?.[0]?.value ?? 0;
+    res.json(buildPageResponse(rows.map(serializeRole), total, page, pageSize));
   } catch (err) {
     next(err);
   }

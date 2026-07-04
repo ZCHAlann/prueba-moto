@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { useAuth } from "../../context/AuthContext";
+import { defaultMessageForCode } from "../../lib/authEvents";
 import { toast } from "sonner";
 
 const SLIDES = [
@@ -55,6 +56,27 @@ export default function SignIn() {
       setFading(false);
     }, 500);
   };
+
+  // ── Si entramos con ?reason=CODE (p.ej. SITE_INACTIVE tras ser
+  // expulsado por la invalidación de sesión), mostrar un toast con el
+  // motivo. Esto cubre el caso 4.8 (sesión activa bloqueada a mitad
+  // de uso) — el form de login debe comunicar al usuario por qué
+  // fue redirigido acá. (Fase 3.3)
+  useEffect(() => {
+    const reason = searchParams.get("reason");
+    if (reason) {
+      toast.error(defaultMessageForCode(reason), {
+        description: "Tu sesión fue cerrada por un cambio administrativo. Si crees que es un error, contacta a tu administrador.",
+        duration: 9000,
+      });
+      // Limpia el query param para que no se repita en un refresh.
+      const next = new URLSearchParams(searchParams);
+      next.delete("reason");
+      const qs = next.toString();
+      navigate(qs ? `/signin?${qs}` : "/signin", { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     intervalRef.current = setInterval(() => {

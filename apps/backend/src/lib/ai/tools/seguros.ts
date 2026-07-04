@@ -12,13 +12,13 @@ import { and, eq, gte, inArray, lte, desc, ilike, sql } from 'drizzle-orm';
 import { db } from '../../../db/client';
 import { companyInsurancePolicies, companyAssets } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
-import { tolerantString, tolerantNumber, tolerantBoolean, tolerantDateString, enumOrList } from '../schema-helpers';
+import { tolerantString, tolerantNumber, tolerantAssetId, tolerantBoolean, tolerantDateString, enumOrList } from '../schema-helpers';
 
 const argsSchema = z.object({
   estado:       enumOrList(['Vigente', 'Vencida', 'Renovada', 'Cancelada']).optional(),
   porVencer:    tolerantBoolean().optional().default(false),
   dias:         tolerantNumber().int().positive().max(365).optional().default(30),
-  assetId:      tolerantNumber().int().positive().optional(),
+  assetId:      tolerantAssetId(),
   placa:        tolerantString().optional(),
   desde:        tolerantDateString().optional(),
   hasta:        tolerantDateString().optional(),

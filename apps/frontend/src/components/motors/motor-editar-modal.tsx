@@ -4,7 +4,7 @@ import { useMotors } from "../../hooks/useMotors";
 import { X, ChevronRight, ChevronLeft } from "lucide-react";
 import { DatePicker } from "../ui/date-picker/DatePicker";
 import type { Asset, AssetFuelType, AssetStatus } from "../../types/activo";
-import { useDrivers } from "../../hooks/useDrivers";
+import { useMotorFormOptions } from "../../hooks/useFormOptions";
 
 /* ── Types ── */
 type EditMotorFormValues = {
@@ -168,7 +168,9 @@ type Props = {
 /* ── Component ── */
 export function MotorEditModal({ motor, onClose }: Props) {
   const { updateMotor } = useMotors();
-  const { drivers, loading: driversLoading } = useDrivers();
+  const { data: formOptions } = useMotorFormOptions();
+  const drivers = formOptions?.drivers ?? [];
+  const driversLoading = !formOptions;
 
   const [step, setStep]     = useState(0);
   const [values, setValues] = useState<EditMotorFormValues>(() => toFormValues(motor));

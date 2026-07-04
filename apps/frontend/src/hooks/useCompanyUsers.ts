@@ -96,6 +96,10 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
   const companyId = session?.companyId ? String(session.companyId) : null;
 
   const [users, setUsers]     = useState<CompanyUser[]>([]);
+  const [total, setTotal]     = useState(0);
+  const [page, setPageState]   = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [tick, setTick]       = useState(0);
@@ -112,13 +116,17 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
     setLoading(true);
     setError(null);
 
-    fetch(`/api/company/${companyId}/users`, { cache: "no-store" })
+    fetch(`/api/company/${companyId}/users?page=1&pageSize=100`, { cache: "no-store" })
       .then((res) => {
         if (!res.ok) throw new Error(`Error ${res.status}`);
         return res.json();
       })
-      .then((body: { data: Record<string, unknown>[] }) => {
+      .then((body: { data: Record<string, unknown>[]; total?: number; page?: number; pageSize?: number; totalPages?: number }) => {
         setUsers((body.data ?? []).map(mapApiToUser));
+        setTotal(typeof body.total === "number" ? body.total : 0);
+        setPageState(typeof body.page === "number" ? body.page : 1);
+        setPageSize(typeof body.pageSize === "number" ? body.pageSize : 100);
+        setTotalPages(typeof body.totalPages === "number" ? body.totalPages : 1);
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Error cargando usuarios");
@@ -154,7 +162,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
 
         const data = await res.json() as Record<string, unknown>;
         const newUser = mapApiToUser(data);
-        setUsers((current) => [newUser, ...current]);
+        setUsers((current) => [newUser, ...current]); setTotal((t) => t + 1);
         return newUser.id;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error creando usuario");
@@ -264,7 +272,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
           throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
         }
 
-        setUsers((current) => current.filter((u) => u.id !== id));
+        setUsers((current) => current.filter((u) => u.id !== id)); setTotal((t) => Math.max(0, t - 1));
         return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error eliminando usuario");
@@ -274,5 +282,5 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
     [companyId]
   );
 
-  return { users, loading, error, refresh, createUser, updateUser, deleteUser, updatePermissions };
+  return { users, total, page, pageSize, totalPages, loading, error, refresh, createUser, updateUser, deleteUser, updatePermissions };
 }

@@ -89,6 +89,10 @@ export function useAssets(): UseAssetsReturn {
   const companyId = session?.companyId ? String(session.companyId) : null;
 
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [total, setTotal]     = useState(0);
+  const [page, setPageState]  = useState(1);
+  const [pageSize, setPageSize] = useState(100);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -104,13 +108,17 @@ export function useAssets(): UseAssetsReturn {
     setLoading(true);
     setError(null);
 
-    fetch(`/api/company/${companyId}/assets`, { cache: "no-store" })
+    fetch(`/api/company/${companyId}/assets?pageSize=100`, { cache: "no-store" })
       .then((res) => {
         if (!res.ok) throw new Error(`Error ${res.status}`);
         return res.json();
       })
-      .then((body: { data: Record<string, unknown>[] }) => {
+      .then((body: { data: Record<string, unknown>[]; total?: number; page?: number; pageSize?: number; totalPages?: number }) => {
         setAssets((body.data ?? []).map((item) => mapApiToAsset(item, companyId)));
+        setTotal(typeof body.total === "number" ? body.total : 0);
+        setPageState(typeof body.page === "number" ? body.page : 1);
+        setPageSize(typeof body.pageSize === "number" ? body.pageSize : 100);
+        setTotalPages(typeof body.totalPages === "number" ? body.totalPages : 1);
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Error cargando activos");
@@ -141,7 +149,7 @@ export function useAssets(): UseAssetsReturn {
 
         const data = await res.json() as Record<string, unknown>;
         const newAsset = mapApiToAsset(data, companyId);
-        setAssets((current) => [...current, newAsset]);
+        setAssets((current) => [...current, newAsset]); setTotal((t) => t + 1);
         return String(data.id);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error creando activo");
@@ -193,7 +201,7 @@ export function useAssets(): UseAssetsReturn {
           throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
         }
 
-        setAssets((current) => current.filter((asset) => asset.id !== id));
+        setAssets((current) => current.filter((asset) => asset.id !== id)); setTotal((t) => Math.max(0, t - 1));
         return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error eliminando activo");
@@ -203,5 +211,5 @@ export function useAssets(): UseAssetsReturn {
     [companyId]
   );
 
-  return { assets, loading, error, refresh, getAsset, createAsset, updateAsset, deleteAsset };
+  return { assets, total, page, pageSize, totalPages, loading, error, refresh, getAsset, createAsset, updateAsset, deleteAsset };
 }

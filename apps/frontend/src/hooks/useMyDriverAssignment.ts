@@ -1,82 +1,57 @@
+"use client";
+
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-
-export type MyDriverAssignment = {
-  hasAssignment: true;
-  assignment: {
-    id: string;
-    assetId: string;
-    driverId: string;
-    driverName: string;
-    startDate: string | null;
-    asset: {
-      id: string;
-      name: string | null;
-      code: string | null;
-      plate: string | null;
-      brand: string | null;
-      model: string | null;
-    };
-  };
-};
-
-type NotDriver = { hasAssignment: false; reason?: "not_a_driver" | "no_active_assignment" };
-
-export type DriverAssignmentState = MyDriverAssignment | NotDriver | null;
+import type { ActaCardData } from "../components/features/drivers/DriverActa";
 
 /**
- * Devuelve la asignación activa del usuario actual si su rol es `conductor`.
- * El backend ya enforza la lógica; este hook es UI.
+ * Carga el acta de asignación del conductor logueado (la activa, o la última
+ * cerrada si no tiene activa). Pensado para ProfilePage: el conductor consulta
+ * su propia acta sin tener permisos administrativos sobre `gestion.conductores`.
  *
- * - Si el usuario no es conductor: resuelve a `null` (no loading).
- * - Si es conductor pero no tiene driver row: `{ hasAssignment: false, reason: 'not_a_driver' }`.
- * - Si es conductor y no tiene asignación activa: `{ hasAssignment: false, reason: 'no_active_assignment' }`.
- * - Si tiene: `{ hasAssignment: true, assignment: {...} }`.
+ * Devuelve:
+ *   - `loading` mientras hace fetch
+ *   - `notFound` true si el usuario logueado no tiene perfil de conductor
+ *   - `acta` con los datos del acta (o `null` si nunca tuvo asignaciones)
+ *   - `refresh()` para reintentar (p. ej. cuando el usuario cierra una
+ *     asignación y vuelve a abrir el perfil).
+ *
+ * No lanza errores visibles: un 404 significa "no soy conductor" y eso lo
+ * maneja el componente padre ocultando la card (no es un fallo).
  */
-export function useMyDriverAssignment(): {
-  state: DriverAssignmentState;
-  loading: boolean;
-  error: string | null;
-  refetch: () => void;
-} {
+export function useMyDriverAssignment() {
   const { session } = useAuth();
-  const companyId = session?.companyId ? String(session.companyId) : null;
-  const isConductor = session?.role === "conductor";
+  const companyId = session?.companyId;
 
-  const [state, setState] = useState<DriverAssignmentState>(null);
-  const [loading, setLoading] = useState<boolean>(isConductor);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
+  const [acta, setActa]     = useState<ActaCardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
 
-  const refetch = useCallback(() => setTick((t) => t + 1), []);
+  const refresh = useCallback(async () => {
+    if (!companyId) return;
+    setLoading(true);
+    setNotFound(false);
+    try {
+      const res = await fetch(`/api/company/${companyId}/drivers/me/acta`);
+      if (res.status === 404) {
+        setActa(null);
+        setNotFound(true);
+        return;
+      }
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const json = await res.json();
+      setActa((json?.data?.acta as ActaCardData | null) ?? null);
+    } catch {
+      // Silencioso: si falla, mantenemos acta=null. El card no se muestra.
+      setActa(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [companyId]);
 
   useEffect(() => {
-    if (!isConductor || !companyId) {
-      setState(null);
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetch(`/api/company/${companyId}/auth/me/driver-assignment`, { credentials: "include" })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const json = await r.json();
-        if (cancelled) return;
-        setState(json?.data ?? json ?? { hasAssignment: false });
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Error desconocido");
-        setState({ hasAssignment: false });
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [companyId, isConductor, tick]);
+    void refresh();
+  }, [refresh]);
 
-  return { state, loading, error, refetch };
+  return { loading, notFound, acta, refresh };
 }

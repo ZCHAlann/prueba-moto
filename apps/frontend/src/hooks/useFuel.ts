@@ -146,24 +146,73 @@ export async function uploadOdometerPhoto(file: File, companyId: number): Promis
   return url;
 }
 
+export type FuelPageState = {
+  data: ApiFuelEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export type FuelFilters = {
+  assetId?: string;
+  driverId?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+/**
+ * Hook con DOS slots independientes:
+ *   - `page`        → paginado al backend (para la TABLA)
+ *   - `allEntries`  → SIN paginar (para KPIs, FuelCharts, FuelCalendarBreakdown
+ *                      y exports a PDF/Excel — features que necesitan el dataset
+ *                      completo del filtro aplicado).
+ *
+ * El componente decide qué slot usar en cada caso. Ambos slots pueden tener
+ * filtros distintos y no se pisan: la tabla puede estar en página 5 mientras
+ * el chart muestra los N entries del universo filtrado.
+ */
 export function useFuel() {
   const { session } = useAuth();
   const companyId = session?.companyId;
 
-  const [fuelEntries, setFuelEntries] = useState<ApiFuelEntry[]>([]);
+  // Slot "paginada".
+  const [page, setPageState] = useState<FuelPageState>({
+    data: [], total: 0, page: 1, pageSize: 20, totalPages: 1,
+  });
+  // Slot "all" (independiente del paginado).
+  const [allEntries, setAllEntries] = useState<ApiFuelEntry[]>([]);
+  const [allTotal, setAllTotal]       = useState(0);
   const [assets, setAssets] = useState<Array<{ id: string; plate: string; brand: string | null; model: string | null }>>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError]     = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  /** Fetch PAGINADO para la tabla. */
+  const fetchPage = useCallback(async (filters: FuelFilters = {}) => {
     if (!companyId) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/company/${companyId}/fuel`);
+      const params = new URLSearchParams();
+      if (filters.assetId)  params.set("assetId",  filters.assetId);
+      if (filters.driverId) params.set("driverId", filters.driverId);
+      if (filters.from)     params.set("from",     filters.from);
+      if (filters.to)       params.set("to",       filters.to);
+      if (filters.page)     params.set("page",     String(filters.page));
+      if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
+      const qs = params.toString();
+      const res = await fetch(`/api/company/${companyId}/fuel${qs ? `?${qs}` : ""}`);
       if (!res.ok) throw new Error(await extractApiError(res, "Error al cargar combustible"));
       const json = await res.json();
-      setFuelEntries((json.data ?? json).map(mapApi));
+      setPageState({
+        data: (json.data ?? []).map(mapApi),
+        total: typeof json.total === "number" ? json.total : 0,
+        page: typeof json.page === "number" ? json.page : 1,
+        pageSize: typeof json.pageSize === "number" ? json.pageSize : 20,
+        totalPages: typeof json.totalPages === "number" ? json.totalPages : 1,
+      });
       if (Array.isArray(json.assets)) setAssets(json.assets);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar combustible");
@@ -172,7 +221,33 @@ export function useFuel() {
     }
   }, [companyId]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  /** Fetch SIN paginar (para stats/charts/calendario/exports). */
+  const fetchAll = useCallback(async (filters: Omit<FuelFilters, "page" | "pageSize"> = {}) => {
+    if (!companyId) return;
+    try {
+      const params = new URLSearchParams();
+      if (filters.assetId)  params.set("assetId",  filters.assetId);
+      if (filters.driverId) params.set("driverId", filters.driverId);
+      if (filters.from)     params.set("from",     filters.from);
+      if (filters.to)       params.set("to",       filters.to);
+      params.set("nopage", "true");
+      const qs = params.toString();
+      const res = await fetch(`/api/company/${companyId}/fuel${qs ? `?${qs}` : ""}`);
+      if (!res.ok) return; // silencioso — los charts son secundarios
+      const json = await res.json();
+      setAllEntries((json.data ?? []).map(mapApi));
+      setAllTotal(typeof json.total === "number" ? json.total : 0);
+      if (Array.isArray(json.assets)) setAssets(json.assets);
+    } catch {
+      // silencioso
+    }
+  }, [companyId]);
+
+  useEffect(() => { void fetchPage(); }, [fetchPage]);
+
+  // Compatibilidad: `fuelEntries` = data de la página actual, `refresh` = refetch page.
+  const fuelEntries = page.data;
+  const refresh = useCallback(() => fetchPage(), [fetchPage]);
 
   const createFuelEntry = useCallback(async (payload: CreateFuelPayload): Promise<ApiFuelEntry> => {
     const res = await fetch(`/api/company/${companyId}/fuel`, {
@@ -194,7 +269,11 @@ export function useFuel() {
     });
     if (!res.ok) throw new Error(await extractApiError(res, "Error al guardar"));
     const created = mapApi(await res.json());
-    setFuelEntries((prev) => [created, ...prev]);
+    // Optimistic update en ambos slots (el "all" puede incluirlo en su próxima
+    // petición, pero el local update evita recargar).
+    setPageState((prev) => ({ ...prev, data: [created, ...prev.data], total: prev.total + 1 }));
+    setAllEntries((prev) => [created, ...prev]);
+    setAllTotal((t) => t + 1);
     return created;
   }, [companyId]);
 
@@ -218,20 +297,40 @@ export function useFuel() {
     });
     if (!res.ok) throw new Error(await extractApiError(res, "Error al actualizar"));
     const updated = mapApi(await res.json());
-    setFuelEntries((prev) => prev.map((e) => e.id === id ? updated : e));
+    setPageState((prev) => ({ ...prev, data: prev.data.map((e) => e.id === id ? updated : e) }));
+    setAllEntries((prev) => prev.map((e) => e.id === id ? updated : e));
     return updated;
   }, [companyId]);
 
   const deleteFuelEntry = useCallback(async (id: string): Promise<void> => {
-    const res = await fetch(`/api/company/${companyId}/fuel/${id}`, {
-      method: "DELETE",
-      credentials: "include",
-    });
+    const res = await fetch(`/api/company/${companyId}/fuel/${id}`, { method: "DELETE", credentials: "include" });
     if (!res.ok) throw new Error(await extractApiError(res, "Error al eliminar"));
-    setFuelEntries((prev) => prev.filter((e) => e.id !== id));
+    setPageState((prev) => ({ ...prev, data: prev.data.filter((e) => e.id !== id), total: Math.max(0, prev.total - 1) }));
+    setAllEntries((prev) => prev.filter((e) => e.id !== id));
+    setAllTotal((t) => Math.max(0, t - 1));
   }, [companyId]);
 
-  return { fuelEntries, assets, loading, error, refresh, createFuelEntry, updateFuelEntry, deleteFuelEntry };
+  return {
+    // Slot paginado (la tabla).
+    fuelEntries,
+    total: page.total,
+    page: page.page,
+    pageSize: page.pageSize,
+    totalPages: page.totalPages,
+    // Slot "all" (charts / stats / exports).
+    allEntries,
+    allTotal,
+    // Catálogo auxiliar.
+    assets,
+    loading,
+    error,
+    refresh,
+    fetchPage,
+    fetchAll,
+    createFuelEntry,
+    updateFuelEntry,
+    deleteFuelEntry,
+  };
 }
 
 // ─── Insights / analytics ───────────────────────────────────────────────────

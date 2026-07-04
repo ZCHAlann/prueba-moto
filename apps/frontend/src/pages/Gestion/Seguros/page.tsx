@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import { useAssetCenter } from "../../../hooks/useInsurancesPolicies";
-import { useAssets } from "@/hooks/useAssets";
+import { useInsuranceFormOptions } from "@/hooks/useFormOptions";
 import { usePermissions } from "@/hooks/usePermissions";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import { RowActionMenu } from "../../../components/ui/table/RowActionMenu";
@@ -794,7 +794,8 @@ function DeleteConfirm({ open, policyNumber, insurer, onCancel, onConfirm }: {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function InsuranceManagementPage() {
-  const { assets } = useAssets();
+  const { data: formOptions } = useInsuranceFormOptions();
+  const assets = formOptions?.assets ?? [];
   const { can } = usePermissions();
   const { policies, loading, createPolicy, updatePolicy, deletePolicy, uploadPolicyFile } = useAssetCenter();
 

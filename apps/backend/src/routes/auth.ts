@@ -9,6 +9,8 @@ import { UnauthorizedError, AppError } from '../lib/errors';
 import { toId } from '../lib/ids';
 import { authenticate, COOKIE_NAME, PermissionMap, ModulePermissionMap } from '../middlewares/authenticate';
 import { getFinalPermissionsForUser } from './company/roles';
+import { getUserEffectivelyActiveFromDb } from '../lib/userStatus.db';
+import { getInactiveMessage, getInactiveCode } from '../lib/userStatus';
 
 const router = Router();
 
@@ -164,6 +166,21 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
 
       await clearFailedLogin(companyUsers, user.id);
 
+      // ── Chequeo de estado efectivo (Fase 2.2) ───────────────────────────────
+      // Si el usuario (y su driver/sede si aplica) está efectivamente
+      // inactivo, bloqueamos el login con un mensaje claro y un código
+      // estructurado que el frontend puede usar para distinguir los casos.
+      const status = await getUserEffectivelyActiveFromDb(
+        user.id,
+        Number(user.companyId),
+      );
+      if (status && !status.effectivelyActive) {
+        return res.status(403).json({
+          code:    getInactiveCode(status.inactiveReason),
+          message: getInactiveMessage(status.inactiveReason),
+        });
+      }
+
       const isAdminRole    = ["owner_empresa", "admin_empresa"].includes(user.role);
       const companyModules = user.company?.enabledModules ?? [];
       const permissions    = {} as PermissionMap;
@@ -257,6 +274,21 @@ router.post('/session', validate(sessionSchema), async (req, res, next) => {
         with:  { company: true },
       });
       if (!user) throw new UnauthorizedError('Usuario no encontrado');
+
+      // ── Chequeo de estado efectivo (Fase 2.2) ───────────────────────────────
+      // El endpoint /auth/session emite un token nuevo sin password, así
+      // que acá también bloqueamos si el usuario/driver/sede quedó
+      // inactivo desde la última sesión. Mismo formato que /login.
+      const status = await getUserEffectivelyActiveFromDb(
+        user.id,
+        Number(user.companyId),
+      );
+      if (status && !status.effectivelyActive) {
+        return res.status(403).json({
+          code:    getInactiveCode(status.inactiveReason),
+          message: getInactiveMessage(status.inactiveReason),
+        });
+      }
 
       const isAdminRole    = ["owner_empresa", "admin_empresa"].includes(user.role);
       const companyModules = user.company?.enabledModules ?? [];

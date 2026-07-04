@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { Checklist, ChecklistInspectionItem } from "../../../../hooks/useChecklists";
+import { useChecklists } from "../../../../hooks/useChecklists";
+import { EditChecklistDateInline } from "./EditChecklistDateInline";
 
 type Props = {
   checklist: Checklist | null;
@@ -38,6 +40,28 @@ function fmtDate(iso: string | null | undefined): string {
 
 export function ChecklistDetailDrawer({ checklist, onClose, focusOnAnomalies = false }: Props) {
   const [exporting, setExporting] = useState(false);
+
+  // Override optimista de la fecha — al guardar, queremos ver el cambio
+  // sin esperar el WS. Si llega después el `checklist` prop con la fecha
+  // nueva, sobreescribimos el local (sincronizamos) y limpiamos.
+  const [optimisticDate, setOptimisticDate] = useState<string | null>(null);
+  const { updateChecklist } = useChecklists();
+
+  // Cuando cambia la prop `checklist.date` desde el padre (WS, refetch),
+  // alineamos el state local. Si ya coinciden, no-op.
+  useEffect(() => {
+    if (checklist?.date) {
+      setOptimisticDate((cur) => (cur === null || cur === checklist.date ? null : checklist.date));
+    }
+  }, [checklist?.date]);
+
+  async function handleSaveDate(id: string, newDate: string) {
+    // Backend actualiza `date` y emite wsBroadcast `checklist:updated` → la lista
+    // y la página Checklist reciben la actualización. Mientras tanto, el
+    // drawer muestra la fecha nueva localmente.
+    setOptimisticDate(newDate);
+    await updateChecklist(id, { date: newDate });
+  }
 
   useEffect(() => {
     if (!checklist) return;
@@ -149,6 +173,8 @@ export function ChecklistDetailDrawer({ checklist, onClose, focusOnAnomalies = f
                 <MetaBlock
                   compact={showOnlyAnomalies}
                   checklist={checklist}
+                  effectiveDate={optimisticDate ?? checklist.date}
+                  onSaveDate={handleSaveDate}
                 />
               </div>
 
@@ -307,14 +333,26 @@ function Metric({ label, value, tone }: { label: string; value: number; tone?: "
   );
 }
 
-function MetaBlock({ compact, checklist }: { compact: boolean; checklist: Checklist }) {
-  const rows = compact
+function MetaBlock({
+  compact,
+  checklist,
+  effectiveDate,
+  onSaveDate,
+}: {
+  compact: boolean;
+  checklist: Checklist;
+  /** Fecha ya con el override optimista aplicado (puede ser null si no hay). */
+  effectiveDate: string;
+  /** Handler que llama al PUT /checklists/:id con la nueva fecha. */
+  onSaveDate: (id: string, newDate: string) => Promise<void>;
+}) {
+  const rows: Array<{ icon: React.ReactNode; label: string; value: string }> = compact
     ? [
-        { icon: <Calendar size={12} />, label: "Fecha",   value: fmtDate(checklist.date) },
+        { icon: <Calendar size={12} />, label: "Fecha",     value: fmtDate(effectiveDate) },
         { icon: <User size={12} />,     label: "Conductor", value: checklist.driverName ?? "" },
       ]
     : [
-        { icon: <Calendar size={12} />, label: "Fecha",     value: fmtDate(checklist.date) },
+        { icon: <Calendar size={12} />, label: "Fecha",     value: fmtDate(effectiveDate) },
         { icon: <Car size={12} />,      label: "Vehículo",  value: checklist.targetLabel ?? "" },
         { icon: <User size={12} />,     label: "Conductor", value: checklist.driverName ?? "" },
         { icon: <FileText size={12} />, label: "Plantilla", value: checklist.categoryName ?? "" },
@@ -322,17 +360,32 @@ function MetaBlock({ compact, checklist }: { compact: boolean; checklist: Checkl
 
   return (
     <div className="rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.02] divide-y divide-gray-100 dark:divide-white/[0.06]">
-      {rows.map((r) => (
-        <div key={r.label} className="flex items-center gap-2 px-4 py-2.5">
-          <span className="text-gray-400 dark:text-gray-500">{r.icon}</span>
-          <span className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 shrink-0 w-24">
-            {r.label}
-          </span>
-          <span className="text-sm text-gray-800 dark:text-gray-200 truncate flex-1 text-right">
-            {r.value || "—"}
-          </span>
-        </div>
-      ))}
+      {rows.map((r) => {
+        const isFechaRow = r.label === "Fecha";
+        return (
+          <div key={r.label} className="flex items-center gap-2 px-4 py-2.5">
+            <span className="text-gray-400 dark:text-gray-500">{r.icon}</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 shrink-0 w-24">
+              {r.label}
+            </span>
+            <span className="flex-1 text-right">
+              {isFechaRow && !compact ? (
+                // En modo full (Historial) habilitamos la edición inline.
+                // En Anomalías (compact) el drawer es chico y no la necesitamos.
+                <EditChecklistDateInline
+                  checklistId={checklist.id}
+                  value={effectiveDate}
+                  onSave={onSaveDate}
+                />
+              ) : (
+                <span className="text-sm text-gray-800 dark:text-gray-200 truncate">
+                  {r.value || "—"}
+                </span>
+              )}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

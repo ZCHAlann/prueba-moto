@@ -32,6 +32,7 @@ export function useWorkshops() {
   const { companyId } = useAuth();
 
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
+  const [total, setTotal]         = useState(0);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState<string | null>(null);
   const [tick, setTick]           = useState(0);
@@ -42,10 +43,11 @@ export function useWorkshops() {
     if (!companyId) { setLoading(false); return; }
     setLoading(true);
     setError(null);
-    fetch(`/api/company/${companyId}/workshops`, { cache: "no-store" })
+    fetch(`/api/company/${companyId}/workshops?pageSize=100`, { cache: "no-store" })
       .then((res) => { if (!res.ok) throw new Error(`Error ${res.status}`); return res.json(); })
-      .then((body: { data: Workshop[] }) => {
+      .then((body: { data: Workshop[]; total?: number }) => {
         setWorkshops(body.data ?? []);
+        setTotal(typeof body.total === "number" ? body.total : 0);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Error cargando talleres"))
       .finally(() => setLoading(false));
@@ -107,5 +109,5 @@ export function useWorkshops() {
     }
   }, [companyId]);
 
-  return { workshops, loading, error, refresh, createWorkshop, updateWorkshop, deleteWorkshop };
+  return { workshops, total, loading, error, refresh, createWorkshop, updateWorkshop, deleteWorkshop };
 }

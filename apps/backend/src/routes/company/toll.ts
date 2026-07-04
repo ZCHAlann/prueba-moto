@@ -5,7 +5,7 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc, gte, lte, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyTollEntries, companyAssets, companyDrivers } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
@@ -15,6 +15,7 @@ import { NotFoundError } from '../../lib/errors';
 import { toId, parseId, parseIdFlexible } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router({ mergeParams: true });
 
@@ -42,36 +43,46 @@ const updateTollSchema = createTollSchema.partial();
 
 // ─── GET /company/:id/toll ────────────────────────────────────────────────────
 // Query: ?assetId=asset-1 &driverId=driver-1 &from=YYYY-MM-DD &to=YYYY-MM-DD
+//        &page=1 &pageSize=20 &nopage=true
+//
+// Modos:
+//   - default (paginado): devuelve { data, total, page, pageSize, totalPages }.
+//   - nopage=true:        devuelve todos los entries SIN paginar (mismo shape
+//                         sin page/pageSize). Se usa para los KPIs
+//                         `totalAmount` y `monthAmount` del componente.
 
 router.get('/', requireModule('peajes', 'peajes'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
-    const { assetId, driverId, from, to } = req.query;
+    const { assetId, driverId, from, to, nopage } = req.query;
 
-    let rows = await db
-      .select()
-      .from(companyTollEntries)
-      .where(eq(companyTollEntries.companyId, companyId))
-      .orderBy(companyTollEntries.date);
-
+    // WHERE compartido.
+    const conds = [eq(companyTollEntries.companyId, companyId)];
     if (assetId && typeof assetId === 'string') {
-      const parsedAssetId = parseIdFlexible('asset', assetId);
-      rows = rows.filter((t) => t.assetId === parsedAssetId);
+      try {
+        const parsedAssetId = parseIdFlexible('asset', assetId);
+        conds.push(eq(companyTollEntries.assetId, parsedAssetId));
+      } catch {
+        conds.push(eq(companyTollEntries.id, -1));
+      }
     }
-
     if (driverId && typeof driverId === 'string') {
-      const parsedDriverId = parseIdFlexible('driver', driverId);
-      rows = rows.filter((t) => t.driverId === parsedDriverId);
+      try {
+        const parsedDriverId = parseIdFlexible('driver', driverId);
+        conds.push(eq(companyTollEntries.driverId, parsedDriverId));
+      } catch {
+        conds.push(eq(companyTollEntries.id, -1));
+      }
     }
-
     if (from && typeof from === 'string') {
-      rows = rows.filter((t) => t.date >= from);
+      conds.push(gte(companyTollEntries.date, from));
     }
     if (to && typeof to === 'string') {
-      rows = rows.filter((t) => t.date <= to);
+      conds.push(lte(companyTollEntries.date, to));
     }
+    const where = and(...conds);
 
-    // ── Enrichment: assets (igual que fuel, para el dropdown del modal) ──
+    // Catálogo auxiliar (no se pagina).
     const assetsRows = await db
       .select({ id: companyAssets.id, plate: companyAssets.plate, brand: companyAssets.brand, model: companyAssets.model })
       .from(companyAssets)
@@ -79,9 +90,39 @@ router.get('/', requireModule('peajes', 'peajes'), async (req, res, next) => {
 
     const assetMap = new Map(assetsRows.map(a => [a.id, { plate: a.plate, brand: a.brand, model: a.model }]));
 
+    if (nopage === 'true') {
+      const rows = await db
+        .select()
+        .from(companyTollEntries)
+        .where(where)
+        .orderBy(desc(companyTollEntries.date));
+      res.json({
+        data: rows.map(t => serializeToll(t, assetMap.get(t.assetId))),
+        total: rows.length,
+        assets: assetsRows.map(a => ({
+          id: toId('asset', a.id),
+          plate: a.plate,
+          brand: a.brand,
+          model: a.model,
+        })),
+      });
+      return;
+    }
+
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
+    const [rows, countRow] = await Promise.all([
+      db.select().from(companyTollEntries).where(where)
+        .orderBy(desc(companyTollEntries.date)).limit(pageSize).offset(offset),
+      db.select({ value: sql<number>`cast(count(*) as int)` }).from(companyTollEntries).where(where),
+    ]);
+    const total = countRow?.[0]?.value ?? 0;
     res.json({
-      data: rows.map(t => serializeToll(t, assetMap.get(t.assetId))),
-      total: rows.length,
+      ...buildPageResponse(
+        rows.map(t => serializeToll(t, assetMap.get(t.assetId))),
+        total,
+        page,
+        pageSize,
+      ),
       assets: assetsRows.map(a => ({
         id: toId('asset', a.id),
         plate: a.plate,

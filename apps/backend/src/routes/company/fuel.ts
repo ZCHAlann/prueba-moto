@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, gte, lte } from 'drizzle-orm';
+import { eq, and, desc, gte, lte, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyFuelEntries, companyAssets, companyDrivers } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
@@ -10,6 +10,7 @@ import { safeString, validators } from '../../lib/validators';
 import { toId, parseId, parseIdFlexible  } from '../../lib/ids';
 import { NotFoundError } from '../../lib/errors';
 import { logAudit } from '../../lib/audit';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 
 
@@ -56,37 +57,48 @@ const updateFuelSchema = z.object({
 
 // ─── GET /company/:id/fuel ────────────────────────────────────────────────────
 // Query: ?assetId=asset-1 &driverId=driver-1 &from=2024-01-01 &to=2024-12-31
+//        &page=1 &pageSize=20 &nopage=true
+//
+// Modos:
+//   - default (paginado): devuelve { data, total, page, pageSize, totalPages }.
+//   - nopage=true:        devuelve todos los entries SIN paginar, manteniendo
+//                         el shape `{ data, total }` (sin page/pageSize).
+//                         Se usa para KPIs, FuelCharts, FuelCalendarBreakdown
+//                         y exports a PDF/Excel — features que necesitan el
+//                         dataset completo del filtro aplicado.
 
 router.get('/', requireModule('combustible'), async (req, res, next) => {
   try {
     const companyId = req.companyId!;
-    const { assetId, driverId, from, to } = req.query;
+    const { assetId, driverId, from, to, nopage } = req.query;
 
-    let rows = await db
-      .select()
-      .from(companyFuelEntries)
-      .where(eq(companyFuelEntries.companyId, companyId))
-      .orderBy(companyFuelEntries.date);
-
+    // WHERE compartido entre SELECT (paginado o no) y COUNT(*).
+    const conds = [eq(companyFuelEntries.companyId, companyId)];
     if (assetId && typeof assetId === 'string') {
-      const parsedAssetId = parseIdFlexible('asset', assetId);
-      rows = rows.filter((f) => f.assetId === parsedAssetId);
+      try {
+        const parsedAssetId = parseIdFlexible('asset', assetId);
+        conds.push(eq(companyFuelEntries.assetId, parsedAssetId));
+      } catch {
+        conds.push(eq(companyFuelEntries.id, -1));
+      }
     }
-
     if (driverId && typeof driverId === 'string') {
-      const parsedDriverId = parseIdFlexible('driver', driverId);
-      rows = rows.filter((f) => f.driverId === parsedDriverId);
+      try {
+        const parsedDriverId = parseIdFlexible('driver', driverId);
+        conds.push(eq(companyFuelEntries.driverId, parsedDriverId));
+      } catch {
+        conds.push(eq(companyFuelEntries.id, -1));
+      }
     }
-
     if (from && typeof from === 'string') {
-      rows = rows.filter((f) => f.date >= from);
+      conds.push(gte(companyFuelEntries.date, from));
     }
-
     if (to && typeof to === 'string') {
-      rows = rows.filter((f) => f.date <= to);
+      conds.push(lte(companyFuelEntries.date, to));
     }
+    const where = and(...conds);
 
-    // ── Enrichment: cargar nombres de activos ─────────────────────────────────
+    // Catálogo auxiliar (no se pagina, se usa para dropdowns).
     const assetsRows = await db
       .select({ id: companyAssets.id, plate: companyAssets.plate, brand: companyAssets.brand, model: companyAssets.model })
       .from(companyAssets)
@@ -94,9 +106,41 @@ router.get('/', requireModule('combustible'), async (req, res, next) => {
 
     const assetMap = new Map(assetsRows.map(a => [a.id, { plate: a.plate, brand: a.brand, model: a.model }]));
 
+    if (nopage === 'true') {
+      // Modo "all": traer todo el dataset filtrado, sin paginar.
+      const rows = await db
+        .select()
+        .from(companyFuelEntries)
+        .where(where)
+        .orderBy(desc(companyFuelEntries.date));
+      res.json({
+        data: rows.map(f => serializeFuel(f, assetMap.get(f.assetId))),
+        total: rows.length,
+        assets: assetsRows.map(a => ({
+          id: toId('asset', a.id),
+          plate: a.plate,
+          brand: a.brand,
+          model: a.model,
+        })),
+      });
+      return;
+    }
+
+    // Modo paginado.
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
+    const [rows, countRow] = await Promise.all([
+      db.select().from(companyFuelEntries).where(where)
+        .orderBy(desc(companyFuelEntries.date)).limit(pageSize).offset(offset),
+      db.select({ value: sql<number>`cast(count(*) as int)` }).from(companyFuelEntries).where(where),
+    ]);
+    const total = countRow?.[0]?.value ?? 0;
     res.json({
-      data: rows.map(f => serializeFuel(f, assetMap.get(f.assetId))),
-      total: rows.length,
+      ...buildPageResponse(
+        rows.map(f => serializeFuel(f, assetMap.get(f.assetId))),
+        total,
+        page,
+        pageSize,
+      ),
       assets: assetsRows.map(a => ({
         id: toId('asset', a.id),
         plate: a.plate,
@@ -212,7 +256,7 @@ router.post(
     } catch (err) {
       next(err);
     }
-  }
+  } 
 );
 
 // ─── PUT /company/:id/fuel/:fuelId ────────────────────────────────────────────

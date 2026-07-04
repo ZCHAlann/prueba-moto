@@ -15,7 +15,7 @@ import {
   useChecklistCategories, type ChecklistCategory,
   type CadenceKind, type ScopeKind,
 } from "../../../hooks/useChecklistCategories";
-import { useCompanyUsers } from "../../../hooks/useCompanyUsers";
+import { useChecklistFormOptions } from "../../../hooks/useFormOptions";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { usePermissions } from "../../../hooks/usePermissions";
 
@@ -367,7 +367,7 @@ type PlantillaInput = {
   targetUserIds?: string[];
   cadenceKind?: CadenceKind;
   cadenceDays?: number | null;
-  windowDays?: number;
+  windowDays?: number | null;
   scopeKind?: ScopeKind;
   scopeAssetType?: string | null;
   scopeSiteId?: number | null;
@@ -400,9 +400,11 @@ function PlantillaEditorWizard({ target, onClose, onCreate, onUpdate }: Plantill
   const [targetUserIds, setTargetUserIds] = useState<string[]>([]);
   const [userSearch, setUserSearch] = useState("");
   const [cadenceKind, setCadenceKind] = useState<CadenceKind>("none");
-  const [cadenceDays, setCadenceDays] = useState<number>(7);
-  const [windowDays, setWindowDays] = useState<number>(7);
-  const [scopeKind, setScopeKind] = useState<ScopeKind>("pick");
+  // `null` significa "vacío en la UI → el admin aún no definió la cadencia".
+  // Antes arrancaba en 7, lo que impedía distinguir "placeholder" de "7 real".
+  const [cadenceDays, setCadenceDays] = useState<number | null>(null);
+  const [windowDays, setWindowDays]   = useState<number | null>(null);
+  const [scopeKind, setScopeKind]     = useState<ScopeKind>("pick");
   const [scopeAssetType, setScopeAssetType] = useState<string>("Vehiculo");
   const [scopeSiteId, setScopeSiteId] = useState<number | null>(null);
   const [items, setItems] = useState<string[]>([]);
@@ -411,13 +413,14 @@ function PlantillaEditorWizard({ target, onClose, onCreate, onUpdate }: Plantill
   const [saving, setSaving] = useState(false);
   const [stepError, setStepError] = useState<string | null>(null);
 
-  const { users: companyUsers } = useCompanyUsers();
+  const { data: formOptions } = useChecklistFormOptions();
+  const companyUsers = formOptions?.users ?? [];
 
   useEffect(() => {
     if (target?.kind === "create") {
       setName(""); setDescription("");
       setTargetRoles([]); setTargetUserIds([]); setUserSearch("");
-      setCadenceKind("none"); setCadenceDays(7); setWindowDays(7);
+      setCadenceKind("none"); setCadenceDays(null); setWindowDays(null);
       setScopeKind("pick"); setScopeAssetType("Vehiculo"); setScopeSiteId(null);
       setItems([]); setDraftItem(""); setItemsTouched(false);
       setStep(0); setStepError(null);
@@ -428,8 +431,8 @@ function PlantillaEditorWizard({ target, onClose, onCreate, onUpdate }: Plantill
       setTargetUserIds([...target.plantilla.targetUserIds]);
       setUserSearch("");
       setCadenceKind(target.plantilla.cadenceKind);
-      setCadenceDays(target.plantilla.cadenceDays ?? 7);
-      setWindowDays(target.plantilla.windowDays);
+      setCadenceDays(target.plantilla.cadenceDays ?? null);
+      setWindowDays(target.plantilla.windowDays ?? null);
       setScopeKind(target.plantilla.scopeKind);
       setScopeAssetType(target.plantilla.scopeAssetType ?? "Vehiculo");
       setScopeSiteId(target.plantilla.scopeSiteId);
@@ -461,13 +464,54 @@ function PlantillaEditorWizard({ target, onClose, onCreate, onUpdate }: Plantill
   const handleToggleUser = (id: string) =>
     setTargetUserIds((prev) => prev.includes(id) ? prev.filter((u) => u !== id) : [...prev, id]);
 
+  // jun 2026 — fix: el buscador de usuarios no funcionaba cuando el término
+  // tenía acentos (ej. "jose" vs "José"), o cuando solo coincidía contra
+  // `firstName`/`lastName` sin tocar `fullName`/`username`. Ahora:
+  //   - normaliza acentos (NFD + strip combining marks) antes de comparar;
+  //   - matchea contra fullName, firstName, lastName, username, role;
+  //   - si NO hay query, muestra los primeros 20 + un footer que avisa
+  //     "hay más — usá el buscador";
+  //   - siempre prioriza mostrar los usuarios YA SELECCIONADOS aunque
+  //     no matcheen con la query actual (sino desaparecen al filtrar).
   const filteredUsers = useMemo(() => {
-    const q = userSearch.trim().toLowerCase();
-    if (!q) return companyUsers.slice(0, 20);
-    return companyUsers
-      .filter((u) => `${u.username ?? ""} ${u.email ?? ""}`.toLowerCase().includes(q))
-      .slice(0, 20);
-  }, [companyUsers, userSearch]);
+    const norm = (s: string | null | undefined) =>
+      (s ?? "")
+        .toString()
+        .normalize("NFD")
+        .replace(/\p{Diacritic}/gu, "")
+        .toLowerCase()
+        .trim();
+    const q = norm(userSearch);
+    const ranked = (u: typeof companyUsers[number]) => targetUserIds.includes(String(u.id)) ? 0 : 1;
+    if (!q) {
+      const items = companyUsers.slice(0, 20);
+      return {
+        items,
+        total: companyUsers.length,
+        pageLimit: 20,
+        truncated: companyUsers.length > 20,
+      };
+    }
+    const matches = companyUsers
+      .filter((u) => {
+        const hay = [
+          u.fullName,
+          u.firstName,
+          u.lastName,
+          u.username,
+          u.role,
+        ].map(norm).join(" | ");
+        return hay.includes(q);
+      })
+      .slice()
+      .sort((a, b) => ranked(a) - ranked(b));
+    return {
+      items: matches.slice(0, 50),
+      total: matches.length,
+      pageLimit: 50,
+      truncated: matches.length > 50,
+    };
+  }, [companyUsers, userSearch, targetUserIds]);
 
   function canAdvanceFromStep(s: number): { ok: boolean; reason?: string } {
     if (s === 0) {
@@ -642,9 +686,9 @@ function PlantillaEditorWizard({ target, onClose, onCreate, onUpdate }: Plantill
                             className="h-8 w-full rounded-lg border border-gray-200 bg-white pl-7 pr-3 text-xs text-gray-800 placeholder:text-gray-400 focus:border-emerald-400 focus:outline-none dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-white" />
                         </div>
                         <div className="mt-1.5 max-h-40 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50/40 p-1 dark:border-white/[0.04] dark:bg-white/[0.02]">
-                          {filteredUsers.length === 0
+                          {filteredUsers.items.length === 0
                             ? <p className="px-2 py-1.5 text-[11px] text-gray-400">Sin resultados.</p>
-                            : filteredUsers.map((u) => {
+                            : filteredUsers.items.map((u) => {
                                 const id = String(u.id);
                                 const active = targetUserIds.includes(id);
                                 return (
@@ -654,15 +698,68 @@ function PlantillaEditorWizard({ target, onClose, onCreate, onUpdate }: Plantill
                                         ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
                                         : "hover:bg-gray-100 dark:hover:bg-white/[0.05] text-gray-700 dark:text-gray-300"
                                     }`}>
-                                    <span className="truncate">{u.username || u.email}</span>
+                                    <span className="flex flex-col truncate">
+                                      <span className="truncate">{u.fullName || u.username}</span>
+                                      {u.username && u.fullName && u.username !== u.fullName && (
+                                        <span className="truncate text-[10px] text-gray-400">@{u.username} · {u.role}</span>
+                                      )}
+                                    </span>
                                     {active && <Check size={11} />}
                                   </button>
                                 );
                               })
                           }
                         </div>
+                        {filteredUsers.truncated && (
+                          <p className="mt-1 text-[10px] text-gray-500">
+                            Mostrando hasta {filteredUsers.pageLimit} de {filteredUsers.total} coincidencias. Ajustá la búsqueda para acotar el resultado.
+                          </p>
+                        )}
+                        {/* Chips de usuarios ya seleccionados. Removibles */}
+                        {/* individualmente clickeando la X. Esto resuelve el gap */}
+                        {/* de UX cuando hay selección múltiple y el admin quiere */}
+                        {/* sacar a uno específico de los tildados. */}
                         {targetUserIds.length > 0 && (
-                          <p className="mt-1 text-[10px] text-gray-500">{targetUserIds.length} {targetUserIds.length === 1 ? "usuario seleccionado" : "usuarios seleccionados"}</p>
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {targetUserIds.map((id) => {
+                              const u = companyUsers.find((x) => String(x.id) === id);
+                              if (!u) {
+                                // Usuario ya no está disponible en la lista (dado de baja, etc).
+                                return (
+                                  <span
+                                    key={id}
+                                    className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300"
+                                  >
+                                    usuario #{id}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleUser(id)}
+                                      aria-label="Quitar selección"
+                                      className="ml-0.5 rounded-full p-0.5 hover:bg-rose-100 dark:hover:bg-rose-500/20"
+                                    >
+                                      <X size={10} />
+                                    </button>
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span
+                                  key={id}
+                                  className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+                                >
+                                  {u.fullName || u.username}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleUser(id)}
+                                    aria-label={`Quitar a ${u.fullName || u.username}`}
+                                    className="ml-0.5 rounded-full p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-500/20"
+                                  >
+                                    <X size={10} />
+                                  </button>
+                                </span>
+                              );
+                            })}
+                          </div>
                         )}
                       </div>
                     </motion.div>
@@ -695,14 +792,28 @@ function PlantillaEditorWizard({ target, onClose, onCreate, onUpdate }: Plantill
                           <div className="grid grid-cols-2 gap-2">
                             <div>
                               <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-500">Cada cuántos días</label>
-                              <input type="number" min={1} max={365} value={cadenceDays}
-                                onChange={(e) => setCadenceDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))}
+                              <input type="number" min={1} max={365}
+                                value={cadenceDays ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === "") { setCadenceDays(null); return; }
+                                  const n = Math.max(1, Math.min(365, Number(v) || 1));
+                                  setCadenceDays(n);
+                                }}
+                                placeholder="Ej: 7"
                                 className="h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 focus:border-emerald-400 focus:outline-none dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-white" />
                             </div>
                             <div>
                               <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-500">Ventana (días)</label>
-                              <input type="number" min={1} max={60} value={windowDays}
-                                onChange={(e) => setWindowDays(Math.max(1, Math.min(60, Number(e.target.value) || 1)))}
+                              <input type="number" min={1} max={60}
+                                value={windowDays ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === "") { setWindowDays(null); return; }
+                                  const n = Math.max(1, Math.min(60, Number(v) || 1));
+                                  setWindowDays(n);
+                                }}
+                                placeholder="Ej: 7"
                                 className="h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 focus:border-emerald-400 focus:outline-none dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-white" />
                             </div>
                           </div>
@@ -710,12 +821,19 @@ function PlantillaEditorWizard({ target, onClose, onCreate, onUpdate }: Plantill
                         {cadenceKind === "weekly" && (
                           <div>
                             <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-500">Ventana (días desde el lunes)</label>
-                            <input type="number" min={1} max={7} value={windowDays}
-                              onChange={(e) => setWindowDays(Math.max(1, Math.min(7, Number(e.target.value) || 1)))}
+                            <input type="number" min={1} max={7}
+                              value={windowDays ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === "") { setWindowDays(null); return; }
+                                const n = Math.max(1, Math.min(7, Number(v) || 1));
+                                setWindowDays(n);
+                              }}
+                              placeholder="Ej: 7"
                               className="h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 focus:border-emerald-400 focus:outline-none dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-white" />
                           </div>
                         )}
-                        {cadenceKind !== "none" && (
+                        {cadenceKind !== "none" && windowDays != null && (
                           <p className="text-[11px] text-gray-500 dark:text-gray-400">
                             El usuario tendrá {windowDays} {windowDays === 1 ? "día" : "días"} para completarla antes de que venza.
                           </p>

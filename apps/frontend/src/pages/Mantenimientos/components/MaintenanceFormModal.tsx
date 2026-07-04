@@ -19,8 +19,7 @@ import {
 } from "../../../hooks/useMaintenancesV2";
 import { useWorkshops } from "../../../hooks/useWorkshops";
 import { useSuppliers } from "../../../hooks/useSuppliers";
-import { useAssets } from "../../../hooks/useAssets";
-import { useCompanyUsers } from "../../../hooks/useCompanyUsers";
+import { useMaintenanceFormOptions } from "../../../hooks/useFormOptions";
 import { usePermissions } from "../../../hooks/usePermissions";
 import { useAuth } from "../../../context/AuthContext";
 
@@ -107,10 +106,11 @@ export function MaintenanceFormModal({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadingIdx, setUploadingIdx] = useState<number | null>(null);
 
-  const { assets: assetsList = [] } = useAssets();
+  const { data: formOptions } = useMaintenanceFormOptions();
+  const assetsList = formOptions?.assets ?? [];
+  const companyUsers = formOptions?.users ?? [];
   const { workshops = [] } = useWorkshops();
   const { suppliers = [] } = useSuppliers();
-  const { users: companyUsers = [] } = useCompanyUsers();
 
   // ─── Form state ──────────────────────────────────────────────────────────
   const isEditing = !!maintenance;
@@ -567,9 +567,9 @@ export function MaintenanceFormModal({
                   type="number"
                   min={0}
                   placeholder="0"
-                  value={laborCost}
+                  value={laborCost === 0 ? "" : laborCost}
                   disabled={isReadOnly}
-                  onChange={(e) => setLaborCost(Number(e.target.value))}
+                  onChange={(e) => setLaborCost(e.target.value === "" ? 0 : Number(e.target.value))}
                   className={inputCls}
                 />
                 <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
@@ -607,10 +607,10 @@ export function MaintenanceFormModal({
               >
                 <option value="">— Sin asignar (libre) —</option>
                 {companyUsers
-                  .filter((u) => u.role === "operador" && u.status === "active")
+                  .filter((u) => u.role === "operador")
                   .map((u) => (
                     <option key={u.id} value={u.id}>
-                      {u.username}{u.email ? ` — ${u.email}` : ""}
+                      {u.fullName || u.username}
                     </option>
                   ))}
               </select>
@@ -680,9 +680,9 @@ export function MaintenanceFormModal({
                       />
                       <input
                         type="number" min={0} placeholder="$ unit."
-                        value={it.unitCost}
+                        value={it.unitCost === 0 ? "" : it.unitCost}
                         disabled={isReadOnly}
-                        onChange={(e) => updateItem(idx, { unitCost: Number(e.target.value) })}
+                        onChange={(e) => updateItem(idx, { unitCost: e.target.value === "" ? 0 : Number(e.target.value) })}
                         className={`${inputCls} md:col-span-2 py-1.5`}
                       />
                       <button

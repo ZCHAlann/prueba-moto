@@ -7,12 +7,14 @@
 //  - WebSocket en tiempo real (escucha { type: 'notification' })
 
 import { useEffect, useRef, useState } from "react";
+import type { ReactElement } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, CheckCheck, Clock, Trash2, X } from "lucide-react";
 import { useNotifications, useUnreadCount, useMarkRead, useMarkAllRead, useDeleteNotification } from "../../../hooks/useNotifications";
 import { useAuth } from "../../../context/AuthContext";
 import { toast } from "sonner";
+import { nativeNotify, playBeep, ensurePermission, permissionState } from "../../../lib/native-notify";
 
 interface Props {
   /** Empresa actual (para construir el WS) */
@@ -196,12 +198,33 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
           try {
             const msg = JSON.parse(ev.data);
             if (msg?.type === 'notification') {
-              // Sonido opcional
-              try { new Audio('/notification.mp3').play().catch(() => {}); } catch {}
+              // ── jun 2026 — sonido corto vía WebAudio (no depende
+              //    de un archivo .mp3). Funciona aunque el browser no
+              //    tenga la Notification API nativa concedida. ──
+              playBeep();
+
+              // ── Notificación NATIVA del browser ──
+              // Si el usuario concedió permiso, sale en el SO aunque
+              // la pestaña esté en background. Al hacer click,
+              // llevamos foco a la pestaña y navegamos al destino
+              // calculado en el backend (routeForKind).
+              if (permissionState() === 'granted') {
+                const where = msg.data?.payload?.route
+                  || msg.data?.href
+                  || msg.data?.url;
+                nativeNotify({
+                  title: msg.data?.title ?? 'Notificación',
+                  body: msg.data?.body ?? undefined,
+                  tag: msg.data?.id ? `aplismart-${msg.data.id}` : undefined,
+                  url: where,
+                });
+              }
+
               // Refetch de la lista y del contador.
               refetch();
               qc?.invalidateQueries?.({ queryKey: ['notifications-unread'] });
-              // Toast
+
+              // Toast in-page (siempre, adicional a la nativa).
               const label = KIND_META[msg.data?.kind]?.label ?? 'Notificación';
               toast(`${label}: ${msg.data?.title ?? ''}`, {
                 description: msg.data?.body,
@@ -280,6 +303,12 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
                 </button>
               </div>
             </div>
+            {/* ── jun 2026 — activar notificaciones nativas del navegador
+                  (estilo Chrome "esta página quiere enviarte notificaciones").
+                  Aparece sólo si el permiso está en "default" (todavía no
+                  preguntó) o "denied" (rechazado). Si está granted, no
+                  mostramos nada porque ya está funcionando. ── */}
+            <NativeNotifBanner onChange={() => setOpen(o => o)} />
             <div className="max-h-[420px] overflow-y-auto">
               {items.length === 0 ? (
                 <div className="px-4 py-8 text-center text-sm text-gray-500">
@@ -371,6 +400,67 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ── Sub-componente: banner para activar notificaciones nativas ────────
+// jun 2026 — usa el helper nativeNotify para pedir permiso del browser
+// (estilo Chrome "esta página quiere enviarte notificaciones"). Una
+// vez granted el estado vive en el browser; si el usuario lo rechaza,
+// el banner cambia de texto pero no vuelve a preguntar (es decisión
+// del usuario, no del sitio).
+function NativeNotifBanner(_: { onChange: () => void }): ReactElement | null {
+  const [perm, setPerm] = useState<ReturnType<typeof permissionState>>(permissionState());
+  const [busy, setBusy] = useState(false);
+
+  // Si el permiso es "granted" u "unsupported", no mostramos nada.
+  if (perm === 'granted' || perm === 'unsupported') return null;
+
+  const request = async () => {
+    setBusy(true);
+    try {
+      const result = await ensurePermission();
+      setPerm(result);
+      if (result === 'granted') {
+        // Sonido + nativa inmediata para confirmar al usuario.
+        playBeep();
+        nativeNotify({
+          title: 'Notificaciones activadas',
+          body: 'Vas a recibir avisos aunque tengas la pestaña en segundo plano.',
+          tag: 'aplismart-welcome',
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (perm === 'denied') {
+    return (
+      <div className="px-4 py-2 bg-gray-50 dark:bg-white/[0.03] border-b border-gray-200 dark:border-white/[0.06] text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+        Las notificaciones del navegador están bloqueadas para este sitio. Para
+        activarlas, hacé click en el candado de la barra de direcciones y permitilas
+        manualmente.
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 py-2.5 bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200 dark:border-amber-500/30 flex items-center gap-2.5">
+      <Bell size={14} className="text-amber-700 dark:text-amber-300 shrink-0" />
+      <div className="flex-1 text-xs text-amber-900 dark:text-amber-100 leading-snug">
+        Activá las notificaciones del navegador para recibirlas aunque estés en
+        otra pestaña.
+      </div>
+      <button
+        type="button"
+        onClick={request}
+        disabled={busy}
+        className="text-xs font-semibold px-3 py-1 rounded-md bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 transition-colors"
+      >
+        {busy ? 'Pidiendo…' : 'Activar'}
+      </button>
     </div>
   );
 }

@@ -72,6 +72,8 @@ export type WizardData = {
   signatureRespUrl:     string | null;
   // PDF
   pdfUrl: string | null;
+  logisticsName: string;
+  logisticsDni:  string;
   // ── Campos específicos del acta de DEVOLUCIÓN (solo finalize) ─────────────
   returnOdometerPhotoUrl: string | null;
   /** File local del odómetro al regreso, antes de subir. */
@@ -132,7 +134,7 @@ const DEFAULT_ACCESORIOS: AccesoriosState = {
 };
 
 function buildInitialData(
-  driver: { firstName: string; lastName: string; phone?: string | null },
+  driver: { firstName: string; lastName: string; phone?: string | null; dni?: string | null },
   asset: {
     plate?: string | null;
     brand?: string | null;
@@ -144,6 +146,7 @@ function buildInitialData(
   assignmentCount: number,
   existing?: ExistingHandoverData | null,
   finalizeMode = false,
+  currentUser?: { name?: string | null; dni?: string | null } | null,
 ): WizardData {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -160,7 +163,11 @@ function buildInitialData(
     actaArea:      existing?.actaArea      ?? "",
     companyName,
     driverName:    `${driver.firstName} ${driver.lastName}`,
-    driverDni:     existing?.driverDni     ?? "",
+    // jun 2026 — autorrellenamos el DNI desde el perfil del conductor.
+    // Prioridad: existingData (acta editada) > driver.dni (columna
+    // dedicada del conductor en company_drivers, migración 0040).
+    // Antes había que tipearlo a mano cada vez.
+    driverDni:     existing?.driverDni     ?? driver.dni ?? "",
     driverPhone:   existing?.driverPhone   ?? driver.phone ?? "",
     driverRole:    existing?.driverRole    ?? "",
     vehiclePlate:  asset.plate  ?? "",
@@ -185,6 +192,8 @@ function buildInitialData(
     signatureRespDataUrl: existing?.signatureRespUrl ?? null,
     signatureRespUrl:     existing?.signatureRespUrl ?? null,
     pdfUrl: existing?.handoverUrl ?? null,
+    logisticsName: currentUser?.name ?? "",
+    logisticsDni:  currentUser?.dni  ?? "",
     returnOdometerPhotoUrl: existing?.returnOdometerPhotoUrl ?? null,
     returnOdometerPhoto:    null,
     multasText:            existing?.multasText ?? "",
@@ -194,7 +203,7 @@ function buildInitialData(
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useHandoverWizard(
-  driver: { firstName: string; lastName: string; phone?: string | null } | null,
+  driver: { firstName: string; lastName: string; phone?: string | null; dni?: string | null } | null,
   asset: {
     plate?: string | null;
     brand?: string | null;
@@ -218,6 +227,7 @@ export function useHandoverWizard(
       assignmentCount,
       existing,
       finalizeMode,
+      { name: session?.name ?? null, dni: session?.dni ?? null },
     )
   );
   const [uploading, setUploading] = useState(false);

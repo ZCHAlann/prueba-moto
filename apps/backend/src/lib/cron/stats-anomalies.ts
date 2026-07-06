@@ -47,10 +47,18 @@ export function startStatsAnomaliesCron() {
  *   - Tests
  */
 export async function runSweep(companyId?: number): Promise<{ companyId: number; inserted: number; updated: number; resolved: number }> {
-  // Si no se pasa companyId, iteramos todas las empresas activas
+  // Si no se pasa companyId, iteramos todas las empresas activas.
+  // jun 2026 — el filtro es por `companies.status = 'active'`, NO por
+  // `isActive` (esa columna NO existe en `companies`, vive en `platform_plans`).
+  // Antes había un `eq(companies.isActive, true)` que generaba SQL inválido
+  // (`where = $1`) porque Drizzle no encuentra la columna y serializa el lado
+  // izquierdo como string vacío.
   const target = companyId
     ? [{ id: companyId }]
-    : await db.select({ id: companies.id }).from(companies).where(eq(companies.isActive, true));
+    : await db
+        .select({ id: companies.id })
+        .from(companies)
+        .where(eq(companies.status, 'active'));
 
   let totalInserted = 0, totalUpdated = 0, totalResolved = 0;
 

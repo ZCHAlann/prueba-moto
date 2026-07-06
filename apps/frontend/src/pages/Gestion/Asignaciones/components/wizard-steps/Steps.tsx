@@ -28,6 +28,20 @@ function validateName(value: string): ValidationError {
   return /^[A-Za-zÁÉÍÓÚáéíóúÑñÜü\s'-]+$/.test(value) ? null : "No puede contener números ni caracteres especiales.";
 }
 
+// jun 2026 — validación inline de placa. Antes el campo Placa en
+// `Step3VehicleData` no tenía `validate`, así que si tipeabas algo como
+// "SADA" el `validateStep3` del wizard devolvía error, el botón "Siguiente"
+// quedaba disabled (canNext = !stepError), y NO aparecía ningún mensaje —
+// la UI se quedaba congelada sin contexto. Ahora el campo muestra el
+// error rojo abajo de sí mismo apenas pierde foco el usuario.
+const PLATE_PATTERN_INLINE = /^[A-Z]{3}-?\d{3,4}$/;
+function validatePlate(value: string): ValidationError {
+  if (!value) return "La placa es obligatoria.";
+  return PLATE_PATTERN_INLINE.test(value.toUpperCase())
+    ? null
+    : "Formato de placa inválido. Debe ser como ABC-1234 o ABC1234.";
+}
+
 // ─── Shared field components ──────────────────────────────────────────────────
 
 function Field({
@@ -224,7 +238,7 @@ export function Step3VehicleData({
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-4">
-        <Field label="Placa"             value={data.vehiclePlate}    onChange={(v) => onChange("vehiclePlate", v)} toUpperCase maxLength={8} />
+        <Field label="Placa"             value={data.vehiclePlate}    onChange={(v) => onChange("vehiclePlate", v)} toUpperCase maxLength={8} required validate={validatePlate} />
         <Field label="Marca"             value={data.vehicleBrand}    onChange={(v) => onChange("vehicleBrand", v)} maxLength={80} />
         <Field label="Modelo"            value={data.vehicleModel}    onChange={(v) => onChange("vehicleModel", v)} maxLength={80} />
         <Field label="Color"             value={data.vehicleColor}    onChange={(v) => onChange("vehicleColor", v)} maxLength={40} />

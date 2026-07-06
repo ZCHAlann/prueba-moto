@@ -106,9 +106,9 @@ export const platformUsers = pgTable('platform_users', {
   failedLoginAttempts: integer('failed_login_attempts').default(0),
   lockedUntil:        timestamp('locked_until'),
   photoUrl: text('photo_url'),
+  dni: varchar('dni', { length: 20 }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-  
 });
 
 // ─────────────────────────────────────────────
@@ -121,6 +121,10 @@ export const companyUsers = pgTable(
     id: serial('id').primaryKey(),
     companyId: integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
     email: varchar('email', { length: 160 }).notNull(),
+    // jun 2026 — cédula/DNI del usuario. Migración 0040.
+    // Si está seteado, es la fuente de verdad para PDFs / reportes
+    // (más rápido de leer que profileData->>'documentNumber').
+    dni: varchar('dni', { length: 20 }),
     username: varchar('username', { length: 80 }).notNull(),
     passwordHash: text('password_hash').notNull(),
     role: varchar('role', { length: 40 }).notNull(),

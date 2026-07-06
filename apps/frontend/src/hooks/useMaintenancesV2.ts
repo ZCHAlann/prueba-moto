@@ -127,6 +127,11 @@ export interface Maintenance {
    *  que reabrió este mantenimiento. Permite trazabilidad sin releer
    *  la tabla de eventos. NULL si nunca fue reautorizado. */
   lastReauthorizationId?: string | null;
+  /** jun 2026 — ISO del momento en que se aprobó esa reautorización
+   *  (`updated_at` de la fila del mantenimiento al aprobar). El backend
+   *  lo expone junto a `lastReauthorizationId` para que el banner del
+   *  drawer pueda mostrar la fecha sin hacer una segunda query. */
+  lastReauthorizationAt?: string | null;
 }
 
 /** Acción solicitada en una reautorización:

@@ -33,6 +33,12 @@ export type AuthSession = {
   scope: "operacion" | "plataforma";
   companyName: string;
   photoUrl: string | null;
+  /** jun 2026 — DNI/cédula del usuario logueado. Lo emite el backend en
+   *  /auth/session leyendo la columna `dni` de `company_users` /
+   *  `platform_users` (migración 0040). Sirve para que el wizard del
+   *  acta PDF de asignaciones autorrellene la firma del responsable
+   *  (Departamento Logístico) sin tipear a mano. */
+  dni: string | null;
   /** Timestamp del último cambio de permisos en BD. Lo emite el backend
    *  en `/auth/session`. Sirve para que el frontend invalide la sesión
    *  si el JWT tiene una versión vieja. */
@@ -86,6 +92,7 @@ function buildSession(data: Record<string, unknown>): AuthSession {
     permissions:          (data.permissions as PermissionMap) ?? {},
     roleLabel:            roleLabelMap[data.role as string] ?? (data.role as string),
     photoUrl:             (data.photoUrl as string | null) ?? null,
+    dni:                  (data.dni as string | null) ?? null,
     permissionsUpdatedAt: (data.permissionsUpdatedAt as string | null) ?? null,
     token:                (data.token as string | undefined) ?? null,
   };

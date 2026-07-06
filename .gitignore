@@ -88,3 +88,5 @@ apps/backend/migrations/*
 apps/backend/scripts/*
 apps/backend/migrations/**
 .mavis/**
+scripts/
+apps/backend/drizzle/

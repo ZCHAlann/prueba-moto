@@ -487,6 +487,16 @@ function serializeMaintenance(m: any, items: any[], events: any[] = []) {
     reprogramReason: m.reprogramReason ?? null,
     reprogrammedAt: m.reprogrammedAt ?? null,
     reprogramCount: m.reprogramCount ?? 0,
+    // jun 2026 — trazabilidad de reautorización. Set en
+    // POST /:id/approve-reauth (ver línea ~2310). El front usa esto
+    // para mostrar el chip "Reautorizado" similar a "Reprog.".
+    // Si está null, el mantenimiento NO pasó por una reautorización.
+    lastReauthorizationId: m.lastReauthorizationId != null
+                              ? toId('reauth', m.lastReauthorizationId)
+                              : null,
+    lastReauthorizationAt:  m.lastReauthorizationId != null
+                              ? (m.updatedAt instanceof Date ? m.updatedAt.toISOString() : String(m.updatedAt))
+                              : null,
     createdAt:     m.createdAt,
     updatedAt:     m.updatedAt,
     items,
@@ -2438,6 +2448,37 @@ router.post(
         }
       } catch (err) {
         console.warn('[maintenances] notify reauth_decided (deny) falló:', (err as Error).message);
+      }
+
+      // jun 2026 — limpiar `last_reauthorization_id` del mantenimiento si
+      // esta es la decisión más reciente y NO hay una aprobación posterior.
+      // El chip "Reautorizado" debe representar el estado vigente de
+      // decisión, no el histórico: si la última decisión es un rechazo,
+      // no mostramos el chip verde.
+      // Lógica:
+      //   1. ¿Hay alguna reaut aprobada para este mantenimiento
+      //      cuyo `decided_at` sea MAYOR al `decided_at` de la rechazada
+      //      que acabamos de procesar? Si sí → esa aprobación gana, no tocar.
+      //   2. Si no → la última decisión del mantenimiento es este rechazo →
+      //      `last_reauthorization_id = NULL`.
+      const laterApproved = await db
+        .select({ id: companyMaintenanceReauthorizations.id })
+        .from(companyMaintenanceReauthorizations)
+        .where(and(
+          eq(companyMaintenanceReauthorizations.maintenanceId, id),
+          eq(companyMaintenanceReauthorizations.status, 'Aprobada'),
+          // Decidida después de esta rechazada (o pendiente, decided_at NULL)
+          or(
+            gte(companyMaintenanceReauthorizations.decidedAt, now),
+            isNull(companyMaintenanceReauthorizations.decidedAt),
+          )!,
+        ))
+        .limit(1);
+      if (laterApproved.length === 0) {
+        await db
+          .update(companyMaintenanceRecords)
+          .set({ lastReauthorizationId: null, updatedAt: now })
+          .where(eq(companyMaintenanceRecords.id, id));
       }
 
       res.json(serializeReauth(updatedReauth));

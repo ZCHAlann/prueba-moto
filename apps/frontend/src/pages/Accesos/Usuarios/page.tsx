@@ -176,6 +176,11 @@ type UserFormState = {
   site: string;
   area: string;
   documentNumber: string;
+  /** jun 2026 — campo de cédula/DNI en columna dedicada (company_users.dni).
+   *  En el form se mantiene sincronizado con `documentNumber` (que sigue
+   *  viajando en profileData por compat). El backend prioriza este campo
+   *  si llega; si no, mantiene el de profileData.documentNumber. */
+  dni: string;
   notes: string;
   photoUrl: string | null;
   // ── Datos del conductor (solo se usan cuando role === "conductor") ──
@@ -212,6 +217,7 @@ function createEmptyForm(
     site: defaultSiteName,
     area: "",
     documentNumber: "",
+    dni: "",
     notes: "",
     photoUrl: null,
     licenseNumber: "",
@@ -357,6 +363,9 @@ function formToCreateInput(form: UserFormState, options?: { restrictRoleToConduc
     password: form.password,
     role:     form.role,
     status:   form.status,
+    // jun 2026 — DNI dedicado. Si el form está vacío, mandamos null
+    // para que el backend caiga al profileData.documentNumber.
+    dni:      form.dni.trim() || null,
     modulePermissions,
     profileData: {
       // fullName se conserva por compatibilidad (algunos lugares lo muestran
@@ -393,6 +402,7 @@ function formToUpdateInput(form: UserFormState, options?: { restrictRoleToConduc
     username: form.username.trim().toLowerCase(),
     role:     form.role,
     status:   form.status,
+    dni:      form.dni.trim() || null,
     modulePermissions,
     profileData: {
       fullName:       `${form.fullName.trim()} ${form.lastName.trim()}`.trim(),
@@ -459,6 +469,9 @@ function userToForm(user: CompanyUser, defaultSiteId: string = "", defaultSiteNa
     siteId:         siteId || defaultSiteId,
     area:           String(p.area ?? ""),
     documentNumber: String(p.documentNumber ?? ""),
+    // jun 2026 — backend expone `user.dni` (columna dedicada).
+    // Si viene null (datos legacy sin migrar), caemos a documentNumber.
+    dni:            String(user.dni ?? p.documentNumber ?? ""),
     notes:          String(p.notes ?? ""),
     photoUrl:       user.photoUrl ?? null,
     licenseNumber:  String(p.licenseNumber ?? ""),
@@ -740,6 +753,11 @@ function UserFormModal({
     setErrors((prev) => { const next = { ...prev }; delete next[key]; return next; });
     setForm((prev) => {
       const next = { ...prev, [key]: value };
+      // jun 2026 — sync dni ↔ documentNumber. Mantenemos ambos campos
+      // del form sincronizados para que el form legado (profileData)
+      // y la columna dedicada (dni) tengan el mismo valor siempre.
+      if (key === "documentNumber") next.dni = value;
+      if (key === "dni") next.documentNumber = value;
       if (!user && !usernameTouched && (key === "fullName" || key === "documentNumber")) {
         next.username = autoUsername(
           key === "fullName" ? value : prev.fullName,

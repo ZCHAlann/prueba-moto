@@ -107,6 +107,9 @@ export function useMarkRead() {
       qc.invalidateQueries({ queryKey: ['notifications'] });
       qc.invalidateQueries({ queryKey: ['notifications-unread'] });
     },
+    onError: (err) => {
+      console.error('[useMarkRead] falló:', err);
+    },
   });
 }
 
@@ -120,6 +123,29 @@ export function useMarkAllRead() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['notifications'] });
       qc.invalidateQueries({ queryKey: ['notifications-unread'] });
+    },
+    onError: (err) => {
+      console.error('[useMarkAllRead] falló:', err);
+    },
+  });
+}
+
+// jun 2026 — borrar una notificación propia. Endpoint `DELETE /notifications/:id`
+// añadido en backend, mismo criterio de auth que PATCH read (filtra por
+// userId en el WHERE; si la fila no es del usuario, responde 404).
+export function useDeleteNotification() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      return jsonFetch<{ ok: boolean }>(`/api/company/${companyId}/notifications/${id}`, { method: 'DELETE' });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notifications'] });
+      qc.invalidateQueries({ queryKey: ['notifications-unread'] });
+    },
+    onError: (err) => {
+      console.error('[useDeleteNotification] falló:', err);
     },
   });
 }

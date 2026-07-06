@@ -37,6 +37,10 @@ const COLOR = {
   warnBar:   "#d97706",
   danger:    "#9f1239",
   dangerBar: "#e11d48",
+  // jun 2026 — verde esmeralda para el aviso de reautorización
+  // (mismo tono que el chip del drawer y de la lista de mantenimientos).
+  reauth:    "#047857",
+  reauthBar: "#10b981",
 };
 
 const s = StyleSheet.create({
@@ -315,6 +319,11 @@ function MaintenanceDetailDocument({ m }: { m: Maintenance }) {
               {m.isReprogrammed && (
                 <Badge label={`Reprogramado${m.reprogramCount > 1 ? ` ×${m.reprogramCount}` : ""}`} color={COLOR.warnBar} />
               )}
+              {/* jun 2026 — chip "Reautorizado" en el PDF, mismo color
+                  verde esmeralda que el badge del drawer/lista. */}
+              {m.lastReauthorizationId && (
+                <Badge label="Reautorizado" color={COLOR.reauthBar} />
+              )}
             </View>
           </View>
         </View>
@@ -329,6 +338,26 @@ function MaintenanceDetailDocument({ m }: { m: Maintenance }) {
             <Text style={s.noticeText}>{m.reprogramReason}</Text>
             {m.reprogrammedAt && (
               <Text style={s.noticeMeta}>{fmtDateTime(m.reprogrammedAt)}</Text>
+            )}
+          </View>
+        )}
+
+        {/* jun 2026 — Aviso de reautorización aprobado. Aparece cuando el
+            mantenimiento pasó por el flujo de atrasados (operador pidió
+            reabrir, admin/supervisor aprobó, volvió a Programado).
+            Independiente de la reprogramación: una reaut puede haber sido
+            sólo 'open' (sin nueva fecha) y aún así dejar
+            lastReauthorizationId poblado. */}
+        {m.lastReauthorizationId && (
+          <View style={[s.noticeBox, { borderLeftColor: COLOR.reauthBar }]}>
+            <Text style={[s.noticeTitle, { color: COLOR.reauth }]}>
+              Reautorizado
+            </Text>
+            <Text style={s.noticeText}>
+              El mantenimiento pasó por una solicitud de reautorización aprobada.
+            </Text>
+            {m.lastReauthorizationAt && (
+              <Text style={s.noticeMeta}>Aprobado el {fmtDateTime(m.lastReauthorizationAt)}</Text>
             )}
           </View>
         )}

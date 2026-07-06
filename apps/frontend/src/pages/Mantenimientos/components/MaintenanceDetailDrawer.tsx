@@ -449,6 +449,16 @@ export function MaintenanceDetailDrawer({
                             <RefreshCw size={10} /> En corrección
                           </span>
                         )}
+                        {/* jun 2026 — chip de reautorización. Distinto de
+                            "Re-programado" (éste viene del flujo de atrasados:
+                            operador pidió reabrir, admin aprobó, vuelve a
+                            Programado). Vector CheckCircle2 para diferenciar
+                            visualmente del RefreshCw de reprogramación. */}
+                        {item.lastReauthorizationId && (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200" title={item.lastReauthorizationAt ? `Aprobado el ${fmtDateTime(item.lastReauthorizationAt)}` : "Aprobado"}>
+                            <CheckCircle2 size={10} /> Reautorizado
+                          </span>
+                        )}
                       </div>
                       <h2 className="mt-2 truncate text-lg font-bold text-gray-800 dark:text-white">
                         {item.title ?? "Mantenimiento"}
@@ -493,6 +503,29 @@ export function MaintenanceDetailDrawer({
                       <p className="mt-1 whitespace-pre-wrap text-sm text-amber-900 dark:text-amber-100">{item.reprogramReason}</p>
                       {item.reprogrammedAt && (
                         <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">Reprogramado el {fmtDateTime(item.reprogrammedAt)}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* jun 2026 — Banner de reautorización aprobado. Aparece
+                      cuando el mantenimiento pasó por el flujo de atrasados:
+                      un operador pidió reabrirlo, un admin/supervisor
+                      aprobó la solicitud y volvió a Programado.
+                      Independiente de `isReprogrammed` — una reaut puede
+                      haber sido sólo 'open' (sin nueva fecha) y aún así
+                      dejar lastReauthorizationId poblado. */}
+                  {item.lastReauthorizationId && (
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-700 dark:text-emerald-300">
+                        Reautorizado
+                      </p>
+                      <p className="mt-1 text-sm text-emerald-900 dark:text-emerald-100">
+                        El mantenimiento pasó por una solicitud de reautorización aprobada.
+                      </p>
+                      {item.lastReauthorizationAt && (
+                        <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300">
+                          Aprobado el {fmtDateTime(item.lastReauthorizationAt)}
+                        </p>
                       )}
                     </div>
                   )}

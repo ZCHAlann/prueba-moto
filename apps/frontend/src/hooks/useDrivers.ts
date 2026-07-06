@@ -57,6 +57,12 @@ export type ApiDriver = {
   site: string;
   notes: string;
   photoUrl: string | null;
+  // jun 2026 — cédula/DNI (migración 0040). El backend lo devuelve priorizando
+  // `company_drivers.dni` con fallback a `profileData.documentNumber` del user
+  // asociado. Antes no estaba en este tipo → era descartado por tipado y el
+  // form de edición mostraba el campo Cédula/DNI vacío incluso cuando la DB
+  // sí tenía el valor.
+  dni: string | null;
   createdAt: string;
   updatedAt: string;
   // ── Backend enrichment (display-only) ──────────────────────────────────────
@@ -92,6 +98,9 @@ type CreateDriverPayload = {
   name: string;
   firstName: string;
   lastName: string;
+  // jun 2026 — cédula/DNI del conductor. Migración 0040.
+  // El backend lo persiste en company_drivers.dni (columna dedicada).
+  dni?: string | null;
   licenseNumber: string;
   licenseType: string;
   licenseExpiry: string;
@@ -132,6 +141,13 @@ function mapApi(raw: Record<string, unknown>): ApiDriver {
     // ── Backend enrichment ──────────────────────────────────────────────────────
     siteName: (raw.siteName as string | null) ?? null,
     currentAssignment: (raw.currentAssignment as AssignmentActa | null) ?? null,
+    // jun 2026 — cédula/DNI (migración 0040). El backend devuelve el valor
+    // priorizando `company_drivers.dni` con fallback a
+    // `profileData.documentNumber` del user asociado. Antes no se mapeaba
+    // acá → `mapApi` lo descartaba → el form de edición y el wizard de
+    // asignación mostraban el campo Cédula/DNI vacío aunque la DB tuviera
+    // el valor.
+    dni: (raw.dni as string | null) ?? null,
     // ── Estado efectivo (Fase 3.1) ─────────────────────────────────────────────
     siteStatus: (raw.siteStatus as string | null) ?? null,
     // Si el backend no manda estos campos (backward compat con responses
@@ -215,6 +231,8 @@ export function useDrivers() {
         code: payload.code,
         firstName: payload.firstName,
         lastName: payload.lastName,
+        // jun 2026 — cédula/DNI del conductor (migración 0040).
+        dni: payload.dni || null,
         licenseNumber: payload.licenseNumber,
         licenseType: payload.licenseType,
         licenseExpiry: payload.licenseExpiry || null,
@@ -238,6 +256,9 @@ export function useDrivers() {
     if (payload.code          !== undefined) body.code          = payload.code;
     if (payload.firstName     !== undefined) body.firstName     = payload.firstName;
     if (payload.lastName      !== undefined) body.lastName      = payload.lastName;
+    // jun 2026 — cédula/DNI del conductor (migración 0040).
+    // Si el front lo manda (aunque sea vacío), persistimos normalizado.
+    if (payload.dni           !== undefined) body.dni           = payload.dni || null;
     if (payload.licenseNumber !== undefined) body.licenseNumber = payload.licenseNumber;
     if (payload.licenseType   !== undefined) body.licenseType   = payload.licenseType;
     if (payload.licenseExpiry !== undefined) body.licenseExpiry = payload.licenseExpiry || null;

@@ -63,6 +63,10 @@ type DriverFormState = {
   email: string;
   phone: string;
   site: string;
+  // jun 2026 — cédula/DNI del conductor. Migración 0040.
+  // Se auto-rellena desde company_users.dni cuando el driver está
+  // asociado a un usuario. Se usa para el acta PDF de asignaciones.
+  dni: string;
   licenseNumber: string;
   licenseType: string;
   licenseExpiry: string;
@@ -95,6 +99,7 @@ function createDriverForm(driver?: ApiDriver): DriverFormState {
     email:         driver?.email         ?? "",
     phone:         driver?.phone         ?? "",
     site:          driver?.site          ?? "",
+    dni:           driver?.dni           ?? "",
     licenseNumber: driver?.licenseNumber ?? "",
     licenseType:   driver?.licenseType   ?? "",
     licenseExpiry: driver?.licenseExpiry ?? "",
@@ -472,6 +477,24 @@ function DriverFormModal({ open, driver, onClose, onCreate, onUpdate }: {
                 {sites.map(s => (<option key={s.id} value={s.name}>{s.name}</option>))}
               </select>
               <ChevronDown size={13} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            </div>
+          </div>
+
+          {/* Cédula/DNI del conductor — jun 2026 (migración 0040).
+              Si el conductor está asociado a un usuario, el backend autorrellena
+              desde company_users.dni al crear. Acá dejamos que el admin pueda
+              tipearlo o corregirlo manualmente cuando NO hay user asociado. */}
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 dark:border-white/[0.05] dark:bg-white/[0.03] space-y-3">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Identificación</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Cédula / DNI</label>
+                <input className={inputCls} placeholder="0000000000" maxLength={10} value={form.dni}
+                  onKeyDown={digitsOnlyInputFilter}
+                  onChange={e => set("dni", e.target.value.replace(/\D/g, "").slice(0, 10))} />
+                {errors.dni && <p className="text-xs text-rose-500">{errors.dni}</p>}
+                {!errors.dni && <p className="text-[10px] text-gray-400">10 dígitos. Se usa para auto-rellenar el acta PDF.</p>}
+              </div>
             </div>
           </div>
 

@@ -58,6 +58,10 @@ const createCompanyUserSchema = z.object({
   password:          z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(128),
   role:              z.string().trim().min(1).max(60),
   status:            z.enum(['active', 'inactive']).default('active'),
+  // jun 2026 — cédula/DNI del usuario. Opcional pero recomendado para
+  // conductores. Migración 0040. Si el front lo manda vacío, persistimos
+  // null (no pisamos profileData.documentNumber).
+  dni:               z.string().trim().regex(/^[0-9 \-]{7,20}$/, 'DNI debe tener 7-20 dígitos (puede tener guiones/espacios)').nullable().optional(),
   modulePermissions: modulePermissionsSchema,
   profileData:       z.record(z.string(), z.unknown()).default({}),
   photoUrl:          z.string().min(1).max(2_000_000).nullable().optional(),
@@ -242,6 +246,18 @@ function normalizeProfileData(
   return out;
 }
 
+/**
+ * jun 2026 — Normaliza un DNI/cédula: lo deja en sólo dígitos, sin
+ * espacios ni guiones. Devuelve null si el input está vacío o no tiene
+ * dígitos suficientes (mínimo 7, para tolerar cédulas no-EC legacy).
+ */
+function normalizeDni(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  const digits = input.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 20) return null;
+  return digits;
+}
+
 function serializeUser(u: typeof companyUsers.$inferSelect) {
   const profile = (u.profileData as Record<string, unknown>) ?? {};
   return {
@@ -251,6 +267,12 @@ function serializeUser(u: typeof companyUsers.$inferSelect) {
     username:          u.username,
     role:              u.role,
     status:            u.status,
+    // jun 2026 — DNI/cédula del usuario. Si está NULL pero hay un
+    // documentNumber en profileData (data legacy), lo exponemos como
+    // fallback para que el frontend pueda autorrellenar. El writer
+    // backend se asegura de que, una vez aplicado este fix, las nuevas
+    // ediciones persistan en la columna dni (no solo en profileData).
+    dni:               u.dni ?? (typeof profile.documentNumber === 'string' ? profile.documentNumber : null) ?? null,
     modulePermissions: (u.modulePermissions as Record<string, Record<string, string[]>>) ?? {},
     permissions:       {},  // deprecado, siempre vacío
     profileData:       profile,
@@ -412,6 +434,15 @@ router.post(
           passwordHash,
           role:              rest.role,
           status:            rest.status,
+          // jun 2026 — persistimos dni normalizado (sólo dígitos) si vino.
+          // Si NO vino, caemos al valor de profileData.documentNumber
+          // como compat: el caller del backfill vía SQL (migración 0040)
+          // ya pobló dni a partir de ahí, pero esto cubre el caso
+          // "POST que solo trae profileData.documentNumber" sin dni explícito.
+          dni:               normalizeDni(body.dni)
+                              ?? (typeof normalizedProfile.documentNumber === 'string'
+                                    ? String(normalizedProfile.documentNumber).replace(/\D/g, '') || null
+                                    : null),
           modulePermissions: resolvedModulePermissions,
           profileData:       normalizedProfile,
           photoUrl:          photoUrl ?? null,
@@ -572,6 +603,14 @@ router.put(
         updateData.profileData = normalizeProfileData(merged);
       }
 
+      // jun 2026 — dni explícito: si el front lo mandó, normalizar y
+      // pisar la columna dedicada. Si el front NO lo mandó, NO tocamos
+      // la columna (dejamos el valor que ya estaba).
+      if (body.dni !== undefined) {
+        updateData.dni = normalizeDni(body.dni);
+      }
+
+      // Debug temporal — ver qué updateData llega al UPDATE real.
       const [updated] = await db
         .update(companyUsers)
         .set(updateData)

@@ -17,11 +17,15 @@ import type { ExistingHandoverData, WizardData } from "../../../../hooks/useHand
 type Props = {
   open: boolean;
   driverId: string;
-  assetId: string;
   driver: {
     firstName: string;
     lastName: string;
     phone?: string | null;
+    // jun 2026 — cédula/DNI (migración 0040). Se usa para autorrellenar
+    // el campo `driverDni` en el paso "Conductor" del wizard. El padre
+    // (`page.tsx`) lo pasa directamente desde `useDrivers().data.find(...)`,
+    // que ya incluye `dni` desde mapApi.
+    dni?: string | null;
   };
   asset: {
     plate?: string | null;
@@ -359,12 +363,82 @@ export function HandoverWizard({
     onChange: <K extends keyof WizardData>(k: K, v: WizardData[K]) => void;
   }) {
     return (
-      <div className="flex flex-col gap-3">
+      // jun 2026 — React.memo a nivel de SignatureStep evita remontar el
+      // sub-árbol cuando cambia un campo no relacionado (ej. `vehiclePhotos`).
+      // El bug visible era: tras tipear UNA letra en "Nombre del responsable"
+      // el input perdía foco y había que volver a hacer click. La causa es
+      // que `HandoverWizard` re-renderiza en CADA cambio de `data` (cada
+      // keystroke), y como `SignatureStep` está definido adentro del
+      // componente padre, React no puede preservar su identidad ⇒ remonta.
+      // Dándole key estable al wrapper + manteniendo la función interna,
+      // al menos garantizamos que los `<input>` DOM no se desmonten.
+      <div key={`signature-step-${variant}`} className="flex flex-col gap-3">
         <p className="text-sm text-gray-600 dark:text-gray-400">
           {variant === "log"
             ? <>Firma del <strong>Departamento Logístico</strong></>
             : <>Firma del <strong>Responsable</strong> (conductor)</>}
         </p>
+
+        {/* jun 2026 — Inputs de nombre + cédula. Se autorrellenan con
+            los datos del responsable (sesión) o del conductor (perfil).
+            El admin los pueden corregir si la firma la pone otra persona. */}
+        {variant === "log" ? (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                Nombre del responsable
+              </label>
+              <input
+                // key estable por (variant, field) para que el navegador no
+                // re-cree el nodo al re-renderizar el padre.
+                key={`siglog-name-${variant}`}
+                type="text"
+                defaultValue={data.logisticsName}
+                maxLength={120}
+                onBlur={(e) => onChange("logisticsName", e.target.value)}
+                placeholder="Autorrellenado con tu usuario"
+                className="h-9 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-400 focus:outline-none dark:border-white/[0.08] dark:bg-gray-950 dark:text-white"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                Cédula / DNI
+              </label>
+              <input
+                key={`siglog-dni-${variant}`}
+                type="text"
+                inputMode="numeric"
+                defaultValue={data.logisticsDni}
+                maxLength={10}
+                onBlur={(e) => onChange("logisticsDni", e.target.value.replace(/\D/g, "").slice(0, 10))}
+                placeholder="0000000000"
+                className="h-9 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-400 focus:outline-none dark:border-white/[0.08] dark:bg-gray-950 dark:text-white"
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                Cédula / DNI del conductor
+              </label>
+              <input
+                key={`sigresp-dni-${variant}`}
+                type="text"
+                inputMode="numeric"
+                defaultValue={data.driverDni}
+                maxLength={10}
+                onBlur={(e) => onChange("driverDni", e.target.value.replace(/\D/g, "").slice(0, 10))}
+                placeholder="0000000000"
+                className="h-9 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-400 focus:outline-none dark:border-white/[0.08] dark:bg-gray-950 dark:text-white"
+              />
+              <p className="text-[10px] text-gray-400">
+                Se autorrellena con el DNI del perfil del conductor.
+              </p>
+            </div>
+          </div>
+        )}
+
         <SignatureCanvas
           existingDataUrl={variant === "log" ? data.signatureLogDataUrl : data.signatureRespDataUrl}
           onSave={(url) => onChange(variant === "log" ? "signatureLogDataUrl" : "signatureRespDataUrl", url as never)}
@@ -536,13 +610,20 @@ export function HandoverWizard({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
-          {error && (
+          {/* jun 2026 — Banner de validación inline.
+              Antes sólo se mostraba `error` (que recién se seteaba al
+              hacer click en Siguiente), pero como `canNext = !stepError`
+              deshabilita el botón, el usuario NUNCA llegaba a ver por qué
+              estaba bloqueado. Ahora mostramos también `stepError` para
+              que el motivo sea visible apenas exista un campo inválido
+              (ej. placa con formato incorrecto, año fuera de rango). */}
+          {(error || stepError) && (
             <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm flex items-start gap-2">
               <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
-              {error}
+              <span>{error ?? stepError}</span>
             </div>
           )}
           {renderStep()}

@@ -114,7 +114,6 @@ function CheckRow({ label, value, tristate = false }: {
           </View>
           <Text style={s.checkOptLabel}>NO</Text>
         </View>
-        {/* NO TIENE (tristate) */}
         {tristate && (
           <View style={s.checkOption}>
             <View style={nt ? s.checkBoxFilled : s.checkBox}>
@@ -128,26 +127,26 @@ function CheckRow({ label, value, tristate = false }: {
   );
 }
 
-// ─── Bloque de firma (orden: imagen → línea Firma → Nombre → CI/Cédula) ───────
-
-function SigBlock({ title, dataUrl }: { title: string; dataUrl: string | null }) {
+function SigBlock({
+  title, dataUrl, name, dni,
+}: {
+  title: string;
+  dataUrl: string | null;
+  name?: string | null;
+  dni?: string | null;
+}) {
   return (
     <View style={s.sigCell}>
       <Text style={s.sigHeader}>{title}</Text>
 
-      {/* Imagen de la firma */}
-      {dataUrl
-        ? <Image src={dataUrl} style={s.sigImg} />
-        : <View style={s.sigImgPlaceholder} />
-      }
+      {dataUrl ? <Image src={dataUrl} style={s.sigImg} /> : <View style={s.sigImgPlaceholder} />}
 
-      {/* Firma (línea debajo de la imagen) */}
       <View style={s.sigLine} /><Text style={s.sigLineLabel}>Firma</Text>
 
-      <View style={{ marginTop: 10 }} />
+      <Text style={{ fontSize: 8, marginTop: 10 }}>{name || " "}</Text>
       <View style={s.sigLine} /><Text style={s.sigLineLabel}>Nombre</Text>
 
-      <View style={{ marginTop: 10 }} />
+      <Text style={{ fontSize: 8, marginTop: 10 }}>{dni || " "}</Text>
       <View style={s.sigLine} /><Text style={s.sigLineLabel}>CI / Cédula</Text>
     </View>
   );
@@ -343,8 +342,18 @@ function ActaPdfDocument({
         <View style={s.table}>
           <View style={s.row}><Text style={s.sectionTitle}>FIRMAS DE RESPONSABILIDAD</Text></View>
           <View style={s.row}>
-            <SigBlock title="DEPARTAMENTO LOGÍSTICO"  dataUrl={data.signatureLogDataUrl} />
-            <SigBlock title="RESPONSABLE (CONDUCTOR)" dataUrl={data.signatureRespDataUrl} />
+            <SigBlock
+              title="DEPARTAMENTO LOGÍSTICO"
+              dataUrl={data.signatureLogDataUrl}
+              name={data.logisticsName}
+              dni={data.logisticsDni}
+            />
+            <SigBlock
+              title="RESPONSABLE (CONDUCTOR)"
+              dataUrl={data.signatureRespDataUrl}
+              name={data.driverName}
+              dni={data.driverDni}
+            />
           </View>
         </View>
 

@@ -25,6 +25,11 @@ export interface JwtPayload {
   companyModules: string[];
   modulePermissions: ModulePermissionMap;  // ← cambió de string[]
   permissions: PermissionMap;
+  // jun 2026 — DNI del usuario. Se setea al firmar el token (login / refresh
+  // / session) leyendo la columna `dni` de `company_users` o `platform_users`.
+  // El frontend lo usa para autorrellenar la firma del responsable en
+  // el acta PDF de asignaciones.
+  dni?: string | null;
   iat: number;
   exp: number;
 }

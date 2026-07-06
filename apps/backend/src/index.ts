@@ -59,7 +59,14 @@ void (async () => {
     const m = await runOverdueChecklists();
     if (m > 0) console.log(`[startup] checklist-overdue: ${m} checklists persistidos como Vencido en el sweep inicial.`);
   } catch (err) {
-    console.warn('[startup] checklist-overdue: sweep inicial falló (no crítico):', (err as Error).message);
+    // jun 2026 — logueamos cause también porque Drizzle envuelve el error
+    // y el `message` queda genérico ("Failed query: …") sin el real.
+    const e = err as Error & { cause?: { message?: string } };
+    console.warn(
+      '[startup] checklist-overdue: sweep inicial falló (no crítico):',
+      e?.message ?? String(err),
+      e?.cause?.message ? 'cause=' + e.cause.message : '',
+    );
   }
 })();
 

@@ -655,22 +655,26 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
                         } hover:bg-blue-50/40 dark:hover:bg-white/[0.04]`}
                       >
                         <td className="px-4 py-3 text-gray-600 dark:text-gray-300 whitespace-nowrap">
-                          {fmtDate(m.scheduledFor)}
-                          {/* jun 2026 — badges de trazabilidad. "Reprog."
-                              viene del flujo clásico (cancelar + reprogramar).
-                              "Reautorizado" viene del flujo de atrasados
-                              (POST /:id/approve-reauth) — quedaron guardados
-                              en `last_reauthorization_id`. */}
-                          {m.isReprogrammed && (
-                            <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300" title={m.reprogramReason ?? ""}>
-                              Reprog.
-                            </span>
-                          )}
-                          {m.lastReauthorizationId && (
-                            <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" title={`Reautorizado por ${m.lastReauthorizationId}`}>
-                              Reautorizado
-                            </span>
-                          )}
+                          <div className="flex flex-col items-start gap-1">
+                            <span>{fmtDate(m.scheduledFor)}</span>
+                            {/* jun 2026 — badges de trazabilidad. "Reprog."
+                                viene del flujo clásico (cancelar + reprogramar).
+                                "Reautorizado" viene del flujo de atrasados
+                                (POST /:id/approve-reauth) — quedaron guardados
+                                en `last_reauthorization_id`. Apilados en
+                                columna cuando ambos están presentes para que
+                                la fecha no quede apretada a los costados. */}
+                            {m.isReprogrammed && (
+                              <span className="inline-flex items-center gap-0.5 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300" title={m.reprogramReason ?? ""}>
+                                Reprog.
+                              </span>
+                            )}
+                            {m.lastReauthorizationId && (
+                              <span className="inline-flex items-center gap-0.5 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" title={m.lastReauthorizationAt ? `Reautorizado el ${new Date(m.lastReauthorizationAt).toLocaleString("es-EC")}` : "Reautorizado"}>
+                                Reautorizado
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <div className="font-medium text-gray-800 dark:text-white">{m.assetPlate ?? "—"}</div>

@@ -9,8 +9,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, CheckCheck, Clock, X } from "lucide-react";
-import { useNotifications, useUnreadCount, useMarkRead, useMarkAllRead } from "../../../hooks/useNotifications";
+import { Bell, Check, CheckCheck, Clock, Trash2, X } from "lucide-react";
+import { useNotifications, useUnreadCount, useMarkRead, useMarkAllRead, useDeleteNotification } from "../../../hooks/useNotifications";
 import { useAuth } from "../../../context/AuthContext";
 import { toast } from "sonner";
 
@@ -160,6 +160,7 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
   const { data: list, refetch } = useNotifications({ unreadOnly: false, scopeAll: isAdmin, limit: 10 });
   const markRead  = useMarkRead();
   const markAll   = useMarkAllRead();
+  const delNotif  = useDeleteNotification();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
 
@@ -285,44 +286,81 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
                   Sin notificaciones por ahora.
                 </div>
               ) : items.map((n) => (
-                <button
+                <div
                   key={n.id}
-                  onClick={() => {
-                    if (!n.readAt) markRead.mutate(n.id);
-                    const route = routeForKind(n.kind, n.payload);
-                    if (route) {
-                      setOpen(false);
-                      navigate(route);
-                    }
-                  }}
                   className={`w-full text-left px-4 py-3 border-b border-gray-100 dark:border-white/[0.04] hover:bg-gray-50 dark:hover:bg-white/[0.04] transition flex gap-3 ${!n.readAt ? 'bg-blue-50/40 dark:bg-blue-500/5' : ''}`}
                 >
-                  {(() => {
-                    const meta = KIND_META[n.kind];
-                    if (!meta) {
-                      return <div className="text-xl leading-none mt-0.5">🔔</div>;
-                    }
-                    const Icon = meta.icon;
-                    const accent = kindAccent(n.kind);
-                    return (
-                      <div className={`h-7 w-7 shrink-0 rounded-full grid place-items-center ${accent.bg}`}>
-                        <Icon size={14} className={accent.fg} />
+                  {/* Cuerpo clickeable: marca como leída al click. */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // jun 2026 — antes esto navegaba a routeForKind(n.kind,
+                      // n.payload), pero muchos routes del payload apuntan a
+                      // IDs / rutas que ya no existen. Por ahora NO navegamos:
+                      // el usuario ve la notificación acá y la cerramos. Para
+                      // profundizar en la entidad, el admin navega manualmente
+                      // desde el módulo correspondiente.
+                      if (!n.readAt) markRead.mutate(n.id);
+                    }}
+                    className="flex flex-1 min-w-0 gap-3 text-left"
+                  >
+                    {(() => {
+                      const meta = KIND_META[n.kind];
+                      if (!meta) {
+                        // jun 2026 — sin emoji 🔔 (campana unicode). Usamos el
+                        // mismo icono vector que la campanita del header, en
+                        // gris neutro para mantener consistencia.
+                        return (
+                          <div className="h-7 w-7 shrink-0 rounded-full grid place-items-center bg-gray-100 dark:bg-white/[0.06]">
+                            <Bell size={14} className="text-gray-500 dark:text-gray-400" />
+                          </div>
+                        );
+                      }
+                      const Icon = meta.icon;
+                      const accent = kindAccent(n.kind);
+                      return (
+                        <div className={`h-7 w-7 shrink-0 rounded-full grid place-items-center ${accent.bg}`}>
+                          <Icon size={14} className={accent.fg} />
+                        </div>
+                      );
+                    })()}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                        {n.title}
                       </div>
-                    );
-                  })()}
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                      {n.title}
+                      {n.body && (
+                        <div className="text-xs text-gray-600 dark:text-gray-400 line-clamp-2 mt-0.5">
+                          {n.body}
+                        </div>
+                      )}
+                      <div className="text-[10px] text-gray-400 mt-1">{relTime(n.createdAt)}</div>
                     </div>
-                    {n.body && (
-                      <div className="text-xs text-gray-600 dark:text-gray-400 line-clamp-2 mt-0.5">
-                        {n.body}
-                      </div>
-                    )}
-                    <div className="text-[10px] text-gray-400 mt-1">{relTime(n.createdAt)}</div>
-                  </div>
+                  </button>
+                  {/* jun 2026 — botón papelera. Antes NO existía endpoint DELETE
+                      y NO había UI; el usuario no podía borrar notificaciones.
+                      Ahora: click → DELETE /notifications/:id. Si falla,
+                      onError del hook loguea y `qc.invalidateQueries`
+                      mantiene el estado de la lista. */}
+                  <button
+                    type="button"
+                    aria-label="Eliminar notificación"
+                    title="Eliminar"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // jun 2026 — sin confirm(). El usuario pidió borrado
+                      // directo (un click). El `isPending` deshabilita el
+                      // botón mientras viaja el DELETE, previniendo
+                      // doble-click accidental. Si falla, la query queda
+                      // invalidada igualmente.
+                      delNotif.mutate(n.id);
+                    }}
+                    disabled={delNotif.isPending}
+                    className="shrink-0 self-start mt-1 p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-40 transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
                   {!n.readAt && <div className="h-2 w-2 rounded-full bg-blue-500 mt-2" />}
-                </button>
+                </div>
               ))}
             </div>
             <div className="px-4 py-2 border-t border-gray-200 dark:border-white/[0.06] text-center">

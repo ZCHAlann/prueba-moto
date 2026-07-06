@@ -110,12 +110,18 @@ router.get(
 
 router.patch(
   '/:id/read',
-  requirePermission('accesos', 'usuarios', 'editar'),
+  // jun 2026 — sin requirePermission. Marcar como leída es una operación
+  // personal del dueño de la notificación (la query filtra por
+  // `userId = req.user.sub`, ver abajo). Antes pedía `accesos.usuarios.editar`
+  // que un operador / conductor típico no tenía → 403 silencioso → el
+  // botón "marcar como leída" no hacía nada.
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
       const userId    = parseId('company-user', req.user!.sub);
       const id        = parseId('notification', req.params.id);
+
+      console.log('[PATCH /notifications/:id/read]', { companyId, userId, notificationId: id });
 
       const [row] = await db
         .update(companyNotifications)
@@ -128,11 +134,17 @@ router.patch(
         .returning();
 
       if (!row) {
-        // Silencio si no es del usuario (no leak info)
-        return res.json({ ok: true });
+        // Si no se actualizó, devolvemos 404 explícito para distinguir
+        // "no existe / no es tuyo" de "fallo del servidor". Antes
+        // devolvía {ok:true} silencioso y el front pensaba que sí
+        // había marcado y luego invalidaba → puntito azul seguía ahí.
+        console.log('[PATCH /notifications/:id/read] no-op: notificación no encontrada o no del usuario', { id, userId, companyId });
+        return res.status(404).json({ ok: false, code: 'not_found' });
       }
+      console.log('[PATCH /notifications/:id/read] OK', { id, readAt: row.readAt });
       res.json(serializeNotification(row));
     } catch (err) {
+      console.error('[PATCH /notifications/:id/read] error:', err);
       next(err);
     }
   },
@@ -142,15 +154,19 @@ router.patch(
 
 router.patch(
   '/read-all',
-  requirePermission('accesos', 'usuarios', 'editar'),
+  // jun 2026 — sin requirePermission (mismo motivo que PATCH /:id/read).
+  // `markAllRead(companyId, userId)` opera solo sobre las filas del caller.
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
       const userId    = parseId('company-user', req.user!.sub);
 
+      console.log('[PATCH /notifications/read-all]', { companyId, userId });
       const updated = await markAllRead(companyId, userId);
+      console.log('[PATCH /notifications/read-all] OK', { updated });
       res.json({ ok: true, updated });
     } catch (err) {
+      console.error('[PATCH /notifications/read-all] error:', err);
       next(err);
     }
   },
@@ -186,6 +202,44 @@ router.post(
 
       res.status(201).json({ ok: true });
     } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── DELETE /company/:id/notifications/:id ───────────────────────────────────
+// jun 2026 — borrar una notificación propia. Sólo el dueño de la fila puede
+// borrarla (filtro por userId = req.user.sub). Sin permisos especiales: es
+// una operación personal sobre notificaciones que el usuario ya vio.
+//
+// Devuelve 404 si no existe o no es del usuario (mismo criterio que PATCH /:id/read).
+router.delete(
+  '/:id',
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const userId    = parseId('company-user', req.user!.sub);
+      const id        = parseId('notification', req.params.id);
+
+      console.log('[DELETE /notifications/:id]', { companyId, userId, notificationId: id });
+
+      const [row] = await db
+        .delete(companyNotifications)
+        .where(and(
+          eq(companyNotifications.id, id),
+          eq(companyNotifications.companyId, companyId),
+          eq(companyNotifications.userId, userId),
+        ))
+        .returning({ id: companyNotifications.id });
+
+      if (!row) {
+        console.log('[DELETE /notifications/:id] no-op: notificación no encontrada o no del usuario', { id, userId, companyId });
+        return res.status(404).json({ ok: false, code: 'not_found' });
+      }
+      console.log('[DELETE /notifications/:id] OK', { id });
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('[DELETE /notifications/:id] error:', err);
       next(err);
     }
   },

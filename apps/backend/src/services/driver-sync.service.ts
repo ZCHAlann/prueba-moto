@@ -74,6 +74,7 @@ export async function syncDriverWithUser(input: {
         email:       companyUsers.email,
         photoUrl:    companyUsers.photoUrl,
         profileData: companyUsers.profileData,
+        dni:         companyUsers.dni,
       })
       .from(companyUsers)
       .where(eq(companyUsers.id, userId))
@@ -127,6 +128,10 @@ export async function syncDriverWithUser(input: {
         phone,
         siteId,
         photoUrl: u?.photoUrl ?? null,
+        // jun 2026 — replicar dni desde company_users si está seteado.
+        // Si el driver ya tenía dni propio (capturado en el módulo Conductores)
+        // y el user NO tiene dni, conservamos el del driver.
+        dni:      u?.dni ?? null,
         updatedAt: new Date(),
       };
       if (licenseNumber !== null) update.licenseNumber = licenseNumber;
@@ -152,6 +157,9 @@ export async function syncDriverWithUser(input: {
         phone,
         siteId,
         photoUrl: u?.photoUrl ?? null,
+        // jun 2026 — dni del user al crear el driver. Si el user no tiene,
+        // queda null (lo completa el admin después, si quiere).
+        dni:      u?.dni ?? null,
         status:   "Activo",
         // Si la licencia viene en el profileData la grabamos al insertar.
         // Si no, la fila queda con NULL en esos campos y el admin puede

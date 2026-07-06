@@ -34,6 +34,11 @@ const createDriverSchema = z.object({
   licenseType: z.enum(['A', 'B', 'C', 'D', 'E', 'F']).optional().nullable(),
   licenseExpiry: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional().nullable(),
   licensePoints: z.number().int().min(0).max(30).optional(),
+  // jun 2026 — cédula/DNI del conductor. Migración 0040.
+  // Cuando se crea el driver con un userId asociado, se replica desde
+  // company_users.dni (si existe). El frontend también puede mandarlo
+  // explícito si está creando el driver y el user por separado.
+  dni: z.string().trim().regex(/^[0-9 \-]{7,20}$/, 'DNI debe tener 7-20 dígitos').nullable().optional(),
   status: z.enum(['Activo', 'Inactivo']).default('Activo'),
   notes: validators.longTextOptional,
   photoUrl: z.string().max(2_000_000).optional().nullable(), // ~1.5 MB base64
@@ -141,6 +146,10 @@ router.get('/', requireModule('gestion', 'conductores'), async (req, res, next) 
             photoUrl:    companyUsers.photoUrl,
             status:      companyUsers.status,
             profileData: companyUsers.profileData,
+            // jun 2026 — cédula/DNI del user asociado (migración 0040).
+            // Se usa como fallback para `d.dni` cuando el conductor no
+            // tiene la columna dedicada poblada.
+            dni:         companyUsers.dni,
           },
           // JOIN a companySites para poder calcular el estado efectivo
           // (status del conductor + status de la sede).
@@ -314,6 +323,19 @@ router.post(
       const companyId = req.companyId!;
       const body = req.body as z.infer<typeof createDriverSchema>;
 
+      // jun 2026 — normalizar dni a sólo dígitos si vino. Si NO vino y
+      // hay userId, intentar copiar del company_user.dni asociado para
+      // que el acta PDF se autorrellene desde el primer POST.
+      let normalizedDni = body.dni ? body.dni.replace(/\D/g, '') || null : null;
+      if (!normalizedDni && body.userId) {
+        const [u] = await db
+          .select({ dni: companyUsers.dni })
+          .from(companyUsers)
+          .where(and(eq(companyUsers.id, parseId('company-user', body.userId)), eq(companyUsers.companyId, companyId)))
+          .limit(1);
+        normalizedDni = u?.dni ?? null;
+      }
+
       const siteId = body.siteId ? parseId('site', body.siteId) : null;
       const userId = body.userId ? parseId('company-user', body.userId) : null;
 
@@ -347,6 +369,8 @@ router.post(
           companyId,
           siteId: siteId ?? undefined,
           userId: userId ?? undefined,
+          // jun 2026 — sobreescribimos el dni del body con el normalizado.
+          dni:     normalizedDni,
         })
         .returning();
 
@@ -397,6 +421,7 @@ requireModule('gestion', 'conductores'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
+      const driverId  = parseId('driver', req.params.driverId);
       const body = req.body as z.infer<typeof updateDriverSchema>;
 
       const existing = await db
@@ -418,6 +443,11 @@ requireModule('gestion', 'conductores'),
       const updateData: Record<string, unknown> = { ...body, updatedAt: new Date() };
       if (body.siteId !== undefined) updateData.siteId = body.siteId ? parseId('site', body.siteId) : null;
       if (body.userId !== undefined) updateData.userId = body.userId ? parseId('company-user', body.userId) : null;
+      // jun 2026 — normalizar dni: si el body trae dni, guardar sólo dígitos.
+      // Si NO lo trae, NO pisamos la columna.
+      if (body.dni !== undefined) {
+        updateData.dni = body.dni ? body.dni.replace(/\D/g, '') || null : null;
+      }
 
       const previousStatus = existing[0]!.status;
       const newStatus      = body.status ?? previousStatus;
@@ -491,6 +521,9 @@ requireModule('gestion', 'conductores'),
             photoUrl:    companyUsers.photoUrl,
             status:      companyUsers.status,
             profileData: companyUsers.profileData,
+            // jun 2026 — cédula/DNI del user. Fallback para el campo
+            // `dni` del response cuando `company_drivers.dni` es null.
+            dni:         companyUsers.dni,
           })
           .from(companyUsers)
           .where(and(eq(companyUsers.id, updated.userId), eq(companyUsers.companyId, companyId)))
@@ -562,6 +595,11 @@ type UserEnrichment = {
   photoUrl: string | null;
   status: string | null;
   profileData: unknown;
+  // jun 2026 — cédula/DNI del company_user asociado. Se trae junto al
+  // resto del enrichment para que `serializeDriver` lo pueda usar como
+  // fallback antes que `profileData.documentNumber` (que sólo tiene valor
+  // en usuarios creados por primera vez vía el form de Accesos).
+  dni: string | null;
 } | null;
 
 function serializeDriver(
@@ -621,6 +659,22 @@ function serializeDriver(
     licensePoints: d.licensePoints,
     status: d.status,
     siteName: siteNameParam ?? null,
+    // jun 2026 — cédula/DNI del conductor. Orden de prioridad:
+    //   1. columna dedicada `company_drivers.dni` (la fuente de verdad
+    //      cuando un operador edita DNI directo desde Conductores).
+    //   2. columna dedicada `company_users.dni` del user asociado — la
+    //      usan los conductores creados vía testing o cuando el admin
+    //      sólo actualizó la cédula en Accesos → Usuarios y el driver
+    //      aún no fue sincronizado. Este es el camino que el usuario
+    //      necesitó: muchos de los `Test Cond` tienen dni en user pero
+    //      `company_drivers.dni IS NULL` y `profile.documentNumber`
+    //      nunca se rellenó (el form no persistía dni antes).
+    //   3. `profileData.documentNumber` (legacy, usuarios viejos).
+    //   4. null.
+    dni: d.dni
+      ?? (typeof user?.dni === 'string' && user.dni.length > 0 ? user.dni : null)
+      ?? (typeof profile.documentNumber === 'string' ? profile.documentNumber : null)
+      ?? null,
     // Estado del site (puede ser null si el conductor no tiene sede).
     siteStatus: siteStatusParam ?? null,
     // ── Estado efectivo calculado. El frontend usa esto para:

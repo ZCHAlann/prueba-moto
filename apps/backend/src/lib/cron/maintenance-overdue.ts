@@ -191,7 +191,15 @@ export async function runOverdueMaintenance(): Promise<number> {
         });
       }
     } catch (err) {
-      console.warn('[cron] overdue: notify falló (no crítico):', (err as Error).message);
+      // jun 2026 — más contexto: "Cannot read properties of undefined (reading 'id')"
+      // venía sin saber qué mantenimiento disparó el error. Mejor logueamos
+      // el maintenanceId y el assigneeId para diagnosticar fácil.
+      const e = err as Error;
+      console.warn(
+        '[cron] overdue: notify falló (no crítico) maintenanceId=' + m.id +
+        ' assignedUserId=' + m.assignedUserId + ' err=' + (e?.message ?? String(err)) +
+        (e?.stack ? '\n' + e.stack.split('\n').slice(0, 4).join('\n') : ''),
+      );
     }
   }
 

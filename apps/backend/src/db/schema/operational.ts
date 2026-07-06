@@ -168,6 +168,7 @@ export const companyDrivers = pgTable(
     licenseType: varchar('license_type', { length: 40 }),
     licenseExpiry: date('license_expiry'),
     licensePoints: integer('license_points').default(0),
+    dni: varchar('dni', { length: 20 }),
     status: varchar('status', { length: 40 }).default('Activo'),
     notes: text('notes'),
     photoUrl: text('photo_url'),

@@ -35,6 +35,9 @@ export type CreateCompanyUserInput = {
   modulePermissions?: PermissionMap;
   profileData?: Record<string, unknown>;
   photoUrl?: string | null;
+  /** jun 2026 — cédula/DNI dedicado. Si viene null, backend cae a
+   *  profileData.documentNumber como compat. */
+  dni?: string | null;
 };
 
 export type UpdateCompanyUserInput = Omit<CreateCompanyUserInput, "password"> & {
@@ -149,6 +152,10 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
             password:          input.password,
             role:              input.role,
             status:            input.status ?? "active",
+            // jun 2026 — cédula/DNI (migración 0040).
+            // Si llega undefined, lo omitimos del body (backend cae al
+            // profileData.documentNumber como compat).
+            dni:               input.dni ?? null,
             modulePermissions: input.modulePermissions ?? {},
             profileData:       input.profileData ?? {},
             photoUrl:          input.photoUrl ?? null,
@@ -183,6 +190,10 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
           username:          input.username,
           role:              input.role,
           status:            input.status ?? "active",
+          // jun 2026 — cédula/DNI (migración 0040). Se incluye siempre
+          // (puede ser null explícito si el admin la borró). Si NO lo
+          // incluyéramos, el backend nunca pisaría la columna.
+          dni:               input.dni ?? null,
           modulePermissions: input.modulePermissions ?? {},
           profileData:       input.profileData ?? {},
           photoUrl:          input.photoUrl ?? null,

@@ -24,6 +24,11 @@ interface TokenPayload {
   companyModules:    string[];
   modulePermissions: ModulePermissionMap;
   permissions:       PermissionMap;
+  /** jun 2026 — cédula/DNI del usuario logueado. Se persiste en el JWT y
+   *  se expone en /auth/session para que el frontend lo consuma desde
+   *  useAuth(). Se usa para autorrellenar la firma del responsable en
+   *  el acta PDF de asignaciones. */
+  dni?:              string | null;
 }
 
 const loginSchema = z.object({
@@ -259,6 +264,7 @@ router.post('/session', validate(sessionSchema), async (req, res, next) => {
         companyId:         null,
         companyModules:    [],
         modulePermissions: {},
+        dni:               user.dni ?? null,
       });
 
       return res.json({
@@ -270,6 +276,7 @@ router.post('/session', validate(sessionSchema), async (req, res, next) => {
           role:     user.role,
           scope:    'plataforma',
           photoUrl: user.photoUrl ?? null,
+          dni:      user.dni       ?? null,
         },
       });
 
@@ -316,6 +323,7 @@ router.post('/session', validate(sessionSchema), async (req, res, next) => {
         companyModules,
         modulePermissions,
         permissions,
+        dni:               user.dni ?? null,
       });
 
       return res.json({
@@ -328,6 +336,7 @@ router.post('/session', validate(sessionSchema), async (req, res, next) => {
           scope:     'operacion',
           companyId: Number(user.companyId),
           photoUrl:  user.photoUrl ?? null,
+          dni:       user.dni       ?? null,
         },
       });
     }
@@ -352,6 +361,10 @@ router.post('/refresh', authenticate, async (req, res, next) => {
       companyModules:    user.companyModules,
       modulePermissions: user.modulePermissions,
       permissions:       user.permissions ?? {},
+      // jun 2026 — preservamos el dni del JWT anterior. Si el token
+      // anterior no lo tenía (sesiones pre-migración 0040), queda null
+      // hasta que el usuario vuelva a login/refresh con el nuevo payload.
+      dni:               user.dni ?? null,
     });
 
     return res.json({ token });
@@ -369,6 +382,11 @@ router.get("/session", authenticate, async (req, res, next) => {
     const user = req.user!;
     let companyName = "";
     let photoUrl: string | null = null;
+    // jun 2026 — DNI del usuario logueado. Lo exponemos en la sesión para
+    // que el wizard del acta PDF de asignaciones autorrellene la firma del
+    // responsable (Departamento Logístico) sin que el usuario tenga que
+    // tipearlo a mano. Viene de la columna dedicada (migración 0040).
+    let userDni: string | null = null;
     // Permisos frescos de BD — el JWT puede tener una versión vieja si
     // un admin cambió los permisos. Sin recargar, leemos siempre la
     // fuente de verdad (catálogo de roles + override per-user).
@@ -378,11 +396,12 @@ router.get("/session", authenticate, async (req, res, next) => {
     if (user.companyId) {
       const companyUserId = Number(user.sub.replace('company-user-', ''));
 
-      // Leer empresa, foto y override per-user en una sola query
+      // Leer empresa, foto, DNI y override per-user en una sola query
       const [row] = await db
         .select({
           companyName:        companies.name,
           photoUrl:           companyUsers.photoUrl,
+          dni:                companyUsers.dni,
           // Importante: leer el role y modulePermissions actuales de BD
           // para que cambios recientes se reflejen sin re-login.
           dbRole:             companyUsers.role,
@@ -396,6 +415,7 @@ router.get("/session", authenticate, async (req, res, next) => {
 
       companyName = row?.companyName ?? "";
       photoUrl    = row?.photoUrl    ?? null;
+      userDni     = row?.dni         ?? null;
       dbUpdatedAt = row?.dbUpdatedAt ?? null;
 
       // Recalcular permisos desde BD (catálogo rol + override)
@@ -416,12 +436,13 @@ router.get("/session", authenticate, async (req, res, next) => {
     } else {
       // Usuario de plataforma — leer foto de platform_users
       const [row] = await db
-        .select({ photoUrl: platformUsers.photoUrl })
+        .select({ photoUrl: platformUsers.photoUrl, dni: platformUsers.dni })
         .from(platformUsers)
         .where(eq(platformUsers.id, Number(user.sub.replace('platform-user-', ''))))
         .limit(1);
 
       photoUrl = row?.photoUrl ?? null;
+      userDni  = row?.dni      ?? null;
       modulePermissions = {};
     }
 
@@ -437,6 +458,9 @@ router.get("/session", authenticate, async (req, res, next) => {
       modulePermissions,
       permissions:       user.permissions       ?? {},
       photoUrl,
+      // jun 2026 — cédula/DNI del usuario logueado. Se usa para
+      // autorrellenar la firma del responsable en el acta PDF.
+      dni:               userDni,
       // Timestamp de la última modificación del usuario. Sirve al
       // frontend para invalidar la sesión si quedó desincronizada
       // con BD (cambio de rol, de permisos, etc.).

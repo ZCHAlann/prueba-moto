@@ -6,7 +6,9 @@
 //  - Drawer completo al hacer click en "Ver todas"
 //  - WebSocket en tiempo real (escucha { type: 'notification' })
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, CheckCheck, Clock, X } from "lucide-react";
 import { useNotifications, useUnreadCount, useMarkRead, useMarkAllRead } from "../../../hooks/useNotifications";
 import { useAuth } from "../../../context/AuthContext";
@@ -22,13 +24,43 @@ interface Props {
 // Meta por kind: ícono (lucide-react) + color de acento + label legible.
 // `color` es un nombre de paleta de Tailwind (rose / amber / emerald / blue / gray).
 const KIND_META: Record<string, { icon: React.ElementType; color: string; label: string }> = {
-  maintenance_due:          { icon: Clock, color: 'rose',  label: 'Mantenimiento atrasado' },
-  maintenance_scheduled:    { icon: Bell,  color: 'amber', label: 'Mantenimiento reagendado' },
-  maintenance_completed:    { icon: Check, color: 'emerald', label: 'Mantenimiento completado' },
-  maintenance_overshoot_km: { icon: Bell,  color: 'amber', label: 'Mantenimiento por km' },
-  workshop_assigned:        { icon: Bell,  color: 'blue',  label: 'Asignado a taller' },
-  supplier_invoice:         { icon: Bell,  color: 'amber', label: 'Compra a proveedor' },
-  system:                   { icon: Bell,  color: 'gray',  label: 'Sistema' },
+  // Mantenimientos
+  maintenance_due:             { icon: Clock, color: 'rose',    label: 'Mantenimiento atrasado' },
+  maintenance_scheduled:       { icon: Bell,  color: 'amber',   label: 'Mantenimiento reagendado' },
+  maintenance_completed:       { icon: Check, color: 'emerald', label: 'Mantenimiento completado' },
+  maintenance_overshoot_km:    { icon: Bell,  color: 'amber',   label: 'Mantenimiento por km' },
+  maintenance_created:         { icon: Bell,  color: 'blue',    label: 'Mantenimiento creado' },
+  maintenance_assigned:        { icon: Bell,  color: 'blue',    label: 'Mantenimiento asignado' },
+  maintenance_taken:           { icon: Check, color: 'emerald', label: 'Mantenimiento tomado' },
+  maintenance_free_pool:       { icon: Bell,  color: 'amber',   label: 'Mantenimiento disponible' },
+  maintenance_status_changed:  { icon: Bell,  color: 'blue',    label: 'Cambio de estado' },
+  // Checklists
+  checklist_created:            { icon: Check, color: 'emerald', label: 'Checklist registrado' },
+  checklist_overdue:           { icon: Clock, color: 'rose',    label: 'Checklist vencido' },
+  checklist_reauth_requested:  { icon: Bell,  color: 'amber',   label: 'Reautorización solicitada' },
+  checklist_reauth_decided:    { icon: Check, color: 'emerald', label: 'Reautorización resuelta' },
+  // Accesos
+  user_created:                { icon: Bell,  color: 'blue',    label: 'Nuevo usuario' },
+  user_updated:                { icon: Bell,  color: 'gray',    label: 'Usuario actualizado' },
+  user_deleted:                { icon: Bell,  color: 'rose',    label: 'Usuario eliminado' },
+  user_inactive:               { icon: Bell,  color: 'amber',   label: 'Usuario inactivado' },
+  role_created:                { icon: Bell,  color: 'blue',    label: 'Rol creado' },
+  role_updated:                { icon: Bell,  color: 'gray',    label: 'Rol actualizado' },
+  role_deleted:                { icon: Bell,  color: 'rose',    label: 'Rol eliminado' },
+  // Gestión genérico
+  entity_created:              { icon: Bell,  color: 'blue',    label: 'Registro creado' },
+  entity_updated:              { icon: Bell,  color: 'gray',    label: 'Registro actualizado' },
+  entity_deleted:              { icon: Bell,  color: 'rose',    label: 'Registro eliminado' },
+  // Alertas operativas
+  alert_created:               { icon: Bell,  color: 'amber',   label: 'Nueva alerta' },
+  alert_updated:               { icon: Bell,  color: 'gray',    label: 'Alerta actualizada' },
+  alert_closed:                { icon: Check, color: 'emerald', label: 'Alerta cerrada' },
+  // Anomalías IA
+  anomaly_detected:            { icon: Bell,  color: 'rose',    label: 'Anomalía detectada' },
+  // Sistema
+  workshop_assigned:           { icon: Bell,  color: 'blue',    label: 'Asignado a taller' },
+  supplier_invoice:            { icon: Bell,  color: 'amber',   label: 'Compra a proveedor' },
+  system:                      { icon: Bell,  color: 'gray',    label: 'Sistema' },
 };
 
 const COLOR_CLASSES: Record<string, { fg: string; bg: string }> = {
@@ -57,46 +89,152 @@ function relTime(iso: string): string {
   return `hace ${days}d`;
 }
 
+// Deep-linking: dado un kind y payload, devuelve la ruta interna a navegar.
+// Si no hay match, devuelve null → no se navega (sólo marca leído).
+function routeForKind(kind: string, payload: Record<string, unknown> | undefined): string | null {
+  const maintenanceId = (payload?.maintenanceId ?? payload?.id) as string | number | undefined;
+  const checklistId = (payload?.checklistId ?? payload?.id) as string | number | undefined;
+  const userId = payload?.userId as string | number | undefined;
+  const roleId = payload?.roleId as string | number | undefined;
+  const alertId = payload?.alertId as string | number | undefined;
+  const reauthId = payload?.reauthRequestId as string | number | undefined;
+  const entityId = payload?.entityId as string | number | undefined;
+
+  switch (kind) {
+    case 'maintenance_due':
+    case 'maintenance_scheduled':
+    case 'maintenance_completed':
+    case 'maintenance_overshoot_km':
+    case 'maintenance_created':
+    case 'maintenance_assigned':
+    case 'maintenance_taken':
+    case 'maintenance_free_pool':
+    case 'maintenance_status_changed':
+      return maintenanceId ? `/mantenimiento/${maintenanceId}` : '/mantenimiento';
+    case 'checklist_created':
+    case 'checklist_overdue':
+      return checklistId ? `/checklist/${checklistId}` : '/checklist';
+    case 'checklist_reauth_requested':
+    case 'checklist_reauth_decided':
+      return '/checklist/reauth';
+    case 'user_created':
+    case 'user_updated':
+    case 'user_deleted':
+    case 'user_inactive':
+      return '/accesos/usuarios' + (userId ? `?id=${userId}` : '');
+    case 'role_created':
+    case 'role_updated':
+    case 'role_deleted':
+      return '/accesos/roles' + (roleId ? `?id=${roleId}` : '');
+    case 'entity_created':
+    case 'entity_updated':
+    case 'entity_deleted':
+      // Resuelve por entityKey (Taller, Sede, Vehículo, etc.)
+      const ek = (payload?.entityKey as string | undefined)?.toLowerCase() ?? '';
+      if (ek.includes('taller')) return '/gestion/talleres' + (entityId ? `?id=${entityId}` : '');
+      if (ek.includes('proveedor')) return '/gestion/proveedores' + (entityId ? `?id=${entityId}` : '');
+      if (ek.includes('sede')) return '/flotas/sedes' + (entityId ? `?id=${entityId}` : '');
+      if (ek.includes('garaje')) return '/flotas/garajes' + (entityId ? `?id=${entityId}` : '');
+      if (ek.includes('conductor')) return '/gestion/conductores' + (entityId ? `?id=${entityId}` : '');
+      if (ek.includes('activo') || ek.includes('veh')) return '/flotas/vehiculos' + (entityId ? `?id=${entityId}` : '');
+      if (ek.includes('combustible')) return '/combustible' + (entityId ? `?id=${entityId}` : '');
+      if (ek.includes('peaje')) return '/peajes' + (entityId ? `?id=${entityId}` : '');
+      if (ek.includes('póliza') || ek.includes('seguro')) return '/gestion/seguros' + (entityId ? `?id=${entityId}` : '');
+      return null;
+    case 'alert_created':
+    case 'alert_updated':
+    case 'alert_closed':
+      return '/alertas' + (alertId ? `?id=${alertId}` : '');
+    case 'anomaly_detected':
+      return '/estadisticas/anomalias';
+    default:
+      return null;
+  }
+}
+
 export function NotificationsBell({ companyId, isAdmin = false }: Props) {
   const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const qc = useQueryClient();
   const { data: unread } = useUnreadCount();
   const { data: list, refetch } = useNotifications({ unreadOnly: false, scopeAll: isAdmin, limit: 10 });
   const markRead  = useMarkRead();
   const markAll   = useMarkAllRead();
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
 
   // ── WebSocket: escuchar notificaciones en vivo ────────────────────────────
+  // Importante: el browser NO envía cookies automáticamente en conexiones
+  // WebSocket, por eso mandamos el JWT como query ?token=<jwt>. El backend
+  // lo lee, valida y deja al cliente suscrito a su companyId/userId.
   useEffect(() => {
     if (!companyId) return;
-    // Construimos el WS igual que el resto de la app
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = `${proto}://${window.location.hostname}:5000/ws?companyId=${companyId}`;
-    let ws: WebSocket | null = null;
-    let alive = true;
-    try {
-      ws = new WebSocket(url);
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg?.type === 'notification') {
-            // Sonido opcional
-            try { new Audio('/notification.mp3').play().catch(() => {}); } catch {}
-            // Refetch
-            refetch();
-            // Toast
-            const label = KIND_META[msg.data?.kind]?.label ?? 'Notificación';
-            toast(`${label}: ${msg.data?.title ?? ''}`, {
-              description: msg.data?.body,
-              duration: 5000,
-            });
-          }
-        } catch {}
-      };
-    } catch {
-      // ignore
+
+    // Obtenemos el token desde una fuente cualquiera: por query param
+    // que pasemos al cargar la app, o desde localStorage (lo guardaremos
+    // en login). Por compatibilidad con sesiones viejas, también aceptamos
+    // el token del AuthContext si existe.
+    const token =
+      sessionStorage.getItem('wsToken')
+      || new URLSearchParams(window.location.search).get('wstoken')
+      || '';
+
+    function connect() {
+      try {
+        const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const url = `${proto}://${window.location.hostname}:5000/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+        // eslint-disable-next-line no-console
+        console.log('[WS] connecting to', url.replace(/token=[^&]+/, 'token=***'));
+        const ws = new WebSocket(url);
+        wsRef.current = ws;
+        ws.onopen = () => {
+          // eslint-disable-next-line no-console
+          console.log('[WS] connected');
+        };
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg?.type === 'notification') {
+              // Sonido opcional
+              try { new Audio('/notification.mp3').play().catch(() => {}); } catch {}
+              // Refetch de la lista y del contador.
+              refetch();
+              qc?.invalidateQueries?.({ queryKey: ['notifications-unread'] });
+              // Toast
+              const label = KIND_META[msg.data?.kind]?.label ?? 'Notificación';
+              toast(`${label}: ${msg.data?.title ?? ''}`, {
+                description: msg.data?.body,
+                duration: 5000,
+              });
+            }
+          } catch {}
+        };
+        ws.onclose = (ev) => {
+          // eslint-disable-next-line no-console
+          console.warn('[WS] closed', { code: ev.code, reason: ev.reason });
+          wsRef.current = null;
+          // Reconexión con backoff (1s, 2s, 5s, max 10s).
+          const delay = Math.min(1000 * Math.pow(2, Math.min(3, Math.floor(Math.random() * 3))), 10_000);
+          reconnectTimerRef.current = window.setTimeout(connect, delay);
+        };
+        ws.onerror = (ev) => {
+          // eslint-disable-next-line no-console
+          console.warn('[WS] error', ev);
+        };
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[WS] connect failed', err);
+      }
     }
+    connect();
+
     return () => {
-      alive = false;
-      try { ws?.close(); } catch {}
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      try { wsRef.current?.close(); } catch {}
+      wsRef.current = null;
     };
   }, [companyId, refetch]);
 
@@ -149,7 +287,14 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
               ) : items.map((n) => (
                 <button
                   key={n.id}
-                  onClick={() => { if (!n.readAt) markRead.mutate(n.id); }}
+                  onClick={() => {
+                    if (!n.readAt) markRead.mutate(n.id);
+                    const route = routeForKind(n.kind, n.payload);
+                    if (route) {
+                      setOpen(false);
+                      navigate(route);
+                    }
+                  }}
                   className={`w-full text-left px-4 py-3 border-b border-gray-100 dark:border-white/[0.04] hover:bg-gray-50 dark:hover:bg-white/[0.04] transition flex gap-3 ${!n.readAt ? 'bg-blue-50/40 dark:bg-blue-500/5' : ''}`}
                 >
                   {(() => {

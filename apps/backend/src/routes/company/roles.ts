@@ -29,6 +29,7 @@ import { NotFoundError, AppError, ConflictError } from "../../lib/errors";
 import { toId, parseId } from "../../lib/ids";
 import { logAudit } from "../../lib/audit";
 import { parsePageParams, buildPageResponse } from "../../lib/pagination";
+import { notifyAdminsExceptActor } from "../../lib/notification-service";
 import {
   ensureDefaultRolesForCompany,
   getPermissionsForRole,
@@ -162,6 +163,24 @@ router.post("/", requirePermission("accesos", "roles", "crear"), validate(create
       description: `Creó el rol personalizado "${created.label}" (key=${created.key}).`,
     });
 
+    // Notificar a los admins (excepto al actor).
+    try {
+      const actorId = parseId("company-user", req.user!.sub);
+      await notifyAdminsExceptActor(companyId, actorId, {
+        kind:    'role_created',
+        title:   `Nuevo rol personalizado: ${created.label}`,
+        body:    `Key: ${created.key} · Creado por ${req.user!.name}.`,
+        payload: {
+          roleId:   created.id,
+          roleKey:  created.key,
+          roleLabel: created.label,
+          actor:    req.user!.name,
+        },
+      });
+    } catch (err) {
+      console.warn('[roles] notify role_created falló (no crítico):', (err as Error).message);
+    }
+
     res.status(201).json(serializeRole(created));
   } catch (err) {
     next(err);
@@ -206,6 +225,23 @@ router.patch("/:roleId", requirePermission("accesos", "roles", "editar"), valida
       actorName: req.user!.name,
       description: `Actualizó el rol "${updated.label}".`,
     });
+
+    try {
+      const actorId = parseId("company-user", req.user!.sub);
+      await notifyAdminsExceptActor(companyId, actorId, {
+        kind:    'role_updated',
+        title:   `Rol actualizado: ${updated.label}`,
+        body:    `Key: ${updated.key} · Modificado por ${req.user!.name}.`,
+        payload: {
+          roleId:    updated.id,
+          roleKey:   updated.key,
+          roleLabel: updated.label,
+          actor:     req.user!.name,
+        },
+      });
+    } catch (err) {
+      console.warn('[roles] notify role_updated falló (no crítico):', (err as Error).message);
+    }
 
     res.json(serializeRole(updated));
   } catch (err) {
@@ -256,6 +292,23 @@ router.delete("/:roleId", requirePermission("accesos", "roles", "eliminar"), asy
       actorName: req.user!.name,
       description: `Eliminó el rol personalizado "${existing.label}" (key=${existing.key}).`,
     });
+
+    try {
+      const actorId = parseId("company-user", req.user!.sub);
+      await notifyAdminsExceptActor(companyId, actorId, {
+        kind:    'role_deleted',
+        title:   `Rol eliminado: ${existing.label}`,
+        body:    `Key: ${existing.key} · Eliminado por ${req.user!.name}.`,
+        payload: {
+          roleId:    existing.id,
+          roleKey:   existing.key,
+          roleLabel: existing.label,
+          actor:     req.user!.name,
+        },
+      });
+    } catch (err) {
+      console.warn('[roles] notify role_deleted falló (no crítico):', (err as Error).message);
+    }
 
     res.json({ ok: true });
   } catch (err) {

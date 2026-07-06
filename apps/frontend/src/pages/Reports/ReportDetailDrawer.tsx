@@ -1,4 +1,4 @@
-﻿"use client";
+﻿﻿"use client";
 
 import { JSX, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -283,24 +283,24 @@ const MODULE_SCHEMAS: Record<string, ModuleSchema> = {
 };
 
 /**
- * Drawer router para la pÃ¡gina de Reportes. Al hacer click en una fila
+ * Drawer router para la página de Reportes. Al hacer click en una fila
  * (plana o agrupada), se guarda en `selectedRow`. Este drawer mira el
- * `__raw` enriquecido por `buildPreview()` y decide quÃ© mostrar:
+ * `__raw` enriquecido por `buildPreview()` y decide qué mostrar:
  *
- *   - Si el mÃ³dulo tiene un drawer nativo con endpoint dedicado (Asset,
+ *   - Si el módulo tiene un drawer nativo con endpoint dedicado (Asset,
  *     Alert), carga el detalle desde su endpoint y muestra un resumen
  *     navegable con botones de cross-link.
  *   - Para el resto (Combustible, Checklist, Mantenimiento, Autorizaciones,
  *     Asignaciones, Gastos), reusa el `__raw` que `buildPreview()` ya
- *     inyectÃ³ y lo muestra expandido por secciÃ³n, con todos los campos
- *     escalares del registro y botones de cross-link al mÃ³dulo original
+ *     inyectó y lo muestra expandido por sección, con todos los campos
+ *     escalares del registro y botones de cross-link al módulo original
  *     con deep-link (?entryId=, ?checklistId=, ?maintenanceId=, etc.).
  *
  * Esto evita:
- *   - Acoplar Reports a hooks de cada mÃ³dulo (useFuel, useToll, etc.)
- *     que requieren companyId, permisos granulares, sesiÃ³n, etc.
+ *   - Acoplar Reports a hooks de cada módulo (useFuel, useToll, etc.)
+ *     que requieren companyId, permisos granulares, sesión, etc.
  *   - Mockear props (`isFullAccess`, `meId`, `onEdit`, ...) que en Reports
- *     no tienen semÃ¡ntica.
+ *     no tienen semántica.
  *   - Tipos incompatibles al pasar `item={m}` cuando el drawer espera
  *     `id: string` + un set de callbacks que no existen en este contexto.
  */
@@ -310,7 +310,7 @@ interface RawPayload {
 }
 
 type ModuleDrawerHint = {
-  /** Etiqueta del mÃ³dulo real al que navega el enlace. */
+  /** Etiqueta del módulo real al que navega el enlace. */
   moduleLabel: string;
   /** Si el `__raw` trae un objeto fuente, construimos la ruta al detalle. */
   buildPath?: (raw: Record<string, unknown> | null) => string | null;
@@ -366,7 +366,7 @@ const HINTS: Record<string, ModuleDrawerHint> = {
       return [
         { label: "Tipo",   value: "Mantenimiento" },
         { label: "Placa",  value: (v?.plate as string | null | undefined) ?? null },
-        { label: "TÃ­tulo", value: (m?.title as string | null | undefined) ?? null },
+        { label: "Título", value: (m?.title as string | null | undefined) ?? null },
         { label: "Estado", value: (m?.status as string | null | undefined) ?? null },
       ];
     },
@@ -394,7 +394,7 @@ const HINTS: Record<string, ModuleDrawerHint> = {
         { label: "Placa",    value: (v?.plate as string | null | undefined) ?? null },
         { label: "Galones",  value: (f?.gallons as number | string | null | undefined)?.toString() ?? null },
         { label: "Costo",    value: (f?.cost as number | string | null | undefined)?.toString() ?? null },
-        { label: "EstaciÃ³n", value: (f?.station as string | null | undefined) ?? null },
+        { label: "Estación", value: (f?.station as string | null | undefined) ?? null },
       ];
     },
   },
@@ -405,7 +405,7 @@ const HINTS: Record<string, ModuleDrawerHint> = {
       const v = (raw?.asset as Record<string, unknown> | null) ?? null;
       return [
         { label: "Placa",     value: (v?.plate as string | null | undefined) ?? null },
-        { label: "TÃ­tulo",    value: (a?.title as string | null | undefined) ?? null },
+        { label: "Título",    value: (a?.title as string | null | undefined) ?? null },
         { label: "Severidad", value: (a?.severity as string | null | undefined) ?? null },
         { label: "Estado",    value: (a?.status as string | null | undefined) ?? null },
       ];
@@ -432,7 +432,7 @@ const HINTS: Record<string, ModuleDrawerHint> = {
       const v = (raw?.asset as Record<string, unknown> | null) ?? null;
       const w = (raw?.workshop as Record<string, unknown> | null) ?? null;
       return [
-        { label: "TÃ­tulo",     value: (m?.title as string | null | undefined) ?? null },
+        { label: "Título",     value: (m?.title as string | null | undefined) ?? null },
         { label: "Tipo",       value: (m?.kind as string | null | undefined) ?? null },
         { label: "Estado",     value: (m?.status as string | null | undefined) ?? null },
         { label: "Placa",      value: (m?.assetPlate as string | null | undefined) ?? (v?.plate as string | null | undefined) ?? null },
@@ -458,7 +458,7 @@ export function ReportDetailDrawer({
   const navigate = useNavigate();
 
   function handleGoToModule() {
-    // Ruta conocida por mÃ³dulo. Si no hay mapping, no hacemos nada.
+    // Ruta conocida por módulo. Si no hay mapping, no hacemos nada.
     const map: Record<string, string> = {
       "rep-001": "/gestion/activos",
       "rep-002": "/gestion/asignaciones",
@@ -551,10 +551,10 @@ export function ReportDetailDrawer({
   );
 }
 
-// â”€â”€â”€ Detalle especializado por mÃ³dulo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Detalle especializado por módulo ────────────────────────────────────────
 //
-// Solo los mÃ³dulos que tienen endpoint de detalle dedicado (Asset y Alert)
-// muestran un bloque con datos "full". El resto cae al resumen genÃ©rico
+// Solo los módulos que tienen endpoint de detalle dedicado (Asset y Alert)
+// muestran un bloque con datos "full". El resto cae al resumen genérico
 // de arriba.
 
 function ModuleFullDetail({
@@ -756,7 +756,7 @@ function RawExpandedDetail({
   );
 }
 
-// â”€â”€â”€ Asset: drawer con datos completos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Asset: drawer con datos completos ────────────────────────────────────────
 
 type AssetDetail = {
   id: string;
@@ -816,7 +816,7 @@ function AssetFullDetail({
     return (
       <div className="flex items-center justify-center gap-2 rounded-xl border border-gray-100 dark:border-white/[0.06] bg-gray-50/60 dark:bg-white/[0.02] p-6 text-xs text-gray-500 dark:text-gray-400">
         <Loader2 size={14} className="animate-spin" />
-        Cargando detalle del activoâ€¦
+        Cargando detalle del activo…
       </div>
     );
   }
@@ -838,7 +838,7 @@ function AssetFullDetail({
       <dl className="grid gap-2 rounded-xl border border-gray-100 dark:border-white/[0.06] bg-gray-50/60 dark:bg-white/[0.02] p-4 text-xs">
         {([
           ["Nombre",       data.name],
-          ["CategorÃ­a",    data.category],
+          ["Categoría",    data.category],
           ["Marca / Modelo", [data.brand, data.model].filter(Boolean).join(" ") || null],
           ["Placa",        data.plate],
           ["Estado",       data.status],
@@ -849,7 +849,7 @@ function AssetFullDetail({
               {label}
             </dt>
             <dd className="text-xs font-medium text-gray-800 dark:text-white text-right break-words">
-              {value ?? "â€”"}
+              {value ?? "—"}
             </dd>
           </div>
         ))}
@@ -865,9 +865,9 @@ function AssetFullDetail({
         </div>
       )}
 
-      {/* Acciones de navegaciÃ³n cruzada â€” cada botÃ³n cierra el drawer y
-          salta al mÃ³dulo correspondiente con `?assetId=X` para que el
-          mÃ³dulo aterrice ya filtrado por este vehÃ­culo. */}
+      {/* Acciones de navegación cruzada — cada botón cierra el drawer y
+          salta al módulo correspondiente con `?assetId=X` para que el
+          módulo aterrice ya filtrado por este vehículo. */}
       <div className="flex flex-col gap-2 pt-1">
         <button
           type="button"
@@ -898,7 +898,7 @@ function AssetFullDetail({
   );
 }
 
-// â”€â”€â”€ Alert: drawer con datos completos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Alert: drawer con datos completos ────────────────────────────────────────
 
 type AlertDetail = {
   id: string;
@@ -954,7 +954,7 @@ function AlertFullDetail({
     return (
       <div className="flex items-center justify-center gap-2 rounded-xl border border-gray-100 dark:border-white/[0.06] bg-gray-50/60 dark:bg-white/[0.02] p-6 text-xs text-gray-500 dark:text-gray-400">
         <Loader2 size={14} className="animate-spin" />
-        Cargando detalle de la alertaâ€¦
+        Cargando detalle de la alerta…
       </div>
     );
   }
@@ -975,7 +975,7 @@ function AlertFullDetail({
       </p>
       <dl className="grid gap-2 rounded-xl border border-gray-100 dark:border-white/[0.06] bg-gray-50/60 dark:bg-white/[0.02] p-4 text-xs">
         {([
-          ["TÃ­tulo",     data.title],
+          ["Título",     data.title],
           ["Tipo",       data.type],
           ["Severidad",  data.severity],
           ["Estado",     data.status],
@@ -987,7 +987,7 @@ function AlertFullDetail({
               {label}
             </dt>
             <dd className="text-xs font-medium text-gray-800 dark:text-white text-right break-words">
-              {value ?? "â€”"}
+              {value ?? "—"}
             </dd>
           </div>
         ))}
@@ -1003,9 +1003,9 @@ function AlertFullDetail({
         </div>
       )}
 
-      {/* Acciones de navegaciÃ³n cruzada â€” solo "Ver activo" cuando aplica,
-          ya que la alerta no tiene vÃ­nculo natural con mantenimiento/checklist
-          (esos se cruzan desde el detalle del Activo, no al revÃ©s). */}
+      {/* Acciones de navegación cruzada — solo "Ver activo" cuando aplica,
+          ya que la alerta no tiene vínculo natural con mantenimiento/checklist
+          (esos se cruzan desde el detalle del Activo, no al revés). */}
       {data.assetId ? (
         <button
           type="button"

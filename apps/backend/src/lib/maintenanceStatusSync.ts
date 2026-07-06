@@ -29,7 +29,7 @@ const INACTIVE_MAINTENANCE_STATUSES = ['Completado', 'Cancelado'] as const;
 export async function syncAssetMaintenanceStatus(
   assetId: number,
   companyId: number,
-): Promise<void> {
+): Promise<{ changed: boolean; newStatus: string | null; previousStatus: string | null }> {
   const todayEc = getTodayInEcuador(); // 'YYYY-MM-DD' en America/Guayaquil
 
   const [asset] = await db
@@ -37,7 +37,7 @@ export async function syncAssetMaintenanceStatus(
     .from(companyAssets)
     .where(and(eq(companyAssets.id, assetId), eq(companyAssets.companyId, companyId)))
     .limit(1);
-  if (!asset) return;
+  if (!asset) return { changed: false, newStatus: null, previousStatus: null };
 
   const activeToday = await db
     .select({ id: companyMaintenanceRecords.id })
@@ -69,20 +69,25 @@ export async function syncAssetMaintenanceStatus(
           updatedAt: new Date(),
         })
         .where(eq(companyAssets.id, assetId));
+      return { changed: true, newStatus: 'En mantenimiento', previousStatus: asset.status };
     }
   } else {
     // Salir de mantenimiento — restaurar el status previo exacto.
     if (asset.status === 'En mantenimiento') {
+      const restored = asset.statusBeforeMaintenance ?? 'Operativo';
       await db
         .update(companyAssets)
         .set({
-          status: asset.statusBeforeMaintenance ?? 'Operativo',
+          status: restored,
           statusBeforeMaintenance: null,
           updatedAt: new Date(),
         })
         .where(eq(companyAssets.id, assetId));
+      return { changed: true, newStatus: restored, previousStatus: 'En mantenimiento' };
     }
   }
+
+  return { changed: false, newStatus: asset.status, previousStatus: asset.status };
 }
 
 function getTodayInEcuador(): string {

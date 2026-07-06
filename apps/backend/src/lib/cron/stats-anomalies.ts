@@ -16,6 +16,7 @@ import { db } from '../../db/client';
 import { companies } from '../../db/schema/platform';
 import { detectAllAnomalies } from '../stats-anomalies';
 import { persistAnomalies } from '../stats-anomalies-persist';
+import { notifyAdmins } from '../notification-service';
 
 let started = false;
 
@@ -59,6 +60,31 @@ export async function runSweep(companyId?: number): Promise<{ companyId: number;
     totalInserted += result.inserted;
     totalUpdated  += result.updated;
     totalResolved += result.resolved;
+
+    // Si se detectaron anomalías NUEVAS, notificar a los admins.
+    // Una sola notif por empresa con el total — no por cada anomalía
+    // (el detector puede generar varias del mismo tipo).
+    if (result.inserted > 0) {
+      try {
+        // Tomar una muestra representativa (la más severa o la primera) para
+        // el payload. La campanita muestra el título + el contador.
+        const sample = detected[0];
+        await notifyAdmins(c.id, {
+          kind:    'anomaly_detected',
+          title:   `${result.inserted} anomalía${result.inserted !== 1 ? 's' : ''} nueva${result.inserted !== 1 ? 's' : ''} detectada${result.inserted !== 1 ? 's' : ''}`,
+          body:    sample
+            ? `Ej: ${sample.tipo ?? 'consumo'} — ${sample.descripcion ?? 'ver detalles en Estadísticas'}.`
+            : 'Revisa la pestaña de Anomalías para ver los detalles.',
+          payload: {
+            count: result.inserted,
+            sampleTipo: sample?.tipo ?? null,
+            anomalyIds: detected.slice(0, 5).map((d: { id?: string | number }) => d.id).filter(Boolean),
+          },
+        });
+      } catch (err) {
+        console.warn('[cron] stats-anomalies notify falló (no crítico):', (err as Error).message);
+      }
+    }
   }
 
   return {

@@ -18,6 +18,7 @@ import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
+import { notifyEntityCrud } from '../../lib/notify-entity';
 
 const router = Router({ mergeParams: true });
 
@@ -132,6 +133,16 @@ router.post(
         description: `Taller "${created.name}" creado.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_created', entityKey: 'Taller',
+          entityId: created.id, entityLabel: created.name,
+        });
+      } catch (err) {
+        console.warn('[workshops] notify falló (no crítico):', (err as Error).message);
+      }
+
       res.status(201).json(serializeWorkshop(created));
     } catch (err) {
       next(err);
@@ -174,6 +185,16 @@ router.put(
         description: `Taller "${updated.name}" actualizado.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_updated', entityKey: 'Taller',
+          entityId: updated.id, entityLabel: updated.name,
+        });
+      } catch (err) {
+        console.warn('[workshops] notify falló (no crítico):', (err as Error).message);
+      }
+
       res.json(serializeWorkshop(updated));
     } catch (err) {
       next(err);
@@ -211,6 +232,16 @@ router.delete(
         actorName: req.user!.name,
         description: `Taller "${existing[0].name}" eliminado.`,
       });
+
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_deleted', entityKey: 'Taller',
+          entityId: existing[0].id, entityLabel: existing[0].name,
+        });
+      } catch (err) {
+        console.warn('[workshops] notify falló (no crítico):', (err as Error).message);
+      }
 
       res.json({ ok: true });
     } catch (err) {

@@ -64,8 +64,36 @@ import { safeString, validators } from '../../lib/validators';
 import { findByIdForCompany, updateByIdForCompany } from '../../lib/db-wrapper';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 import { syncAssetMaintenanceStatus } from '../../lib/maintenanceStatusSync'; // NUEVO v3.4
+import {
+  notify,
+  notifyAdmins,
+  notifyAdminsExceptActor,
+  notifyFreePool,
+} from '../../lib/notification-service';
 
 const router = Router({ mergeParams: true });
+
+// ─── Helpers de notificación (mantenimientos) ──────────────────────────────
+//
+// Reglas:
+//   - Crear mantenimiento CON assignedUserId:
+//       notif al asignado (kind: maintenance_assigned) + admins (kind: maintenance_created)
+//   - Crear mantenimiento SIN assignedUserId (libre):
+//       notif a TODOS los operadores activos (kind: maintenance_free_pool)
+//       + admins (kind: maintenance_created)
+//   - Tomar mantenimiento libre:
+//       notif a admins (kind: maintenance_taken)
+//   - Cambiar estado:
+//       notif al asignado + admins (kind: maintenance_status_changed)
+//
+// El actor (quien hizo la acción) NO se notifica a sí mismo en el canal admins.
+// Si el actor es el operador asignado, NO se notifica el cambio de estado
+// que él mismo disparó (evita feedback ruidoso).
+
+function maintTitle(action: string, title?: string | null): string {
+  const t = title ?? '(sin título)';
+  return `${action}: ${t}`;
+}
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 // "En curso" fue renombrado a "En proceso" (UX) — backend lo acepta como alias.
@@ -1259,6 +1287,74 @@ router.post(
       const itemsMap  = await loadItemsMap([created.id]);
       const eventsMap = await loadEventsMap([created.id]);
 
+      // ── Notificaciones ────────────────────────────────────────────────────────
+      // Reglas:
+      //   - Mantenimiento CON assignedUserId  → notif al asignado (si no es actor) + admins.
+      //   - Mantenimiento SIN assignedUserId → notif a TODOS los operadores (free pool)
+      //                                         + admins.
+      //   - El actor (quien creó) NO se notifica a sí mismo en admins.
+      try {
+        const actorId = meId ?? -1;
+        const [assetInfo] = await db
+          .select({ name: companyAssets.name, plate: companyAssets.plate })
+          .from(companyAssets)
+          .where(eq(companyAssets.id, assetId))
+          .limit(1);
+        const assetLabel = assetInfo
+          ? `${assetInfo.name}${assetInfo.plate ? ` (${assetInfo.plate})` : ''}`
+          : 'Vehículo';
+        const bodyCreated  = `${assetLabel} · ${body.type ?? 'Programado'}`;
+        const titleCreated = maintTitle('Nuevo mantenimiento', body.title);
+        const basePayload = {
+          maintenanceId: created.id,
+          assetId,
+          assetLabel,
+          type:        body.type ?? 'Programado',
+          status:      finalStatus,
+          scheduledFor: body.scheduledFor,
+          actor:       req.user!.name ?? null,
+        };
+
+        if (assignedUserId) {
+          // (1) Notificar al operador asignado (si NO es el actor).
+          if (assignedUserId !== actorId) {
+            await notify({
+              companyId,
+              userId:  assignedUserId,
+              kind:    'maintenance_assigned',
+              title:   maintTitle('Mantenimiento asignado', body.title),
+              body:    bodyCreated,
+              payload: basePayload,
+            });
+          }
+          // (2) Notificar a los admins (excepto actor).
+          await notifyAdminsExceptActor(companyId, actorId, {
+            kind:    'maintenance_created',
+            title:   titleCreated,
+            body:    `${bodyCreated} · Asignado a operador`,
+            payload: basePayload,
+          });
+        } else {
+          // Mantenimiento LIBRE (sin asignar) → notificar a TODOS los operadores.
+          await notifyFreePool(companyId, {
+            kind:    'maintenance_free_pool',
+            title:   maintTitle('Mantenimiento disponible', body.title),
+            body:    bodyCreated,
+            payload: basePayload,
+          });
+          // También notificar a los admins (excepto actor) para que sepan
+          // que hay algo en la piscina.
+          await notifyAdminsExceptActor(companyId, actorId, {
+            kind:    'maintenance_created',
+            title:   titleCreated,
+            body:    `${bodyCreated} · Libre (sin asignar)`,
+            payload: basePayload,
+          });
+        }
+      } catch (err) {
+        console.warn('[maintenances] notify created falló (no crítico):', (err as Error).message);
+      }
+
       res.status(201).json(serializeMaintenance({ ...full!.m, ...full! }, itemsMap.get(created.id) ?? [], eventsMap.get(created.id) ?? []));
     } catch (err) {
       next(err);
@@ -1505,6 +1601,24 @@ router.post(
         .returning();
 
       await recordEvent(companyId, id, 'taken', { userId: meId, name: req.user!.name ?? null });
+
+      // Notificar a admins (excepto actor) que un operador tomó este mantenimiento.
+      try {
+        await notifyAdminsExceptActor(companyId, meId, {
+          kind:    'maintenance_taken',
+          title:   maintTitle('Mantenimiento tomado', updated.title),
+          body:    `${req.user!.name ?? 'Operador'} tomó este mantenimiento.`,
+          payload: {
+            maintenanceId: updated.id,
+            assetId:       updated.assetId,
+            takenByUserId: meId,
+            actor:         req.user!.name ?? null,
+          },
+        });
+      } catch (err) {
+        console.warn('[maintenances] notify taken falló (no crítico):', (err as Error).message);
+      }
+
       res.json({
         ok: true,
         id: toId('maintenance', updated.id),
@@ -1562,6 +1676,38 @@ router.post(
 
       // NUEVO v3.4
       await syncAssetMaintenanceStatus(existing.assetId, companyId);
+
+      // Notificar al asignado (si no es el actor) + admins del cambio de estado.
+      try {
+        const notifyTarget = updated.assignedUserId;
+        if (notifyTarget && notifyTarget !== meId) {
+          await notify({
+            companyId, userId: notifyTarget,
+            kind:    'maintenance_status_changed',
+            title:   maintTitle('Mantenimiento iniciado', updated.title),
+            body:    `Tu mantenimiento cambió a "En proceso".`,
+            payload: {
+              maintenanceId: updated.id, assetId: updated.assetId,
+              previousStatus: normalizeStatus(existing.status),
+              newStatus: 'En proceso',
+              actor: req.user!.name ?? null,
+            },
+          });
+        }
+        await notifyAdminsExceptActor(companyId, meId, {
+          kind:    'maintenance_status_changed',
+          title:   maintTitle('Mantenimiento en proceso', updated.title),
+          body:    `${req.user!.name ?? 'Operador'} lo inició.`,
+          payload: {
+            maintenanceId: updated.id, assetId: updated.assetId,
+            previousStatus: normalizeStatus(existing.status),
+            newStatus: 'En proceso',
+            actor: req.user!.name ?? null,
+          },
+        });
+      } catch (err) {
+        console.warn('[maintenances] notify start falló (no crítico):', (err as Error).message);
+      }
 
       res.json({ ok: true, id: toId('maintenance', updated.id), status: 'En proceso' });
     } catch (err) {
@@ -1702,6 +1848,38 @@ router.post(
       // NUEVO v3.4 — puede liberar el vehículo si este era el último
       // mantenimiento activo de hoy.
       await syncAssetMaintenanceStatus(existing.assetId, companyId);
+
+      // Notificar al asignado (si no es el actor) + admins.
+      try {
+        const notifyTarget = updated.assignedUserId;
+        if (notifyTarget && notifyTarget !== meId) {
+          await notify({
+            companyId, userId: notifyTarget,
+            kind:    'maintenance_status_changed',
+            title:   maintTitle('Mantenimiento completado', updated.title),
+            body:    `Tu mantenimiento cambió a "Completado".`,
+            payload: {
+              maintenanceId: updated.id, assetId: updated.assetId,
+              previousStatus: normalizeStatus(existing.status),
+              newStatus: 'Completado',
+              actor: req.user!.name ?? null,
+            },
+          });
+        }
+        await notifyAdminsExceptActor(companyId, meId, {
+          kind:    'maintenance_status_changed',
+          title:   maintTitle('Mantenimiento completado', updated.title),
+          body:    `${req.user!.name ?? 'Operador'} lo finalizó.`,
+          payload: {
+            maintenanceId: updated.id, assetId: updated.assetId,
+            previousStatus: normalizeStatus(existing.status),
+            newStatus: 'Completado',
+            actor: req.user!.name ?? null,
+          },
+        });
+      } catch (err) {
+        console.warn('[maintenances] notify complete falló (no crítico):', (err as Error).message);
+      }
 
       res.json({ ok: true, id: toId('maintenance', updated.id), status: 'Completado' });
     } catch (err) {
@@ -1867,7 +2045,9 @@ router.post(
 router.post(
   '/:id/request-reauth',
   requireModule('mantenimiento'),
-  requirePermission('mantenimiento', 'execution', 'editar'),
+  // Cualquier operador asignado puede pedir reautorización de SU mantenimiento.
+  // Verificación estricta de ownership se hace más abajo (existing.assignedUserId === meId).
+  requirePermission('mantenimiento', 'reautorizaciones', 'ver'),
   validate(requestReauthSchema),
   async (req, res, next) => {
     try {
@@ -1961,6 +2141,25 @@ router.post(
         action:   body.action,
         reason:   body.reason,
       });
+
+      // Notificación a admins (excepto al actor si fuera admin/supervisor).
+      try {
+        const actorIdForNotify = meId ?? undefined;
+        await notifyAdminsExceptActor(companyId, actorIdForNotify, {
+          kind:    'maintenance_reauth_requested',
+          title:   `Reautorización solicitada: ${existing.title ?? 'Mantenimiento'}`,
+          body:    `Solicitada por ${req.user!.name ?? 'el asignado'} (${body.action})`,
+          payload: {
+            maintenanceId: id,
+            reauthId:      toId('reauth', created.id),
+            action:        body.action,
+            reason:        body.reason,
+            actor:         req.user!.name,
+          },
+        });
+      } catch (err) {
+        console.warn('[maintenances] notify reauth_requested falló:', (err as Error).message);
+      }
 
       res.status(201).json(serializeReauth(created));
     } catch (err) {
@@ -2133,6 +2332,28 @@ router.post(
       //    ya no está Atrasado, el asset podría habilitarse).
       await syncAssetMaintenanceStatus(existing.assetId, companyId);
 
+      // 5) Notificación al solicitante (operador/conductor que pidió la reaut.)
+      try {
+        if (reauth.requestedByUserId) {
+          await notify({
+            companyId,
+            userId:  reauth.requestedByUserId,
+            kind:    'maintenance_reauth_decided',
+            title:   `Reautorización aprobada: ${existing.title ?? 'Mantenimiento'}`,
+            body:    `Aprobada por ${req.user!.name ?? 'un administrador'}. Nueva fecha: ${appliedDate.toLocaleDateString('es-AR')}`,
+            payload: {
+              maintenanceId:   id,
+              reauthId:        toId('reauth', reauth.id),
+              decision:        'Aprobada',
+              newScheduledFor: appliedDate.toISOString(),
+              notes:           body.decisionNotes ?? null,
+            },
+          });
+        }
+      } catch (err) {
+        console.warn('[maintenances] notify reauth_decided (approve) falló:', (err as Error).message);
+      }
+
       res.json(serializeReauth(updatedReauth));
     } catch (err) {
       next(err);
@@ -2197,6 +2418,27 @@ router.post(
         reauthId: toId('reauth', reauth.id),
         notes:    body.decisionNotes,
       });
+
+      // Notificación al solicitante.
+      try {
+        if (reauth.requestedByUserId) {
+          await notify({
+            companyId,
+            userId:  reauth.requestedByUserId,
+            kind:    'maintenance_reauth_decided',
+            title:   `Reautorización rechazada: ${existing.title ?? 'Mantenimiento'}`,
+            body:    `Rechazada por ${req.user!.name ?? 'un administrador'}.${body.decisionNotes ? ' Motivo: ' + body.decisionNotes : ''}`,
+            payload: {
+              maintenanceId: id,
+              reauthId:      toId('reauth', reauth.id),
+              decision:      'Rechazada',
+              notes:         body.decisionNotes ?? null,
+            },
+          });
+        }
+      } catch (err) {
+        console.warn('[maintenances] notify reauth_decided (deny) falló:', (err as Error).message);
+      }
 
       res.json(serializeReauth(updatedReauth));
     } catch (err) {
@@ -2264,6 +2506,38 @@ router.post(
       // nuevo el status del vehículo si la fecha (nueva o la original)
       // corresponde a hoy.
       await syncAssetMaintenanceStatus(existing.assetId, companyId);
+
+      // Notificar al asignado (si no es el actor) + admins.
+      try {
+        const notifyTarget = updated.assignedUserId;
+        if (notifyTarget && notifyTarget !== meId) {
+          await notify({
+            companyId, userId: notifyTarget,
+            kind:    'maintenance_status_changed',
+            title:   maintTitle('Mantenimiento requiere corrección', updated.title),
+            body:    `Un supervisor pidió correcciones.`,
+            payload: {
+              maintenanceId: updated.id, assetId: updated.assetId,
+              previousStatus: 'Completado', newStatus: 'Correccion',
+              reason: body.reason ?? null,
+              actor: req.user!.name ?? null,
+            },
+          });
+        }
+        await notifyAdminsExceptActor(companyId, meId, {
+          kind:    'maintenance_status_changed',
+          title:   maintTitle('Mantenimiento enviado a corrección', updated.title),
+          body:    `Volvió a estado "Correccion".`,
+          payload: {
+            maintenanceId: updated.id, assetId: updated.assetId,
+            previousStatus: 'Completado', newStatus: 'Correccion',
+            reason: body.reason ?? null,
+            actor: req.user!.name ?? null,
+          },
+        });
+      } catch (err) {
+        console.warn('[maintenances] notify correction falló (no crítico):', (err as Error).message);
+      }
 
       res.json({
         ok: true,

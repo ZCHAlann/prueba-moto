@@ -16,6 +16,7 @@ import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
+import { notifyEntityCrud } from '../../lib/notify-entity';
 
 const router = Router({ mergeParams: true });
 
@@ -130,6 +131,16 @@ router.post(
         description: `Proveedor "${created.name}" creado.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_created', entityKey: 'Proveedor',
+          entityId: created.id, entityLabel: created.name,
+        });
+      } catch (err) {
+        console.warn('[suppliers] notify falló (no crítico):', (err as Error).message);
+      }
+
       res.status(201).json(serializeSupplier(created));
     } catch (err) {
       next(err);
@@ -172,6 +183,16 @@ router.put(
         description: `Proveedor "${updated.name}" actualizado.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_updated', entityKey: 'Proveedor',
+          entityId: updated.id, entityLabel: updated.name,
+        });
+      } catch (err) {
+        console.warn('[suppliers] notify falló (no crítico):', (err as Error).message);
+      }
+
       res.json(serializeSupplier(updated));
     } catch (err) {
       next(err);
@@ -209,6 +230,16 @@ router.delete(
         actorName: req.user!.name,
         description: `Proveedor "${existing[0].name}" eliminado.`,
       });
+
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_deleted', entityKey: 'Proveedor',
+          entityId: existing[0].id, entityLabel: existing[0].name,
+        });
+      } catch (err) {
+        console.warn('[suppliers] notify falló (no crítico):', (err as Error).message);
+      }
 
       res.json({ ok: true });
     } catch (err) {

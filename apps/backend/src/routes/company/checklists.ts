@@ -14,6 +14,7 @@ import { safeString, validators } from '../../lib/validators';
 import { wsBroadcast } from '../../services/websocket';
 import { currentCycle, isWithinWindow, isCycleClosed, previousCycle, type CadenceKind, type ScopeKind } from '../../lib/periodicity';
 import { deriveAssetsForCategory, getUserSiteId } from '../../lib/checklist-helpers';
+import { notify, notifyAdminsExceptActor } from '../../lib/notification-service';
 
 const router = Router({ mergeParams: true });
 
@@ -769,6 +770,49 @@ router.post(
         type: 'checklist:created',
         data: serializeChecklist(c, { assetName, driverName, categoryName }),
       });
+
+      // ── Notificación in-app al inspector (auto-confirmación) + admins ─────────
+      try {
+        const actorId = Number(req.user!.sub.replace(/\D/g, '')) || null;
+        const title = `Checklist registrado: ${categoryName ?? c.targetLabel}`;
+        const statusLabel = c.status === 'Aprobado' ? '✓ Aprobado'
+          : c.status === 'Observado' ? '⚠ Observado'
+          : c.status === 'Rechazado' ? '✗ Rechazado'
+          : c.status;
+        // (1) Notificar al propio inspector (si no es el actor — pero el inspector
+        //     SIEMPRE es el actor en POST, así que esto solo aplica si el body
+        //     trae un inspectorId distinto). Lo dejamos por simetría.
+        if (c.inspectorId && c.inspectorId !== actorId) {
+          await notify({
+            companyId, userId: c.inspectorId,
+            kind:    'checklist_created',
+            title,
+            body:    `Estado: ${statusLabel} · ${assetName ?? c.targetLabel}`,
+            payload: {
+              checklistId: c.id,
+              categoryId:  c.categoryId,
+              assetId:     c.assetId,
+              status:      c.status,
+              actor:       req.user!.name ?? null,
+            },
+          });
+        }
+        // (2) Notificar a los admins (excepto actor).
+        await notifyAdminsExceptActor(companyId, actorId ?? -1, {
+          kind:    'checklist_created',
+          title,
+          body:    `${req.user!.name ?? 'Inspector'} · ${statusLabel}`,
+          payload: {
+            checklistId: c.id,
+            categoryId:  c.categoryId,
+            assetId:     c.assetId,
+            status:      c.status,
+            actor:       req.user!.name ?? null,
+          },
+        });
+      } catch (err) {
+        console.warn('[checklists] notify created falló (no crítico):', (err as Error).message);
+      }
     } catch (err) {
       next(err);
     }

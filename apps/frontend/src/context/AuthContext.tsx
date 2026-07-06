@@ -37,6 +37,10 @@ export type AuthSession = {
    *  en `/auth/session`. Sirve para que el frontend invalide la sesión
    *  si el JWT tiene una versión vieja. */
   permissionsUpdatedAt: string | null;
+  /** JWT crudo (no la cookie httpOnly, sino el valor que viene en el body
+   *  del login). Se usa SOLO para el upgrade del WebSocket (los browsers
+   *  no envían cookies en conexiones WS). NUNCA persistir en disco. */
+  token?: string | null;
 };
 
 type LoginInput  = { email: string; password: string; remember: boolean };
@@ -83,6 +87,7 @@ function buildSession(data: Record<string, unknown>): AuthSession {
     roleLabel:            roleLabelMap[data.role as string] ?? (data.role as string),
     photoUrl:             (data.photoUrl as string | null) ?? null,
     permissionsUpdatedAt: (data.permissionsUpdatedAt as string | null) ?? null,
+    token:                (data.token as string | undefined) ?? null,
   };
 }
 
@@ -134,6 +139,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Guardamos el JWT en sessionStorage (NO localStorage) para que el WS
+  // pueda leerlo sin tener que volver a pedirlo al backend en cada reconexión.
+// sessionStorage se borra al cerrar la pestaña — más seguro que localStorage.
+  function stashToken(token: string | null | undefined) {
+    try {
+      if (token) sessionStorage.setItem('wsToken', token);
+      else sessionStorage.removeItem('wsToken');
+    } catch { /* ignore */ }
+  }
+
   // Login operadores (scope: operacion)
   const login = useCallback(async ({ email, password, remember }: LoginInput): Promise<LoginResult> => {
     try {
@@ -164,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await res.json();
       const built = buildSession(data);
       setSession(built);
+      stashToken(built.token);
       return {
         ok: true,
         redirectTo: getDefaultRouteForSession({
@@ -193,7 +209,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const data = await res.json();
-      setSession(buildSession(data));
+      const built = buildSession(data);
+      setSession(built);
+      stashToken(built.token);
       return { ok: true, redirectTo: "/platform/dashboard" };
     } catch {
       return { ok: false, title: "Error de conexión", description: "No se pudo conectar con el servidor." };
@@ -203,6 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
     setSession(null);
+    stashToken(null);
     window.location.assign("/signin");
   }, []);
 

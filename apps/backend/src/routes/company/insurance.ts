@@ -11,6 +11,7 @@ import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
+import { notifyEntityCrud } from '../../lib/notify-entity';
 
 const router = Router({ mergeParams: true });
 
@@ -135,6 +136,16 @@ router.post(
         description: `Póliza "${created.policyNumber}" de ${created.insurer} registrada.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_created', entityKey: 'Póliza de seguro',
+          entityId: created.id, entityLabel: `${created.policyNumber} (${created.insurer})`,
+        });
+      } catch (err) {
+        console.warn('[insurance] notify falló (no crítico):', (err as Error).message);
+      }
+
       res.status(201).json(serializePolicy(created));
     } catch (err) {
       next(err);
@@ -202,6 +213,16 @@ router.put(
         description: `Póliza "${updated.policyNumber}" de ${updated.insurer} actualizada.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_updated', entityKey: 'Póliza de seguro',
+          entityId: updated.id, entityLabel: `${updated.policyNumber} (${updated.insurer})`,
+        });
+      } catch (err) {
+        console.warn('[insurance] notify falló (no crítico):', (err as Error).message);
+      }
+
       res.json(serializePolicy(updated));
     } catch (err) {
       next(err);
@@ -250,6 +271,16 @@ router.delete(
         actorName:   req.user!.name,
         description: `Póliza "${existing[0].policyNumber}" de ${existing[0].insurer} eliminada.`,
       });
+
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_deleted', entityKey: 'Póliza de seguro',
+          entityId: existing[0].id, entityLabel: `${existing[0].policyNumber} (${existing[0].insurer})`,
+        });
+      } catch (err) {
+        console.warn('[insurance] notify falló (no crítico):', (err as Error).message);
+      }
 
       res.json({ ok: true });
     } catch (err) {

@@ -11,6 +11,7 @@ import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
 import { invalidateSiteStatusCache } from '../../lib/userStatus.db';
+import { notifyEntityCrud } from '../../lib/notify-entity';
 
 const router = Router({ mergeParams: true });
 
@@ -123,6 +124,16 @@ router.post(
         actorName: req.user!.name,
         description: `Sede "${created.name}" creada.`,
       });
+
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_created', entityKey: 'Sede',
+          entityId: created.id, entityLabel: created.name,
+        });
+      } catch (err) {
+        console.warn('[sites] notify falló (no crítico):', (err as Error).message);
+      }
 
       res.status(201).json(serializeSite(created));
     } catch (err) {
@@ -261,6 +272,21 @@ router.put(
         },
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_updated', entityKey: 'Sede',
+          entityId: updated.id, entityLabel: updated.name,
+          extra: {
+            previousStatus,
+            newStatus,
+            affectedDriversCount,
+          },
+        });
+      } catch (err) {
+        console.warn('[sites] notify falló (no crítico):', (err as Error).message);
+      }
+
       // Devolvemos el conteo en la response para que el frontend
       // (toast / UI) pueda mostrarlo sin pedir un GET extra.
       res.json({
@@ -308,6 +334,16 @@ router.delete(
         actorName: req.user!.name,
         description: `Sede "${existing[0].name}" eliminada.`,
       });
+
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_deleted', entityKey: 'Sede',
+          entityId: existing[0].id, entityLabel: existing[0].name,
+        });
+      } catch (err) {
+        console.warn('[sites] notify falló (no crítico):', (err as Error).message);
+      }
 
       res.json({ ok: true });
     } catch (err) {

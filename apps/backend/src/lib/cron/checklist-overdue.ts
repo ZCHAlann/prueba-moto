@@ -39,6 +39,7 @@ import {
 } from '../../db/schema/operational';
 import { deriveAssetsForCategory } from '../checklist-helpers';
 import { previousCycle, type CadenceKind } from '../periodicity';
+import { notifyAdmins } from '../notification-service';
 
 let started = false;
 
@@ -80,6 +81,8 @@ export async function runOverdueChecklists(): Promise<number> {
   }
 
   let inserted = 0;
+  // Para notificar al final agrupado por empresa: empresaId -> count
+  const overdueByCompany = new Map<number, number>();
 
   for (const [companyId, categories] of byCompany) {
     for (const cat of categories) {
@@ -134,6 +137,7 @@ export async function runOverdueChecklists(): Promise<number> {
           reauthRequestId: null,
         });
         inserted++;
+        overdueByCompany.set(companyId, (overdueByCompany.get(companyId) ?? 0) + 1);
         continue;
       }
 
@@ -203,7 +207,26 @@ export async function runOverdueChecklists(): Promise<number> {
           reauthRequestId: null,
         });
         inserted++;
+        overdueByCompany.set(companyId, (overdueByCompany.get(companyId) ?? 0) + 1);
       }
+    }
+  }
+
+  // ── Notificaciones (resumen por empresa) ────────────────────────────────────
+  // Una sola notif por empresa con el total, no por cada fila (evita spam).
+  for (const [companyId, count] of overdueByCompany) {
+    try {
+      await notifyAdmins(companyId, {
+        kind:    'checklist_overdue',
+        title:   `${count} checklist${count !== 1 ? 's' : ''} vencido${count !== 1 ? 's' : ''}`,
+        body:    `El ciclo cerró sin que se completaran. Operadores pueden pedir reautorización.`,
+        payload: {
+          count,
+          cycleStart: undefined, // se llenaría por empresa si fuera útil
+        },
+      });
+    } catch (err) {
+      console.warn('[cron] checklist-overdue notify falló (no crítico):', (err as Error).message);
     }
   }
 

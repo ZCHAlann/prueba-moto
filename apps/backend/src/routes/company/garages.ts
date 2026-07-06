@@ -11,6 +11,7 @@ import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
+import { notifyEntityCrud } from '../../lib/notify-entity';
 
 const router = Router({ mergeParams: true });
 
@@ -78,6 +79,16 @@ router.post(
         description: `Garaje "${created.name}" creado.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_created', entityKey: 'Garaje',
+          entityId: created.id, entityLabel: created.name,
+        });
+      } catch (err) {
+        console.warn('[garages] notify falló (no crítico):', (err as Error).message);
+      }
+
       res.status(201).json(serializeGarage(created));
     } catch (err) {
       next(err);
@@ -121,6 +132,16 @@ router.put(
         description: `Garaje "${updated.name}" actualizado.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_updated', entityKey: 'Garaje',
+          entityId: updated.id, entityLabel: updated.name,
+        });
+      } catch (err) {
+        console.warn('[garages] notify falló (no crítico):', (err as Error).message);
+      }
+
       res.json(serializeGarage(updated));
     } catch (err) {
       next(err);
@@ -155,6 +176,16 @@ router.delete('/:garageId', requireModule('gestion', 'garages'), requireAdmin, a
       actorName: req.user!.name,
       description: `Garaje "${existing[0].name}" eliminado.`,
     });
+
+    try {
+      await notifyEntityCrud({
+        companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+        crudKind: 'entity_deleted', entityKey: 'Garaje',
+        entityId: existing[0].id, entityLabel: existing[0].name,
+      });
+    } catch (err) {
+      console.warn('[garages] notify falló (no crítico):', (err as Error).message);
+    }
 
     res.json({ ok: true });
   } catch (err) {

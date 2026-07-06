@@ -16,6 +16,7 @@ import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 import { requirePermission } from '../../middlewares/requirePermission';
 import { isUserEffectivelyActive } from '../../lib/userStatus';
 import { invalidateUserStatusCache } from '../../lib/userStatus.db';
+import { notifyEntityCrud } from '../../lib/notify-entity';
 
 const router = Router({ mergeParams: true });
 
@@ -358,6 +359,16 @@ router.post(
         description: `Conductor "${created.firstName} ${created.lastName}" creado.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_created', entityKey: 'Conductor',
+          entityId: created.id, entityLabel: `${created.firstName} ${created.lastName}`,
+        });
+      } catch (err) {
+        console.warn('[drivers] notify falló (no crítico):', (err as Error).message);
+      }
+
       // ── Enrichment: cargar nombre de sede ──────────────────────────────────────
       let siteName: string | null = null;
       if (created.siteId) {
@@ -447,6 +458,16 @@ requireModule('gestion', 'conductores'),
         description: `Conductor "${updated.firstName} ${updated.lastName}" actualizado.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_updated', entityKey: 'Conductor',
+          entityId: updated.id, entityLabel: `${updated.firstName} ${updated.lastName}`,
+        });
+      } catch (err) {
+        console.warn('[drivers] notify falló (no crítico):', (err as Error).message);
+      }
+
       // ── Enrichment: cargar nombre de sede ──────────────────────────────────────
       let siteName: string | null = null;
       if (updated.siteId) {
@@ -515,6 +536,16 @@ router.delete(
         actorName: req.user!.name,
         description: `Conductor "${existing[0].firstName} ${existing[0].lastName}" eliminado.`,
       });
+
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_deleted', entityKey: 'Conductor',
+          entityId: existing[0].id, entityLabel: `${existing[0].firstName} ${existing[0].lastName}`,
+        });
+      } catch (err) {
+        console.warn('[drivers] notify falló (no crítico):', (err as Error).message);
+      }
 
       res.json({ ok: true });
     } catch (err) {

@@ -11,6 +11,7 @@ import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { validators, safeString } from '../../lib/validators';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
+import { notifyEntityCrud } from '../../lib/notify-entity';
 
 const router = Router({ mergeParams: true });
 
@@ -221,6 +222,16 @@ router.post(
         description: `Activo "${created.name}"${created.plate ? ` (${created.plate})` : ''} creado.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_created', entityKey: created.type ?? 'Activo',
+          entityId: created.id, entityLabel: `${created.name}${created.plate ? ` (${created.plate})` : ''}`,
+        });
+      } catch (err) {
+        console.warn('[assets] notify falló (no crítico):', (err as Error).message);
+      }
+
       res.status(201).json(serializeAsset(created));
     } catch (err) {
       next(err);
@@ -274,6 +285,16 @@ router.put(
         description: `Activo "${updated.name}" actualizado.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_updated', entityKey: updated.type ?? 'Activo',
+          entityId: updated.id, entityLabel: `${updated.name}${updated.plate ? ` (${updated.plate})` : ''}`,
+        });
+      } catch (err) {
+        console.warn('[assets] notify falló (no crítico):', (err as Error).message);
+      }
+
       res.json(serializeAsset(updated));
     } catch (err) {
       next(err);
@@ -319,6 +340,20 @@ router.patch(
         description: `Activo "${updated.name}" ${newStatus === 'Operativo' ? 'activado' : 'desactivado'}.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_updated', entityKey: updated.type ?? 'Activo',
+          entityId: updated.id, entityLabel: `${updated.name}${updated.plate ? ` (${updated.plate})` : ''}`,
+          extra: {
+            newStatus,
+            previousStatus: current.status,
+          },
+        });
+      } catch (err) {
+        console.warn('[assets] notify toggle falló (no crítico):', (err as Error).message);
+      }
+
       res.json(serializeAsset(updated));
     } catch (err) {
       next(err);
@@ -357,6 +392,16 @@ router.delete(
         actorName: req.user!.name,
         description: `Activo "${existing[0].name}" eliminado.`,
       });
+
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_deleted', entityKey: existing[0].type ?? 'Activo',
+          entityId: existing[0].id, entityLabel: `${existing[0].name}${existing[0].plate ? ` (${existing[0].plate})` : ''}`,
+        });
+      } catch (err) {
+        console.warn('[assets] notify falló (no crítico):', (err as Error).message);
+      }
 
       res.json({ ok: true });
     } catch (err) {

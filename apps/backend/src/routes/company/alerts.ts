@@ -7,11 +7,13 @@ import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
 import { requireSupervisor } from '../../middlewares/requireSupervisor';
+import { requireSupervisorOrOperator } from '../../middlewares/requireSupervisorOrOperator';
 import { NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
+import { notifyAdmins, notifyAdminsExceptActor } from '../../lib/notification-service';
 
 const router = Router({ mergeParams: true });
 
@@ -149,7 +151,10 @@ router.get('/:alertId', requireModule('alertas'), async (req, res, next) => {
 router.post(
   '/',
   requireModule('alertas'),
-  requireSupervisor,
+  // Operadores / conductores también pueden crear alertas (regla de
+  // negocio: "Cualquier usuario de la empresa puede reportar incidentes").
+  // Los admins las reciben por WS via notifyAdmins(companyId, ...).
+  requireSupervisorOrOperator,
   validate(createAlertSchema),
   async (req, res, next) => {
     try {
@@ -181,6 +186,54 @@ router.post(
           .where(and(eq(companyAssets.id, created.assetId), eq(companyAssets.companyId, companyId)))
           .limit(1);
         assetInfo = asset ?? null;
+      }
+
+      // ── Notificación: alerta creada ──────────────────────────────────────────
+      // Regla: si el creador es un conductor/operador (NO admin), se notifica a
+      // TODOS los admin_empresa/owner_empresa de la empresa. Si el creador ya
+      // es admin, se notifica al resto de admins (excepto actor).
+      try {
+        const actorRole = req.user!.role;
+        const actorId = parseId('company-user', req.user!.sub);
+        const isAdmin = actorRole === 'admin_empresa' || actorRole === 'owner_empresa';
+
+        const title = `Nueva alerta (${created.severity}): ${created.title}`;
+        const body  = assetInfo
+          ? `Vehículo: ${assetInfo.name}${assetInfo.plate ? ` (${assetInfo.plate})` : ''}`
+          : (created.notes ?? '');
+
+        if (isAdmin) {
+          await notifyAdminsExceptActor(companyId, actorId, {
+            kind:    'alert_created',
+            title,
+            body,
+            payload: {
+              alertId:  created.id,
+              severity: created.severity,
+              type:     created.type ?? 'Manual',
+              assetId:  created.assetId,
+              actor:    req.user!.name,
+            },
+          });
+        } else {
+          // Conductor/operador: avisar a TODOS los admins (incluyendo si el
+          // actor es admin, cosa que no debería pasar por el middleware, pero
+          // por seguridad lo manejamos así).
+          await notifyAdmins(companyId, {
+            kind:    'alert_created',
+            title,
+            body,
+            payload: {
+              alertId:  created.id,
+              severity: created.severity,
+              type:     created.type ?? 'Manual',
+              assetId:  created.assetId,
+              actor:    req.user!.name,
+            },
+          });
+        }
+      } catch (err) {
+        console.warn('[alerts] notify created falló (no crítico):', (err as Error).message);
       }
 
       res.status(201).json(serializeAlert(created, assetInfo));
@@ -276,6 +329,25 @@ router.patch(
         actorName: req.user!.name,
         description: `Alerta "${updated.title}" cambió a estado "${status}".`,
       });
+
+      // Notificación: cuando se CIERRA notificar a los admins (excepto actor).
+      try {
+        if (status === 'Cerrada') {
+          const actorId = parseId('company-user', req.user!.sub);
+          await notifyAdminsExceptActor(companyId, actorId, {
+            kind:    'alert_closed',
+            title:   `Alerta cerrada: ${updated.title}`,
+            body:    `Cerrada por ${req.user!.name}.`,
+            payload: {
+              alertId: updated.id,
+              severity: updated.severity,
+              actor:    req.user!.name,
+            },
+          });
+        }
+      } catch (err) {
+        console.warn('[alerts] notify status falló (no crítico):', (err as Error).message);
+      }
 
       res.json(serializeAlert(updated));
     } catch (err) {

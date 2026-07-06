@@ -3,7 +3,7 @@ import { Link, useLocation } from "react-router";
 import { ChevronDown, MoreHorizontal, Pin, PinOff } from "lucide-react";
 import { useSidebar } from "../context/SidebarContext";
 import { useAuth } from "../context/AuthContext";
-import { useAlertsBell } from "../context/AlertsBellContext";
+import { useUnreadCount } from "../hooks/useNotifications";
 import { filterOperationalNavigation } from "../lib/access-control";
 import { navigationSections, isRouteActive } from "../lib/navigation";
 import type { NavigationSection } from "../lib/navigation";
@@ -47,7 +47,10 @@ type AppSidebarProps = {
 const AppSidebar: React.FC<AppSidebarProps> = ({ sections: sectionsProp, homeHref = "/dashboard" }) => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered, toggleSidebar } = useSidebar();
   const { session } = useAuth();
-  const { openCount: alertsOpenCount } = useAlertsBell();
+  // Antes: useAlertsBell().openCount (campana vieja de alertas).
+  // Ahora: useUnreadCount() — el nuevo sistema unificado de campanita + WS.
+  const { data: unread } = useUnreadCount();
+  const unreadCount = unread?.count ?? 0;
   const location = useLocation();
 
   const operationSections = useMemo(
@@ -64,13 +67,14 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ sections: sectionsProp, homeHre
   const sections = sectionsProp ?? operationSections;
 
   // Mapa de href → badge numérico. Solo cargamos contadores de cosas que
-  // queremos resaltar (ej. alertas abiertas).
+  // queremos resaltar (ej. módulo "Alertas" del sidebar muestra el count
+  // global de notificaciones no leídas).
   const badgeForHref = useCallback(
     (href: string): number | null => {
-      if (href === "/alertas") return alertsOpenCount > 0 ? alertsOpenCount : null;
+      if (href === "/alertas") return unreadCount > 0 ? unreadCount : null;
       return null;
     },
-    [alertsOpenCount],
+    [unreadCount],
   );
 
   const [openSubmenu, setOpenSubmenu] = useState<number | null>(null);

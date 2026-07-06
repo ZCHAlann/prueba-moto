@@ -1,10 +1,22 @@
 // routes/company/notifications.ts
-// In-app notifications + device tokens para FCM/Web Push.
+// In-app notifications + device tokens para Expo Push / FCM.
+//
+// Reglas de acceso (julio 2026):
+//   - Cualquier usuario autenticado de la empresa puede ver SUS PROPIAS
+//     notificaciones. NO requiere permisos especiales — la campanita es
+//     infraestructura transversal, no un submódulo de mantenimiento.
+//   - Admin/owner/superadmin pueden pasar ?scope=all para ver TODAS las
+//     de la empresa.
+//   - El aislamiento multi-empresa y por usuario está garantizado a nivel
+//     SQL (todas las queries filtran por companyId y/o userId).
 //
 // Permisos:
-//   - maintenance.notifications.ver      → ver las propias
-//   - admin_empresa/owner_empresa/superadmin → pueden pasar ?scope=all para
-//     ver TODAS las de la empresa (para la campanita del admin).
+//   - lecturas (GET) → sin permiso (cualquier user autenticado de la empresa).
+//   - escrituras (PATCH read, PATCH read-all) → requirePermission('accesos', 'usuarios', 'editar')
+//     (un usuario sin permisos de edición NO debería poder "manejar" notificaciones;
+//      es coherente con el resto de UI: solo el admin limpia su bandeja).
+//   - devices (POST/DELETE) → sin permiso (necesario para que la app móvil
+//     registre su push token al hacer login, incluso sin permisos granulares).
 
 import { Router } from 'express';
 import { z } from 'zod';
@@ -12,7 +24,6 @@ import { eq, and, desc, isNull, gte } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyNotifications, companyDeviceTokens } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
-import { requireModule } from '../../middlewares/requireModule';
 import { requirePermission } from '../../middlewares/requirePermission';
 import { toId, parseId, parseIdFlexible } from '../../lib/ids';
 import { markAllRead } from '../../lib/notification-service';
@@ -41,8 +52,6 @@ function serializeNotification(n: typeof companyNotifications.$inferSelect) {
 
 router.get(
   '/',
-  requireModule('mantenimiento'),
-  requirePermission('mantenimiento', 'notifications', 'ver'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -77,8 +86,6 @@ router.get(
 
 router.get(
   '/unread-count',
-  requireModule('mantenimiento'),
-  requirePermission('mantenimiento', 'notifications', 'ver'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -103,8 +110,7 @@ router.get(
 
 router.patch(
   '/:id/read',
-  requireModule('mantenimiento'),
-  requirePermission('mantenimiento', 'notifications', 'editar'),
+  requirePermission('accesos', 'usuarios', 'editar'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -136,8 +142,7 @@ router.patch(
 
 router.patch(
   '/read-all',
-  requireModule('mantenimiento'),
-  requirePermission('mantenimiento', 'notifications', 'editar'),
+  requirePermission('accesos', 'usuarios', 'editar'),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
@@ -152,7 +157,9 @@ router.patch(
 );
 
 // ─── POST /company/:id/notifications/devices ─────────────────────────────────
-// Registra (o actualiza) el token FCM/Web Push del usuario actual.
+// Registra (o actualiza) el push token (Expo o FCM) del usuario actual.
+// Sin permisos especiales — la app móvil NECESITA poder hacer esto apenas
+// hace login, incluso si el user tiene un rol restringido.
 
 const registerDeviceSchema = z.object({
   token:    z.string().min(10).max(2_000),
@@ -161,8 +168,6 @@ const registerDeviceSchema = z.object({
 
 router.post(
   '/devices',
-  requireModule('mantenimiento'),
-  requirePermission('mantenimiento', 'notifications', 'ver'),
   validate(registerDeviceSchema),
   async (req, res, next) => {
     try {
@@ -190,8 +195,6 @@ router.post(
 
 router.delete(
   '/devices/:token',
-  requireModule('mantenimiento'),
-  requirePermission('mantenimiento', 'notifications', 'ver'),
   async (req, res, next) => {
     try {
       const userId = parseId('company-user', req.user!.sub);

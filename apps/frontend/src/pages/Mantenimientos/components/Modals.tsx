@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import { todayEcuador } from "@/lib/datetime";
 
-// â”€â”€â”€ Shared â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Shared ───────────────────────────────────────────────────────────────────
 
 interface OverlayProps {
   children: React.ReactNode;
@@ -41,7 +41,7 @@ function Overlay({ children, onClose }: OverlayProps) {
   );
 }
 
-// â”€â”€â”€ Custom Select â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Custom Select ────────────────────────────────────────────────────────────
 
 interface SelectOption {
   value: string;
@@ -110,7 +110,7 @@ function CustomSelect({ options, value, onChange, placeholder }: CustomSelectPro
   );
 }
 
-// â”€â”€â”€ Field â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Field ────────────────────────────────────────────────────────────────────
 
 const inputCls =
   "h-10 w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/20 focus:border-emerald-500/50 focus:outline-none transition";
@@ -133,7 +133,7 @@ function Field({ label, required, children }: FieldProps) {
   );
 }
 
-// â”€â”€â”€ Close button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Close button ─────────────────────────────────────────────────────────────
 
 function CloseBtn({ onClose }: { onClose: () => void }) {
   return (
@@ -148,7 +148,7 @@ function CloseBtn({ onClose }: { onClose: () => void }) {
   );
 }
 
-// â”€â”€â”€ OilChangeModal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── OilChangeModal ───────────────────────────────────────────────────────────
 
 interface OilChangeForm {
   assetId: string;

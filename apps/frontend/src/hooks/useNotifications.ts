@@ -2,11 +2,39 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
 
+// ─── Kinds soportados ─────────────────────────────────────────────────────
+// Mantener sincronizado con `notification_kind_enum` del backend
+// (db/schema/operational.ts) y con `NotificationKind` en
+// lib/notification-service.ts.
+
 export type NotificationKind =
   | 'maintenance_due'
   | 'maintenance_scheduled'
   | 'maintenance_completed'
   | 'maintenance_overshoot_km'
+  | 'maintenance_created'
+  | 'maintenance_assigned'
+  | 'maintenance_taken'
+  | 'maintenance_free_pool'
+  | 'maintenance_status_changed'
+  | 'checklist_created'
+  | 'checklist_overdue'
+  | 'checklist_reauth_requested'
+  | 'checklist_reauth_decided'
+  | 'user_created'
+  | 'user_updated'
+  | 'user_deleted'
+  | 'user_inactive'
+  | 'role_created'
+  | 'role_updated'
+  | 'role_deleted'
+  | 'entity_created'
+  | 'entity_updated'
+  | 'entity_deleted'
+  | 'alert_created'
+  | 'alert_updated'
+  | 'alert_closed'
+  | 'anomaly_detected'
   | 'workshop_assigned'
   | 'supplier_invoice'
   | 'system';
@@ -50,7 +78,9 @@ export function useNotifications(opts?: { unreadOnly?: boolean; scopeAll?: boole
       );
     },
     enabled: !!companyId,
-    refetchInterval: 30_000, // poll de respaldo
+    // Sin polling — el WebSocket se encarga de invalidar en vivo.
+    refetchOnWindowFocus: true,
+    staleTime: 30_000,
   });
 }
 
@@ -60,7 +90,9 @@ export function useUnreadCount() {
     queryKey: ['notifications-unread', companyId],
     queryFn: async () => jsonFetch<{ count: number }>(`/api/company/${companyId}/notifications/unread-count`),
     enabled: !!companyId,
-    refetchInterval: 15_000,
+    // Sin polling — el WebSocket se encarga de invalidar en vivo.
+    refetchOnWindowFocus: true,
+    staleTime: 30_000,
   });
 }
 

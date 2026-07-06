@@ -16,6 +16,7 @@ import { toId, parseId, parseIdFlexible } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
+import { notifyEntityCrud } from '../../lib/notify-entity';
 
 const router = Router({ mergeParams: true });
 
@@ -220,6 +221,16 @@ router.post(
         description: `Peaje "${body.tollName}" registrado por ${body.amount} para "${asset.plate}".`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_created', entityKey: 'Peaje',
+          entityId: created.id, entityLabel: `${body.tollName} (${asset.plate})`,
+        });
+      } catch (err) {
+        console.warn('[toll] notify falló (no crítico):', (err as Error).message);
+      }
+
       res.status(201).json(serializeToll(created, { plate: asset.plate, brand: asset.brand, model: asset.model }));
     } catch (err) {
       next(err);
@@ -277,6 +288,16 @@ router.put(
         description: `Registro de peaje "${toId('toll', updated.id)}" actualizado.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_updated', entityKey: 'Peaje',
+          entityId: updated.id, entityLabel: `Peaje #${updated.id}`,
+        });
+      } catch (err) {
+        console.warn('[toll] notify falló (no crítico):', (err as Error).message);
+      }
+
       const [assetInfo] = await db
         .select({ plate: companyAssets.plate, brand: companyAssets.brand, model: companyAssets.model })
         .from(companyAssets)
@@ -321,6 +342,16 @@ router.delete(
         actorName: req.user!.name,
         description: `Registro de peaje eliminado.`,
       });
+
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_deleted', entityKey: 'Peaje',
+          entityId: existing.id, entityLabel: `Peaje #${existing.id}`,
+        });
+      } catch (err) {
+        console.warn('[toll] notify falló (no crítico):', (err as Error).message);
+      }
 
       res.json({ ok: true });
     } catch (err) {

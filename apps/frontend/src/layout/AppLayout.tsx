@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { useLocation, useNavigate, Outlet } from "react-router";
 import { SidebarProvider, useSidebar } from "../context/SidebarContext";
 import { useAuth } from "../context/AuthContext";
-import { AlertsBellProvider } from "../context/AlertsBellContext";
 import { canAccessHref } from "../lib/access-control";
 import AppHeader from "./AppHeader";
 import Backdrop from "./Backdrop";
@@ -80,11 +79,9 @@ const LayoutContent: React.FC = () => {
 
 const AppLayout: React.FC = () => {
   return (
-    <AlertsBellProvider>
-      <SidebarProvider>
-        <LayoutContent />
-      </SidebarProvider>
-    </AlertsBellProvider>
+    <SidebarProvider>
+      <LayoutContent />
+    </SidebarProvider>
   );
 };
 

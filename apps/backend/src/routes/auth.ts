@@ -226,7 +226,12 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
     const maxAge = req.body.remember ? 60 * 60 * 24 * 7 : undefined;
 
     res.cookie(COOKIE_NAME, token, { ...COOKIE_OPTS, maxAge });
-    return res.json(userOut);
+    // Devolvemos también el token en el body para que el WebSocket del
+    // frontend pueda usarlo (los browsers NO envían cookies automáticamente
+    // en conexiones WS, solo en fetch normal). El frontend guarda el token
+    // en memoria (nunca localStorage) y lo manda como ?token= en el query
+    // SOLO del upgrade WS.
+    return res.json({ ...userOut, token });
   } catch (err) {
     next(err);
   }

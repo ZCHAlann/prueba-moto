@@ -11,6 +11,7 @@ import { toId, parseId, parseIdFlexible  } from '../../lib/ids';
 import { NotFoundError } from '../../lib/errors';
 import { logAudit } from '../../lib/audit';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
+import { notifyEntityCrud } from '../../lib/notify-entity';
 
 
 
@@ -252,6 +253,16 @@ router.post(
         description: `Carga de combustible registrada: ${body.gallons.toFixed(2)} gal para "${asset[0].name}" (${invoiceNumber}).`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_created', entityKey: 'Carga de combustible',
+          entityId: created.id, entityLabel: `${asset[0].plate} · ${body.gallons.toFixed(2)} gal`,
+        });
+      } catch (err) {
+        console.warn('[fuel] notify falló (no crítico):', (err as Error).message);
+      }
+
       res.status(201).json(serializeFuel(withInvoice, { plate: asset[0].plate, brand: asset[0].brand, model: asset[0].model }));
     } catch (err) {
       next(err);
@@ -319,6 +330,16 @@ router.put(
         description: `Registro de combustible "${toId('fuel', updated.id)}" actualizado.`,
       });
 
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_updated', entityKey: 'Carga de combustible',
+          entityId: updated.id, entityLabel: `Carga #${updated.id}`,
+        });
+      } catch (err) {
+        console.warn('[fuel] notify falló (no crítico):', (err as Error).message);
+      }
+
       const [assetInfo] = await db
         .select({ plate: companyAssets.plate, brand: companyAssets.brand, model: companyAssets.model })
         .from(companyAssets)
@@ -363,6 +384,16 @@ router.delete(
         actorName: req.user!.name,
         description: `Registro de combustible eliminado.`,
       });
+
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_deleted', entityKey: 'Carga de combustible',
+          entityId: existing[0].id, entityLabel: `Carga #${existing[0].id}`,
+        });
+      } catch (err) {
+        console.warn('[fuel] notify falló (no crítico):', (err as Error).message);
+      }
 
       res.json({ ok: true });
     } catch (err) {

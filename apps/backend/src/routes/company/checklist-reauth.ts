@@ -248,7 +248,7 @@ router.post(
           .limit(1);
 
         await notifyAdmins(companyId, {
-          kind: 'system',
+          kind: 'checklist_reauth_requested',
           title: `Solicitud de reautorización de checklist`,
           body: `${user.name} pide autorización para rehacer "${cat?.name ?? 'un checklist'}". Motivo: ${body.reason.slice(0, 140)}`,
           payload: {
@@ -443,10 +443,10 @@ router.put(
           await notify({
             companyId,
             userId: existing.requestedByUserId,
-            kind: 'system',
+            kind: 'checklist_reauth_decided',
             title: body.decision === 'Autorizada'
-              ? `Tu reautorización fue aprobada: ${cat?.name ?? 'checklist'}`
-              : `Tu reautorización fue rechazada: ${cat?.name ?? 'checklist'}`,
+              ? `Reautorización aprobada: ${cat?.name ?? 'checklist'}`
+              : `Reautorización rechazada: ${cat?.name ?? 'checklist'}`,
             body: body.decision === 'Autorizada'
               ? `Podés hacer el checklist atrasado desde la sección "Atrasados". Motivo original: ${existing.reason.slice(0, 140)}`
               : (body.notes ?? 'Sin notas del aprobador.'),

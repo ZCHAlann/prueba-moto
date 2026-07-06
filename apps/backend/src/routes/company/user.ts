@@ -12,6 +12,22 @@ import { hashPassword } from '../../services/auth.service';
 import { validators } from '../../lib/validators';
 import { syncDriverWithUser, onUserDelete } from '../../services/driver-sync.service';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
+import {
+  notify,
+  notifyAdminsExceptActor,
+} from '../../lib/notification-service';
+
+// ─── Helper: nombre corto del usuario (cargo) para mostrar en el toast ────
+//
+// Lee `profileData.position` (cargo) o `profileData.area` como fallback.
+// Si no hay nada, devuelve el username como último recurso.
+function userShortLabel(u: { profileData?: unknown; username: string; email: string }): string {
+  const pd = (u.profileData as Record<string, unknown> | null) ?? {};
+  const position = typeof pd.position === 'string' ? pd.position.trim() : '';
+  const fullName = typeof pd.fullName === 'string' ? pd.fullName.trim() : '';
+  const label = fullName || u.username || u.email;
+  return position ? `${label} — ${position}` : label;
+}
 
 const router = Router({ mergeParams: true });
 
@@ -418,6 +434,39 @@ router.post(
         description: `Usuario "${created.email}" creado en la empresa.`,
       });
 
+      // Notificar a los admins (excepto al actor si es admin).
+      // Si el usuario recién creado es admin/owner, no le llega notif
+      // (sería redundante — ya sabe que existe).
+      try {
+        const actorId = parseId('company-user', req.user!.sub);
+        await notifyAdminsExceptActor(companyId, actorId, {
+          kind:    'user_created',
+          title:   `Nuevo usuario: ${userShortLabel(created)}`,
+          body:    `Rol: ${created.role} · Email: ${created.email}`,
+          payload: {
+            userId:  created.id,
+            email:   created.email,
+            role:    created.role,
+            status:  created.status,
+            actor:   req.user!.name,
+          },
+        });
+        // Si el nuevo usuario está activo, también le llega un "bienvenida"
+        // para que sepa que su cuenta ya existe.
+        if (created.status === 'active') {
+          await notify({
+            companyId,
+            userId:    created.id,
+            kind:      'user_created',
+            title:     'Tu cuenta fue creada',
+            body:      `Ya puedes iniciar sesión con el rol "${created.role}".`,
+            payload:   { userId: created.id, self: true },
+          });
+        }
+      } catch (err) {
+        console.warn('[users] notify user_created falló (no crítico):', (err as Error).message);
+      }
+
       res.status(201).json(serializeUser(created));
     } catch (err) {
       next(err);
@@ -557,6 +606,77 @@ router.put(
         actorName:   req.user!.name,
         description: `Usuario "${updated.email}" actualizado.`,
       });
+
+      // Notificación: detectar cambio de status → 'inactive' para diferenciar
+      // de un update normal (regla del usuario).
+      try {
+        const actorId = parseId('company-user', req.user!.sub);
+        const wasActive = existing[0].status === 'active';
+        const nowInactive = updated.status === 'inactive';
+        const becameInactive = wasActive && nowInactive;
+        const becameActive   = existing[0].status === 'inactive' && updated.status === 'active';
+
+        if (becameInactive) {
+          // Cambio a inactivo: notificar admins (excepto actor) + al propio
+          // usuario (para que sepa que su cuenta fue suspendida).
+          await notifyAdminsExceptActor(companyId, actorId, {
+            kind:    'user_inactive',
+            title:   `Usuario inactivado: ${userShortLabel(updated)}`,
+            body:    `Antes activo, ahora inactivo.`,
+            payload: {
+              userId:   updated.id,
+              email:    updated.email,
+              role:     updated.role,
+              actor:    req.user!.name,
+            },
+          });
+          await notify({
+            companyId,
+            userId:    updated.id,
+            kind:      'user_inactive',
+            title:     'Tu cuenta fue inactivada',
+            body:      `Ya no podrás iniciar sesión. Contacta a un administrador.`,
+            payload:   { userId: updated.id, self: true },
+          });
+        } else if (becameActive) {
+          await notifyAdminsExceptActor(companyId, actorId, {
+            kind:    'user_updated',
+            title:   `Usuario reactivado: ${userShortLabel(updated)}`,
+            body:    `La cuenta volvió a estar activa.`,
+            payload: { userId: updated.id, email: updated.email, actor: req.user!.name },
+          });
+          await notify({
+            companyId,
+            userId:    updated.id,
+            kind:      'user_updated',
+            title:     'Tu cuenta fue reactivada',
+            body:      `Ya puedes iniciar sesión de nuevo.`,
+            payload:   { userId: updated.id, self: true },
+          });
+        } else {
+          // Update "normal" (sin cambio de status): notificar admins + al propio usuario.
+          await notifyAdminsExceptActor(companyId, actorId, {
+            kind:    'user_updated',
+            title:   `Usuario editado: ${userShortLabel(updated)}`,
+            body:    `Datos del usuario actualizados.`,
+            payload: { userId: updated.id, email: updated.email, actor: req.user!.name },
+          });
+          // Solo notificar al propio usuario si NO es el actor (si edita sus
+          // propios datos, ya lo sabe).
+          if (updated.id !== actorId) {
+            await notify({
+              companyId,
+              userId:    updated.id,
+              kind:      'user_updated',
+              title:     'Tus datos fueron actualizados',
+              body:      `Un administrador modificó tu cuenta.`,
+              payload:   { userId: updated.id, self: true, actor: req.user!.name },
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[users] notify user_updated falló (no crítico):', (err as Error).message);
+      }
 
       res.json(serializeUser(updated));
     } catch (err) {
@@ -708,6 +828,25 @@ router.delete(
         actorName:   req.user!.name,
         description: `Usuario "${existing[0].email}" eliminado de la empresa.`,
       });
+
+      // Notificar a los admins (excepto actor). No se puede notificar al
+      // usuario eliminado porque su fila ya no existe.
+      try {
+        const actorId = parseId('company-user', req.user!.sub);
+        await notifyAdminsExceptActor(companyId, actorId, {
+          kind:    'user_deleted',
+          title:   `Usuario eliminado: ${userShortLabel(existing[0])}`,
+          body:    `${existing[0].email} fue removido de la empresa.`,
+          payload: {
+            userId:   existing[0].id,
+            email:    existing[0].email,
+            role:     existing[0].role,
+            actor:    req.user!.name,
+          },
+        });
+      } catch (err) {
+        console.warn('[users] notify user_deleted falló (no crítico):', (err as Error).message);
+      }
 
       res.json({ ok: true });
     } catch (err) {

@@ -1,6 +1,6 @@
 import 'leaflet/dist/leaflet.css';
 import { useMemo } from 'react';
-import { MapPin, Navigation2, Radio } from 'lucide-react';
+import { Construction, MapPin, Navigation2, Radio } from 'lucide-react';
 import { MapView } from './components/Map';
 import { BottomSheet } from './components/BottomSheet';
 import { useCarStore } from './store/carStore';
@@ -57,10 +57,64 @@ export const GeolocationPage = () => {
         </div>
       </div>
 
-      {/* ── Mapa ───────────────────────────────────────── */}
+      {/* ── Mapa (placeholder "En desarrollo" sobre el render real) ──
+          jun 2026 — la página de geolocalización sigue en desarrollo
+          (telemetría, ruta en tiempo real, integración con GPS de los
+          móviles, etc.). En vez de borrar el `MapView`/`BottomSheet`/
+          `carStore` (que ya están integrados y se usan en otros lugares),
+          lo que hacemos es MOSTRAR el mapa de fondo con `filter: blur`
+          (no `backdrop-blur`: Leaflet crea su propio stacking context y
+          no se llega a aplicar el blur del backdrop) y un card centrado
+          "En desarrollo!!" — así el operador ve el progreso del módulo
+          sin perder la inversión en el componente. Cuando el módulo
+          esté listo, se quita este overlay y queda el mapa funcional. */}
       <div className="relative h-[calc(100vh-220px)] min-h-[560px] w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm dark:border-white/[0.06] dark:bg-slate-950">
-        <MapView />
-        <BottomSheet />
+        {/* Mapa borroso: `filter: blur(8px)` directo al contenedor
+            (no backdrop) para que Leaflet y sus tiles queden difuminados.
+            `pointer-events-none` para que no se pueda interactuar con
+            el mapa de fondo. */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 z-0 overflow-hidden pointer-events-none"
+          style={{ filter: 'blur(8px)' }}
+        >
+          <MapView />
+          <BottomSheet />
+        </div>
+
+        {/* Capa translúcida oscura que refuerza la sensación de "no
+            listo". Va arriba del mapa borroso, debajo del card. */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 z-10 bg-slate-900/40 dark:bg-slate-950/55"
+        />
+
+        {/* Card centrado "En desarrollo" — bien legible arriba del todo. */}
+        <div
+          aria-live="polite"
+          className="absolute inset-0 z-20 flex items-center justify-center"
+        >
+          <div className="mx-4 max-w-md rounded-2xl border border-slate-200 bg-white/95 p-6 text-center shadow-2xl
+            dark:border-white/[0.08] dark:bg-slate-900/90">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300">
+              <Construction className="h-6 w-6" />
+            </div>
+            <div className="mt-4 text-xs font-bold uppercase tracking-widest text-amber-600 dark:text-amber-300">
+              Próximamente
+            </div>
+            <h2 className="mt-1 text-xl font-black tracking-tight text-slate-900 dark:text-white">
+              ¡En desarrollo!
+            </h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              Estamos terminando el módulo de geolocalización: ruta en
+              tiempo real, telemetría, geocercas y bloqueo por desvío.
+            </p>
+            <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+              La integración con el GPS llega en las próximas
+              mejoras.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );

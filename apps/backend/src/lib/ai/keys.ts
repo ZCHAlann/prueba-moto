@@ -5,18 +5,26 @@
 // Lee N claves desde variables de entorno, donde N se define con
 // `GROQ_API_KEY_COUNT`:
 //
+//   # Convención 1-based (recomendada, jun 2026):
 //   GROQ_API_KEY_COUNT=3
-//   GROQ_API_KEY=gsk_...           ← key 0 (primaria)
-//   GROQ_API_KEY1=gsk_...          ← key 1
-//   GROQ_API_KEY2=gsk_...          ← key 2
+//   GROQ_API_KEY1=gsk_...          ← key idx 0 (primaria)
+//   GROQ_API_KEY2=gsk_...          ← key idx 1
+//   GROQ_API_KEY3=gsk_...          ← key idx 2
 //
 // Convenciones:
-//   - La PRIMARY (key 0) **siempre** se llama `GROQ_API_KEY` (sin sufijo).
-//   - Las siguientes llevan sufijo numérico ascendente: `GROQ_API_KEY1`,
-//     `GROQ_API_KEY2`, … hasta `GROQ_API_KEY{N-1}`.
+//   - 1-based para el .env: la primaria es `GROQ_API_KEY1` (no
+//     `GROQ_API_KEY`). Las siguientes llevan sufijo ascendente.
+//     Esto resuelve el off-by-one que tenía la convención anterior
+//     (donde la primaria era `GROQ_API_KEY` sin sufijo, lo cual era
+//     incómodo para los operadores que naturalmente configuran
+//     `KEY1, KEY2, …, KEY7` en su .env).
+//   - Compatibilidad legacy: si `GROQ_API_KEY_COUNT` no está definido
+//     Y existe `GROQ_API_KEY` (sin sufijo) en el entorno, se usa esa
+//     como única key (idx 0). Esto preserva el comportamiento previo
+//     para deploys que ya tenían sólo la variable legacy.
 //   - Si `GROQ_API_KEY_COUNT=0` o no está definido → la cascada es de 1
-//     elemento (solo la key primaria). Comportamiento idéntico al
-//     anterior a esta feature.
+//     elemento (la primaria disponible: legacy `GROQ_API_KEY` o
+//     `GROQ_API_KEY1`).
 //   - Las keys declaradas pero vacías (`""`) se descartan. La cascada
 //     solo itera sobre keys "truthy". Si ninguna es válida, el cliente
 //     devuelve `null` y los consumidores saben que la IA no está
@@ -44,12 +52,27 @@ function readKeyCount(): number {
 }
 
 /**
- * Devuelve el nombre de la env var para el índice `idx`:
- *   - idx=0 → `GROQ_API_KEY`
- *   - idx≥1 → `GROQ_API_KEY1`, `GROQ_API_KEY2`, …
+ * Devuelve el nombre de la env var para el índice `idx` (interno, 0-based):
+ *   - idx=0 → `GROQ_API_KEY1` (convención 1-based en el .env).
+ *   - idx≥1 → `GROQ_API_KEY{idx+1}`.
+ *
+ * Excepción legacy: si `GROQ_API_KEY_COUNT` no está definido y existe
+ * la variable legacy `GROQ_API_KEY` (sin sufijo), se usa esa para
+ * idx=0. Así los deploys pre-jun-2026 siguen funcionando.
  */
 function envNameForIndex(idx: number): string {
-  return idx === 0 ? 'GROQ_API_KEY' : `GROQ_API_KEY${idx}`;
+  // 1-based en el .env: idx 0 → KEY1, idx 1 → KEY2, ...
+  const oneBased = idx + 1;
+  // ¿Y la legacy? Si el operador NO declaró COUNT y NO usó KEY1
+  // pero sí la legacy GROQ_API_KEY, mantenemos compat.
+  const isLegacyMode =
+    !process.env.GROQ_API_KEY_COUNT &&
+    !!process.env.GROQ_API_KEY &&
+    !process.env[`GROQ_API_KEY${oneBased}`];
+  if (isLegacyMode) {
+    return idx === 0 ? 'GROQ_API_KEY' : `GROQ_API_KEY${oneBased}`;
+  }
+  return `GROQ_API_KEY${oneBased}`;
 }
 
 /** Lee una sola key del entorno. Vacía o ausente → `null`. */
@@ -83,22 +106,21 @@ export function getApiKeyCount(): number {
   return getApiKeys().length;
 }
 
-/** Para el endpoint de stats / health check. */
+/**
+ * Estado opaco de la cascada. NO expone el nombre de las env vars, ni
+ * cuáles están vacías, ni ningún dato que un atacante pueda usar para
+ * reconocimiento. Sólo contadores agregados: cuántas declaraste
+ * (`configured`) y cuántas tienen valor real (`available`).
+ *
+ * Si en algún momento se expone vía un endpoint admin, esa persona
+ * sigue sin poder enumerar nombres de variables del entorno.
+ */
 export function getApiKeysConfig() {
   const total = readKeyCount();
   const available = getApiKeyCount();
-  const indices: Array<{ index: number; envVar: string; present: boolean }> = [];
-  for (let i = 0; i < total; i++) {
-    indices.push({
-      index:   i,
-      envVar:  envNameForIndex(i),
-      present: readKey(i) !== null,
-    });
-  }
   return {
-    configuredCount: total,
-    availableCount:  available,
-    keys:             indices,
+    configured: total,
+    available:  available,
   };
 }
 

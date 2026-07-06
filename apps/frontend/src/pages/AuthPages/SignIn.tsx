@@ -6,22 +6,28 @@ import { toast } from "sonner";
 
 const SLIDES = [
   {
-    image: "https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&w=1400&q=80",
-    headline: "Controla tu flota,",
-    accent: "en tiempo real.",
-    sub: "Una sola vista para toda tu operacion.",
+    image: "/images/login-slide-fleet-tablet.png",
+    headline: "Tu operacion,",
+    accent: "al instante.",
+    sub: "Consulta vehiculos, combustible y alertas desde cualquier lugar.",
   },
   {
-    image: "https://images.unsplash.com/photo-1581092921461-eab62e97a780?auto=format&fit=crop&w=1400&q=80",
-    headline: "Menos planilla,",
-    accent: "mas decisiones.",
-    sub: "Datos claros para tu equipo y tu gerencia.",
+    image: "/images/login-slide-dashboard.png",
+    headline: "Toda la flota,",
+    accent: "una pantalla.",
+    sub: "Vehiculos, mantenimientos, combustible y alertas en un solo panel.",
   },
   {
-    image: "https://images.unsplash.com/photo-1518186285589-2f7649de83e0?auto=format&fit=crop&w=1400&q=80",
-    headline: "Trazabilidad total,",
-    accent: "sin friccion.",
-    sub: "Vehiculos, combustible, mantenimientos y alertas.",
+    image: "/images/login-slide-ai.png",
+    headline: "Decisiones con",
+    accent: "inteligencia.",
+    sub: "Datos claros y trazables para tu equipo y tu gerencia.",
+  },
+  {
+    image: "/images/fleet-vans.png",
+    headline: "Camionetas, motores",
+    accent: "y generadores.",
+    sub: "Una plataforma para ordenar toda tu operacion.",
   },
 ];
 

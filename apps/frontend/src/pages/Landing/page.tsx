@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { motion } from "framer-motion";
 import LaptopMockup from "../../components/landing/LaptopMockup";
 import CountUp from "../../components/landing/CountUp";
 import { useScrollReveal } from "../../hooks/useScrollReveal";
@@ -121,6 +122,7 @@ export default function LandingPage() {
     <>
       <ScrollProgress />
       <HeroSection />
+      <LaptopSection />
       <StatsSection />
       <BenefitsSection />
       <FeaturesSection />
@@ -155,7 +157,7 @@ function HeroSection() {
   return (
     <section
       id="hero"
-      className="relative overflow-hidden bg-gray-950 pt-12 pb-20 md:pt-20 md:pb-28"
+      className="relative flex min-h-[calc(100vh-4rem)] items-start overflow-hidden bg-gray-950 pb-16 pt-2 md:pb-20 md:pt-0"
     >
       {/* Reactive dot grid background */}
       <div
@@ -181,29 +183,49 @@ function HeroSection() {
         className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
       />
 
-      <div className="relative mx-auto flex w-full max-w-6xl flex-col items-center px-4 text-center lg:px-6">
-        {/* Badge with bounce */}
-        <Reveal>
-          <span className="inline-flex animate-[bounce_3s_ease-in-out_infinite] items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300 shadow-lg shadow-emerald-500/5">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Control vehicular y equipos de campo
-          </span>
-        </Reveal>
+      <div className="relative z-10 mx-auto grid w-full max-w-6xl items-start gap-10 px-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:gap-10 lg:px-6">
+        {/* Left column — text (slides in from the left, with stagger) */}
+        <motion.div
+          initial={{ opacity: 0, x: -40 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
+          className="flex flex-col items-center text-center lg:items-start lg:text-left"
+        >
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 1, delay: 0.15, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Control vehicular y equipos de campo
+            </span>
+          </motion.div>
 
-        <Reveal delay={80}>
-          <h1 className="mt-6 max-w-4xl text-balance text-4xl font-bold leading-tight tracking-tight text-white sm:text-5xl md:text-6xl lg:text-7xl">
+          <motion.h1
+            initial={{ opacity: 0, x: -30 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 1.1, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-5 max-w-xl text-balance text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl md:text-5xl lg:text-5xl xl:text-6xl"
+          >
             {marketingContent.heroTitle}
-          </h1>
-        </Reveal>
+          </motion.h1>
 
-        <Reveal delay={140}>
-          <p className="mt-5 max-w-2xl text-pretty text-base text-gray-400 sm:text-lg md:text-xl">
+          <motion.p
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 1.1, delay: 0.45, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-4 max-w-md text-pretty text-base text-gray-300 sm:text-lg"
+          >
             {marketingContent.heroSubtitle}
-          </p>
-        </Reveal>
+          </motion.p>
 
-        <Reveal delay={200}>
-          <div className="mt-9 flex flex-col items-center gap-3 sm:flex-row">
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 1.1, delay: 0.6, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-7 flex flex-col items-center gap-3 sm:flex-row lg:items-start"
+          >
             <ShineButton to="/solicitar-demo" variant="primary">
               {marketingContent.heroPrimaryCta}
               <svg viewBox="0 0 24 24" className="h-4 w-4 transition-transform group-hover:translate-x-1" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -213,13 +235,36 @@ function HeroSection() {
             <ShineButton to="/signin" variant="outline">
               {marketingContent.heroSecondaryCta}
             </ShineButton>
-          </div>
-        </Reveal>
+          </motion.div>
+        </motion.div>
 
-        {/* Laptop mockup */}
-        <div className="mt-14 w-full md:mt-20">
-          <LaptopMockup />
-        </div>
+        {/* Right column — fleet image (slides in from the right) */}
+        <motion.div
+          initial={{ opacity: 0, x: 40 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 1.2, delay: 0.4, ease: [0.16, 1, 0.3, 1] }}
+          className="flex items-center justify-center"
+        >
+          <img
+            src="/images/fleet-vans.png"
+            alt="Camionetas de flota ApliSmart Motors"
+            className="mx-auto block h-auto w-full max-w-md object-contain md:max-w-xl lg:max-w-3xl"
+          />
+        </motion.div>
+      </div>
+    </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                Laptop mockup                                */
+/* -------------------------------------------------------------------------- */
+
+function LaptopSection() {
+  return (
+    <section className="relative overflow-hidden bg-gray-950 pb-20 pt-12 md:pb-28 md:pt-20">
+      <div className="relative z-10 mx-auto w-full max-w-3xl px-4 lg:px-6">
+        <LaptopMockup />
       </div>
     </section>
   );

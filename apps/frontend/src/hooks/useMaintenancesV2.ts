@@ -63,8 +63,15 @@ export interface MaintenanceAttachment {
   kind?:              "repuesto" | "mano_obra" | "lavada" | "servicio" | "otro" | null;
   /** Monto del comprobante (USD). Null si no aplica. */
   amount?:            number | null;
-  /** Número de factura / comprobante. Vacío o ausente = no factura. */
+  /** Número de factura / comprobante. **AUTO-generado por backend** desde
+   *  jul 2026 v3. El cliente NO lo manda. Queda nullable para compat
+   *  con filas legacy; cuando llega del backend ya viene relleno. */
   invoiceNumber?:     string | null;
+  /** jul 2026 v3 — flag EXPLICITO que el cliente manda para indicar
+   *  "este attachment es una factura" (debe generar fila en ledger).
+   *  Antes se inferia por invoiceNumber no-vacío, pero con la numeración
+   *  AUTO ese campo viene null al crear. Backend usa isInvoice como señal. */
+  isInvoice?:         boolean;
   /** jul 2026 — FK lógica al supplier del catálogo (string para IDs serializados). */
   supplierId?:        string | number | null;
   /** jul 2026 — items desglosados del comprobante. Persistidos en
@@ -446,6 +453,11 @@ export function useUpdateMaintenance() {
       qc.invalidateQueries({ queryKey: ['maintenances'] });
       qc.invalidateQueries({ queryKey: ['maintenances-agenda'] });
       qc.invalidateQueries({ queryKey: ['maintenance'] });
+      // jul 2026 v3 — el sync al ledger Finanzas puede haber creado/
+      // borrado/modificado facturas al guardar attachments o items.
+      // Invalidamos para que /finanzas/facturas muestre los cambios
+      // inmediatamente al volver a esa pantalla.
+      qc.invalidateQueries({ queryKey: ['finance-invoices'] });
     },
   });
 }
@@ -803,6 +815,30 @@ export function useAddMaintenanceItems() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['maintenance'] });
       qc.invalidateQueries({ queryKey: ['maintenances'] });
+    },
+  });
+}
+
+/**
+ * jul 2026 v3 — Borra UN item del mantenimiento. Si el item tiene
+ * `attachment_key` (i.e. pertenece a una factura), el backend
+ * recalcula la factura: subtotal/total/items y la marca 'anulada'
+ * si no quedan items. Refresca la lista de facturas en Finanzas.
+ */
+export function useDeleteMaintenanceItem() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, itemId }: { id: string; itemId: string }) => {
+      return jsonFetch<{ ok: boolean; deleted: { id: string; attachmentKey: string | null } }>(
+        `/api/company/${companyId}/maintenances/${id}/items/${itemId}`,
+        { method: 'DELETE' },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenance'] });
+      qc.invalidateQueries({ queryKey: ['maintenances'] });
+      qc.invalidateQueries({ queryKey: ['finance-invoices'] });
     },
   });
 }

@@ -280,7 +280,7 @@ export const navigationSections: NavigationSection[] = [
   {
     label: "Finanzas",
     icon: "FN",
-    description: "Comprobantes y conciliacion",
+    description: "Comprobantes, caja chica y transacciones",
     accent: "emerald",
     items: [
       {
@@ -288,6 +288,20 @@ export const navigationSections: NavigationSection[] = [
         href: "/finanzas/facturas",
         icon: "FN",
         description: "Ledger de comprobantes de combustible, peajes y mantenimiento",
+        accent: "emerald",
+      },
+      {
+        label: "Caja Chica",
+        href: "/finanzas/caja-chica",
+        icon: "CC",
+        description: "Solicitudes, vales e historial de movimientos",
+        accent: "emerald",
+      },
+      {
+        label: "Transacciones",
+        href: "/finanzas/transacciones",
+        icon: "TR",
+        description: "Linea de tiempo de caja chica + gastos anuales",
         accent: "emerald",
       },
     ],

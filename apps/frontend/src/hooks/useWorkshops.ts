@@ -43,11 +43,13 @@ export function useWorkshops() {
     if (!companyId) { setLoading(false); return; }
     setLoading(true);
     setError(null);
-    fetch(`/api/company/${companyId}/workshops?pageSize=100`, { cache: "no-store" })
+    // jul 2026 v3 — nopage=true trae TODOS los talleres sin paginar
+    // (necesario para dropdowns en modales de factura).
+    fetch(`/api/company/${companyId}/workshops?nopage=true`, { cache: "no-store" })
       .then((res) => { if (!res.ok) throw new Error(`Error ${res.status}`); return res.json(); })
       .then((body: { data: Workshop[]; total?: number }) => {
         setWorkshops(body.data ?? []);
-        setTotal(typeof body.total === "number" ? body.total : 0);
+        setTotal(typeof body.total === "number" ? body.total : (body.data?.length ?? 0));
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Error cargando talleres"))
       .finally(() => setLoading(false));

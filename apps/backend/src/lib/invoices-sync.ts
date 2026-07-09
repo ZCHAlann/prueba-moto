@@ -45,7 +45,11 @@ type DrizzleTx = any;
 export type InvoiceSourceModule =
   | 'combustible'
   | 'peajes'
-  | 'mantenimiento';
+  | 'mantenimiento'
+  // jul 2026 v4 — Comprobantes subidos al cerrar un vale de Caja Chica.
+  // El voucher actúa como source_entity_id (con prefijo 'voucher-' antes
+  // de pasar al sync) y attachment_key = 'voucher-<id>'.
+  | 'petty_cash';
 
 export type InvoiceKind =
   | 'combustible'
@@ -66,20 +70,22 @@ export interface MaintenanceAttachmentLike {
   amount?: number | null;
   invoiceNumber?: string | null;
   /**
-   * jul 2026 — FK lógica opcional al supplier del catálogo. Si se pasa, el
+   * jul 2026 v3 — Flag EXPLICITO de "esto es una factura". Antes se
+   * inferia por `invoiceNumber` no-vacío, pero con la numeración AUTO
+   * el cliente ya no manda ese campo, así que necesitamos una señal
+   * independiente para saber si el attachment genera fila en el ledger.
+   * Si `isInvoice` es true → sync lo crea aunque `invoiceNumber` venga vacío.
+   */
+  isInvoice?: boolean;
+  /**
+   * FK lógica opcional al supplier del catálogo. Si se pasa, el
    * syncMaterialize forza el supplierId (FK) y el supplierName (denormalized)
    * en la fila del ledger. Si es null, el campo del ledger queda NULL.
    */
   supplierId?: number | null;
   /**
    * jul 2026 — ítems desglosados del comprobante. Persistidos en
-   * `company_invoices.items` (jsonb) SIN hacer upsert separado en
-   * `company_maintenance_items` (eso lo hace el controller de mantenances
-   * vía `attachment_key`). Sirven para el reporte (PDF) y para que la UI
-   * pueda graficar "qué items cubre tal factura".
-   *
-   * Si `items` no viene, el campo jsonb queda en [] (no se pisa el valor
-   * anterior cuando ya hay items? — SÍ se pisa, replaced-style).
+   * `company_invoices.items` (jsonb).
    */
   items?: Array<{
     description: string;
@@ -217,10 +223,17 @@ export async function syncSingleInvoice(opts: {
     currency = 'USD',
   } = opts;
 
+  // jul 2026 v3 — Caso borrar SOLO si el caller explícitamente lo pide
+  // (invoiceNumber con sentinel '__DELETE__' o flag delete en el data).
+  // Antes esto borraba si invoiceNumber venia vacío, pero con la
+  // numeración AUTO el cliente no manda ese campo, y un attachment nuevo
+  // llegaba con invoiceNumber=undefined y se BORRABA el ledger por error.
+  // Ahora `invoiceNumber` vacío o null = "autogenerar" (caso upsert).
   const emptyNumber = isEmptyInvoiceNumber(data.invoiceNumber);
+  const explicitDelete = (data as any).__delete === true ||
+                          String(data.invoiceNumber).trim() === '__DELETE__';
 
-  // ── Caso borrar ────────────────────────────────────────────────────────
-  if (emptyNumber) {
+  if (emptyNumber && explicitDelete) {
     const del = await tx
       .delete(companyInvoices)
       .where(
@@ -277,7 +290,9 @@ export async function syncSingleInvoice(opts: {
   // key (company, source, sourceEntityId, attachmentKey), conservamos
   // el `invoice_number` original para no romper la trazabilidad.
   const sourceMod = opts.sourceModule === 'peajes' ? 'toll' : (
-    opts.sourceModule === 'combustible' ? 'fuel' : 'maintenance'
+    opts.sourceModule === 'combustible' ? 'fuel' : (
+      opts.sourceModule === 'petty_cash' ? 'petty_cash' : 'maintenance'
+    )
   );
   const existing = await tx
     .select({ id: companyInvoices.id, invoiceNumber: companyInvoices.invoiceNumber })
@@ -332,8 +347,25 @@ export async function syncSingleInvoice(opts: {
     return { id: existing[0].id, created: false };
   }
 
-  // INSERT — autogeneramos invoice_number con la funcion PL/pgSQL.
-  const generated = await tx.execute(sql`SELECT next_invoice_number(${companyId}, ${sourceMod}) AS n`);
+// INSERT — autogeneramos invoice_number con la funcion PL/pgSQL.
+// jul 2026 v3 — Llamada separada (no sub-select inline) porque drizzle
+// 0.30+ con postgres-js contaba mal los placeholders cuando se mezclan
+// sub-selects SQL con params explícitos en .values(), y el INSERT fallaba
+// con "Failed query" sin causa. La función sigue tomando el advisory lock
+// y devuelve el número atómico.
+  let nextInvoiceNumber: string;
+  try {
+    const execRes = await tx.execute(
+      sql`SELECT next_invoice_number(${companyId}, ${sourceMod}) AS invoice_number`,
+    );
+    const rows = (execRes as any).rows ?? execRes;
+    const first = Array.isArray(rows) ? rows[0] : undefined;
+    nextInvoiceNumber = String(first?.invoice_number ?? first?.n ?? '');
+  } catch (seqErr) {
+    console.warn('[syncSingleInvoice] next_invoice_number falló, usando fallback:', (seqErr as Error).message);
+    nextInvoiceNumber = `GEN-${Date.now()}`;
+  }
+  if (!nextInvoiceNumber) nextInvoiceNumber = `GEN-${Date.now()}`;
 
   const inserted = await tx
     .insert(companyInvoices)
@@ -343,7 +375,7 @@ export async function syncSingleInvoice(opts: {
       sourceEntityId,
       sourceAttachmentKey: attachmentKey,
       kind: (data.kind as InvoiceKind) ?? 'otro',
-      invoiceNumber: String((generated as any).rows?.[0]?.n ?? `GEN-${Date.now()}`),
+      invoiceNumber: nextInvoiceNumber,
       invoiceDate,
       amount: amountStr,
       currency,
@@ -360,6 +392,14 @@ export async function syncSingleInvoice(opts: {
       workerName:   data.workerName ?? null,
     })
     .returning({ id: companyInvoices.id, invoiceNumber: companyInvoices.invoiceNumber });
+
+  console.log('[syncSingleInvoice] INSERT OK', {
+    id: inserted[0]?.id,
+    invoiceNumber: inserted[0]?.invoiceNumber,
+    companyId,
+    sourceModule,
+    attachmentKey,
+  });
 
   return { id: inserted[0].id, created: true };
 }
@@ -391,6 +431,23 @@ export async function syncMaintenanceInvoices(opts: {
   attachments: MaintenanceAttachmentLike[];
 }): Promise<SyncMaintenanceInvoicesResult> {
   const { tx, companyId, maintenanceId, attachments } = opts;
+
+  // jul 2026 v3 — DEBUG: loguear qué attachments llegan al sync para
+  // diagnosticar por qué las facturas no aparecen en Finanzas.
+  console.log('[syncMaintenanceInvoices]', {
+    companyId,
+    maintenanceId,
+    attachmentsCount: attachments.length,
+    attachments: attachments.map((a) => ({
+      key: a.key,
+      url: a.url ? a.url.split('/').pop() : null,
+      isInvoice: a.isInvoice,
+      invoiceNumber: a.invoiceNumber,
+      kind: a.kind,
+      supplierId: a.supplierId,
+      itemCount: a.items?.length ?? 0,
+    })),
+  });
 
   // 1) Determinar qué keys seguimos conservando en el nuevo set.
   //    Asignamos keys a los attachments que aún no tienen una.
@@ -428,16 +485,19 @@ export async function syncMaintenanceInvoices(opts: {
     }
   }
 
-  // 3) Para cada attachment con invoiceNumber no-vacío: upsert.
+  // 3) Para cada attachment que sea factura (invoiceNumber no-vacío
+  //    o flag explícito `isInvoice=true`): upsert.
   //
-  //    Si el attachment tiene invoiceNumber vacío, lo saltamos aquí — la
-  //    limpieza del paso (2) ya removió las facturas que ya no aplican.
+  //    jul 2026 v3 — con la numeración AUTO el cliente ya no manda
+  //    invoiceNumber. La señal de "es factura" es ahora el flag
+  //    `isInvoice` (preferred) o el invoiceNumber legacy (compat).
   let created = 0;
   let updated = 0;
   for (let i = 0; i < attachments.length; i++) {
     const att = attachments[i];
     if (!att.url) continue; // skip attachments sin archivo
-    if (isEmptyInvoiceNumber(att.invoiceNumber)) continue;
+    const looksLikeInvoice = att.isInvoice === true || !isEmptyInvoiceNumber(att.invoiceNumber);
+    if (!looksLikeInvoice) continue;
 
     const key = att.key?.trim() || slugifyForKey(att.label, i);
     const amt = att.amount ?? 0;
@@ -449,7 +509,12 @@ export async function syncMaintenanceInvoices(opts: {
       sourceEntityId: maintenanceId,
       attachmentKey: key,
       data: {
-        invoiceNumber: String(att.invoiceNumber),
+        // jul 2026 v3 — el cliente ya NO manda invoiceNumber; el backend
+        // lo autogenera. Pasamos 'AUTO' como sentinel para que
+        // syncSingleInvoice NO entre al branch de borrado.
+        invoiceNumber: isEmptyInvoiceNumber(att.invoiceNumber)
+          ? 'AUTO'
+          : String(att.invoiceNumber),
         invoiceDate:
           att.uploadedAt && !Number.isNaN(new Date(att.uploadedAt).getTime())
             ? new Date(att.uploadedAt)
@@ -509,6 +574,129 @@ export async function deleteInvoicesForSource(opts: {
     .returning({ id: companyInvoices.id });
 
   return { deleted: rows.length };
+}
+
+// ─── 5. recalcInvoiceFromAttachment (jul 2026 v3) ────────────────────────────
+//
+// Cuando cambia `company_maintenance_items` (agregar/editar/borrar repuesto
+// desde el drawer) esta función sincroniza la fila del ledger con el
+// estado actual de los items:
+//
+//   • Lee los items de mantenimiento con `attachment_key = X`.
+//   • Calcula subtotal = Σ(item.subtotal).
+//   • Serializa esos items a JSON para `company_invoices.items[]`.
+//   • Actualiza subtotal/total/items en la fila del ledger.
+//   • Si subtotal = 0 (todos los items borrados), deja la fila con
+//     status='anulada' (la factura queda pero como cancelada).
+//
+// Idempotente: correr N veces produce el mismo estado.
+//
+// Devuelve la cantidad de items recyncronizados, o 0 si no había fila.
+
+export interface RecalcInvoiceResult {
+  invoiceId: number | null;
+  itemCount: number;
+  subtotal: number;
+  status: 'updated' | 'anulada' | 'unchanged' | 'created' | 'missing';
+}
+
+export async function recalcInvoiceFromAttachment(opts: {
+  tx: DrizzleTx;
+  companyId: number;
+  maintenanceId: number;
+  attachmentKey: string;
+}): Promise<RecalcInvoiceResult> {
+  const { tx, companyId, maintenanceId, attachmentKey } = opts;
+
+  // 1) Leer items actuales del mantenimiento con este attachment_key.
+  // (imported inline para no romper si el árbol de imports cambia)
+  const { companyMaintenanceItems } = await import(
+    '../db/schema/operational'
+  );
+
+  const items = await tx
+    .select({
+      id:          companyMaintenanceItems.id,
+      name:        companyMaintenanceItems.name,
+      quantity:    companyMaintenanceItems.quantity,
+      unitCost:    companyMaintenanceItems.unitCost,
+      subtotal:    companyMaintenanceItems.subtotal,
+      photoUrl:    companyMaintenanceItems.photoUrl,
+      attachmentKey: companyMaintenanceItems.attachmentKey,
+    })
+    .from(companyMaintenanceItems)
+    .where(
+      and(
+        eq(companyMaintenanceItems.maintenanceId, maintenanceId),
+        eq(companyMaintenanceItems.attachmentKey, attachmentKey),
+      ),
+    );
+
+  // 2) Buscar la fila del ledger.
+  const existing = await tx
+    .select({ id: companyInvoices.id, ivaAmount: companyInvoices.ivaAmount })
+    .from(companyInvoices)
+    .where(
+      and(
+        eq(companyInvoices.companyId, companyId),
+        eq(companyInvoices.sourceModule, 'mantenimiento'),
+        eq(companyInvoices.sourceEntityId, maintenanceId),
+        eq(companyInvoices.sourceAttachmentKey, attachmentKey),
+      ),
+    )
+    .limit(1);
+
+  if (existing.length === 0) {
+    return { invoiceId: null, itemCount: items.length, subtotal: 0, status: 'missing' };
+  }
+
+  // 3) Si no quedan items: marcar la factura como 'anulada' (no la
+  //    borramos — preservamos trazabilidad) y vaciar items[].
+  if (items.length === 0) {
+    await tx
+      .update(companyInvoices)
+      .set({
+        items:     '[]',
+        subtotal:  '0.00',
+        total:     String(existing[0].ivaAmount ?? '0.00'), // ivaAmount queda como "lo que se pagó"
+        status:    'anulada',
+        updatedAt: sql`now()`,
+      })
+      .where(eq(companyInvoices.id, existing[0].id));
+    return { invoiceId: existing[0].id, itemCount: 0, subtotal: 0, status: 'anulada' };
+  }
+
+  // 4) Items presentes: serializar y recalcular.
+  const itemsJson = items.map((it) => ({
+    description: it.name,
+    quantity:    Number(it.quantity),
+    unitPrice:   Number(it.unitCost),
+    subtotal:    Number(it.subtotal),
+    imageUrl:    it.photoUrl ?? null,
+  }));
+  const subtotal = items.reduce(
+    (acc, it) => acc + Number(it.subtotal || 0),
+    0,
+  );
+  const ivaAmount = Number(existing[0].ivaAmount ?? 0);
+  const total = +(subtotal + ivaAmount).toFixed(2);
+
+  await tx
+    .update(companyInvoices)
+    .set({
+      items:     JSON.stringify(itemsJson),
+      subtotal:  subtotal.toFixed(2),
+      total:     total.toFixed(2),
+      updatedAt: sql`now()`,
+    })
+    .where(eq(companyInvoices.id, existing[0].id));
+
+  return {
+    invoiceId: existing[0].id,
+    itemCount: items.length,
+    subtotal,
+    status: 'updated',
+  };
 }
 
 // ─── 4. ledgerInvoiceId ─────────────────────────────────────────────────────

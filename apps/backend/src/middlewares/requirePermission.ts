@@ -53,7 +53,7 @@ function resolveModuleSub(
 export const requirePermission = (
   module: string,
   submodule: string,
-  action: "ver" | "crear" | "editar" | "eliminar",
+  action: "ver" | "crear" | "editar" | "eliminar" | "aprobar" | "reponer",
 ) => (req: Request, _res: Response, next: NextFunction): void => {
   const user = req.user;
 
@@ -89,7 +89,7 @@ export const requirePermission = (
  */
 export const requirePermissionAny = (
   entries: Array<{ module: string; submodule: string }>,
-  action: "ver" | "crear" | "editar" | "eliminar",
+  action: "ver" | "crear" | "editar" | "eliminar" | "aprobar" | "reponer",
 ) => (req: Request, _res: Response, next: NextFunction): void => {
   const user = req.user;
 

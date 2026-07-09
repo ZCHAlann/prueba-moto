@@ -24,7 +24,7 @@
 //   - finanzas.facturas.crear    requerido para "+ Nuevo comprobante"
 //   - finanzas.facturas.eliminar requerido para desactivar tipo custom
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Receipt, Search, Filter, X, ChevronLeft, ChevronRight,
   FileText, Loader2, ExternalLink, Pencil, Save,
@@ -32,6 +32,7 @@ import {
   Tag, FolderOpen, Wrench, AlertCircle,
   Plus, Trash2, Settings2, FileDown,
   ArrowUpRight, Wrench as WrenchIcon,
+  Download, FileSpreadsheet, FileCode, FileType2, ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -90,6 +91,8 @@ const SOURCE_MODULE_LABELS: Record<FinanceInvoiceSourceModule, string> = {
   combustible:   "Combustible",
   peajes:        "Peajes",
   mantenimiento: "Mantenimiento",
+  // jul 2026 v4
+  petty_cash:    "Caja Chica",
   manual:        "Manual",
 };
 
@@ -136,6 +139,14 @@ function originHref(inv: ApiFinanceInvoice): string | null {
       const id = inv.sourceEntityId;
       return sr.assetId ? `/peajes?assetId=${sr.assetId}&open=${id}` : `/peajes?open=${id}`;
     }
+    // jul 2026 v4 — Facturas standalone de Caja Chica: el "origen" es el
+    // vale. Decodificamos sourceEntityId = 1_000_000 + voucherId (ver
+    // POST /finance/vouchers/:id/invoice en el backend).
+    case "petty_cash": {
+      const rawId = inv.sourceEntityId ?? 0;
+      const voucherId = rawId > 1_000_000 ? rawId - 1_000_000 : rawId;
+      return `/finanzas/caja-chica?tab=vales&voucher=${voucherId}`;
+    }
     default:
       return null;
   }
@@ -163,6 +174,12 @@ export function FacturasPage() {
 
   // ── Filtros ────────────────────────────────────────────────────────────
   // Prioridad: Vehículo > Taller > Tipo > Módulo origen > Fechas
+  // jul 2026 v3 — búsqueda automática: cualquier cambio en un dropdown
+  // o fecha dispara refetch inmediatamente (sin apretar "Buscar").
+  // El botón "Buscar" se mantiene como atajo manual opcional.
+  // El input "q" (búsqueda libre) tiene debounce de 250ms.
+  const [q, setQ]                     = useState("");
+  const [qDebounced, setQDebounced]   = useState("");
   const [assetId, setAssetId]         = useState<string>("all");
   const [workshopId, setWorkshopId]   = useState<string>("all");
   const [typeId, setTypeId]           = useState<string>("all");
@@ -170,6 +187,12 @@ export function FacturasPage() {
   const [from, setFrom]               = useState("");
   const [to, setTo]                   = useState("");
   const [page, setPage]               = useState(1);
+
+  // Debounce del input de búsqueda libre (250ms).
+  useEffect(() => {
+    const t = setTimeout(() => setQDebounced(q), 250);
+    return () => clearTimeout(t);
+  }, [q]);
 
   // ── Drawer detalle ─────────────────────────────────────────────────────
   const [detail, setDetail]             = useState<ApiFinanceInvoice | null>(null);
@@ -179,12 +202,16 @@ export function FacturasPage() {
   // ── Modal admin tipos ──────────────────────────────────────────────────
   const [showManageTypes, setShowManageTypes] = useState(false);
 
+  // ── Menú de export por fila (jul 2026 v3) ──────────────────────────────
+  const [openExportMenuId, setOpenExportMenuId] = useState<string | null>(null);
+
   // ── Refetch ───────────────────────────────────────────────────────────
   const runFetch = useCallback(
     (overrides?: { page?: number }) => {
       if (!canView || !companyId) return;
       const targetPage = overrides?.page ?? page;
       void fetchInvoices({
+        q:             qDebounced || undefined,
         assetId:       assetId === "all" ? "all" : Number(assetId),
         sourceModule:  sourceModule === "all" ? undefined : sourceModule,
         invoiceTypeId: typeId === "all" ? undefined : Number(typeId),
@@ -195,11 +222,32 @@ export function FacturasPage() {
       });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [canView, companyId, assetId, workshopId, typeId, sourceModule, from, to, page],
+    [canView, companyId, qDebounced, assetId, workshopId, typeId, sourceModule, from, to, page],
   );
 
-  // Refetch cuando el page cambia (la búsqueda es on-demand).
+  // jul 2026 v3 — AUTO-SEARCH: cualquier cambio en cualquier filtro o
+  // en la búsqueda libre (con debounce) dispara un refetch a página 1.
+  // Antes había que apretar "Buscar". Ahora solo el dropdown o la fecha
+  // bastan. El botón "Buscar" queda como atajo opcional.
   useEffect(() => {
+    if (!canView || !companyId) return;
+    void fetchInvoices({
+      q:             qDebounced || undefined,
+      assetId:       assetId === "all" ? "all" : Number(assetId),
+      sourceModule:  sourceModule === "all" ? undefined : sourceModule,
+      invoiceTypeId: typeId === "all" ? undefined : Number(typeId),
+      from:          from || undefined,
+      to:            to || undefined,
+      page:          1,
+      pageSize:      PAGE_SIZE,
+    });
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canView, companyId, qDebounced, assetId, workshopId, typeId, sourceModule, from, to]);
+
+  // Refetch cuando el page cambia (cambia sin resetear filtros).
+  useEffect(() => {
+    if (page === 1) return; // ya disparado arriba
     runFetch({ page });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
@@ -221,11 +269,24 @@ export function FacturasPage() {
 
   // ── Handlers ─────────────────────────────────────────────────────────
   const onSearch = () => {
+    // jul 2026 v3 — el botón "Buscar" es ahora opcional (atajo manual).
+    // El refetch automático del useEffect anterior ya dispara al cambiar
+    // filtros. Solo forzamos el refetch inmediato para feedback visual.
     setPage(1);
-    runFetch({ page: 1 });
+    void fetchInvoices({
+      q:             qDebounced || undefined,
+      assetId:       assetId === "all" ? "all" : Number(assetId),
+      sourceModule:  sourceModule === "all" ? undefined : sourceModule,
+      invoiceTypeId: typeId === "all" ? undefined : Number(typeId),
+      from:          from || undefined,
+      to:            to || undefined,
+      page:          1,
+      pageSize:      PAGE_SIZE,
+    });
   };
 
   const onClearFilters = () => {
+    setQ("");
     setAssetId("all");
     setWorkshopId("all");
     setTypeId("all");
@@ -233,10 +294,62 @@ export function FacturasPage() {
     setFrom("");
     setTo("");
     setPage(1);
-    // Aplicar inmediatamente
-    setTimeout(() => {
-      void fetchInvoices({ page: 1, pageSize: PAGE_SIZE });
-    }, 0);
+    // El useEffect superior dispara el refetch al cambiar state.
+  };
+
+  // ── Export individual por factura (PDF / CSV / XLSX / TXT) ───────────
+  // jul 2026 v3 — el backend expone /:id/{pdf,csv,xlsx,txt} que
+  // devuelven el archivo con Content-Disposition: attachment.
+  // Aquí disparamos la descarga via fetch con credentials y guardamos
+  // el blob con el nombre sugerido.
+  const triggerBlobDownload = async (url: string, fallbackName: string) => {
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+      }
+      const cd = res.headers.get("Content-Disposition") ?? "";
+      const m = cd.match(/filename="([^"]+)"/);
+      const name = m?.[1] ?? fallbackName;
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    } catch (err) {
+      toast.error("No se pudo descargar", { description: (err as Error).message });
+    }
+  };
+
+  const onDownloadInvoice = (inv: ApiFinanceInvoice, format: "pdf" | "csv" | "xlsx" | "txt") => {
+    const safeName = inv.invoiceNumber.replace(/[^A-Za-z0-9_.-]/g, "_");
+    const url = `/api/company/${companyId}/finance-invoices/${inv.id}/${format}`;
+    void triggerBlobDownload(url, `factura-${safeName}.${format}`);
+  };
+
+  // ── Export GENERAL (jul 2026 v3) ──────────────────────────────────────
+  // Manda TODAS las filas filtradas (nopage=true) en el formato pedido.
+  // NO usa el paginado del front. El backend respeta los mismos filtros
+  // (q, assetId, sourceModule, invoiceTypeId, from, to) del listado.
+  const [openExportAllMenu, setOpenExportAllMenu] = useState(false);
+  const onExportAll = (format: "pdf" | "csv" | "xlsx" | "txt") => {
+    setOpenExportAllMenu(false);
+    const params = new URLSearchParams();
+    if (qDebounced)                              params.set("q", qDebounced);
+    if (assetId !== "all")                       params.set("assetId", assetId);
+    if (sourceModule !== "all")                  params.set("sourceModule", sourceModule);
+    if (typeId !== "all")                        params.set("invoiceTypeId", typeId);
+    if (from)                                    params.set("from", from);
+    if (to)                                      params.set("to",   to);
+    params.set("nopage", "true");
+    params.set("format", format);
+    const url = `/api/company/${companyId}/finance-invoices?${params.toString()}`;
+    void triggerBlobDownload(url, `facturas_${new Date().toISOString().slice(0, 10)}.${format}`);
   };
 
   const openDetail = async (inv: ApiFinanceInvoice) => {
@@ -303,7 +416,7 @@ export function FacturasPage() {
   // ─── Render ─────────────────────────────────────────────────────────
   const firstShown = rows.length > 0 ? (page - 1) * PAGE_SIZE + 1 : 0;
   const lastShown  = (page - 1) * PAGE_SIZE + rows.length;
-  const hasFiltersActive = assetId !== "all" || workshopId !== "all" || typeId !== "all" || sourceModule !== "all" || from || to;
+  const hasFiltersActive = q !== "" || assetId !== "all" || workshopId !== "all" || typeId !== "all" || sourceModule !== "all" || from || to;
 
   return (
     <div className="space-y-4 p-4 sm:p-6">
@@ -330,6 +443,43 @@ export function FacturasPage() {
             <Settings2 size={13} /> Tipos
           </button>
         )}
+
+        {/* jul 2026 v3 — Botón "Exportar" general (respeta filtros). */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setOpenExportAllMenu((v) => !v)}
+            className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-3 text-xs font-medium text-sky-700 transition hover:bg-sky-50 dark:border-sky-500/30 dark:bg-white/[0.05] dark:text-sky-300 dark:hover:bg-sky-500/10"
+          >
+            <Download size={13} /> Exportar <ChevronDown size={11} />
+          </button>
+          {openExportAllMenu && (
+            <div
+              className="absolute right-0 z-30 mt-1 w-44 rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-white/[0.08] dark:bg-[#0b0f1a]"
+              onMouseLeave={() => setOpenExportAllMenu(false)}
+            >
+              <p className="px-3 pt-1 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                Exportar {total} factura{total !== 1 ? "s" : ""} (filtros aplicados)
+              </p>
+              {([
+                { fmt: "pdf"  as const, icon: <FileText size={12} />,         label: "PDF" },
+                { fmt: "csv"  as const, icon: <FileType2 size={12} />,        label: "CSV" },
+                { fmt: "xlsx" as const, icon: <FileSpreadsheet size={12} />,  label: "XLSX" },
+                { fmt: "txt"  as const, icon: <FileCode size={12} />,         label: "TXT" },
+              ]).map((opt) => (
+                <button
+                  key={opt.fmt}
+                  type="button"
+                  onClick={() => onExportAll(opt.fmt)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.06]"
+                >
+                  {opt.icon}
+                  <span>Descargar {opt.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Filtros ───────────────────────────────────────────────────── */}
@@ -341,12 +491,25 @@ export function FacturasPage() {
           </span>
           {hasFiltersActive && (
             <span className="text-[10px] text-emerald-600 dark:text-emerald-300">
-              (filtros activos — tocá "Buscar" para aplicar)
+              (filtros activos — la búsqueda es automática)
             </span>
           )}
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-12">
+          {/* jul 2026 v3 — Buscador libre con auto-search (debounce 250ms).
+              Coincide en invoice_number, supplier_name, workshop_name, worker_name. */}
+          <div className="lg:col-span-3">
+            <label className={labelCls}><Search size={10} className="inline mr-1" />Buscar</label>
+            <input
+              type="text"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="N° factura, proveedor, taller..."
+              className={inputCls}
+            />
+          </div>
+
           {/* Vehículo */}
           <div className="lg:col-span-3">
             <label className={labelCls}><Truck size={10} className="inline mr-1" />Vehículo</label>
@@ -572,6 +735,43 @@ export function FacturasPage() {
                           >
                             <Pencil size={13} />
                           </button>
+                          {/* jul 2026 v3 — Menu dropdown de export por fila */}
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setOpenExportMenuId(openExportMenuId === inv.id ? null : inv.id)}
+                              title="Exportar"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-sky-200 text-sky-700 transition hover:bg-sky-50 dark:border-sky-500/30 dark:text-sky-300 dark:hover:bg-sky-500/10"
+                            >
+                              <Download size={13} />
+                            </button>
+                            {openExportMenuId === inv.id && (
+                              <div
+                                className="absolute right-0 z-20 mt-1 w-44 rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-white/[0.08] dark:bg-[#0b0f1a]"
+                                onMouseLeave={() => setOpenExportMenuId(null)}
+                              >
+                                {([
+                                  { fmt: "pdf"  as const, icon: <FileText size={12} />,         label: "PDF" },
+                                  { fmt: "csv"  as const, icon: <FileType2 size={12} />,        label: "CSV" },
+                                  { fmt: "xlsx" as const, icon: <FileSpreadsheet size={12} />,  label: "XLSX" },
+                                  { fmt: "txt"  as const, icon: <FileCode size={12} />,         label: "TXT" },
+                                ]).map((opt) => (
+                                  <button
+                                    key={opt.fmt}
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenExportMenuId(null);
+                                      onDownloadInvoice(inv, opt.fmt);
+                                    }}
+                                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.06]"
+                                  >
+                                    {opt.icon}
+                                    <span>Descargar {opt.label}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -727,6 +927,76 @@ export function FacturasPage() {
                   </a>
                 ) : (
                   <p className="text-xs text-gray-400 dark:text-gray-500">Sin archivo adjunto.</p>
+                )}
+              </div>
+
+              {/* jul 2026 v3 — DESGLOSE de items de la factura.
+                  Lo que el operador cargó en el modal "¿factura?" se
+                  persiste en `company_invoices.items[]` (jsonb). Lo
+                  mostramos en el drawer para que el desglose sea visible
+                  desde el módulo Finanzas, no solo desde el mantenimiento. */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className={labelCls + " mb-0"}>Desglose</label>
+                  <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                    {(detail.items?.length ?? 0)} item{(detail.items?.length ?? 0) !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                {detail.items && detail.items.length > 0 ? (
+                  <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-white/[0.06]">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-gray-50 dark:bg-white/[0.02]">
+                        <tr className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                          <th className="px-2 py-2 text-left">Item</th>
+                          <th className="px-2 py-2 text-right">Cant.</th>
+                          <th className="px-2 py-2 text-right">P. unit.</th>
+                          <th className="px-2 py-2 text-right">Subtotal</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-white/[0.05]">
+                        {detail.items.map((it, idx) => (
+                          <tr key={idx}>
+                            <td className="px-2 py-2 text-gray-700 dark:text-gray-200">
+                              <div className="flex items-center gap-2">
+                                {it.imageUrl ? (
+                                  <img src={it.imageUrl} alt="" className="h-7 w-7 rounded object-cover shrink-0" />
+                                ) : (
+                                  <div className="h-7 w-7 rounded bg-gray-100 dark:bg-white/[0.04] shrink-0" />
+                                )}
+                                <span className="truncate">{it.description}</span>
+                              </div>
+                            </td>
+                            <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">
+                              {Number(it.quantity).toFixed(2)}
+                            </td>
+                            <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">
+                              {fmtMoney(it.unitPrice, detail.currency)}
+                            </td>
+                            <td className="px-2 py-2 text-right tabular-nums font-semibold text-gray-700 dark:text-gray-200">
+                              {fmtMoney(it.subtotal, detail.currency)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-gray-50 dark:bg-white/[0.02]">
+                        <tr className="text-[11px]">
+                          <td className="px-2 py-2 font-semibold text-gray-700 dark:text-gray-200" colSpan={3}>
+                            Totales
+                          </td>
+                          <td className="px-2 py-2 text-right font-bold tabular-nums text-emerald-700 dark:text-emerald-300">
+                            {fmtMoney(
+                              detail.items.reduce((acc, it) => acc + Number(it.subtotal || 0), 0),
+                              detail.currency,
+                            )}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 dark:text-gray-500 italic px-1 py-2 rounded-md border border-dashed border-gray-200 dark:border-white/[0.06]">
+                    Esta factura no tiene items registrados.
+                  </p>
                 )}
               </div>
 

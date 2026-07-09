@@ -6,7 +6,7 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, ilike, or, desc, sql } from 'drizzle-orm';
+import { eq, and, ilike, or, desc, asc, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyWorkshops } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
@@ -76,6 +76,14 @@ router.get(
       ]);
 
       const total = countRow?.[0]?.value ?? 0;
+      // jul 2026 v3 — nopage=true: devuelve TODOS los talleres sin
+      // paginar. Usado por dropdowns (modal de factura, etc.).
+      if (req.query.nopage === 'true' || req.query.nopage === '1') {
+        const allRows = await db.select().from(companyWorkshops)
+          .where(eq(companyWorkshops.companyId, companyId))
+          .orderBy(asc(companyWorkshops.name));
+        return res.json({ data: allRows.map(serializeWorkshop), total: allRows.length });
+      }
       res.json(buildPageResponse(rows.map(serializeWorkshop), total, page, pageSize));
     } catch (err) {
       next(err);

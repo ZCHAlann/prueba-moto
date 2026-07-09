@@ -27,6 +27,8 @@ import { CanvasBoardEditorPage } from "./pages/Reports/CanvasBoardEditorPage";
 import { FuelPage } from "./pages/Combustible/page";
 import { PeajesPage } from "./pages/Peajes/page";
 import { FacturasPage } from "./pages/finanzas/FacturasPage";
+import { CajaChicaPage } from "./pages/finanzas/CajaChicaPage";
+import { TransaccionesPage } from "./pages/finanzas/TransaccionesPage";
 import { ProfilePage } from "./pages/Profile/page";
 import { SettingsPage } from "./pages/Settings/page";
 import FlotasPage from "./pages/Gestion/Flotas/page";
@@ -187,6 +189,8 @@ export default function App() {
           <Route path="/combustible" element={<FuelPage />} />
           <Route path="/peajes" element={<PeajesPage />} />
           <Route path="/finanzas/facturas" element={<FacturasPage />} />
+          <Route path="/finanzas/caja-chica" element={<CajaChicaPage />} />
+          <Route path="/finanzas/transacciones" element={<TransaccionesPage />} />
           <Route path="/perfil" element={<ProfilePage />} />
           <Route path="/configuracion" element={<SettingsPage />} />
           <Route path="/flotas" element={<FlotasPage />} />

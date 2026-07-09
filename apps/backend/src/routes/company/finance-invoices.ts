@@ -10,12 +10,18 @@
 //   GET  /company/:id/finance-invoices
 //     Listado paginado con filtros:
 //       assetId, sourceModule, from, to, invoiceNumber (exacto), supplier (LIKE),
-//       invoice_type_id, supplier_id,
+//       invoice_type_id, supplier_id, q (búsqueda libre),
 //       page (default 1), pageSize (default 15, max 200).
 //     Devuelve { total, rows: [...], page, pageSize }. Cada row trae la
 //     `source_ref` hidratada (datos del fuel/toll/mantenimiento origen) para
 //     que el frontend pueda mostrar "factura de peaje X del 2026-07-05"
 //     sin tener que pegar a otra ruta.
+//
+//     Flags opcionales:
+//       nopage=true : devuelve TODAS las filas sin paginar. Usado por
+//                     /export para generar archivo completo.
+//       format=csv|xlsx|txt|pdf : genera archivo descargable con esos
+//                     formatos. nopage=true implicito.
 //
 //   GET  /company/:id/finance-invoices/:id
 //     Devuelve UNA fila hidratada del ledger, parseando el id como
@@ -169,6 +175,17 @@ function serializeInvoice(
 
     createdAt:           row.createdAt,
     updatedAt:           row.updatedAt,
+
+    // jul 2026 v3 — Totales + items[] para que el drawer del módulo
+    // Finanzas muestre el desglose. `row.items` puede ser null/array
+    // legacy (string). Lo normalizamos a array de objetos.
+    subtotal:    row.subtotal != null ? Number(row.subtotal) : 0,
+    ivaPercent:   row.ivaPercent != null ? Number(row.ivaPercent) : 15,
+    ivaAmount:    row.ivaAmount != null ? Number(row.ivaAmount) : 0,
+    total:        row.total != null ? Number(row.total) : 0,
+    workshopName: row.workshopName ?? null,
+    workerName:   row.workerName ?? null,
+    items:        Array.isArray(row.items) ? row.items : [],
   };
 }
 
@@ -530,6 +547,19 @@ router.get(
       const limit  = clampInt(req.query.limit,  50, 1, 200);
       const offset = clampInt(req.query.offset,  0, 0, 1_000_000);
 
+      // ── Búsqueda libre (jul 2026): jul 2026 v3 ─────────────────────────
+      // Coincidencia case-insensitive en invoice_number, supplier_name,
+      // workshop_name, worker_name. Si viene vacia o no es string → null.
+      const qRaw = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      const q = qRaw ? `%${qRaw}%` : null;
+
+      // ── Modo sin paginar (jul 2026 v3) ──────────────────────────────────
+      // Para el export general: ?nopage=true&format=csv|xlsx|txt|pdf
+      const noPage = req.query.nopage === 'true' || req.query.nopage === '1';
+      const formatRaw = typeof req.query.format === 'string' ? req.query.format.toLowerCase() : '';
+      const format = ['csv', 'xlsx', 'txt', 'pdf'].includes(formatRaw) ? formatRaw : null;
+      const isExport = noPage && format !== null;
+
       // assetId: parseIdFlexible acepta "asset-12" o "12". Si falla o es
       // 'all', lo ignoramos (semántica: traer facturas de cualquier activo).
       let assetIdNum: number | null = null;
@@ -592,6 +622,18 @@ router.get(
         conds.push(eq(companyInvoices.invoiceNumber, invoiceNumberQ));
       }
       if (supplierQ) conds.push(ilike(companyInvoices.supplierName, supplierQ));
+
+      // Búsqueda libre (jul 2026 v3): match en invoice_number, supplier_name,
+      // workshop_name, worker_name. case-insensitive. OR entre los 4.
+      if (q) {
+        const qClauses = [
+          ilike(companyInvoices.invoiceNumber, q),
+          ilike(companyInvoices.supplierName,  q),
+          ilike(companyInvoices.workshopName,  q),
+          ilike(companyInvoices.workerName,    q),
+        ];
+        conds.push(or(...qClauses)!);
+      }
 
       // invoice_type_id (catálogo company_invoice_types)
       if (invoiceTypeIdNum != null) {
@@ -664,6 +706,50 @@ router.get(
           })),
         );
 
+      // ── Modo EXPORT (jul 2026 v3) ─────────────────────────────────────────
+      // Cuando viene ?nopage=true&format=csv|xlsx|txt|pdf, devolvemos
+      // TODAS las filas que matchean los filtros, sin paginar, en el formato
+      // pedido. NO se hidrata `source_ref` (solo columnas planas necesarias).
+      if (isExport) {
+        const allRows = await db
+          .select()
+          .from(companyInvoices)
+          .where(where)
+          .orderBy(desc(companyInvoices.invoiceDate), desc(companyInvoices.id));
+
+        const tExportMap = new Map(
+          (await hydrateTypeAndSupplierFull(
+            allRows.map((r) => ({
+              invoiceTypeId: r.invoiceTypeId,
+              supplierId:    r.supplierId,
+            })),
+          )).types,
+        );
+
+        // Para export: sin source_ref. Planamos datos clave.
+        const flatRows = allRows.map((r) => ({
+          invoiceNumber: r.invoiceNumber ?? '',
+          invoiceDate:   formatDateOnly(r.invoiceDate),
+          sourceModule:  r.sourceModule ?? '',
+          kind:          r.kind ?? '',
+          invoiceTypeName: r.invoiceTypeId != null ? (tExportMap.get(r.invoiceTypeId)?.name ?? '') : '',
+          supplierName:  r.supplierName ?? '',
+          workshopName:  r.workshopName ?? '',
+          workerName:    r.workerName ?? '',
+          subtotal:      r.subtotal != null ? String(r.subtotal) : '0.00',
+          ivaAmount:     r.ivaAmount != null ? String(r.ivaAmount) : '0.00',
+          total:         r.total != null ? String(r.total) : '0.00',
+          status:        r.status ?? '',
+          notes:         r.notes ?? '',
+        }));
+
+        const filename = `facturas_${new Date().toISOString().slice(0, 10)}.${format}`;
+        if (format === 'csv')  { sendCsv (res, flatRows, filename); return; }
+        if (format === 'txt')  { sendTxt (res, flatRows, filename); return; }
+        if (format === 'xlsx') { await sendXlsx(res, flatRows, filename); return; }
+        if (format === 'pdf')  { await sendExportPdf(res, flatRows, filename, companyId); return; }
+      }
+
       res.json({
         total,
         rows: rows.map((r) => {
@@ -686,6 +772,204 @@ router.get(
     }
   },
 );
+
+// ─── Helpers de EXPORT (jul 2026 v3) ─────────────────────────────────────────
+// Para los formatos CSV / XLSX / TXT / PDF, generamos el archivo en
+// memoria y lo devolvemos con Content-Disposition: attachment. Cada
+// helper toma las filas planas (flatRows) que arma el caller.
+//
+// Estructura de flatRows (la misma para individual y general):
+//   { invoiceNumber, invoiceDate, sourceModule, kind, invoiceTypeName,
+//     supplierName, workshopName, workerName, subtotal, ivaAmount, total,
+//     status, notes }
+//
+// Para el PDF individual usamos el jsPDF detallado del comprobante
+// (con items[], header de empresa, etc.). Para el PDF general y los
+// demas formatos usamos un layout tabular simple.
+
+type ExportFlatRow = {
+  invoiceNumber: string;
+  invoiceDate:   string;     // YYYY-MM-DD
+  sourceModule:  string;
+  kind:          string;
+  invoiceTypeName: string;
+  supplierName:  string;
+  workshopName:  string;
+  workerName:    string;
+  subtotal:      string;
+  ivaAmount:     string;
+  total:         string;
+  status:        string;
+  notes:         string;
+};
+
+const EXPORT_HEADERS: Array<{ key: keyof ExportFlatRow; label: string }> = [
+  { key: 'invoiceNumber',   label: 'N° Factura' },
+  { key: 'invoiceDate',     label: 'Fecha' },
+  { key: 'sourceModule',    label: 'Origen' },
+  { key: 'kind',            label: 'Tipo' },
+  { key: 'invoiceTypeName', label: 'Categoría' },
+  { key: 'supplierName',    label: 'Proveedor' },
+  { key: 'workshopName',    label: 'Taller' },
+  { key: 'workerName',      label: 'Lavador' },
+  { key: 'subtotal',        label: 'Subtotal (USD)' },
+  { key: 'ivaAmount',       label: 'IVA (USD)' },
+  { key: 'total',           label: 'Total (USD)' },
+  { key: 'status',          label: 'Estado' },
+  { key: 'notes',           label: 'Notas' },
+];
+
+function csvEscape(v: string): string {
+  // CSV escaping RFC 4180: comilla doble + duplicar comillas internas.
+  if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
+  return v;
+}
+
+function sendCsv(res: Response, rows: ExportFlatRow[], filename: string): void {
+  const lines: string[] = [];
+  lines.push(EXPORT_HEADERS.map((h) => csvEscape(h.label)).join(','));
+  for (const r of rows) {
+    lines.push(EXPORT_HEADERS.map((h) => csvEscape(String(r[h.key] ?? ''))).join(','));
+  }
+  // BOM UTF-8 para que Excel reconozca acentos correctamente.
+  const body = '\ufeff' + lines.join('\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(body);
+}
+
+function sendTxt(res: Response, rows: ExportFlatRow[], filename: string): void {
+  const widths = EXPORT_HEADERS.map((h) =>
+    Math.max(h.label.length, ...rows.map((r) => String(r[h.key] ?? '').length)),
+  );
+  const pad = (s: string, w: number) => s.padEnd(w, ' ');
+  const sep = widths.map((w) => '-'.repeat(w)).join('  ');
+  const lines: string[] = [];
+  lines.push(EXPORT_HEADERS.map((h, i) => pad(h.label, widths[i])).join('  '));
+  lines.push(sep);
+  for (const r of rows) {
+    lines.push(EXPORT_HEADERS.map((h, i) => pad(String(r[h.key] ?? ''), widths[i])).join('  '));
+  }
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(lines.join('\n'));
+}
+
+async function sendXlsx(
+  res: Response,
+  rows: ExportFlatRow[],
+  filename: string,
+): Promise<void> {
+  // Dynamic import: exceljs es pesado y solo lo necesitamos para export.
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'ApliSmart Motors';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('Facturas', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  ws.columns = EXPORT_HEADERS.map((h) => ({
+    header: h.label,
+    key: h.key,
+    width: Math.max(h.label.length + 2, 14),
+  }));
+  // Header style
+  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  ws.getRow(1).fill = {
+    type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' },
+  };
+  ws.getRow(1).alignment = { vertical: 'middle', horizontal: 'left' };
+  // Rows
+  for (const r of rows) {
+    ws.addRow({
+      invoiceNumber: r.invoiceNumber,
+      invoiceDate:   r.invoiceDate,
+      sourceModule:  r.sourceModule,
+      kind:          r.kind,
+      invoiceTypeName: r.invoiceTypeName,
+      supplierName:  r.supplierName,
+      workshopName:  r.workshopName,
+      workerName:    r.workerName,
+      subtotal:      Number(r.subtotal) || 0,
+      ivaAmount:     Number(r.ivaAmount) || 0,
+      total:         Number(r.total) || 0,
+      status:        r.status,
+      notes:         r.notes,
+    });
+  }
+  // Formato numerico para USD
+  ['subtotal', 'ivaAmount', 'total'].forEach((k) => {
+    const col = ws.getColumn(k);
+    col.numFmt = '"$"#,##0.00';
+    col.alignment = { horizontal: 'right' };
+  });
+  const buf = await wb.xlsx.writeBuffer();
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(Buffer.from(buf as ArrayBuffer));
+}
+
+async function sendExportPdf(
+  res: Response,
+  rows: ExportFlatRow[],
+  filename: string,
+  companyId: number,
+): Promise<void> {
+  // PDF general (lista de facturas). Para el PDF individual por
+  // factura, usar el endpoint existente /:id/pdf (más detallado).
+  const { jsPDF } = (await import('jspdf')).default
+    ? await import('jspdf')
+    : await import('jspdf');
+  // Hay dos shapes de export de jspdf (named/default). El cast cubre ambos.
+  const JsPDFCtor = ((jsPDF as any).default ?? jsPDF) as any;
+  const doc = new JsPDFCtor({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+  doc.setFontSize(14);
+  doc.text('Listado de Facturas — ApliSmart Motors', 14, 14);
+  doc.setFontSize(9);
+  doc.text(`Generado: ${new Date().toISOString().slice(0, 19).replace('T', ' ')}  |  Empresa: ${companyId}  |  Total: ${rows.length}`, 14, 20);
+
+  // Tabla simple con autoTable.
+  const autoTableMod = await import('jspdf-autotable');
+  const autoTable = (autoTableMod as any).default ?? autoTableMod;
+
+  autoTable(doc, {
+    startY: 26,
+    head: [EXPORT_HEADERS.map((h) => h.label)],
+    body: rows.map((r) => EXPORT_HEADERS.map((h) => String(r[h.key] ?? ''))),
+    styles: { fontSize: 7, cellPadding: 1.5 },
+    headStyles: { fillColor: [31, 41, 55], textColor: 255, fontStyle: 'bold' },
+    columnStyles: {
+      0: { cellWidth: 22 }, // N° Factura
+      1: { cellWidth: 20 }, // Fecha
+      2: { cellWidth: 22 }, // Origen
+      3: { cellWidth: 18 }, // Tipo
+      4: { cellWidth: 22 }, // Categoría
+      5: { cellWidth: 28 }, // Proveedor
+      6: { cellWidth: 28 }, // Taller
+      7: { cellWidth: 24 }, // Lavador
+      8: { cellWidth: 22, halign: 'right' }, // Subtotal
+      9: { cellWidth: 18, halign: 'right' }, // IVA
+     10: { cellWidth: 22, halign: 'right' }, // Total
+     11: { cellWidth: 16 }, // Estado
+     12: { cellWidth: 'auto' }, // Notas
+    },
+  });
+
+  const buf = doc.output('arraybuffer') as ArrayBuffer;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(Buffer.from(buf));
+}
+
+function formatDateOnly(d: Date | string | null): string {
+  if (!d) return '';
+  if (typeof d === 'string') return d.slice(0, 10);
+  return d.toISOString().slice(0, 10);
+}
 
 // ─── GET /company/:id/finance-invoices/:id ────────────────────────────────────
 
@@ -855,6 +1139,158 @@ router.get(
     } catch (err) {
       next(err);
     }
+  },
+);
+
+// ─── GET /company/:id/finance-invoices/:id/{csv,xlsx,txt} ────────────────────
+// jul 2026 v3 — Export individual de UNA factura en formato tabular.
+// Mismo formato que el export general (mismas columnas), pero con
+// UNA sola fila: la factura solicitada. Útil para descargar el
+// comprobante en formato Excel/CSV/TXT sin abrir el PDF.
+//
+// PDF individual sigue siendo /:id/pdf (más detallado, jsPDF con
+// tabla de items y header de empresa).
+
+async function exportSingleInvoiceFlat(
+  companyId: number,
+  invoiceId: number,
+): Promise<ExportFlatRow | null> {
+  const [row] = await db
+    .select()
+    .from(companyInvoices)
+    .where(and(
+      eq(companyInvoices.id, invoiceId),
+      eq(companyInvoices.companyId, companyId),
+    ))
+    .limit(1);
+  if (!row) return null;
+
+  const { types: tMap, suppliers: sMap } =
+    await hydrateTypeAndSupplierFull([{
+      invoiceTypeId: row.invoiceTypeId,
+      supplierId:    row.supplierId,
+    }]);
+  const t = row.invoiceTypeId != null ? tMap.get(row.invoiceTypeId) : undefined;
+
+  return {
+    invoiceNumber:   row.invoiceNumber ?? '',
+    invoiceDate:     formatDateOnly(row.invoiceDate),
+    sourceModule:    row.sourceModule ?? '',
+    kind:            row.kind ?? '',
+    invoiceTypeName: t?.name ?? '',
+    supplierName:    row.supplierName ?? (sMap.get(row.supplierId ?? -1)?.name ?? ''),
+    workshopName:    row.workshopName ?? '',
+    workerName:      row.workerName ?? '',
+    subtotal:        row.subtotal != null ? String(row.subtotal) : '0.00',
+    ivaAmount:       row.ivaAmount != null ? String(row.ivaAmount) : '0.00',
+    total:           row.total != null ? String(row.total) : '0.00',
+    status:          row.status ?? '',
+    notes:           row.notes ?? '',
+  };
+}
+
+router.get(
+  '/:id/csv',
+  requirePermission('finanzas', 'facturas', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = ensureCompanyId(req.companyId);
+      const invoiceId = parseId('invoice', req.params.id);
+      const flat = await exportSingleInvoiceFlat(companyId, invoiceId);
+      if (!flat) throw new NotFoundError('Factura', req.params.id);
+      const safeName = String(flat.invoiceNumber).replace(/[^A-Za-z0-9_.-]/g, '_');
+      sendCsv(res, [flat], `factura-${safeName}.csv`);
+    } catch (err) { next(err); }
+  },
+);
+
+// ─── GET /company/:id/finance-invoices/:id  ───────────────────────────────────
+// jul 2026 v4-b — Detalle de UNA factura. Usado por el drawer de mantenimiento
+// para mostrar la factura cerrada cuando el operador cerró el vale desde
+// CajaChicaPage. Devuelve shape `ApiFinanceInvoice` ya hidratada para
+// que el frontend pueda reusar el mismo componente de detalle.
+router.get(
+  '/:id',
+  requirePermission('finanzas', 'facturas', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = ensureCompanyId(req.companyId);
+      const invoiceId = parseId('invoice', req.params.id);
+
+      const [row] = await db
+        .select({
+          inv: companyInvoices,
+        })
+        .from(companyInvoices)
+        .where(and(
+          eq(companyInvoices.id, invoiceId),
+          eq(companyInvoices.companyId, companyId),
+        ))
+        .limit(1);
+      if (!row) throw new NotFoundError('Factura', req.params.id);
+
+      // Devolvemos lo mínimo que el drawer necesita para mostrar la
+      // factura cerrada: id, número, fecha, total, items, archivo.
+      // El listado del modulo Finanzas tiene más campos; acá solo
+      // devolvemos lo esencial.
+      const items = (() => {
+        if (!row.inv.items) return [];
+        if (Array.isArray(row.inv.items)) return row.inv.items;
+        try { return JSON.parse(String(row.inv.items)); } catch { return []; }
+      })();
+
+      return res.json({
+        invoice: {
+          id: toId('invoice', row.inv.id),
+          numericId: row.inv.id,
+          invoiceNumber: row.inv.invoiceNumber,
+          invoiceDate: row.inv.invoiceDate,
+          amount: row.inv.amount,
+          total: row.inv.total,
+          subtotal: row.inv.subtotal,
+          ivaPercent: row.inv.ivaPercent,
+          ivaAmount: row.inv.ivaAmount,
+          kind: row.inv.kind,
+          sourceModule: row.inv.sourceModule,
+          sourceAttachmentKey: row.inv.sourceAttachmentKey,
+          fileUrl: row.inv.fileUrl,
+          fileMimeType: row.inv.fileMimeType,
+          items,
+          workshopName: row.inv.workshopName,
+          workerName: row.inv.workerName,
+        },
+      });
+    } catch (err) { next(err); }
+  },
+);
+
+router.get(
+  '/:id/txt',
+  requirePermission('finanzas', 'facturas', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = ensureCompanyId(req.companyId);
+      const invoiceId = parseId('invoice', req.params.id);
+      const flat = await exportSingleInvoiceFlat(companyId, invoiceId);
+      if (!flat) throw new NotFoundError('Factura', req.params.id);
+      const safeName = String(flat.invoiceNumber).replace(/[^A-Za-z0-9_.-]/g, '_');
+      sendTxt(res, [flat], `factura-${safeName}.txt`);
+    } catch (err) { next(err); }
+  },
+);
+
+router.get(
+  '/:id/xlsx',
+  requirePermission('finanzas', 'facturas', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = ensureCompanyId(req.companyId);
+      const invoiceId = parseId('invoice', req.params.id);
+      const flat = await exportSingleInvoiceFlat(companyId, invoiceId);
+      if (!flat) throw new NotFoundError('Factura', req.params.id);
+      const safeName = String(flat.invoiceNumber).replace(/[^A-Za-z0-9_.-]/g, '_');
+      await sendXlsx(res, [flat], `factura-${safeName}.xlsx`);
+    } catch (err) { next(err); }
   },
 );
 

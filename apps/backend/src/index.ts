@@ -24,6 +24,7 @@ import { startMaintenanceStatusCron } from './lib/cron/maintenanceStatusCron';
 import { startStatsAnomaliesCron } from './lib/cron/stats-anomalies';
 import { startStatsCleanupCron } from './lib/cron/cleanup';
 import { startScheduledJobs as startJarvisWeeklySummary } from './scheduled/weekly-summary';
+import { startPettyCashPeriodResetCron, startPettyCashLimitCheckCron } from './lib/cron/petty-cash';
 
 const PORT = process.env.PORT || 5000;
 
@@ -78,6 +79,11 @@ void (async () => {
 if (process.env.JARVIS_WEEKLY_SUMMARY_ENABLED !== 'false') {
   startJarvisWeeklySummary();
 }
+
+// jul 2026 — Caja Chica: period reset (diario 00:30 EC) + chequeo de límite
+// (cada 1h). Se activan con PETTY_CASH_CRON_ENABLED=true.
+startPettyCashPeriodResetCron();
+startPettyCashLimitCheckCron();
 
 server.listen(PORT, () => {
   console.log(`✓ Backend corriendo en puerto ${PORT} (TZ=${process.env.TZ})`);

@@ -31,9 +31,14 @@ const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub
   { test: (h) => h === "/lienzo" || h.startsWith("/lienzo"),                                              mod: "lienzo",        sub: "lienzo" },
   { test: (h) => h === "/combustible" || h.startsWith("/combustible"),                                    mod: "combustible",   sub: "combustible" },
   { test: (h) => h === "/peajes"      || h.startsWith("/peajes"),                                         mod: "peajes",        sub: "peajes"      },
-  // Finanzas (jul 2026) — ledger de comprobantes. La página principal
-  // vive en /finanzas/facturas pero la ruta también acepta /finanzas/*
-  // para futuros sub-ítems (estadísticas, conciliación).
+  // Finanzas (jul 2026) — ledger de comprobantes. Sub-rutas ESPECÍFICAS
+  // antes del catch-all para que `canAccessItem` chequee el submódulo
+  // correcto, NO siempre `facturas`. Sin esto, un operador SIN
+  // `finanzas.facturas.ver` no podría ni entrar a Caja Chica aunque
+  // tenga `finanzas.caja_chica.ver`, y al revés.
+  { test: (h) => h === "/finanzas/caja-chica" || h.startsWith("/finanzas/caja-chica"),                    mod: "finanzas",      sub: "caja_chica"  },
+  { test: (h) => h === "/finanzas/transacciones" || h.startsWith("/finanzas/transacciones"),              mod: "finanzas",      sub: "transacciones" },
+  // Fallback de la familia: /finanzas o /finanzas/facturas o cualquier futuro sub.
   { test: (h) => h === "/finanzas" || h.startsWith("/finanzas"),                                          mod: "finanzas",      sub: "facturas"    },
   { test: (h) => h === "/geolocalizacion" || h.startsWith("/geolocalizacion"),                            mod: "geolocalizacion", sub: "geolocalizacion" },
   { test: (h) => h === "/autorizaciones" || h.startsWith("/autorizaciones"),                              mod: "autorizaciones", sub: "autorizaciones" },

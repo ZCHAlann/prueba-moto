@@ -35,6 +35,7 @@ import jarvisRouter from './jarvis';
 import formOptionsRouter from './formOptions';
 import financeInvoicesRouter from './finance-invoices';
 import financeInvoiceTypesRouter from './finance-invoice-types';
+import financePettyCashRouter from './finance-petty-cash';
 
 const router = Router({ mergeParams: true });
 
@@ -92,6 +93,17 @@ router.use('/finance-invoices', financeInvoicesRouter);
 // módulo "finanzas" para mantener todo el dominio agrupado, pero su URL
 // es independiente porque la entidad no es un invoice.
 router.use('/finance-invoice-types', financeInvoiceTypesRouter);
+
+// ── finanzas: caja chica + transacciones (jul 2026 v4) ───────────────────────
+//
+// Submódulo nuevo: solicitudes de gasto, vales, historial de movimientos y
+// gastos anuales con recurrencia. Cubre los flujos:
+//   - Operador pide recurso (POST /finance/requests)
+//   - Aprobador clasifica como petty_cash o annual_expense y aprueba (PATCH /review)
+//   - Operador cierra vale subiendo factura (PATCH /vouchers/:id/close)
+//   - Admin_empresa / owner rellenan la caja (POST /finance/petty-cash/replenish)
+//   - Lectura del historial en /finance/transactions (con export PDF)
+router.use('/finance', financePettyCashRouter);
 
 
 export default router;

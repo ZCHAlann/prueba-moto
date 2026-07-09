@@ -202,6 +202,11 @@ export const invoiceSourceModuleEnum = pgEnum('invoice_source_module_enum', [
   'combustible',
   'peajes',
   'mantenimiento',
+  // jul 2026 v4 — Comprobantes subidos al cerrar un vale de Caja Chica.
+  // Los vales standalone no están asociados a un mantenimiento, así que
+  // estos comprobantes viven en `company_invoices` como si fuesen su
+  // propio origen. attachment_key = `voucher-<id>`.
+  'petty_cash',
 ]);
 
 export const invoiceKindEnum = pgEnum('invoice_kind_enum', [
@@ -300,6 +305,13 @@ export const companyInvoices = pgTable(
     total:                numeric('total', { precision: 14, scale: 2 }).notNull().default('0'),
     workshopName:         varchar('workshop_name', { length: 160 }),
     workerName:           varchar('worker_name', { length: 160 }),
+
+    // ── jul 2026 v4 — vínculo opcional a solicitud de finanzas ───────────
+    // NULL por default. Se setea cuando la factura nace de cerrar un vale de
+    // caja chica. Mantenimientos v3 también lo setean si el item disparó una
+    // solicitud. ON DELETE SET NULL porque la factura debe sobrevivir al
+    // borrado de la solicitud.
+    financeRequestId:     integer('finance_request_id'),
 
     createdAt:             timestamp('created_at').notNull().defaultNow(),
     updatedAt:             timestamp('updated_at').notNull().defaultNow(),
@@ -488,6 +500,13 @@ export const notificationKindEnum = pgEnum('notification_kind_enum', [
   'workshop_assigned',
   'supplier_invoice',
   'system',
+  // jul 2026 — Caja Chica / Finanzas (migration 0046):
+  'finance_request_created',
+  'finance_request_reviewed',
+  'finance_voucher_issued',
+  'finance_voucher_closed',
+  'finance_petty_cash_limit_reached',
+  'finance_petty_cash_replenished',
 ]);
 
 export const devicePlatformEnum = pgEnum('device_platform_enum', [
@@ -655,6 +674,19 @@ export const companyMaintenanceItems = pgTable('company_maintenance_items', {
   // el array attachments[]" se hace en lib/invoices-sync al llamar a
   // syncMaterialize.
   attachmentKey:  varchar('attachment_key', { length: 40 }),
+
+  // jul 2026 — vínculo opcional a la solicitud de caja chica lanzada
+  // desde este item de mantenimiento (botón "Solicitar recurso a finanzas"
+  // en el drawer). NULL = no se solicitó recurso para este item.
+  financeRequestId: integer('finance_request_id'),
+
+  // jul 2026 v4 — clasificación contable del item (migration 0047).
+  // NULL = sin clasificar todavía.
+  // 'petty_cash' = cubierto por un vale de caja chica aprobado.
+  // 'annual_expense' = registrado como gasto anual.
+  // La setea el aprobador de finanzas al aprobar la solicitud — NO el operador.
+  // Si está set, financeRequestId DEBE estar set también (constraint en BD).
+  financeClassification: varchar('finance_classification', { length: 20 }),
 });
 
 // ── Adicionales de Lavada (items extra que el operador agrega al servicio) ───
@@ -1634,3 +1666,188 @@ export const companyCanvasWidgets = pgTable('company_canvas_widgets', {
   updatedAt:    timestamp('updated_at').notNull().defaultNow(),
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// jul 2026 — Módulo Caja Chica + Gastos Anuales (migration 0046)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 5 tablas nuevas + 7 enums. Patrón:
+//   - Caja chica por SEDE (no por empresa): site_id NOT NULL en todo.
+//   - Movimientos append-only (rechaza UPDATE/DELETE vía trigger SQL).
+//   - Las funciones PL/pgSQL fn_apply_finance_request_approval y
+//     fn_close_petty_cash_voucher viven en 0046_petty_cash.sql.
+//   - current_balance está materializado en la cuenta (no se recalcula en
+//     cada lectura) — los triggers de PL/pgSQL lo mantienen en sync.
+
+// ── Enums del módulo Caja Chica ──────────────────────────────────────────────
+
+export const pettyCashAccountModeEnum = pgEnum('petty_cash_account_mode_enum', [
+  'period',
+  'balance',
+]);
+
+export const pettyCashPeriodKindEnum = pgEnum('petty_cash_period_kind_enum', [
+  'monthly',
+  'weekly',
+]);
+
+export const financeRequestOriginEnum = pgEnum('finance_request_origin_enum', [
+  'maintenance',       // jul 2026 v4 — anticipo genérico atado al mantenimiento
+  'maintenance_item',  // anticipo atado a un item puntual
+  'standalone',        // sin atadura, solo caja chica general
+]);
+
+export const financeRequestClassificationEnum = pgEnum(
+  'finance_request_classification_enum',
+  ['pending', 'petty_cash', 'annual_expense'],
+);
+
+export const financeRequestStatusEnum = pgEnum('finance_request_status_enum', [
+  'pending',
+  'approved',
+  'rejected',
+  'cancelled',
+]);
+
+export const pettyCashVoucherStatusEnum = pgEnum(
+  'petty_cash_voucher_status_enum',
+  ['open', 'closed', 'cancelled'],
+);
+
+export const pettyCashMovementTypeEnum = pgEnum(
+  'petty_cash_movement_type_enum',
+  [
+    'initial_assignment',
+    'replenishment',
+    'period_reset_out',
+    'period_reset_in',
+    'request_approved_petty',
+    'request_approved_annual',
+    'voucher_closed_refund',
+    'voucher_cancelled',
+    'manual_adjustment',
+  ],
+);
+
+// ── Cuentas de caja chica ────────────────────────────────────────────────────
+//
+// Una fila por sede activa. El índice UNIQUE parcial garantiza unicidad
+// solo entre activas (cuando se reactiva una sede, hay que desactivar la
+// anterior — el backend se encarga).
+
+export const companyPettyCashAccounts = pgTable(
+  'company_petty_cash_accounts',
+  {
+    id:              serial('id').primaryKey(),
+    companyId:       integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+    siteId:          integer('site_id').notNull().references(() => companySites.id, { onDelete: 'cascade' }),
+    mode:            pettyCashAccountModeEnum('mode').notNull().default('balance'),
+    periodKind:      pettyCashPeriodKindEnum('period_kind'),
+    initialAmount:   numeric('initial_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+    limitAmount:     numeric('limit_amount',   { precision: 12, scale: 2 }).notNull().default('0'),
+    // Materializado: lo actualizan los triggers PL/pgSQL al insertar movements.
+    currentBalance:  numeric('current_balance', { precision: 12, scale: 2 }).notNull().default('0'),
+    isActive:        boolean('is_active').notNull().default(true),
+    periodStartedAt: timestamp('period_started_at').notNull().defaultNow(),
+    createdBy:       integer('created_by').references(() => companyUsers.id, { onDelete: 'set null' }),
+    updatedBy:       integer('updated_by').references(() => companyUsers.id, { onDelete: 'set null' }),
+    createdAt:       timestamp('created_at').notNull().defaultNow(),
+    updatedAt:       timestamp('updated_at').notNull().defaultNow(),
+  },
+);
+
+// ── Log inmutable de movimientos ─────────────────────────────────────────────
+//
+// Append-only vía trigger SQL (fn_petty_cash_movements_immutable en 0046).
+
+export const companyPettyCashMovements = pgTable(
+  'company_petty_cash_movements',
+  {
+    id:                serial('id').primaryKey(),
+    companyId:         integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+    accountId:         integer('account_id').notNull().references(() => companyPettyCashAccounts.id, { onDelete: 'cascade' }),
+    type:              pettyCashMovementTypeEnum('type').notNull(),
+    amount:            numeric('amount',         { precision: 12, scale: 2 }).notNull(),
+    balanceAfter:      numeric('balance_after',  { precision: 12, scale: 2 }).notNull(),
+    relatedRequestId:  integer('related_request_id').references(() => companyFinanceRequests.id, { onDelete: 'set null' }),
+    relatedVoucherId:  integer('related_voucher_id').references(() => companyPettyCashVouchers.id, { onDelete: 'set null' }),
+    actorUserId:       integer('actor_user_id').references(() => companyUsers.id, { onDelete: 'set null' }),
+    note:              text('note'),
+    occurredAt:        timestamp('occurred_at').notNull().defaultNow(),
+    createdAt:         timestamp('created_at').notNull().defaultNow(),
+  },
+);
+
+// ── Solicitudes de finanzas ──────────────────────────────────────────────────
+
+export const companyFinanceRequests = pgTable(
+  'company_finance_requests',
+  {
+    id:                  serial('id').primaryKey(),
+    companyId:           integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+    siteId:              integer('site_id').notNull().references(() => companySites.id, { onDelete: 'cascade' }),
+    requesterUserId:     integer('requester_user_id').notNull().references(() => companyUsers.id, { onDelete: 'restrict' }),
+    approverUserId:      integer('approver_user_id').references(() => companyUsers.id, { onDelete: 'set null' }),
+    amount:              numeric('amount', { precision: 12, scale: 2 }).notNull(),
+    reason:              varchar('reason', { length: 280 }).notNull(),
+    justificationNotes:  text('justification_notes'),
+    origin:              financeRequestOriginEnum('origin').notNull().default('standalone'),
+    maintenanceId:       integer('maintenance_id').references(() => companyMaintenanceRecords.id, { onDelete: 'set null' }),
+    maintenanceItemId:   integer('maintenance_item_id').references(() => companyMaintenanceItems.id, { onDelete: 'set null' }),
+    // 'pending' al crear; el backend lo cambia a 'petty_cash' o 'annual_expense' al aprobar.
+    classification:      financeRequestClassificationEnum('classification').notNull().default('pending'),
+    status:              financeRequestStatusEnum('status').notNull().default('pending'),
+    rejectionReason:     text('rejection_reason'),
+    reviewedAt:          timestamp('reviewed_at'),
+    createdAt:           timestamp('created_at').notNull().defaultNow(),
+    updatedAt:           timestamp('updated_at').notNull().defaultNow(),
+  },
+);
+
+// ── Vales de caja chica ──────────────────────────────────────────────────────
+
+export const companyPettyCashVouchers = pgTable(
+  'company_petty_cash_vouchers',
+  {
+    id:                   serial('id').primaryKey(),
+    companyId:            integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+    siteId:               integer('site_id').notNull().references(() => companySites.id, { onDelete: 'cascade' }),
+    requestId:            integer('request_id').notNull().unique().references(() => companyFinanceRequests.id, { onDelete: 'cascade' }),
+    accountId:            integer('account_id').notNull().references(() => companyPettyCashAccounts.id, { onDelete: 'restrict' }),
+    assignedToUserId:     integer('assigned_to_user_id').notNull().references(() => companyUsers.id, { onDelete: 'restrict' }),
+    issuedAmount:         numeric('issued_amount', { precision: 12, scale: 2 }).notNull(),
+    status:               pettyCashVoucherStatusEnum('status').notNull().default('open'),
+    closedAt:             timestamp('closed_at'),
+    closedActualAmount:   numeric('closed_actual_amount', { precision: 12, scale: 2 }),
+    closedInvoiceId:      integer('closed_invoice_id').references(() => companyInvoices.id, { onDelete: 'set null' }),
+    closedNotes:          text('closed_notes'),
+    refundAmount:         numeric('refund_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+    createdAt:            timestamp('created_at').notNull().defaultNow(),
+    updatedAt:            timestamp('updated_at').notNull().defaultNow(),
+  },
+);
+
+// ── Gastos anuales ───────────────────────────────────────────────────────────
+//
+// Categoría libre (texto), no catálogo. estimated_next_due_at lo calcula
+// el backend al insertar (default = occurred_at + 1 año), pero es editable.
+
+export const companyAnnualExpenses = pgTable(
+  'company_annual_expenses',
+  {
+    id:                    serial('id').primaryKey(),
+    companyId:             integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+    siteId:                integer('site_id').notNull().references(() => companySites.id, { onDelete: 'cascade' }),
+    financeRequestId:      integer('finance_request_id').references(() => companyFinanceRequests.id, { onDelete: 'set null' }),
+    invoiceId:             integer('invoice_id').references(() => companyInvoices.id, { onDelete: 'set null' }),
+    description:           varchar('description', { length: 280 }).notNull(),
+    amount:                numeric('amount', { precision: 12, scale: 2 }).notNull(),
+    occurredAt:            date('occurred_at').notNull(),
+    estimatedNextDueAt:    date('estimated_next_due_at'),
+    category:              varchar('category', { length: 80 }),
+    vehicleId:             integer('vehicle_id').references(() => companyAssets.id, { onDelete: 'set null' }),
+    maintenanceId:         integer('maintenance_id').references(() => companyMaintenanceRecords.id, { onDelete: 'set null' }),
+    actorUserId:           integer('actor_user_id').references(() => companyUsers.id, { onDelete: 'set null' }),
+    createdAt:             timestamp('created_at').notNull().defaultNow(),
+    updatedAt:             timestamp('updated_at').notNull().defaultNow(),
+  },
+);

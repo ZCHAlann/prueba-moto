@@ -4,13 +4,71 @@ import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Eye, Plus, Pencil, Trash2, Check, Sparkles, Layers,
-  ChevronDown, RotateCcw, CheckCircle2,
+  ChevronDown, RotateCcw, CheckCircle2, Settings, Users,
 } from "lucide-react";
 import { MODULE_TREE, type ActionKey, type PermissionMap } from "../../lib/module-tree";
 
 /* ── Configuración de las acciones (botones coloridos) ──────────────────── */
 
 const ACTIONS: ActionKey[] = ["ver", "crear", "editar", "eliminar"];
+
+// jul 2026 v4-b — Acciones extra que SOLO aplican a submódulos puntuales.
+// El editor las suma automáticamente a los chips del submódulo indicado.
+// Esto permite exponer permisos granulares como "ver_todos" sin pedirle
+// al admin que sepa el string exacto.
+const EXTRA_ACTIONS_BY_SUB: Record<string, ActionKey[]> = {
+  // Caja Chica: el admin configura visibilidad por pestaña y bypass por dueño.
+  "finanzas.caja_chica": [
+    "ver_solicitudes",
+    "ver_vales",
+    "ver_historial",
+    "configurar_caja",
+    "aprobar",
+    "reponer",
+    "ver_todos",
+  ],
+  // Checklists — mantener 'aprobar' como acción específica.
+  "checklist.reautorizaciones": ["aprobar", "crear"],
+  // Geolocalización / Reportes / etc.: aquí se podrán agregar en el futuro.
+};
+
+const EXTRA_ACTION_LABELS: Record<ActionKey, string> = {
+  ver:        "Ver",
+  crear:      "Crear",
+  editar:     "Editar",
+  eliminar:   "Eliminar",
+  aprobar:    "Aprobar",
+  reponer:    "Reponer",
+  // v4-b
+  ver_solicitudes: "Ver · Solicitudes",
+  ver_vales:       "Ver · Vales",
+  ver_historial:   "Ver · Historial",
+  configurar_caja: "Configurar caja",
+  ver_todos:       "Ver todos",
+};
+
+const EXTRA_ACTION_STYLES: Record<ActionKey, string> = {
+  ver:        "bg-blue-600 text-white border-blue-600",
+  crear:      "bg-emerald-600 text-white border-emerald-600",
+  editar:     "bg-amber-500 text-white border-amber-500",
+  eliminar:   "bg-rose-600 text-white border-rose-600",
+  aprobar:    "bg-violet-600 text-white border-violet-600",
+  reponer:    "bg-cyan-600 text-white border-cyan-600",
+  // v4-b — chips con estilo distintivo para que el admin las reconozca
+  ver_solicitudes: "bg-slate-600 text-white border-slate-600",
+  ver_vales:       "bg-slate-600 text-white border-slate-600",
+  ver_historial:   "bg-slate-600 text-white border-slate-600",
+  configurar_caja: "bg-indigo-600 text-white border-indigo-600",
+  ver_todos:       "bg-pink-600 text-white border-pink-600",
+};
+
+/** Devuelve el set completo de acciones disponibles para un (mod, sub). */
+function actionsFor(mod: string, sub: string): ActionKey[] {
+  const base = [...ACTIONS];
+  const extras = EXTRA_ACTIONS_BY_SUB[`${mod}.${sub}`];
+  if (extras) base.push(...extras);
+  return base;
+}
 
 const ACTION_STYLES: Record<ActionKey, {
   Icon: React.ElementType;
@@ -46,6 +104,56 @@ const ACTION_STYLES: Record<ActionKey, {
     inactive: "bg-transparent text-gray-500 dark:text-gray-400 border-gray-200 dark:border-white/10 hover:border-rose-300 dark:hover:border-rose-500/40 hover:text-rose-600 dark:hover:text-rose-400",
     label: "Eliminar",
     description: "Puede borrar o desactivar registros",
+  },
+  // jul 2026 v4-b
+  aprobar: {
+    Icon: Check,
+    active: "bg-violet-600 text-white border-violet-600 shadow-sm shadow-violet-500/30",
+    inactive: "bg-transparent text-gray-500 dark:text-gray-400 border-gray-200 dark:border-white/10 hover:border-violet-300 dark:hover:border-violet-500/40 hover:text-violet-600 dark:hover:text-violet-400",
+    label: "Aprobar",
+    description: "Puede aprobar / rechazar solicitudes",
+  },
+  reponer: {
+    Icon: RotateCcw,
+    active: "bg-cyan-600 text-white border-cyan-600 shadow-sm shadow-cyan-500/30",
+    inactive: "bg-transparent text-gray-500 dark:text-gray-400 border-gray-200 dark:border-white/10 hover:border-cyan-300 dark:hover:border-cyan-500/40 hover:text-cyan-600 dark:hover:text-cyan-400",
+    label: "Reponer",
+    description: "Puede rellenar / resetear caja chica",
+  },
+  ver_solicitudes: {
+    Icon: Eye,
+    active: "bg-slate-600 text-white border-slate-600 shadow-sm shadow-slate-500/30",
+    inactive: "bg-transparent text-gray-500 dark:text-gray-400 border-gray-200 dark:border-white/10 hover:border-slate-300 dark:hover:border-slate-500/40 hover:text-slate-600 dark:hover:text-slate-300",
+    label: "Ver · Solicitudes",
+    description: "Muestra la pestaña de Solicitudes",
+  },
+  ver_vales: {
+    Icon: Eye,
+    active: "bg-slate-600 text-white border-slate-600 shadow-sm shadow-slate-500/30",
+    inactive: "bg-transparent text-gray-500 dark:text-gray-400 border-gray-200 dark:border-white/10 hover:border-slate-300 dark:hover:border-slate-500/40 hover:text-slate-600 dark:hover:text-slate-300",
+    label: "Ver · Vales",
+    description: "Muestra la pestaña de Vales",
+  },
+  ver_historial: {
+    Icon: Eye,
+    active: "bg-slate-600 text-white border-slate-600 shadow-sm shadow-slate-500/30",
+    inactive: "bg-transparent text-gray-500 dark:text-gray-400 border-gray-200 dark:border-white/10 hover:border-slate-300 dark:hover:border-slate-500/40 hover:text-slate-600 dark:hover:text-slate-300",
+    label: "Ver · Historial",
+    description: "Muestra la pestaña de Historial",
+  },
+  configurar_caja: {
+    Icon: Settings,
+    active: "bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-500/30",
+    inactive: "bg-transparent text-gray-500 dark:text-gray-400 border-gray-200 dark:border-white/10 hover:border-indigo-300 dark:hover:border-indigo-500/40 hover:text-indigo-600 dark:hover:text-indigo-400",
+    label: "Configurar caja",
+    description: "Acceso a la pestaña Configuración (cuentas, límites)",
+  },
+  ver_todos: {
+    Icon: Users,
+    active: "bg-pink-600 text-white border-pink-600 shadow-sm shadow-pink-500/30",
+    inactive: "bg-transparent text-gray-500 dark:text-gray-400 border-gray-200 dark:border-white/10 hover:border-pink-300 dark:hover:border-pink-500/40 hover:text-pink-600 dark:hover:text-pink-400",
+    label: "Ver todos",
+    description: "Bypass de filtro por dueño: ve todas las solicitudes/vales de la empresa",
   },
 };
 
@@ -476,6 +584,10 @@ export function PermissionEditor({
                           const subLabel  = modDef.submodules[subKey as keyof typeof modDef.submodules];
                           const acts      = effectivePerms[modKey]?.[subKey] ?? [];
                           const subActive = acts.length;
+                          // jul 2026 v4-b — Para Caja Chica y similares el set
+                          // de acciones visibles puede ser > 4 (incluye
+                          // ver_vales, ver_todos, etc.). Calculamos el denom.
+                          const totalActions = actionsFor(modKey, subKey).length;
 
                           return (
                             <div
@@ -485,7 +597,7 @@ export function PermissionEditor({
                               <div className="flex min-w-0 items-center gap-2">
                                 <span
                                   className={`flex h-1.5 w-1.5 shrink-0 rounded-full ${
-                                    subActive === 4
+                                    subActive === totalActions
                                       ? "bg-emerald-500"
                                       : subActive > 0
                                       ? "bg-blue-500"
@@ -503,13 +615,13 @@ export function PermissionEditor({
                                 </span>
                                 {subActive > 0 && (
                                   <span className="inline-flex shrink-0 items-center rounded-md bg-gray-100 dark:bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 dark:text-gray-400">
-                                    {subActive}/4
+                                    {subActive}/{totalActions}
                                   </span>
                                 )}
                               </div>
 
                               <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
-                                {ACTIONS.map((action) => {
+                                {actionsFor(modKey, subKey).map((action) => {
                                   const v = ACTION_STYLES[action];
                                   const Icon = v.Icon;
                                   const isActive = acts.includes(action);

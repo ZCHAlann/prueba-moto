@@ -28,6 +28,7 @@ import {
   useMaintenance,
   useAddMaintenanceNote,
   useAddMaintenanceItems,
+  useDeleteMaintenanceItem,
   useAssignMaintenance,
   useUpdateMaintenance,
   useCarwashExtras,
@@ -51,6 +52,7 @@ import {
   AttachmentFacturaModal,
   type AttachmentFacturaResult,
 } from "./AttachmentFacturaModal";
+import { FinancePanel } from "./FinancePanel";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -294,6 +296,7 @@ export function MaintenanceDetailDrawer({
 
   const addNoteMut = useAddMaintenanceNote();
   const addItemsMut = useAddMaintenanceItems();
+  const deleteItemMut = useDeleteMaintenanceItem();
   const assignMut = useAssignMaintenance();
   const updateMut = useUpdateMaintenance();
   const addCarwashExtraMut = useAddCarwashExtras();
@@ -462,8 +465,11 @@ export function MaintenanceDetailDrawer({
     if (!item) return;
     try {
       const newKey = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const label = result.invoiceNumber
-        ? `Factura · ${result.invoiceNumber}`
+      // jul 2026 v3 — el backend AUTOGENERA el invoiceNumber, el cliente
+      // ya no lo manda. El criterio de "es factura" es ahora `isInvoice`.
+      const isInvoice = result.isInvoice === true;
+      const label = isInvoice
+        ? `Factura · (autogenerada)`
         : `Evidencia · ${result.url.split("/").pop()?.slice(0, 40) ?? "adjunto"}`;
       const newAttachment: MaintenanceAttachment & {
         kind?: string;
@@ -474,14 +480,17 @@ export function MaintenanceDetailDrawer({
         ivaAmount?: number | null;
         items?: typeof result.items;
         key?: string;
+        // Flag explicito para el sync (backend lo lee como senal de "crear fila en ledger").
+        isInvoice?: boolean;
       } = {
         key: newKey,
         url: result.url,
         label,
         uploadedAt: new Date().toISOString(),
-        ...(result.invoiceNumber
+        ...(isInvoice
           ? {
-              invoiceNumber: result.invoiceNumber,
+              // NO mandamos invoiceNumber — el backend lo autogenera.
+              isInvoice: true,
               kind: (result.kind ?? "repuesto"),
               supplierId: result.supplierId ?? null,
               workshopName: result.workshopName ?? null,
@@ -490,7 +499,7 @@ export function MaintenanceDetailDrawer({
               ivaAmount: result.ivaAmount ?? null,
               items: result.items ?? [],
             }
-          : {}),
+          : { isInvoice: false }),
       };
       const nextAttachments = [...attachments, newAttachment];
       await updateMut.mutateAsync({ id: item.id, body: { attachments: nextAttachments } });
@@ -540,6 +549,12 @@ export function MaintenanceDetailDrawer({
           fileUrl={pendingAttachment.url}
           fileMimeType={pendingAttachment.file.type}
           fileLabel={pendingAttachment.file.name}
+          // jul 2026 v3 — sincronizar mano de obra bidireccional con
+          // el campo "Mano de obra" del drawer. Si el operador edita
+          // el valor en el modal, se guarda en el mantenimiento via
+          // `saveLaborCost` (igual que el campo en línea).
+          initialLaborCost={item?.laborCost ?? 0}
+          onLaborCostChange={canEditLabor ? saveLaborCost : undefined}
           onClose={handleAttachmentModalClose}
           onSubmit={handleAttachmentModalSubmit}
         />
@@ -563,9 +578,9 @@ export function MaintenanceDetailDrawer({
                 <div className="flex h-full items-center justify-center text-sm text-gray-400">Cargando…</div>
               ) : (
                 <>
-                  {/* ─── Header ─── */}
+                  {/* ─── Header (sticky en la parte superior del drawer) ─── */}
                   <div
-                    className="relative shrink-0 border-b border-gray-200 dark:border-white/[0.06] px-5 pt-4 pb-4"
+                    className="sticky top-0 z-10 shrink-0 border-b border-gray-200 dark:border-white/[0.06] px-5 pt-4 pb-4 backdrop-blur"
                     style={{
                     background:
                       `linear-gradient(135deg, ${statusGradient(item.status)} 0%, transparent 70%)`,
@@ -603,8 +618,14 @@ export function MaintenanceDetailDrawer({
                       <p className="mt-0.5 font-mono text-[11px] text-gray-400 dark:text-gray-500">
                         Folio #{item.id}
                       </p>
+                      {/* jul 2026 v4 — Indicador compacto de Caja Chica,
+                          debajo del título. Como el header es sticky, queda
+                          fijo en la parte superior del drawer. */}
+                      <div className="mt-2">
+                        <FinancePanel maintenanceId={item.id} item={item} onChanged={() => refetch()} />
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex shrink-0 items-center gap-1">
                       <button
                         type="button"
                         onClick={async () => {
@@ -853,36 +874,47 @@ export function MaintenanceDetailDrawer({
                                     <p className="text-[11px] text-gray-400 dark:text-gray-500">{fmtDateTime(a.uploadedAt)}</p>
                                   )}
                                 </div>
-                                {isInvoice && (a as any).key && canUploadAttachment && (
+                                {(a as any).key && canOperate && (
                                   <button
                                     type="button"
                                     onClick={async () => {
                                       if (!item) return;
-                                      if (!confirm(`Borrar la factura ${a.invoiceNumber}? Esto elimina sus items del mantenimiento y la fila del ledger Finanzas.`)) return;
+                                      const msg = isInvoice
+                                        ? `Borrar la factura ${a.invoiceNumber}? Esto elimina sus items del mantenimiento y la fila del ledger Finanzas.`
+                                        : `Quitar este adjunto? Sus items asociados tambien se borraran del mantenimiento.`;
+                                      if (!confirm(msg)) return;
                                       try {
                                         const targetKey = (a as any).key ?? null;
                                         const nextAtt = attachments.filter((x: any) => (x as any).key !== targetKey);
-                                        await updateMut.mutateAsync({ id: item.id, body: { attachments: nextAtt } });
-                                        const itemsToKeep = (item.items || []).filter((it: any) => it.attachmentKey !== targetKey);
-                                        await addItemsMut.mutateAsync({
-                                          id: item.id,
-                                          items: itemsToKeep.map((it: any) => ({
+                                        // jul 2026 v3 — REEMPLAZO ATÓMICO via PATCH: el backend
+                                        // borra todos los items del mantenimiento y re-inserta
+                                        // solo los que queremos mantener. Un solo request,
+                                        // una sola transacción en backend, recalcula la factura.
+                                        const itemsToKeep = (item.items || [])
+                                          .filter((it: any) => it.attachmentKey !== targetKey)
+                                          .map((it: any) => ({
                                             name: it.name,
                                             quantity: Number(it.quantity) || 0,
                                             unitCost: Number(it.unitCost) || 0,
                                             photoUrl: it.photoUrl ?? null,
                                             supplierId: it.supplierId ?? null,
                                             attachmentKey: it.attachmentKey ?? null,
-                                          })),
+                                          }));
+                                        await updateMut.mutateAsync({
+                                          id: item.id,
+                                          body: {
+                                            attachments: nextAtt,
+                                            items: itemsToKeep,
+                                          },
                                         });
-                                        toast.success("Factura y sus items borrados.");
+                                        toast.success(isInvoice ? "Factura y sus items borrados." : "Adjunto y sus items borrados.");
                                         refetch();
                                       } catch (e) {
                                         toast.error((e as Error).message);
                                       }
                                     }}
-                                    className="rounded p-1 text-gray-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
-                                    title="Borrar factura"
+                                    className="rounded p-1 text-gray-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 shrink-0"
+                                    title={isInvoice ? "Borrar factura" : "Quitar adjunto"}
                                   >
                                     <Trash2 size={12} />
                                   </button>
@@ -994,8 +1026,36 @@ export function MaintenanceDetailDrawer({
                                   <p className="text-[11px] text-gray-400 dark:text-gray-500">
                                     {it.supplierName ? `${it.supplierName} · ` : ""}{it.attachmentKey ? `factura · ${attachments.find((a) => (a.key || "main") === it.attachmentKey)?.invoiceNumber || ""} · ` : ""}{it.quantity} × {fmtMoney(it.unitCost)}
                                   </p>
+                                  {/* jul 2026 v4 — badge si este item disparó una solicitud de caja chica. */}
+                                  {(it as any).financeRequestId && (
+                                    <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/30" title={`Solicitud #${(it as any).financeRequestId} enviada a finanzas`}>
+                                      💰 Solicitud #{(it as any).financeRequestId}
+                                    </span>
+                                  )}
                                 </div>
                                 <p className="text-xs font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap">{fmtMoney(it.subtotal)}</p>
+                                {/* jul 2026 v3 — papelera por item. Si tiene attachmentKey, el backend
+                                    recalcula la factura dueña (la marca 'anulada' si no quedan items). */}
+                                {canOperate && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (!item) return;
+                                      if (!confirm(`Borrar "${it.name}"?${it.attachmentKey ? " Esto también lo quita de la factura asociada y recalcula el total." : ""}`)) return;
+                                      try {
+                                        await deleteItemMut.mutateAsync({ id: item.id, itemId: it.id });
+                                        toast.success("Item borrado.");
+                                        refetch();
+                                      } catch (err) {
+                                        toast.error((err as Error).message);
+                                      }
+                                    }}
+                                    className="rounded p-1 text-gray-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 shrink-0"
+                                    title="Borrar item"
+                                  >
+                                    <Trash2 size={11} />
+                                  </button>
+                                )}
                               </li>
                             ))}
                           </ul>

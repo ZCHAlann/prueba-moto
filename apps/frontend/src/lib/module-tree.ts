@@ -175,6 +175,15 @@ export const MODULE_TREE = {
       // en el futuro podrían agregarse `estadisticas` (KPIs agregados),
       // `conciliacion`, etc.
       facturas: "Facturas",
+      // jul 2026 v4 — Caja Chica:
+      //   ver    = ver pestaña + listar solicitudes/vales/historial
+      //   crear  = crear solicitud (operador)
+      //   aprobar= aprobar/rechazar + clasificar como caja chica / gasto anual
+      // Rellenar caja chica es acción separada "reponer" (solo admin/owner).
+      caja_chica: "Caja Chica",
+      // jul 2026 v4 — Transacciones: línea de tiempo global (caja chica +
+      // gastos anuales), filtros, exportar PDF.
+      transacciones: "Transacciones",
     },
   },
   geolocalizacion: {
@@ -217,7 +226,17 @@ export const MODULE_TREE = {
 } as const;
 
 export type ModuleKey    = keyof typeof MODULE_TREE;
-export type ActionKey    = "ver" | "crear" | "editar" | "eliminar";
+// jul 2026 v4 — agregamos `aprobar` (caja_chica, checklist.reauth, etc.) y
+// `reponer` (solo caja_chica — rellenar caja chica). El backend acepta
+// cualquier string en permissions[] — los extras son semánticos.
+// jul 2026 v4-b — Acciones granulares adicionales para Caja Chica:
+//   ver_solicitudes  = puede ver la pestaña de Solicitudes (default de `ver`)
+//   ver_vales        = puede ver la pestaña Vales
+//   ver_historial    = puede ver la pestaña Historial (timeline movimientos)
+//   configurar_caja  = pestaña Configuración (reponer / crear cuenta)
+export type ActionKey    = "ver" | "crear" | "editar" | "eliminar" | "aprobar" | "reponer"
+                          | "ver_solicitudes" | "ver_vales" | "ver_historial" | "configurar_caja"
+                          | "ver_todos";
 export type PermissionMap = Record<string, Record<string, ActionKey[]>>;
 
 export const ACTION_LABELS: Record<ActionKey, string> = {
@@ -225,6 +244,8 @@ export const ACTION_LABELS: Record<ActionKey, string> = {
   crear:    "Crear",
   editar:   "Editar",
   eliminar: "Eliminar",
+  aprobar:  "Aprobar",
+  reponer:  "Reponer",
 };
 
 export const ACTION_COLORS: Record<ActionKey, { active: string; inactive: string }> = {

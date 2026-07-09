@@ -125,6 +125,12 @@ const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionMap> = {
     checklist:     { checklist: ["ver", "crear"] },
     alertas:       { alertas: ["ver"] },
     reportes:      { reportes: ["ver"] },
+    // jul 2026 — Caja Chica / Finanzas (alineado con role-catalog.service.ts):
+    // supervisor aprueba/rechaza solicitudes; NO rellena caja chica.
+    finanzas:      {
+      caja_chica:   ["ver", "crear", "aprobar"],
+      transacciones:["ver"],
+    },
   },
   operador: {
     dashboard:     { dashboard: ["ver"] },
@@ -139,6 +145,10 @@ const ROLE_DEFAULT_PERMISSIONS: Record<string, PermissionMap> = {
     checklist:     { checklist: ["ver", "crear"] },
     alertas:       { alertas: ["ver"] },
     geolocalizacion: { geolocalizacion: ["ver"] },
+    // jul 2026 — operador crea solicitudes, ve sus vales. NO aprueba.
+    finanzas:      {
+      caja_chica:   ["ver", "crear"],
+    },
   },
   conductor: {
     dashboard:     { dashboard: ["ver"] },

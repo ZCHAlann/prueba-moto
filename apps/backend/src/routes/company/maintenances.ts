@@ -67,6 +67,7 @@ import { syncAssetMaintenanceStatus } from '../../lib/maintenanceStatusSync'; //
 import {
   syncMaintenanceInvoices,
   deleteInvoicesForSource,
+  recalcInvoiceFromAttachment,
 } from '../../lib/invoices-sync';
 import {
   notify,
@@ -142,6 +143,9 @@ const attachmentSchema = z.object({
   url:           z.string().min(1).max(2_000_000).nullable().optional(),
   label:         z.string().min(1).max(60).default('Adjunto'),
   uploadedAt:    z.string().datetime().optional(),
+  // jul 2026 v3 — flag explicito de "es factura". Con la numeracion AUTO
+  // el cliente no puede inferirse del invoiceNumber.
+  isInvoice:     z.boolean().optional(),
   // jul 2026 v3 — solo 3 tipos permitidos: repuesto/mano_obra/lavada.
   kind:          z.enum(['repuesto', 'mano_obra', 'lavada']).optional(),
   amount:        z.number().nonnegative().max(1_000_000_000).nullable().optional(),
@@ -1557,6 +1561,58 @@ router.put(
         }
       }
 
+      // jul 2026 v3 — recalcular el ledger de Finanzas para cada
+      // attachmentKey afectado. Se ejecuta SIEMPRE que venga items
+      // o attachments en el body. Cubre:
+      //   • Repuesto agregado al drawer con attachmentKey → factura.
+      //   • Repuesto editado (qty/unit) → subtotal/total recalculados.
+      //   • Repuesto eliminado del drawer → se quita de la factura.
+      //   • Attachment completo borrado → items caen al key anterior;
+      //     recalc marca la factura como 'anulada' si no quedan.
+      if (body.items !== undefined || body.attachments !== undefined) {
+        const affectedKeys = new Set<string>();
+        if (body.items) {
+          for (const it of body.items) {
+            if (it.attachmentKey && it.attachmentKey.trim().length > 0) {
+              affectedKeys.add(it.attachmentKey);
+            }
+          }
+        }
+        // Keys huérfanas: existían antes pero ya no están en after.
+        const beforeAttachments = (existing as any).attachments ?? [];
+        const afterAttachments  = body.attachments ?? beforeAttachments;
+        const beforeKeys = new Set(
+          (beforeAttachments as Array<{ key?: string }>)
+            .map((a) => a.key ?? '')
+            .filter(Boolean),
+        );
+        const afterKeys = new Set(
+          (afterAttachments as Array<{ key?: string }>)
+            .map((a) => a.key ?? '')
+            .filter(Boolean),
+        );
+        for (const k of beforeKeys) {
+          if (!afterKeys.has(k)) affectedKeys.add(k);
+        }
+        for (const key of affectedKeys) {
+          try {
+            await recalcInvoiceFromAttachment({
+              tx: db,
+              companyId,
+              maintenanceId: id,
+              attachmentKey: key,
+            });
+          } catch (recErr) {
+            console.warn(
+              '[maintenances] recalcInvoiceFromAttachment falló para key',
+              key,
+              ':',
+              (recErr as Error).message,
+            );
+          }
+        }
+      }
+
       await recalcMaintenanceTotal(id, companyId);
 
       // ── Sincronizar ledger Finanzas (módulo de facturas) ───────────────────
@@ -1573,24 +1629,25 @@ router.put(
       // lista anterior y syncMaintenanceInvoices es efectivamente un
       // reconciliador idempotente.
       try {
+        // jul 2026 v3 — el cast debe incluir TODOS los campos que
+        // syncMaintenanceInvoices espera (incluido `isInvoice`, sin
+        // este campo el sync SKIP-ea el attachment aunque sea factura).
+        // El backend ya hizo el PATCH, asi que `updated.attachments`
+        // tiene la lista final persistida (incluye el attachment nuevo
+        // y el campo `isInvoice: true` que el frontend mando).
         await syncMaintenanceInvoices({
           tx: db,
           companyId,
           maintenanceId: id,
           attachments: (Array.isArray((updated as any).attachments)
             ? (updated as any).attachments
-            : []) as Array<{
-              key?: string;
-              url: string;
-              label?: string;
-              uploadedAt?: string;
-              kind?: 'repuesto' | 'mano_obra' | 'lavada' | 'servicio' | 'otro';
-              amount?: number | null;
-              invoiceNumber?: string | null;
-            }>,
+            : []) as any,
         });
       } catch (invErr) {
-        console.warn('[maintenances] syncMaintenanceInvoices falló en PUT (no crítico):', (invErr as Error).message);
+        // jul 2026 v3 — loguear con detalle (incluye stack) para
+        // diagnosticar por qué las facturas no aparecen en Finanzas.
+        console.error('[maintenances] syncMaintenanceInvoices falló en PUT:', (invErr as Error).message);
+        console.error((invErr as Error).stack);
       }
 
       // NUEVO v3.4 — solo si status o scheduledFor pudieron cambiar si
@@ -2736,7 +2793,13 @@ router.post(
       const meId = getUserIdFromSub(req.user!.sub);
       const body = req.body as { items: z.infer<typeof itemSchema>[] };
 
-      await db.insert(companyMaintenanceItems).values(buildItemValues(id, body.items));
+      // jul 2026 v3 — antes fallaba con "values() must be called with at
+// least one value" cuando el cliente mandaba items=[] (caso típico:
+// borrar todos los items de un mantenimiento para limpiar la factura).
+// Permitimos items=[] como no-op: solo recalculamos el total.
+      if (body.items.length > 0) {
+        await db.insert(companyMaintenanceItems).values(buildItemValues(id, body.items));
+      }
       const total = await recalcMaintenanceTotal(id, companyId);
 
       await recordEvent(companyId, id, 'item_added', {
@@ -2745,6 +2808,75 @@ router.post(
       }, { count: body.items.length, totalAdded: total });
 
       res.json({ ok: true, totalCost: total });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── DELETE /:id/items/:itemId ────────────────────────────────────────────────
+// jul 2026 v3 — borrar un item del mantenimiento. Si el item tiene
+// `attachment_key`, recalcula la factura del ledger (subtotal/total/items)
+// y la marca como 'anulada' si no quedan items.
+router.delete(
+  '/:id/items/:itemId',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'editar'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const maintenanceId = parseId('maintenance', req.params.id);
+      const itemId        = parseId('maintenanceItem', req.params.itemId);
+
+      // 1) Cargar el item antes de borrar (necesitamos el attachmentKey
+      //    para el recalc de la factura dueña).
+      const [existingItem] = await db
+        .select({
+          id:           companyMaintenanceItems.id,
+          attachmentKey: companyMaintenanceItems.attachmentKey,
+        })
+        .from(companyMaintenanceItems)
+        .where(
+          and(
+            eq(companyMaintenanceItems.id, itemId),
+            eq(companyMaintenanceItems.maintenanceId, maintenanceId),
+          ),
+        )
+        .limit(1);
+
+      if (!existingItem) {
+        return res.status(404).json({ error: 'Item no encontrado' });
+      }
+
+      // 2) Borrar el item.
+      await db
+        .delete(companyMaintenanceItems)
+        .where(eq(companyMaintenanceItems.id, itemId));
+
+      // 3) Recalcular el total del mantenimiento.
+      await recalcMaintenanceTotal(maintenanceId, companyId);
+
+      // 4) Si el item tenía attachment_key, recalcular la factura
+      //    dueña en el ledger de Finanzas.
+      if (existingItem.attachmentKey) {
+        try {
+          await recalcInvoiceFromAttachment({
+            tx: db,
+            companyId,
+            maintenanceId,
+            attachmentKey: existingItem.attachmentKey,
+          });
+        } catch (recErr) {
+          console.warn(
+            '[maintenances] recalcInvoice falló al borrar item',
+            itemId,
+            ':',
+            (recErr as Error).message,
+          );
+        }
+      }
+
+      res.json({ ok: true, deleted: { id: itemId, attachmentKey: existingItem.attachmentKey } });
     } catch (err) {
       next(err);
     }

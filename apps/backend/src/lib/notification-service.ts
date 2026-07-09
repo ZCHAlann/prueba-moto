@@ -27,7 +27,7 @@
 //   a otra empresa, ni siquiera por error. El WS además filtra por companyId
 //   y opcionalmente por targetUserId.
 
-import { db } from '../db/client';
+import { db, client } from '../db/client';
 import {
   companyNotifications,
   companyDeviceTokens,
@@ -77,7 +77,14 @@ export type NotificationKind =
   // ── Sistema ──────────────────────────────────────────────────────────────
   | 'workshop_assigned'
   | 'supplier_invoice'
-  | 'system';
+  | 'system'
+  // ── jul 2026 — Caja Chica / Finanzas (migration 0046) ──────────────────
+  | 'finance_request_created'
+  | 'finance_request_reviewed'
+  | 'finance_voucher_issued'
+  | 'finance_voucher_closed'
+  | 'finance_petty_cash_limit_reached'
+  | 'finance_petty_cash_replenished';
 
 export interface NotifyArgs {
   companyId:   number;
@@ -177,11 +184,25 @@ export async function notify(args: NotifyArgs): Promise<InferSelectModel<typeof 
   }
 
   // 1) In-app
-  const [row] = await db
-    .insert(companyNotifications)
-    .values({ companyId, userId, kind, title, body: body ?? null, payload })
-    .returning();
-
+  // jul 2026 v4 — Usamos client.unsafe() directo con placeholders $N. El
+  // problema con Drizzle tagged templates: cuando `body` es null, el driver
+  // postgres-js a veces lo infiere como undefined y el binary protocol
+  // rechaza la query. Con client.unsafe + placeholders, el driver manda
+  // los valores por separado al binary protocol, sin inferencia.
+  const insertSql = `
+    INSERT INTO company_notifications (company_id, user_id, kind, title, body, payload)
+    VALUES ($1::integer, $2::integer, $3::text, $4::text, $5::text, $6::jsonb)
+    RETURNING id, company_id, user_id, kind, title, body, payload, read_at, created_at
+  `;
+  const insertResult = await client.unsafe(insertSql, [
+    companyId,
+    userId,
+    kind,
+    title ?? '',
+    body ?? null,    // explícitamente null si no hay body
+    JSON.stringify(payload ?? {}),
+  ]);
+  const row = (Array.isArray(insertResult) ? insertResult[0] : (insertResult as any)) as InferSelectModel<typeof companyNotifications> | undefined;
   if (!row) return null;
 
   // 2) WebSocket (en tiempo real, sin esperar el push)

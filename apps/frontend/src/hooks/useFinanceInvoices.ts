@@ -24,6 +24,10 @@ export type FinanceInvoiceSourceModule =
   | "combustible"
   | "peajes"
   | "mantenimiento"
+  // jul 2026 v4 — vouchers standalone de Caja Chica generan facturas
+  // con source_module='petty_cash'. Las trata el listado como un origen
+  // más con su propio badge.
+  | "petty_cash"
   | "manual";
 export type FinanceInvoiceKind =
   | "combustible"
@@ -69,6 +73,7 @@ export type FinanceInvoiceItem = {
   quantity:    string | number;
   unitPrice:   string | number;
   subtotal:    string | number;
+  imageUrl?:   string | null;
 };
 
 export type ApiFinanceInvoice = {
@@ -98,6 +103,13 @@ export type ApiFinanceInvoice = {
   invoiceTypeName:       string | null;
   supplierId:            number | null;
   supplier:              FinanceInvoiceSupplier | null;
+  // jul 2026 v3 — totales + datos contextuales para el desglose.
+  subtotal:    number;
+  ivaPercent:  number;
+  ivaAmount:   number;
+  total:       number;
+  workshopName: string | null;
+  workerName:   string | null;
   items:                 FinanceInvoiceItem[];
 };
 
@@ -167,6 +179,8 @@ function mapApi(raw: Record<string, unknown>): ApiFinanceInvoice {
     quantity:    it.quantity ?? 0,
     unitPrice:   it.unitPrice ?? 0,
     subtotal:    it.subtotal ?? 0,
+    // jul 2026 v3 — imageUrl persistido al subir foto por item.
+    imageUrl:    asStringOrNull(it.imageUrl ?? it.image_url),
   }));
 
   const sourceRef: FinanceInvoiceSourceRef | null = sourceRefRaw
@@ -211,6 +225,14 @@ function mapApi(raw: Record<string, unknown>): ApiFinanceInvoice {
     invoiceTypeName: asStringOrNull(raw.invoiceTypeName ?? raw.invoice_type_name),
     supplierId:      asNumberOrNull(raw.supplierId ?? raw.supplier_id),
     supplier,
+
+    // jul 2026 v3 — totales + datos contextuales para el desglose.
+    subtotal:    Number(raw.subtotal ?? 0),
+    ivaPercent:  Number(raw.ivaPercent ?? 15),
+    ivaAmount:   Number(raw.ivaAmount ?? 0),
+    total:       Number(raw.total ?? raw.amount ?? 0),
+    workshopName: asStringOrNull(raw.workshopName ?? raw.workshop_name),
+    workerName:   asStringOrNull(raw.workerName ?? raw.worker_name),
     items,
   };
 }

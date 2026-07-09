@@ -31,6 +31,13 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<DefaultRoleKey, ModulePermissionMa
     // Lienzo: solo `ver` por default. Crear/editar/eliminar se delegan
     // per-user si querés que el supervisor arme sus propios lienzos.
     lienzo:        { lienzo: ["ver"] },
+    // jul 2026 — Caja Chica / Finanzas: supervisor ve ambas pestañas y
+    // puede aprobar/rechazar solicitudes como caja chica o gasto anual.
+    // NO puede rellenar caja chica (eso es admin_empresa/owner_empresa).
+    finanzas:      {
+      caja_chica: ["ver", "crear", "aprobar"],
+      transacciones: ["ver"],
+    },
   },
   operador: {
     dashboard:       { dashboard:       ["ver"] },
@@ -40,6 +47,11 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<DefaultRoleKey, ModulePermissionMa
     checklist:       { checklist: ["ver", "crear"], reautorizaciones: ["ver", "crear"] },
     alertas:         { alertas:         ["ver"] },
     geolocalizacion: { geolocalizacion: ["ver"] },
+    // jul 2026 — operador puede CREAR solicitudes de caja chica (cuando
+    // necesita un repuesto urgente) y VER sus vales. NO aprueba.
+    finanzas:        {
+      caja_chica: ["ver", "crear"],
+    },
   },
   conductor: {
     dashboard:       { dashboard:       ["ver"] },

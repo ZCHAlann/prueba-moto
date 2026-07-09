@@ -32,6 +32,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useSuppliers } from "../../../hooks/useSuppliers";
+import { useWorkshops } from "../../../hooks/useWorkshops";
+import { useAuth } from "../../../context/AuthContext";
+import { uploadPartPhoto } from "../../../hooks/useMaintenancesV2";
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -80,6 +83,14 @@ export interface AttachmentFacturaModalProps {
   fileUrl:        string;
   fileMimeType?:  string | null;
   fileLabel?:     string;
+  /** jul 2026 v3 — Mano de obra actual del mantenimiento.
+      Cuando kind='mano_obra' el TOTAL FACTURA del modal inicia en
+      este valor y se mantiene sincronizado bidireccional con el
+      drawer padre. */
+  initialLaborCost?: number;
+  /** Callback opcional para sincronizar el valor de mano de obra
+      con el drawer padre en tiempo real (live sync). */
+  onLaborCostChange?: (value: number) => void;
   onClose:        () => void;
   onSubmit:       (result: AttachmentFacturaResult) => Promise<void>;
 }
@@ -119,6 +130,8 @@ export function AttachmentFacturaModal(props: AttachmentFacturaModalProps) {
   const [submitting, setSubmitting]   = useState(false);
 
   const { suppliers, loading: suppliersLoading } = useSuppliers();
+  const { workshops, loading: workshopsLoading } = useWorkshops();
+  const { session } = useAuth();
 
   // Subtotal auto desde items
   const subtotal = useMemo(
@@ -129,7 +142,37 @@ export function AttachmentFacturaModal(props: AttachmentFacturaModalProps) {
     const n = parseFloat(ivaAmount);
     return Number.isFinite(n) && n >= 0 ? +n.toFixed(2) : 0;
   }, [ivaAmount]);
-  const total = useMemo(() => +(subtotal + ivaNum).toFixed(2), [subtotal, ivaNum]);
+  // jul 2026 v3 — para MANO DE OBRA el "subtotal" es el laborCost del
+  // drawer padre. EDITABLE en el modal (también) y se sincroniza con
+  // el drawer via `props.onLaborCostChange`. Si el operador edita en
+  // cualquiera de los dos, ambos se mantienen sincronizados.
+  const [laborCostDraft, setLaborCostDraft] = useState<number>(props.initialLaborCost ?? 0);
+  useEffect(() => {
+    // Solo sincronizamos desde la prop cuando NO estamos editando
+    // activamente (evita pisar el input mientras el usuario tipea).
+    if (kind === "mano_obra") {
+      setLaborCostDraft(props.initialLaborCost ?? 0);
+    }
+  }, [props.initialLaborCost, kind]);
+  const laborCostOverride = useMemo(() => {
+    if (kind !== "mano_obra") return null;
+    return laborCostDraft;
+  }, [kind, laborCostDraft]);
+  // Subtotal "visible": para mano de obra es el laborCost del drawer;
+  // para repuesto/lavada es la suma de items.
+  const subtotalForDisplay = laborCostOverride != null ? laborCostOverride : subtotal;
+  const total = useMemo(
+    () => +(subtotalForDisplay + ivaNum).toFixed(2),
+    [subtotalForDisplay, ivaNum],
+  );
+  // jul 2026 v3 — sincroniza el valor de mano de obra al drawer padre.
+  // Se llama cuando el usuario cambia el valor en el modal.
+  const onLaborCostDraftChange = (raw: string) => {
+    const n = parseFloat(raw.replace(/[^0-9.]/g, ""));
+    const v = Number.isFinite(n) && n >= 0 ? +n.toFixed(2) : 0;
+    setLaborCostDraft(v);
+    props.onLaborCostChange?.(v);
+  };
 
   // ── Handlers ───────────────────────────────────────────────────────────
   const addItem = useCallback(() => {
@@ -172,6 +215,7 @@ export function AttachmentFacturaModal(props: AttachmentFacturaModalProps) {
    *  imageUrl ya materializado y imagePending=false. */
   const uploadPendingImages = useCallback(async (): Promise<AttachmentFacturaResult["items"]> => {
     const cleaned: NonNullable<AttachmentFacturaResult["items"]> = [];
+    const cid = (session as any)?.companyId ?? undefined;
     for (const it of items) {
       const clean: NonNullable<AttachmentFacturaResult["items"]>[number] = {
         description: it.description.trim(),
@@ -183,7 +227,7 @@ export function AttachmentFacturaModal(props: AttachmentFacturaModalProps) {
       };
       if (it.imagePending && it.imageFile) {
         try {
-          const url = await uploadOneImage(it.imageFile);
+          const url = await uploadPartPhoto(it.imageFile, cid);
           clean.imageUrl = url;
         } catch (err) {
           toast.warning(`No se pudo subir imagen de "${it.description || 'item'}": ${(err as Error).message}`);
@@ -371,13 +415,26 @@ export function AttachmentFacturaModal(props: AttachmentFacturaModalProps) {
                 {kind === "mano_obra" && (
                   <div>
                     <label className={labelCls}>Taller</label>
-                    <input
-                      type="text"
+                    {/* jul 2026 v3 — dropdown de talleres registrados.
+                        Antes era input libre, ahora selecciona de
+                        company_workshops. Si no hay ninguno, mensaje
+                        + link "Ir a Gestión > Talleres" para crear uno. */}
+                    <select
                       value={workshopName}
                       onChange={(e) => setWorkshopName(e.target.value)}
-                      placeholder="Nombre del taller"
+                      disabled={workshopsLoading}
                       className={inputCls}
-                    />
+                    >
+                      <option value="">{workshopsLoading ? "Cargando talleres..." : "Selecciona un taller"}</option>
+                      {workshops.map((w) => (
+                        <option key={w.id} value={w.name}>{w.name}{w.nit ? ` — NIT ${w.nit}` : ""}</option>
+                      ))}
+                    </select>
+                    {!workshopsLoading && workshops.length === 0 && (
+                      <p className="mt-1 text-[10px] text-rose-600 dark:text-rose-300">
+                        No hay talleres registrados. Crea uno en Gestion &raquo; Talleres para poder facturar mano de obra.
+                      </p>
+                    )}
                   </div>
                 )}
                 {kind === "lavada" && (
@@ -416,10 +473,31 @@ export function AttachmentFacturaModal(props: AttachmentFacturaModalProps) {
 
                 {/* Subtotal y total: solo lectura */}
                 <div>
-                  <label className={labelCls}>Subtotal (calculado)</label>
-                  <div className="h-10 w-full rounded-lg border border-gray-200 bg-gray-50 dark:border-white/[0.06] dark:bg-white/[0.02] px-3 text-sm tabular-nums flex items-center text-gray-700 dark:text-gray-200">
-                    ${subtotal.toFixed(2)}
-                  </div>
+                  <label className={labelCls}>
+                    {kind === "mano_obra" ? "Mano de obra (del mantenimiento)" : "Subtotal (calculado)"}
+                  </label>
+                  {kind === "mano_obra" ? (
+                    /* jul 2026 v3 — EDITABLE y sincronizado con el drawer
+                       padre. Cambiar acá actualiza el campo "Mano de obra"
+                       del mantenimiento via `onLaborCostChange`. */
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={laborCostDraft === 0 ? "" : laborCostDraft.toFixed(2)}
+                      onChange={(e) => onLaborCostDraftChange(e.target.value)}
+                      placeholder="0.00"
+                      className="h-10 w-full rounded-lg border border-violet-300 bg-violet-50 dark:border-violet-500/30 dark:bg-violet-500/10 px-3 text-sm tabular-nums font-semibold text-violet-800 dark:text-violet-200 focus:outline-none focus:ring-2 focus:ring-violet-500/20"
+                    />
+                  ) : (
+                    <div className="h-10 w-full rounded-lg border border-gray-200 bg-gray-50 dark:border-white/[0.06] dark:bg-white/[0.02] px-3 text-sm tabular-nums flex items-center text-gray-700 dark:text-gray-200">
+                      ${subtotalForDisplay.toFixed(2)}
+                    </div>
+                  )}
+                  {kind === "mano_obra" && (
+                    <p className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                      Editable. Se sincroniza con el campo "Mano de obra" del mantenimiento.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className={labelCls}>Total factura (subtotal + IVA)</label>
@@ -429,8 +507,11 @@ export function AttachmentFacturaModal(props: AttachmentFacturaModalProps) {
                 </div>
               </div>
 
-              {/* Sub-tabla items — sin upload, se hace en modal aparte? No.
-                  Cada item tiene upload INLINE que se guarda al cerrar. */}
+              {/* jul 2026 v3 — Sub-tabla items SOLO para repuesto y lavada.
+                  Para mano de obra la factura se registra solo con el
+                  total (el taller cobra una mano de obra completa, no
+                  un desglose de items). */}
+              {kind !== "mano_obra" && (
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <p className={labelCls + " mb-0"}>Items de la factura</p>
@@ -537,6 +618,17 @@ export function AttachmentFacturaModal(props: AttachmentFacturaModalProps) {
                   Los items quedan atados a esta factura. Al guardar, las imágenes de cada item se suben al storage. Luego Finanzas registra una sola factura con todos los items en <code>company_invoices.items</code>, y el repuesto aparece automáticamente en el drawer de mantenimiento.
                 </p>
               </div>
+              )}
+
+              {/* jul 2026 v3 — Mano de obra: solo se muestra el total.
+                  El subtotal se mantiene en 0 (no hay items) y el total
+                  es igual al IVA + subtotal. El operador mete el total
+                  completo abajo del IVA. */}
+              {kind === "mano_obra" && (
+                <div className="rounded-md border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-500/5 p-3 text-[11px] text-emerald-800 dark:text-emerald-200">
+                  Factura de mano de obra: el total se registra completo (sin desglose de items).
+                </div>
+              )}
             </>
           )}
         </div>
@@ -568,39 +660,10 @@ export function AttachmentFacturaModal(props: AttachmentFacturaModalProps) {
 }
 
 // ─── Helpers de upload ──────────────────────────────────────────────────────
-
-async function uploadOneImage(file: File): Promise<string> {
-  const fd = new FormData();
-  fd.append("photos", file);
-  const res = await fetch(`/upload/photos`, {
-    method: "POST",
-    body: fd,
-    credentials: "include",
-  });
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(`HTTP ${res.status}: ${t || res.statusText}`);
-  }
-  const json = (await res.json()) as { urls?: string[] };
-  const url = json.urls?.[0];
-  if (!url) throw new Error("El servidor no devolvió la URL del archivo.");
-  return url;
-}
-
-/**
- * Helper: unifica el upload al storage + el modal "¿factura o evidencia?".
- * Devuelve la URL tras subir el archivo. El padre abre el modal con esa URL.
- *
- * Esta función NO es un hook React — se llama desde eventos del drawer padre.
- */
-export async function uploadAttachmentBeforeModal(opts: {
-  url: string;
-  file: File;
-  category?: string;
-}): Promise<string> {
-  // Solo se mantiene por compatibilidad — la lógica real va por uploadOneImage.
-  return uploadOneImage(opts.file);
-}
+// (Antes había aquí `uploadOneImage()` como función top-level, pero
+// referenciaba `session` que solo existe dentro del componente React.
+// Ahora `uploadPendingImages` (useCallback dentro del componente) usa
+// directamente `uploadPartPhoto(file, companyId)` con el session local.)
 
 // Silenciar import no usado (ImageIcon está disponible si querés, pero el
 // branch actual usa solo FileText + un <img> directo).

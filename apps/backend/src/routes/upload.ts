@@ -778,4 +778,68 @@ router.delete('/file', (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
+// ─── Finance receipts (jul 2026 v4) ───────────────────────────────────────────
+// Subida de comprobantes para facturas standalone del módulo Caja Chica.
+// Acepta imagen (JPG/PNG/WebP) o PDF. Devuelve { url, type, name, size }
+// para que el cliente lo guarde en `company_invoices.file_url`.
+router.post(
+  '/finance-receipts',
+  (req: Request, res: Response, next: NextFunction) => {
+    let companyId: number;
+    try {
+      companyId = validateUploadCompanyId(
+        req.query.companyId as string | undefined,
+        req.user?.companyId ?? undefined,
+      );
+    } catch (e) {
+      return next(new AppError(403, (e as Error).message));
+    }
+
+    const folder = `finance/${companyId}`;
+
+    const upload = multer({
+      storage: buildStorage(folder),
+      // PDFs y fotos de comprobantes pueden ser más pesados que una foto de
+      // repuesto. Subimos el límite a 16 MB; igual es defense-in-depth porque
+      // multer cortará acá si lo superan.
+      limits: { fileSize: 16 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+        if (allowed.includes(file.mimetype)) cb(null, true);
+        else cb(new AppError(400, `Tipo de archivo no permitido: ${file.mimetype}`));
+      },
+    }).single('receipt');
+
+    upload(req, res, async (err) => {
+      if (err) return next(err);
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file) return next(new AppError(400, 'No se recibió el comprobante.'));
+
+      try {
+        if (file.mimetype === 'application/pdf') {
+          validatePdfFile(file);
+        } else if (file.mimetype.startsWith('image/')) {
+          validateImageFile(file);
+        } else {
+          throw new Error(`Tipo de archivo no soportado: ${file.mimetype}`);
+        }
+      } catch (e) {
+        return next(new AppError(400, (e as Error).message));
+      }
+
+      // Optimizamos imágenes, PDFs tal cual.
+      if (file.mimetype.startsWith('image/')) {
+        try { await optimizeImageIfNeeded(file); } catch { /* skip */ }
+      }
+
+      res.json({
+        url:  `/uploads/${folder}/${file.filename}`,
+        type: file.mimetype,
+        name: file.originalname,
+        size: file.size,
+      });
+    });
+  },
+);
+
 export default router;

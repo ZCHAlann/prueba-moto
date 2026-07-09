@@ -18,4 +18,9 @@ export const db = drizzle(client, {
   },
 });
 
+// Exportamos el client directo para queries crudas donde Drizzle infiere mal
+// el tipo del placeholder (caso típico: PL/pgSQL con parámetros opcionales NULL).
+// Usar con cuidado y sanitizando los inputs manualmente.
+export { client };
+
 export type DB = typeof db;

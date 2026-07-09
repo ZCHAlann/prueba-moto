@@ -8,10 +8,14 @@ import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
 import { safeString, validators } from '../../lib/validators';
 import { toId, parseId, parseIdFlexible  } from '../../lib/ids';
-import { NotFoundError } from '../../lib/errors';
+import { AppError, NotFoundError } from '../../lib/errors';
 import { logAudit } from '../../lib/audit';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 import { notifyEntityCrud } from '../../lib/notify-entity';
+import {
+  syncSingleInvoice,
+  deleteInvoicesForSource,
+} from '../../lib/invoices-sync';
 
 
 
@@ -212,6 +216,15 @@ router.post(
         if (!driver.length) throw new NotFoundError('Conductor', body.driverId!);
       }
 
+      // jul 2026 v3 — Generamos invoice_number per-origen (COMB-NNN) por
+      // empresa via la PL/pgSQL `next_invoice_number`. El cliente ya NO
+      // manda este campo.
+      const genRows = await db.execute(sql`
+        SELECT next_invoice_number(${companyId}, 'fuel') AS invoice_number
+      `) as unknown as { rows: Array<{ invoice_number: string }> };
+      const invoiceNumber: string =
+        genRows.rows?.[0]?.invoice_number ?? `COMB-${String(Date.now()).slice(-6)}`;
+
       const [created] = await db
         .insert(companyFuelEntries)
         .values({
@@ -228,21 +241,41 @@ router.post(
           notes: body.notes ?? null,
           photoUrl: body.photoUrl ?? null,
           odometerPhotoUrl: body.odometerPhotoUrl ?? null,
+          invoiceNumber,
         })
         .returning();
+      const withInvoice = created;
 
-      // ── Generar N.° de factura autoincremental ────────────────────────────
-      // Usamos el `id` serial que Postgres ya asignó de forma atómica (sin
-      // condiciones de carrera, sin necesidad de un contador aparte).
-      // Formato: FAC-0001, FAC-0002... — único a nivel de TODA la tabla,
-      // no por empresa (evita tener que lockear filas de un contador
-      // compartido entre empresas).
-      const invoiceNumber = `FAC-${String(created.id).padStart(4, '0')}`;
-      const [withInvoice] = await db
-        .update(companyFuelEntries)
-        .set({ invoiceNumber })
-        .where(eq(companyFuelEntries.id, created.id))
-        .returning();
+      // ── Sincronizar ledger Finanzas ──────────────────────────────────────────
+      // El módulo Finanzas mantiene un ledger (company_invoices) que es la
+      // fuente de verdad para reportes de facturas. Por cada fuel entry
+      // espejamos una fila con su invoiceNumber, fecha, monto, estación y
+      // URL de la foto (si fue subida). Si el operador borra la foto
+      // después, syncSingleInvoice con fileUrl=null NO la pisa (el ledger
+      // preserva la trazabilidad). Si en el futuro el flujo permite borrar
+      // el invoiceNumber, syncSingleInvoice lo interpretaría como borrado.
+      try {
+        await syncSingleInvoice({
+          tx: db,
+          companyId,
+          sourceModule: 'combustible',
+          sourceEntityId: withInvoice.id,
+          data: {
+            invoiceNumber,
+            invoiceDate: withInvoice.date,
+            amount: withInvoice.cost ?? '0',
+            supplierName: withInvoice.station ?? null,
+            fileUrl: withInvoice.photoUrl ?? null,
+            fileMimeType: withInvoice.photoUrl ? 'image/jpeg' : null,
+            kind: 'combustible',
+          },
+        });
+      } catch (invErr) {
+        // No rompemos la creación del fuel entry si el ledger falla —
+        // el ledger se puede reconciliar después. Logueamos para
+        // diagnóstico.
+        console.warn('[fuel] syncSingleInvoice falló (no crítico):', (invErr as Error).message);
+      }
 
       await logAudit(db, companyId, {
         entity: 'fuel',
@@ -321,6 +354,31 @@ router.put(
         .where(and(eq(companyFuelEntries.id, fuelId), eq(companyFuelEntries.companyId, companyId)))
         .returning();
 
+      // ── Sincronizar ledger Finanzas tras la edición ──────────────────────────
+      // invoiceNumber es inmutable (lo generamos al crear), así que siempre
+      // está presente → syncSingleInvoice hace UPSERT (no delete). Si el
+      // operador cambió la estación, el costo o la foto, el ledger se
+      // actualiza atómicamente.
+      try {
+        await syncSingleInvoice({
+          tx: db,
+          companyId,
+          sourceModule: 'combustible',
+          sourceEntityId: updated.id,
+          data: {
+            invoiceNumber: updated.invoiceNumber ?? `FAC-${String(updated.id).padStart(4, '0')}`,
+            invoiceDate: updated.date,
+            amount: updated.cost ?? '0',
+            supplierName: updated.station ?? null,
+            fileUrl: updated.photoUrl ?? null,
+            fileMimeType: updated.photoUrl ? 'image/jpeg' : null,
+            kind: 'combustible',
+          },
+        });
+      } catch (invErr) {
+        console.warn('[fuel] syncSingleInvoice falló en PUT (no crítico):', (invErr as Error).message);
+      }
+
       await logAudit(db, companyId, {
         entity: 'fuel',
         entityId: toId('fuel', updated.id),
@@ -375,6 +433,21 @@ router.delete(
       await db
         .delete(companyFuelEntries)
         .where(and(eq(companyFuelEntries.id, fuelId), eq(companyFuelEntries.companyId, companyId)));
+
+      // ── Limpiar ledger Finanzas ──────────────────────────────────────────────
+      // Si este fuel entry tenía una factura sincronizada, la borramos del
+      // ledger. Hacerlo ANTES del logAudit para que el row de auditoría
+      // refleje el estado ya limpio.
+      try {
+        await deleteInvoicesForSource({
+          tx: db,
+          companyId,
+          sourceModule: 'combustible',
+          sourceEntityId: fuelId,
+        });
+      } catch (invErr) {
+        console.warn('[fuel] deleteInvoicesForSource falló (no crítico):', (invErr as Error).message);
+      }
 
       await logAudit(db, companyId, {
         entity: 'fuel',

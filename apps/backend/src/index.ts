@@ -44,6 +44,9 @@ startMaintenanceOverdueCron();
 // Se apaga con CHECKLIST_OVERDUE_CRON_ENABLED != true.
 startChecklistOverdueCron();
 
+// (jul 2026 — el cron invoice-due-status fue removido: el módulo Finanzas no
+// usa modelo CxP contable. Las columnas cxp_status/due_date ya no existen.)
+
 // Sweep inicial best-effort: si por algún motivo el cron diario no se
 // ejecutó (deployment, cold start), corremos una pasada al arrancar.
 void (async () => {

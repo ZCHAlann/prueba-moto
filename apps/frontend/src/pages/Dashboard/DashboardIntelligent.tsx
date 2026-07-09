@@ -356,25 +356,6 @@ export function ConsumoPorVehiculoCard({ data, loading }: { data: CombustiblePor
 }
 
 // ────────────────────────────────────────────────────────────────────────
-//  6. Costo de combustible por vehículo (top 10)
-// ────────────────────────────────────────────────────────────────────────
-export function CostoPorVehiculoCard({ data, loading }: { data: CombustiblePorVehiculo[]; loading: boolean }) {
-  return (
-    <ChartCard title="Costo por vehículo" subtitle="Top 10 por costo de combustible" href="/combustible">
-      {loading
-        ? <ChartSkeleton height="h-[220px]" />
-        : data.length === 0
-          ? <p className="text-xs text-gray-400 py-8 text-center">Sin datos de costo</p>
-          : <Table
-              headers={["Placa", "Vehículo", "Costo", "Galones"]}
-              rows={data.map(d => [d.plate, d.name, `$${d.cost.toLocaleString()}`, `${d.gallons.toLocaleString()} gal`])}
-            />
-      }
-    </ChartCard>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────────────
 //  7. Consumo de combustible por conductor (Fase 2, hook propio)
 // ────────────────────────────────────────────────────────────────────────
 export function ConsumoPorConductorCard() {

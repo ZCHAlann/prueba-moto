@@ -65,6 +65,10 @@ import { findByIdForCompany, updateByIdForCompany } from '../../lib/db-wrapper';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 import { syncAssetMaintenanceStatus } from '../../lib/maintenanceStatusSync'; // NUEVO v3.4
 import {
+  syncMaintenanceInvoices,
+  deleteInvoicesForSource,
+} from '../../lib/invoices-sync';
+import {
   notify,
   notifyAdmins,
   notifyAdminsExceptActor,
@@ -110,6 +114,11 @@ const itemSchema = z.object({
   quantity:   z.number().positive().max(1_000_000).default(1),
   unitCost:   z.number().nonnegative().max(1_000_000_000).default(0),
   photoUrl:   z.string().min(1).optional().nullable(),
+  // jul 2026 — FK lógica al attachment del array `attachments` del
+  // mismo mantenimiento (Opción A). NULL = item sin factura.
+  // Se valida que el attachment_key exista en el array attachments[] a
+  // nivel de aplicación en lib/invoices-sync.
+  attachmentKey: z.string().min(1).max(40).optional().nullable(),
 });
 
 // ─── Maintenance schemas ──────────────────────────────────────────────────────
@@ -117,10 +126,43 @@ const MAINT_TYPES = ['Correctivo', 'Programado', 'Lavada'] as const;
 
 // Schema individual para un adjunto. La URL la emite el endpoint de
 // upload genérico; el frontend la manda de vuelta para guardarla.
+//
+// jul 2026 — extendemos con campos del módulo Finanzas:
+//   • key              — slug opcional. Si falta, lib/invoices-sync
+//                        genera uno a partir del label + index.
+//   • kind             — invoice_kind_enum: 'repuesto' | 'mano_obra' |
+//                        'lavada' | 'servicio' | 'otro'. Default 'otro'.
+//   • amount           — monto de la factura asociada a este adjunto.
+//                        Opcional (puede ser null si es solo evidencia).
+//   • invoiceNumber    — número de factura. Si está vacío/null, el adjunto
+//                        es solo evidencia (no genera fila en
+//                        company_invoices).
 const attachmentSchema = z.object({
-  url:        z.string().min(1).max(2_000_000),
-  label:      z.string().min(1).max(60).default('Adjunto'),
-  uploadedAt: z.string().datetime().optional(),
+  key:           z.string().min(1).max(40).optional(),
+  url:           z.string().min(1).max(2_000_000).nullable().optional(),
+  label:         z.string().min(1).max(60).default('Adjunto'),
+  uploadedAt:    z.string().datetime().optional(),
+  // jul 2026 v3 — solo 3 tipos permitidos: repuesto/mano_obra/lavada.
+  kind:          z.enum(['repuesto', 'mano_obra', 'lavada']).optional(),
+  amount:        z.number().nonnegative().max(1_000_000_000).nullable().optional(),
+  invoiceNumber: safeString({ max: 60, fieldLabel: 'N.° de factura', allowEmpty: true }).nullable().optional(),
+  supplierId:    z.union([z.number().int(), z.string(), z.null()]).optional(),
+  // v3 — IVA y totales manuales (no se calculan):
+  ivaPercent:    z.number().nonnegative().max(100).nullable().optional(),
+  ivaAmount:     z.number().nonnegative().max(1_000_000_000).nullable().optional(),
+  // v3 — solo cuando kind es mano_obra:
+  workshopName:  safeString({ max: 160, fieldLabel: 'Taller', allowEmpty: true }).nullable().optional(),
+  // v3 — solo cuando kind es lavada:
+  workerName:    safeString({ max: 160, fieldLabel: 'Lavador', allowEmpty: true }).nullable().optional(),
+  // Opción A: items con imagen pendiente por item.
+  items:         z.array(z.object({
+                    description:   z.string().min(1).max(255),
+                    quantity:      z.number().positive(),
+                    unitPrice:     z.number().nonnegative(),
+                    subtotal:      z.number().nonnegative(),
+                    imageUrl:      z.string().nullable().optional(),
+                    imagePending:  z.boolean().optional(),
+                  })).max(50).optional(),
 });
 
 const createMaintenanceSchema = z.object({
@@ -363,6 +405,8 @@ async function loadItemsMap(maintenanceIds: number[]): Promise<Map<number, any[]
       unitCost:       companyMaintenanceItems.unitCost,
       subtotal:       companyMaintenanceItems.subtotal,
       photoUrl:       companyMaintenanceItems.photoUrl,
+      // jul 2026 — Opción A: vínculo lógico al attachment del array `attachments`.
+      attachmentKey:  companyMaintenanceItems.attachmentKey,
     })
     .from(companyMaintenanceItems)
     .leftJoin(companySuppliers, eq(companySuppliers.id, companyMaintenanceItems.supplierId))
@@ -372,15 +416,16 @@ async function loadItemsMap(maintenanceIds: number[]): Promise<Map<number, any[]
   for (const i of items) {
     if (!map.has(i.maintenanceId)) map.set(i.maintenanceId, []);
     map.get(i.maintenanceId)!.push({
-      id:           toId('maintenance-item', i.id),
-      maintenanceId: toId('maintenance', i.maintenanceId),
-      supplierId:   i.supplierId ? toId('supplier', i.supplierId) : null,
-      supplierName: i.supplierName,
-      name:         i.name,
-      quantity:     Number(i.quantity),
-      unitCost:     Number(i.unitCost),
-      subtotal:     Number(i.subtotal),
-      photoUrl:     i.photoUrl ?? null,
+      id:             toId('maintenance-item', i.id),
+      maintenanceId:  toId('maintenance', i.maintenanceId),
+      supplierId:     i.supplierId ? toId('supplier', i.supplierId) : null,
+      supplierName:   i.supplierName,
+      name:           i.name,
+      quantity:       Number(i.quantity),
+      unitCost:       Number(i.unitCost),
+      subtotal:       Number(i.subtotal),
+      photoUrl:       i.photoUrl ?? null,
+      attachmentKey:  i.attachmentKey ?? null, // jul 2026
     });
   }
   return map;
@@ -426,6 +471,8 @@ function buildItemValues(maintenanceId: number, items: z.infer<typeof itemSchema
     unitCost:   i.unitCost.toFixed(2),
     subtotal:   (i.quantity * i.unitCost).toFixed(2),
     photoUrl:   i.photoUrl ?? null,
+    // jul 2026 — Opción A: FK lógica al attachment del array `attachments`.
+    attachmentKey: i.attachmentKey ?? null,
   }));
 }
 
@@ -943,6 +990,7 @@ router.get(
             unitCost:       companyMaintenanceItems.unitCost,
             subtotal:       companyMaintenanceItems.subtotal,
             photoUrl:       companyMaintenanceItems.photoUrl,
+            attachmentKey:  companyMaintenanceItems.attachmentKey, // jul 2026
           })
           .from(companyMaintenanceItems)
           .where(and(...whereItems));
@@ -1265,6 +1313,36 @@ router.post(
       }
       await recalcMaintenanceTotal(created.id, companyId);
 
+      // ── Sincronizar ledger Finanzas (módulo de facturas) ───────────────────
+      // Cada mantenimiento puede traer N facturas (una por adjunto con
+      // invoiceNumber). syncMaintenanceInvoices se encarga de:
+      //   1. UPSERT por (mantenimiento, attachment key) si el adjunto
+      //      tiene invoiceNumber no-vacío.
+      //   2. Borrar del ledger cualquier factura previa del mantenimiento
+      //      cuyo attachment key ya no esté en la nueva lista (caso
+      //      "adjuntos eliminados en el edit modal").
+      // Si body.attachments está vacío o todos los invoiceNumber están
+      // vacíos, la función es no-op para UPSERT pero igual borra
+      // cualquier huérfana previa del mantenimiento (defensivo).
+      try {
+        await syncMaintenanceInvoices({
+          tx: db,
+          companyId,
+          maintenanceId: created.id,
+          attachments: (body.attachments ?? []) as Array<{
+            key?: string;
+            url: string;
+            label?: string;
+            uploadedAt?: string;
+            kind?: 'repuesto' | 'mano_obra' | 'lavada' | 'servicio' | 'otro';
+            amount?: number | null;
+            invoiceNumber?: string | null;
+          }>,
+        });
+      } catch (invErr) {
+        console.warn('[maintenances] syncMaintenanceInvoices falló (no crítico):', (invErr as Error).message);
+      }
+
       // NUEVO v3.4 — sincroniza el status del vehículo si el mantenimiento
       // recién creado ya cuenta como "activo hoy".
       await syncAssetMaintenanceStatus(assetId, companyId);
@@ -1480,6 +1558,40 @@ router.put(
       }
 
       await recalcMaintenanceTotal(id, companyId);
+
+      // ── Sincronizar ledger Finanzas (módulo de facturas) ───────────────────
+      // Llamamos SIEMPRE: si el operador no envió attachments nuevos,
+      // syncMaintenanceInvoices es no-op para UPSERT pero igual borra
+      // cualquier factura previa del mantenimiento cuyo attachment key
+      // ya no esté (defensivo contra ediciones que solo cambiaron items).
+      // Si SÍ envió attachments, toma la lista final como fuente de
+      // verdad para el ledger.
+      //
+      // Usamos `updated.attachments` (la fila ya actualizada) en lugar de
+      // `body.attachments` para reflejar exactamente lo que quedó
+      // persistido. Si el body no traía attachments, esto preserva la
+      // lista anterior y syncMaintenanceInvoices es efectivamente un
+      // reconciliador idempotente.
+      try {
+        await syncMaintenanceInvoices({
+          tx: db,
+          companyId,
+          maintenanceId: id,
+          attachments: (Array.isArray((updated as any).attachments)
+            ? (updated as any).attachments
+            : []) as Array<{
+              key?: string;
+              url: string;
+              label?: string;
+              uploadedAt?: string;
+              kind?: 'repuesto' | 'mano_obra' | 'lavada' | 'servicio' | 'otro';
+              amount?: number | null;
+              invoiceNumber?: string | null;
+            }>,
+        });
+      } catch (invErr) {
+        console.warn('[maintenances] syncMaintenanceInvoices falló en PUT (no crítico):', (invErr as Error).message);
+      }
 
       // NUEVO v3.4 — solo si status o scheduledFor pudieron cambiar si
       // "hoy" cuenta como activo. Evita queries innecesarias en ediciones
@@ -2898,6 +3010,20 @@ router.delete(
       await db.delete(companyMaintenanceCarwashExtras).where(eq(companyMaintenanceCarwashExtras.maintenanceId, id));
       await db.delete(companyMaintenanceCarwashPhotos).where(eq(companyMaintenanceCarwashPhotos.maintenanceId, id));
       await db.delete(companyMaintenanceEvents).where(eq(companyMaintenanceEvents.maintenanceId, id));
+      // ── Limpiar ledger Finanzas ANTES de borrar el mantenimiento ──────────
+      // Borra TODAS las facturas sincronizadas de este mantenimiento
+      // (mantenimientos multi-factura). Si no se hace, quedan filas
+      // huérfanas en company_invoices apuntando a un id inexistente.
+      try {
+        await deleteInvoicesForSource({
+          tx: db,
+          companyId,
+          sourceModule: 'mantenimiento',
+          sourceEntityId: id,
+        });
+      } catch (invErr) {
+        console.warn('[maintenances] deleteInvoicesForSource falló (no crítico):', (invErr as Error).message);
+      }
       await db
         .delete(companyMaintenanceRecords)
         .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)));

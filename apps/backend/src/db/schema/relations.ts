@@ -41,6 +41,8 @@ import {
   assetNotes,
   assetRoutes,
   companyInsurancePolicies,
+  companyInvoices,
+  companyInvoiceTypes,
 } from './operational';
 
 // ─────────────────────────────────────────────
@@ -337,5 +339,26 @@ export const assetRoutesRelations = relations(assetRoutes, ({ one }) => ({
   company: one(companies,     { fields: [assetRoutes.companyId], references: [companies.id] }),
   asset:   one(companyAssets,  { fields: [assetRoutes.assetId],   references: [companyAssets.id] }),
   driver:  one(companyDrivers, { fields: [assetRoutes.driverId],  references: [companyDrivers.id] }),
+}));
+
+// ── Finance v2 (jul 2026) ────────────────────────────────────────────────────
+//
+// Relaciones del modelo Cuentas por Pagar. Permite que el query builder
+// de Drizzle (`db.query.companyInvoices.findMany({ with: { invoiceType,
+// supplier, ... } })`) traiga las filas relacionadas en una sola query.
+//
+// `invoiceType` y `supplier` son LEFT JOINs lógicos — los FKs son nullable
+// (ON DELETE SET NULL), así que las facturas sin tipo/proveedor quedan con
+// esos campos en null y la relación devuelve null.
+
+export const companyInvoicesRelations = relations(companyInvoices, ({ one }) => ({
+  company:     one(companies,           { fields: [companyInvoices.companyId],     references: [companies.id] }),
+  invoiceType: one(companyInvoiceTypes, { fields: [companyInvoices.invoiceTypeId], references: [companyInvoiceTypes.id], relationName: 'invoice_type' }),
+  supplier:    one(companySuppliers,    { fields: [companyInvoices.supplierId],    references: [companySuppliers.id],    relationName: 'invoice_supplier' }),
+}));
+
+export const companyInvoiceTypesRelations = relations(companyInvoiceTypes, ({ one, many }) => ({
+  company:  one(companies,      { fields: [companyInvoiceTypes.companyId], references: [companies.id] }),
+  invoices: many(companyInvoices, { relationName: 'invoice_type' }),
 }));
 

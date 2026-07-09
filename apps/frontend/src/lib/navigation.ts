@@ -278,6 +278,21 @@ export const navigationSections: NavigationSection[] = [
     ],
   },
   {
+    label: "Finanzas",
+    icon: "FN",
+    description: "Comprobantes y conciliacion",
+    accent: "emerald",
+    items: [
+      {
+        label: "Facturas",
+        href: "/finanzas/facturas",
+        icon: "FN",
+        description: "Ledger de comprobantes de combustible, peajes y mantenimiento",
+        accent: "emerald",
+      },
+    ],
+  },
+  {
     label: "Geolocalizacion",
     icon: "GL",
     description: "Ubicacion operativa y monitoreo",

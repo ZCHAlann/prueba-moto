@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAssets } from "../../hooks/useAssets";
 import { useDrivers } from "../../hooks/useDrivers";
 import { useAssignments } from "../../hooks/useAssignments";
-import { useMaintenancesList } from "../../hooks/useMaintenancesV2";
+import { useMaintenancesList, useMaintenanceCategories } from "../../hooks/useMaintenancesV2";
 import { useChecklists } from "../../hooks/useChecklists";
 import { useAlerts } from "../../hooks/useAlerts";
 import { useFuel } from "../../hooks/useFuel";
@@ -587,6 +587,9 @@ function Pagination({
 //  • Un solo grupo abierto a la vez (click en otro cierra el anterior).
 //  • Al cambiar las filas (filtros), se cierran todos los grupos.
 //  • El header de la tabla (nombres de columna) siempre está visible arriba.
+//  • (rep-009) Cada carpetita puede tener su propio filtro de categoría,
+//    que solo afecta las filas mostradas DENTRO de esa carpetita — el
+//    encabezado colapsado y el gran total siguen reflejando todo.
 //
 // FIX SCROLL: antes el header y cada grupo abierto eran contenedores
 // `overflow-x-auto` INDEPENDIENTES, cada uno con su propio `scrollLeft`.
@@ -606,6 +609,10 @@ function GroupedReportTable({
   moduleSubtitle,
   moduleFilename,
   onRowClick,
+  categories,
+  enableCategoryFilter = false,
+  types,
+  enableTypeFilter = false,
 }: {
   columns: ReportColumn[];
   rows: ReportRow[];
@@ -617,8 +624,21 @@ function GroupedReportTable({
   moduleSubtitle: string;
   moduleFilename: string;
   onRowClick: (row: ReportRow) => void;
+  /** Categorías disponibles para el dropdown por carpetita (rep-009). */
+  categories?: { key: string; label: string }[];
+  /** Si true, cada carpetita muestra su propio dropdown de categoría. */
+  enableCategoryFilter?: boolean;
+  /** Tipos disponibles (Programado / Correctivo / Lavada) para el dropdown por carpetita. */
+  types?: { key: string; label: string }[];
+  /** Si true, cada carpetita muestra su propio dropdown de tipo. */
+  enableTypeFilter?: boolean;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+  // Filtro de categoría POR carpetita: clave = groupValue (placa),
+  // valor = category key seleccionada ("all" = sin filtro).
+  const [groupCategoryFilter, setGroupCategoryFilter] = useState<Record<string, string>>({});
+  // Filtro de tipo (Programado/Correctivo/Lavada) POR carpetita, misma mecánica.
+  const [groupTypeFilter, setGroupTypeFilter] = useState<Record<string, string>>({});
   const p = PALETTE[palette];
 
   const groups = useMemo(() => groupRowsByKey(rows, groupKey), [rows, groupKey]);
@@ -627,17 +647,28 @@ function GroupedReportTable({
     [rows, numericCols],
   );
 
-  // Al cambiar los filtros (las filas cambian), cerramos todos los grupos.
+  // Al cambiar los filtros (las filas cambian), cerramos todos los grupos
+  // y limpiamos los filtros de categoría por carpetita.
   useEffect(() => {
     setOpenGroup(null);
+    setGroupCategoryFilter({});
+    setGroupTypeFilter({});
   }, [rows]);
 
   function toggle(g: string) {
     setOpenGroup((cur) => (cur === g ? null : g));
   }
 
-  // Exporta solo este grupo a PDF/Excel. Título del PDF identifica
-  // el grupo para que el archivo se entienda de un vistazo.
+  function setCategoryFor(groupValue: string, catKey: string) {
+    setGroupCategoryFilter((prev) => ({ ...prev, [groupValue]: catKey }));
+  }
+
+  function setTypeFor(groupValue: string, typeKey: string) {
+    setGroupTypeFilter((prev) => ({ ...prev, [groupValue]: typeKey }));
+  }
+
+  // Exporta solo este grupo a PDF/Excel. Recibe las filas YA filtradas
+  // por categoría (si había un filtro activo en esa carpetita).
   const handleExportPdf = (groupValue: string, groupRows: ReportRow[]) => {
     void import("./groupedExport").then(({ exportGroupedToPdf }) => {
       void exportGroupedToPdf({
@@ -711,8 +742,23 @@ function GroupedReportTable({
           <div>
             {groups.map(({ groupValue, rows: groupRows }) => {
               const isOpen = openGroup === groupValue;
+              // Subtotal del HEADER de la carpetita: siempre sobre el total
+              // sin filtrar (el filtro de categoría solo afecta el detalle
+              // interno, no el resumen colapsado).
               const subtotals = sumNumericCols(groupRows, numericCols);
               const groupId = `group-${moduleId}-${groupValue.replace(/\s+/g, "_")}`;
+
+              // ── Filtros de categoría y tipo aplicados SOLO al contenido expandido ──
+              const catFilter  = groupCategoryFilter[groupValue] ?? "all";
+              const typeFilter = groupTypeFilter[groupValue] ?? "all";
+              const filteredGroupRows = groupRows.filter((r) => {
+                if (enableCategoryFilter && catFilter !== "all" && String(r.categoryKey ?? "") !== catFilter) return false;
+                if (enableTypeFilter && typeFilter !== "all" && String(r.kind ?? "") !== typeFilter) return false;
+                return true;
+              });
+              const filteredSubtotals = sumNumericCols(filteredGroupRows, numericCols);
+              const anyFilterActive = (enableCategoryFilter && catFilter !== "all") || (enableTypeFilter && typeFilter !== "all");
+
               return (
                 <div
                   key={groupValue}
@@ -760,14 +806,14 @@ function GroupedReportTable({
                       );
                     })}
 
-                    {/* ── Botones de exportar (solo este grupo) ── */}
+                    {/* ── Botones de exportar (solo este grupo, respetando filtro de categoría) ── */}
                     <span
                       className="inline-flex items-center gap-1.5 ml-2 shrink-0"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
                         type="button"
-                        onClick={() => handleExportPdf(groupValue, groupRows)}
+                        onClick={() => handleExportPdf(groupValue, filteredGroupRows)}
                         className="inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1 text-[11px] font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.08] transition"
                         title={`Exportar ${groupValue} a PDF`}
                       >
@@ -775,7 +821,7 @@ function GroupedReportTable({
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleExportExcel(groupValue, groupRows)}
+                        onClick={() => handleExportExcel(groupValue, filteredGroupRows)}
                         className="inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1 text-[11px] font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.08] transition"
                         title={`Exportar ${groupValue} a Excel`}
                       >
@@ -794,37 +840,106 @@ function GroupedReportTable({
                         transition={{ duration: 0.22, ease: "easeInOut" }}
                         className="overflow-hidden"
                       >
-                        <div>
-                          {groupRows.map((row, i) => (
-                            <div
-                              key={i}
-                              style={{ gridTemplateColumns: gridTemplate }}
-                              className="grid text-sm border-b border-gray-100/70 last:border-b-0 dark:border-white/[0.03] hover:bg-gray-50/80 dark:hover:bg-white/[0.02] cursor-pointer"
-                              onClick={(e) => { e.stopPropagation(); onRowClick(row); }}
-                              title="Ver detalle"
-                            >
-                              {columns.map((col) => (
-                                <div
-                                  key={col.key}
-                                  title={String(row[col.key] ?? "—")}
-                                  className={`truncate px-4 py-3 text-gray-600 dark:text-gray-300 ${
-                                    numericCols.includes(col.key) ? "text-right tabular-nums" : ""
-                                  }`}
+                        {/* ── Dropdowns de Tipo y Categoría — solo si están habilitados ── */}
+                        {((enableTypeFilter && types && types.length > 0) ||
+                          (enableCategoryFilter && categories && categories.length > 0)) && (
+                          <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 dark:border-white/[0.05] bg-gray-50/60 dark:bg-white/[0.02] px-4 py-2">
+                            {enableTypeFilter && types && types.length > 0 && (
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                                  Tipo
+                                </span>
+                                <select
+                                  value={typeFilter}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => setTypeFor(groupValue, e.target.value)}
+                                  className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/40 dark:border-white/[0.06] dark:bg-white/[0.04] dark:text-gray-200"
                                 >
-                                  {String(row[col.key] ?? "—")}
-                                </div>
-                              ))}
+                                  <option value="all">Todos los tipos</option>
+                                  {types.map((t) => (
+                                    <option key={t.key} value={t.key}>
+                                      {t.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+
+                            {enableCategoryFilter && categories && categories.length > 0 && (
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                                  Categoría
+                                </span>
+                                <select
+                                  value={catFilter}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => setCategoryFor(groupValue, e.target.value)}
+                                  className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/40 dark:border-white/[0.06] dark:bg-white/[0.04] dark:text-gray-200"
+                                >
+                                  <option value="all">Todas las categorías</option>
+                                  {categories.map((c) => (
+                                    <option key={c.key} value={c.key}>
+                                      {c.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+
+                            {anyFilterActive && (
+                              <span className="text-[11px] text-gray-400 dark:text-gray-500">
+                                {filteredGroupRows.length} de {groupRows.length}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        <div>
+                          {filteredGroupRows.length === 0 ? (
+                            <div className="px-4 py-6 text-center text-xs text-gray-400 dark:text-gray-500">
+                              Sin registros para esta categoría.
                             </div>
-                          ))}
+                          ) : (
+                            filteredGroupRows.map((row, i) => (
+                              <div
+                                key={i}
+                                style={{ gridTemplateColumns: gridTemplate }}
+                                className="grid text-sm border-b border-gray-100/70 last:border-b-0 dark:border-white/[0.03] hover:bg-gray-50/80 dark:hover:bg-white/[0.02] cursor-pointer"
+                                onClick={(e) => { e.stopPropagation(); onRowClick(row); }}
+                                title="Ver detalle"
+                              >
+                                {columns.map((col) => (
+                                  <div
+                                    key={col.key}
+                                    title={String(row[col.key] ?? "—")}
+                                    className={`truncate px-4 py-3 text-gray-600 dark:text-gray-300 ${
+                                      numericCols.includes(col.key) ? "text-right tabular-nums" : ""
+                                    }`}
+                                  >
+                                    {String(row[col.key] ?? "—")}
+                                  </div>
+                                ))}
+                              </div>
+                            ))
+                          )}
                         </div>
 
-                        {/* Subtotal del grupo: barra propia (no fila de tabla) para
-                            no depender del grid de columnas — evita que el label
-                            "Subtotal X" se corte o se solape con celdas vecinas. */}
-                        {numericCols.length > 0 && (
+                        {/* Subtotal del grupo — refleja SOLO las filas visibles
+                            (respeta el filtro de categoría activo). */}
+                        {numericCols.length > 0 && filteredGroupRows.length > 0 && (
                           <div className="flex items-center gap-3 border-t border-gray-100 dark:border-white/[0.05] bg-gray-50/60 px-4 py-2.5 dark:bg-white/[0.03]">
                             <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                               Subtotal {groupValue}
+                              {anyFilterActive && (
+                                <span className="ml-1 font-normal normal-case text-gray-400">
+                                  (
+                                  {[
+                                    typeFilter !== "all" ? (types?.find((t) => t.key === typeFilter)?.label ?? typeFilter) : null,
+                                    catFilter !== "all" ? (categories?.find((c) => c.key === catFilter)?.label ?? catFilter) : null,
+                                  ].filter(Boolean).join(" · ")}
+                                  )
+                                </span>
+                              )}
                             </span>
                             <span className="flex-1" />
                             {numericCols.map((col) => {
@@ -835,7 +950,7 @@ function GroupedReportTable({
                                     {colDef?.label ?? col}
                                   </span>
                                   <span className="text-sm font-bold tabular-nums text-gray-800 dark:text-white">
-                                    {fmtSubtotal(subtotals[col] ?? 0, col)}
+                                    {fmtSubtotal(filteredSubtotals[col] ?? 0, col)}
                                   </span>
                                 </span>
                               );
@@ -849,7 +964,7 @@ function GroupedReportTable({
               );
             })}
 
-            {/* ── Gran total ── */}
+            {/* ── Gran total (siempre sobre TODAS las filas, sin filtro de categoría) ── */}
             {numericCols.length > 0 && (
               <div className="flex items-center gap-3 px-4 py-3 border-t-2 border-gray-200 dark:border-white/[0.1] bg-gray-100/60 dark:bg-white/[0.04]">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-gray-700 dark:text-gray-200">
@@ -905,6 +1020,31 @@ export function ReportsPage() {
   const { items: exitAuths, loading: loadingExitAuths, fetchList: fetchExitAuths } = useExitAuthorizations();
   const { workshops } = useWorkshops();
   const { suppliers } = useSuppliers();
+  // Categorías de mantenimiento (sistema + custom de la empresa). Se usan
+  // para el dropdown de filtro por categoría DENTRO de cada carpetita del
+  // reporte de Mantenimiento (rep-009).
+  const { data: maintCategoriesRaw } = useMaintenanceCategories();
+  const customMaintCategories = maintCategoriesRaw ?? [];
+  // Lista COMPLETA de categorías (built-in + custom) para el dropdown de
+  // filtro por carpetita del reporte de Mantenimiento (rep-009). Antes acá
+  // solo se pasaban las categorías custom (useMaintenanceCategories solo
+  // trae las que la empresa creó manualmente), por eso el dropdown de
+  // Categoría no aparecía nunca en la práctica: categories.length > 0
+  // daba false. Las keys built-in deben calzar exacto con las que arma
+  // el backend en maintenance.category (ver `allCategories` en
+  // MaintenanceListTab.tsx, que es la fuente de verdad de este mapeo).
+  const maintCategories = useMemo(() => {
+    const builtIn: { key: string; label: string }[] = [
+      { key: "Primordial:Bombas",  label: "Primordial · Bombas"  },
+      { key: "Primordial:Motores", label: "Primordial · Motores" },
+      { key: "Aceite:Cambio",      label: "Aceite · Cambio"      },
+      { key: "Aceite:Inventario",  label: "Aceite · Inventario"  },
+      { key: "Lavada",             label: "Lavada"               },
+      { key: "Otro",               label: "Otro"                 },
+    ];
+    const custom = customMaintCategories.map((c) => ({ key: `custom:${c.id}`, label: c.label }));
+    return [...builtIn, ...custom];
+  }, [customMaintCategories]);
 
   useEffect(() => {
     void fetchExitAuths();
@@ -1272,6 +1412,10 @@ export function ReportsPage() {
           labor,
           parts,
           cost:          total,
+          // Clave de categoría cruda del backend ("Primordial:Bombas",
+          // "Aceite:Cambio", custom, "Otro", etc.). No es columna visible;
+          // solo se usa para el dropdown de filtro por carpetita.
+          categoryKey:   m.category ?? "Otro",
           __status:      m.status,
           __date:        m.scheduledFor,
           __workshopId:  m.workshopId ?? null,
@@ -1635,6 +1779,14 @@ export function ReportsPage() {
                       moduleSubtitle={`Rango: ${applied.from || "inicio abierto"} — ${applied.to || "fin abierto"}`}
                       moduleFilename={`reporte-${activeId}`}
                       onRowClick={setSelectedRow}
+                      categories={activeId === "rep-009" ? maintCategories : undefined}
+                      enableCategoryFilter={activeId === "rep-009"}
+                      types={activeId === "rep-009" ? [
+                        { key: "Programado", label: "Programado" },
+                        { key: "Correctivo", label: "Correctivo" },
+                        { key: "Lavada",     label: "Lavada" },
+                      ] : undefined}
+                      enableTypeFilter={activeId === "rep-009"}
                     />
                   ) : (
                     <>

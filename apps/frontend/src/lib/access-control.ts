@@ -31,6 +31,10 @@ const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub
   { test: (h) => h === "/lienzo" || h.startsWith("/lienzo"),                                              mod: "lienzo",        sub: "lienzo" },
   { test: (h) => h === "/combustible" || h.startsWith("/combustible"),                                    mod: "combustible",   sub: "combustible" },
   { test: (h) => h === "/peajes"      || h.startsWith("/peajes"),                                         mod: "peajes",        sub: "peajes"      },
+  // Finanzas (jul 2026) — ledger de comprobantes. La página principal
+  // vive en /finanzas/facturas pero la ruta también acepta /finanzas/*
+  // para futuros sub-ítems (estadísticas, conciliación).
+  { test: (h) => h === "/finanzas" || h.startsWith("/finanzas"),                                          mod: "finanzas",      sub: "facturas"    },
   { test: (h) => h === "/geolocalizacion" || h.startsWith("/geolocalizacion"),                            mod: "geolocalizacion", sub: "geolocalizacion" },
   { test: (h) => h === "/autorizaciones" || h.startsWith("/autorizaciones"),                              mod: "autorizaciones", sub: "autorizaciones" },
   // Accesos — jun 2026: split en `usuarios` + `roles`. Las sub-rutas
@@ -180,6 +184,7 @@ const reservedTopLevelSegments = new Set([
   "reportes",
   "combustible",
   "peajes",
+  "finanzas",
   "geolocalizacion",
   "operaciones",
   "api",
@@ -308,6 +313,7 @@ const rules: RouteRule[] = [
       pathname.startsWith("/lienzo") ||
       pathname.startsWith("/combustible") ||
       pathname.startsWith("/peajes") ||
+      pathname.startsWith("/finanzas") ||
       pathname.startsWith("/geolocalizacion") ||
       pathname.startsWith("/operaciones") ||
       pathname.startsWith("/dashboard"),
@@ -563,6 +569,7 @@ const SECTION_MODULE_MAP: Record<string, string[]> = {
   "lienzo":           ["lienzo"],
   "combustible":      ["combustible"],
   "peajes":           ["peajes"],
+  "finanzas":         ["finanzas"],
   "geolocalizacion":  ["geolocalizacion"],
   "soporte":          ["soporte"],
   "autorizaciones":   ["autorizaciones"],

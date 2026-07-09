@@ -26,6 +26,7 @@ import { CanvasBoardsListPage } from "./pages/Reports/CanvasBoardsListPage";
 import { CanvasBoardEditorPage } from "./pages/Reports/CanvasBoardEditorPage";
 import { FuelPage } from "./pages/Combustible/page";
 import { PeajesPage } from "./pages/Peajes/page";
+import { FacturasPage } from "./pages/finanzas/FacturasPage";
 import { ProfilePage } from "./pages/Profile/page";
 import { SettingsPage } from "./pages/Settings/page";
 import FlotasPage from "./pages/Gestion/Flotas/page";
@@ -185,6 +186,7 @@ export default function App() {
           <Route path="/lienzo/:boardId" element={<CanvasBoardEditorPage />} />
           <Route path="/combustible" element={<FuelPage />} />
           <Route path="/peajes" element={<PeajesPage />} />
+          <Route path="/finanzas/facturas" element={<FacturasPage />} />
           <Route path="/perfil" element={<ProfilePage />} />
           <Route path="/configuracion" element={<SettingsPage />} />
           <Route path="/flotas" element={<FlotasPage />} />

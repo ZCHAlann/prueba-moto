@@ -8,6 +8,7 @@ import { promises as fs } from 'fs';
 import { authenticate } from '../middlewares/authenticate';
 import {
   validateImageFile,
+  validatePdfFile,
   validateUploadCompanyId,
   optimizeImageIfNeeded,
 } from '../lib/upload-security';
@@ -598,9 +599,31 @@ router.post('/handover-pdf', (req: Request, res: Response, next: NextFunction) =
 });
 
 // ─── Facturas ─────────────────────────────────────────────────────────────────
+//
+// SEGURIDAD (jul 2026 — módulo Finanzas):
+//   • Valida `companyId` del query contra el del JWT (validateUploadCompanyId).
+//     Esto evita que un usuario suba al bucket de otra empresa.
+//   • Defense in depth: revalida mimetype + extensión por archivo
+//     (validateImageFile para imágenes, validatePdfFile para PDFs). Un futuro
+//     cambio del `fileFilter` de multer no debería abrir este endpoint.
+//   • Folder FINAL siempre es `invoices/${validatedCompanyId}` — nunca
+//     depende del query string sin validar.
 
 router.post('/invoice-files', (req, res, next) => {
-  const folder = 'invoices';
+  // El router /upload no es company-scoped (no pasa por `requireCompany`).
+  // Tomamos el companyId del JWT para validar contra el query param.
+  let companyId: number;
+  try {
+    companyId = validateUploadCompanyId(
+      req.query.companyId as string | undefined,
+      req.user?.companyId ?? undefined,
+    );
+  } catch (e) {
+    return next(new AppError(403, (e as Error).message));
+  }
+
+  const folder = `invoices/${companyId}`;
+
   const upload = multer({
     storage: buildStorage(folder),
     limits: { fileSize: 10 * 1024 * 1024 },
@@ -615,12 +638,26 @@ router.post('/invoice-files', (req, res, next) => {
     if (err) return next(err);
     const files = req.files as Express.Multer.File[];
     if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+
+    // Defense in depth: revalidar mimetype + extensión de cada archivo.
+    try {
+      for (const f of files) {
+        if (f.mimetype === 'application/pdf') {
+          validatePdfFile(f);
+        } else if (f.mimetype.startsWith('image/')) {
+          validateImageFile(f);
+        } else {
+          throw new Error(`Tipo de archivo no soportado: ${f.mimetype}`);
+        }
+      }
+    } catch (e) {
+      return next(new AppError(400, (e as Error).message));
+    }
+
     // Solo optimizamos imágenes; los PDFs van tal cual (sharp no los maneja).
     const imageFiles = files.filter((f) => f.mimetype.startsWith('image/'));
     await Promise.allSettled(imageFiles.map((f) => optimizeImageIfNeeded(f)));
-    const companyId = req.query.companyId as string | undefined;
-    const folder2 = companyId ? `invoices/${companyId}` : 'invoices';
-    res.json({ urls: files.map(f => `/uploads/${folder2}/${f.filename}`) });
+    res.json({ urls: files.map(f => `/uploads/${folder}/${f.filename}`) });
   });
 });
 

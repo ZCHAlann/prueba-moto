@@ -40,6 +40,11 @@ export type CreateTollPayload = {
   axes?:         number | null;
   notes?:        string | null;
   photoUrl?:     string | null;
+  // jul 2026 — número de factura / comprobante del peaje. Si viene vacío
+  // o ausente, no se crea fila en el ledger de facturas.
+  // El backend lo rechaza con 400 si se manda al editar (es inmutable
+  // post-creación, como en combustible).
+  invoiceNumber?: string | null;
 };
 
 export type UpdateTollPayload = Partial<CreateTollPayload>;
@@ -191,6 +196,7 @@ export function useToll() {
         axes:          payload.axes ?? null,
         notes:         payload.notes ?? "",
         photoUrl:      payload.photoUrl ?? null,
+        invoiceNumber: payload.invoiceNumber ?? null,
       }),
     });
     if (!res.ok) throw new Error(`Error ${res.status}`);

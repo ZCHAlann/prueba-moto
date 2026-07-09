@@ -10,17 +10,18 @@
 // v3.4: mano de obra editable en línea (En proceso) + sección de
 // facturas y evidencias (adjuntos), igual que en MaintenanceFormModal.
 // Ambos campos quedan reflejados automáticamente en el PDF de detalle.
-// v3.5: se separa "Tomar" de "Iniciar". Tomar solo asigna (sigue
+// v3.5: se separa "Tomar"  de "Iniciar". Tomar solo asigna (sigue
 // Programado/Corrección); Iniciar pasa a En proceso. Se agrega la
-// sección "Taller" (faltaba mostrarse en el drawer).
+// sección "Taller"  (faltaba mostrarse en el drawer).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Truck, Calendar, Hash, Download, RefreshCw, CheckCircle2, Play,
   User as UserIcon, Clock, AlertCircle, Package, Wrench, MapPin,
   Store, Plus, Image as ImageIcon, Camera, DollarSign, FileText,
   CalendarDays, TruckIcon, ClipboardList, History, Receipt, Loader2,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -46,17 +47,21 @@ import { useSuppliers } from "../../../hooks/useSuppliers";
 import { useAuth } from "../../../context/AuthContext";
 import { EditDatesInline } from "../../../components/features/maintenances/EditDatesInline";
 import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
+import {
+  AttachmentFacturaModal,
+  type AttachmentFacturaResult,
+} from "./AttachmentFacturaModal";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function fmtDate(iso?: string | null) {
+function fmtDate(iso: string | null) {
   return fmtDateShortEc(iso);
 }
-function fmtDateTime(iso?: string | null) {
+function fmtDateTime(iso: string | null) {
   return fmtDateTimeEc(iso);
 }
 function fmtMoney(n: number | string | null | undefined) {
-  const v = typeof n === "string" ? Number(n) : (n ?? 0);
+  const v = typeof n === "string" ? Number(n) : (n || 0);
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(v);
 }
 
@@ -79,46 +84,46 @@ function colorForUser(id: number | string | null | undefined): { ring: string; b
 
 // Colores por tipo de evento (línea de tiempo)
 const KIND_META: Record<string, { label: string; dot: string; ring: string; tone: string }> = {
-  created:              { label: "Mantenimiento creado",       dot: "bg-violet-500",  ring: "ring-violet-300",   tone: "text-violet-700 dark:text-violet-200" },
-  assigned:             { label: "Asignado a un operador",     dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
-  reassigned:           { label: "Reasignado",                 dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
-  taken:                { label: "Operador tomó el mantenimiento", dot: "bg-amber-500", ring: "ring-amber-300",    tone: "text-amber-700 dark:text-amber-200" },
-  started:              { label: "Mantenimiento iniciado",     dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
-  item_added:           { label: "Repuestos / adicionales",     dot: "bg-cyan-500",    ring: "ring-cyan-300",     tone: "text-cyan-700 dark:text-cyan-200" },
-  note_added:           { label: "Nota agregada",               dot: "bg-slate-500",   ring: "ring-slate-300",    tone: "text-slate-700 dark:text-slate-200" },
-  photo_uploaded:       { label: "Foto subida",                 dot: "bg-fuchsia-500", ring: "ring-fuchsia-300",  tone: "text-fuchsia-700 dark:text-fuchsia-200" },
-  cancelled:            { label: "Reprogramado",                dot: "bg-amber-500",   ring: "ring-amber-300",    tone: "text-amber-700 dark:text-amber-200" },
-  reauthorized:         { label: "Reautorizado",                dot: "bg-orange-500",  ring: "ring-orange-300",   tone: "text-orange-700 dark:text-orange-200" },
-  overdue:              { label: "Marcado como atrasado",       dot: "bg-rose-500",    ring: "ring-rose-300",     tone: "text-rose-700 dark:text-rose-200" },
+  created: { label: "Mantenimiento creado",       dot: "bg-violet-500",  ring: "ring-violet-300",   tone: "text-violet-700 dark:text-violet-200" },
+  assigned: { label: "Asignado a un operador",     dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
+  reassigned: { label: "Reasignado",                 dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
+  taken: { label: "Operador tomó el mantenimiento", dot: "bg-amber-500", ring: "ring-amber-300",    tone: "text-amber-700 dark:text-amber-200" },
+  started: { label: "Mantenimiento iniciado",     dot: "bg-sky-500",     ring: "ring-sky-300",      tone: "text-sky-700 dark:text-sky-200" },
+  item_added: { label: "Repuestos / adicionales",     dot: "bg-cyan-500",    ring: "ring-cyan-300",     tone: "text-cyan-700 dark:text-cyan-200" },
+  note_added: { label: "Nota agregada",               dot: "bg-slate-500",   ring: "ring-slate-300",    tone: "text-slate-700 dark:text-slate-200" },
+  photo_uploaded: { label: "Foto subida",                 dot: "bg-fuchsia-500", ring: "ring-fuchsia-300",  tone: "text-fuchsia-700 dark:text-fuchsia-200" },
+  cancelled: { label: "Reprogramado",                dot: "bg-amber-500",   ring: "ring-amber-300",    tone: "text-amber-700 dark:text-amber-200" },
+  reauthorized: { label: "Reautorizado",                dot: "bg-orange-500",  ring: "ring-orange-300",   tone: "text-orange-700 dark:text-orange-200" },
+  overdue: { label: "Marcado como atrasado",       dot: "bg-rose-500",    ring: "ring-rose-300",     tone: "text-rose-700 dark:text-rose-200" },
   correction_requested: { label: "Marcado para corrección",     dot: "bg-rose-500",    ring: "ring-rose-300",     tone: "text-rose-700 dark:text-rose-200" },
-  finalized:            { label: "Finalizado",                  dot: "bg-emerald-500", ring: "ring-emerald-300",  tone: "text-emerald-700 dark:text-emerald-200" },
-  viewed:               { label: "Visualizado",                 dot: "bg-gray-400",    ring: "ring-gray-300",     tone: "text-gray-500 dark:text-gray-400" },
+  finalized: { label: "Finalizado",                  dot: "bg-emerald-500", ring: "ring-emerald-300",  tone: "text-emerald-700 dark:text-emerald-200" },
+  viewed: { label: "Visualizado",                 dot: "bg-gray-400",    ring: "ring-gray-300",     tone: "text-gray-500 dark:text-gray-400" },
 };
 
 const TYPE_LABEL: Record<string, string> = {
   Programado: "Programado",
   Correctivo: "Correctivo",
-  Lavada:     "Lavada",
+  Lavada: "Lavada",
 };
 
 // ─── Sub-componentes ─────────────────────────────────────────────────────────
 
-function Kpi({ label, value, accent = "violet" }: { label: string; value: string; accent?: "violet" | "emerald" | "sky" | "amber" | "rose" | "orange" }) {
+function Kpi({ label, value, accent = "violet" }: { label: string; value: string; accent: "violet" | "emerald" | "sky" | "amber" | "rose" | "orange" }) {
   const tones: Record<string, string> = {
-    violet:  "border-violet-200 dark:border-violet-500/20 bg-violet-50 dark:bg-violet-500/10",
+    violet: "border-violet-200 dark:border-violet-500/20 bg-violet-50 dark:bg-violet-500/10",
     emerald: "border-emerald-200 dark:border-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/10",
-    sky:     "border-sky-200 dark:border-sky-500/20 bg-sky-50 dark:bg-sky-500/10",
-    amber:   "border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10",
-    rose:    "border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/10",
-    orange:  "border-orange-200 dark:border-orange-500/20 bg-orange-50 dark:bg-orange-500/10",
+    sky: "border-sky-200 dark:border-sky-500/20 bg-sky-50 dark:bg-sky-500/10",
+    amber: "border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10",
+    rose: "border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/10",
+    orange: "border-orange-200 dark:border-orange-500/20 bg-orange-50 dark:bg-orange-500/10",
   };
   const textTones: Record<string, string> = {
-    violet:  "text-violet-700 dark:text-violet-200",
+    violet: "text-violet-700 dark:text-violet-200",
     emerald: "text-emerald-700 dark:text-emerald-200",
-    sky:     "text-sky-700 dark:text-sky-200",
-    amber:   "text-amber-700 dark:text-amber-200",
-    rose:    "text-rose-700 dark:text-rose-200",
-    orange:  "text-orange-700 dark:text-orange-200",
+    sky: "text-sky-700 dark:text-sky-200",
+    amber: "text-amber-700 dark:text-amber-200",
+    rose: "text-rose-700 dark:text-rose-200",
+    orange: "text-orange-700 dark:text-orange-200",
   };
   return (
     <div className={`rounded-lg border px-3 py-2 ${tones[accent]}`}>
@@ -129,7 +134,7 @@ function Kpi({ label, value, accent = "violet" }: { label: string; value: string
 }
 
 function Section({ icon, title, children, right }: {
-  icon?: React.ReactNode;
+  icon: React.ReactNode;
   title: string;
   children: React.ReactNode;
   right?: React.ReactNode;
@@ -190,8 +195,8 @@ function groupViewedEvents(events: EventNode[]): Array<EventNode | { kind: "view
     if (group.length === 1) {
       out.push(group[0]);
     } else {
-      const users = group.map((g) => ({ name: g.actorName ?? "—", id: g.actorUserId, at: g.createdAt }));
-      // Mantener el último "at" como createdAt del grupo
+      const users = group.map((g) => ({ name: g.actorName || "—", id: g.actorUserId, at: g.createdAt }));
+      // Mantener el último "at"  como createdAt del grupo
       out.push({ kind: "viewed_group", count: group.length, users, createdAt: group[group.length - 1].createdAt });
     }
     i = j;
@@ -202,7 +207,7 @@ function groupViewedEvents(events: EventNode[]): Array<EventNode | { kind: "view
 // Devuelve true si la URL parece ser una imagen (para decidir si mostrar
 // thumbnail o un ícono de documento genérico, ej. para PDFs de factura).
 function isImageUrl(url: string): boolean {
-  return /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(url);
+  return /\.(jpeg|png|webp|gif|heic|heif)$/i.test(url);
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -221,12 +226,12 @@ export function MaintenanceDetailDrawer({
   onReschedule: (m: Maintenance) => void;
   onRequestCorrection: (m: Maintenance) => void;
 }) {
-  const { data: m, isLoading, refetch } = useMaintenance(id ?? undefined);
+  const { data: m, isLoading, refetch } = useMaintenance(id || undefined);
   const { session } = useAuth();
-  const meRole = session?.role ?? "";
+  const meRole = session.role || "";
 
   // Datos de lavada (extras y fotos)
-  const itemId = m?.id ?? null;
+  const itemId = m?.id || null;
   const { data: carwashExtras = [] } = useCarwashExtras(itemId);
   const { data: carwashPhotos = [] } = useCarwashPhotos(itemId);
 
@@ -236,16 +241,34 @@ export function MaintenanceDetailDrawer({
   // pero NO de Accesos pueda igual reasignar.
   const { data: formOptions } = useMaintenanceFormOptions();
   const operadores = useMemo(
-    () => (formOptions?.users ?? []).filter((u) => u.role === "operador"),
+    () => (formOptions?.users || []).filter((u) => u.role === "operador"),
     [formOptions],
   );
 
   const [newNote, setNewNote] = useState("");
-  const [newItem, setNewItem] = useState<{ name: string; quantity: string; unitCost: string; photoUrl: string | null; uploading: boolean; supplierId: string | null }>({
-    name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null,
+  const [newItem, setNewItem] = useState<{
+    name: string;
+    quantity: string;
+    unitCost: string;
+    photoUrl: string | null;
+    uploading: boolean;
+    supplierId: string | null;
+    // jul 2026 — Opcion A: vinculo lógico a un attachment del array
+    // `attachments[]`. NULL = sin factura asignada (solo evidencia).
+    attachmentKey: string | null;
+  }>({
+    name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null,
   });
   // Batch de repuestos pendientes por agregar
-  const [pendingItems, setPendingItems] = useState<{ name: string; quantity: string; unitCost: string; photoUrl: string | null; uploading: boolean; supplierId: string | null }[]>([]);
+  const [pendingItems, setPendingItems] = useState<{
+    name: string;
+    quantity: string;
+    unitCost: string;
+    photoUrl: string | null;
+    uploading: boolean;
+    supplierId: string | null;
+    attachmentKey: string | null;
+  }[]>([]);
   // IVA% editable (default 15 para Ecuador)
   const [ivaPercentDraft, setIvaPercentDraft] = useState<number>(15);
   const { suppliers } = useSuppliers();
@@ -264,20 +287,23 @@ export function MaintenanceDetailDrawer({
 
   // Facturas y evidencias (adjuntos)
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  // jul 2026 — guardamos el archivo recién subido + URL mientras el modal
+  // "factura o evidencia" decide qué hacer con él.
+  const [pendingAttachment, setPendingAttachment] = useState<{ url: string; file: File } | null>(null);
   const attachmentFileRef = useRef<HTMLInputElement | null>(null);
 
-  const addNoteMut         = useAddMaintenanceNote();
-  const addItemsMut        = useAddMaintenanceItems();
-  const assignMut          = useAssignMaintenance();
-  const updateMut          = useUpdateMaintenance();
+  const addNoteMut = useAddMaintenanceNote();
+  const addItemsMut = useAddMaintenanceItems();
+  const assignMut = useAssignMaintenance();
+  const updateMut = useUpdateMaintenance();
   const addCarwashExtraMut = useAddCarwashExtras();
   const addCarwashPhotoMut = useAddCarwashPhotos();
 
   useEffect(() => {
     setNewNote("");
-    setNewItem({ name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null });
+    setNewItem({ name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
     setPendingItems([]);
-    setIvaPercentDraft(item?.ivaPercent ?? 15);
+    setIvaPercentDraft(m?.ivaPercent || 15);
     setNewExtra({ name: "", quantity: 1, unitCost: 0, photoUrl: "" });
     setNewPhotoCaption("");
     setAssignTo("");
@@ -288,11 +314,11 @@ export function MaintenanceDetailDrawer({
   // del mantenimiento (la carga es async, así que no alcanza con el
   // efecto de arriba, que solo corre al cambiar `id`).
   useEffect(() => {
-    if (m) setLaborCostDraft(m.laborCost ?? 0);
+    if (m) setLaborCostDraft(m.laborCost || 0);
   }, [m?.id, m?.laborCost]);
 
-  const item: Maintenance | null = m ?? null;
-  const events = (item?.events ?? []) as EventNode[];
+  const item: Maintenance | null = m || null;
+  const events = (item?.events || []) as EventNode[];
 
   // Sync IVA% con el valor guardado cuando llegan los datos
   useEffect(() => {
@@ -303,8 +329,6 @@ export function MaintenanceDetailDrawer({
   // no violar las Rules of Hooks. Si el componente re-renderiza con un
   // `id` distinto, el orden de hooks debe ser estable.
   const groupedEvents = useMemo(() => groupViewedEvents(events), [events]);
-
-  if (!id) return null;
 
   // Normalización: el backend manda `item.assignedUserId` con el prefijo
   // "company-user-N" (toId()), pero `meId` es un número puro. Compararlos
@@ -317,7 +341,7 @@ export function MaintenanceDetailDrawer({
   };
   const assignedNum = idFromPrefixed(item?.assignedUserId);
   const createdByNum = idFromPrefixed(item?.createdBy);
-  const meIdNum     = meId != null ? meId : null;
+  const meIdNum = meId != null ? meId : null;
 
   const isOwn = item
     ? (meIdNum != null && (assignedNum === meIdNum || createdByNum === meIdNum))
@@ -332,25 +356,25 @@ export function MaintenanceDetailDrawer({
     meRole === "owner_empresa" || meRole === "admin_empresa" || meRole === "operador";
 
   const isProgramado = item?.status === "Programado";
-  const isProceso    = item?.status === "En proceso";
-  const isCompleto   = item?.status === "Completado";
+  const isProceso = item?.status === "En proceso";
+  const isCompleto = item?.status === "Completado";
   const isCorreccion = item?.status === "Correccion";
-  const isLavada     = item?.type?.toString() === "Lavada";
+  const isLavada = item?.type?.toString() === "Lavada";
 
-  // ¿El mantenimiento está libre (sin nadie asignado)? Disponible para
+  // El mantenimiento está libre (sin nadie asignado) Disponible para
   // ser tomado por cualquiera con permiso (operador o full access).
   const isFree = assignedNum == null;
-  // ¿Ya es de quien está mirando el drawer? (asignado a él, sea
+  // Ya es de quien está mirando el drawer (asignado a él, sea
   // operador o full access que se auto-asignó).
   const isMine = meIdNum != null && assignedNum === meIdNum;
 
-  const currentAssignedId = item?.assignedUserId ?? "";
-  const partsCost = (item?.totalCost ?? 0) - (item?.laborCost ?? 0);
-  // Para lavada: el "Total" del servicio = carwashTotal. Los "Repuestos /
+  const currentAssignedId = item?.assignedUserId || "";
+  const partsCost = (item?.totalCost || 0) - (item?.laborCost || 0);
+  // Para lavada: el "Total"  del servicio = carwashTotal. Los "Repuestos /
   // Extras" no aplican como tal — lo que sí hay son los adicionales que el
   // operador agregó al servicio (carwashExtras).
   const carwashExtrasCost = carwashExtras.reduce(
-    (acc, e) => acc + Number(e.quantity ?? 0) * Number(e.unitCost ?? 0),
+    (acc, e) => acc + Number(e.quantity || 0) * Number(e.unitCost || 0),
     0,
   );
 
@@ -361,7 +385,7 @@ export function MaintenanceDetailDrawer({
 
   const saveLaborCost = async (value: number) => {
     if (!item) return;
-    if (value === (item.laborCost ?? 0)) return;
+    if (value === (item.laborCost || 0)) return;
     setSavingLabor(true);
     try {
       await updateMut.mutateAsync({ id: item.id, body: { laborCost: value } });
@@ -369,7 +393,7 @@ export function MaintenanceDetailDrawer({
       refetch();
     } catch (e) {
       toast.error((e as Error).message);
-      setLaborCostDraft(item.laborCost ?? 0);
+      setLaborCostDraft(item.laborCost || 0);
     } finally {
       setSavingLabor(false);
     }
@@ -379,57 +403,170 @@ export function MaintenanceDetailDrawer({
   // el usuario puede operar. La sección igual se muestra (solo lectura)
   // si ya hay adjuntos cargados, sin importar el estado.
   const canUploadAttachment = !isLavada && isProceso && canOperate;
-  const attachments = item?.attachments ?? [];
+  const attachments = item?.attachments || [];
+  // jul 2026 — Opcion A: solo los attachments que tienen invoiceNumber
+  // son candidatos a recibir items "agregados después" desde el form de
+  // repuestos. Los demás quedan como evidencia visual.
+  const attachmentsWithInvoice = useMemo(
+    () => attachments.filter((a) => a.invoiceNumber && String(a.invoiceNumber).trim().length > 0),
+    [attachments],
+  );
 
   const handleAttachmentUpload = async (file: File) => {
     if (!item) return;
     setUploadingAttachment(true);
     try {
-      const url = await uploadMaintenanceAttachment(file, Number(session?.companyId ?? 0));
-      const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-      const label = isPdf
-        ? `Factura · ${file.name.replace(/\.pdf$/i, "").slice(0, 40)}`
-        : `Evidencia · ${file.name.replace(/\.[^.]+$/, "").slice(0, 40)}`;
-      const nextAttachments: MaintenanceAttachment[] = [
-        ...attachments,
-        { url, label, uploadedAt: new Date().toISOString() },
-      ];
-      await updateMut.mutateAsync({ id: item.id, body: { attachments: nextAttachments } });
-      toast.success("Adjunto subido");
-      refetch();
+      const url = await uploadMaintenanceAttachment(file, Number(session.companyId || 0));
+      // jul 2026 — guardamos el archivo + URL y abrimos el modal "factura o
+      // evidencia" ANTES de guardar en el mantenimiento. El modal decide
+      // y devuelve el attachment final con todos los metadatos.
+      setPendingAttachment({
+        url,
+        file,
+      });
     } catch (err) {
       toast.error("No se pudo subir el adjunto", {
         description: err instanceof Error ? err.message : "Error",
       });
+      if (attachmentFileRef.current) attachmentFileRef.current.value = "";
     } finally {
       setUploadingAttachment(false);
-      if (attachmentFileRef.current) attachmentFileRef.current.value = "";
     }
   };
 
+  // jul 2026 — modal "factura o evidencia"
+  const handleAttachmentModalClose = useCallback(() => {
+    setPendingAttachment(null);
+    if (attachmentFileRef.current) attachmentFileRef.current.value = "";
+  }, []);
+
+  const handleAttachmentModalSubmit = useCallback(async (result: {
+    url: string;
+    isInvoice: boolean;
+    kind?: "repuesto" | "mano_obra" | "lavada" | null;
+    supplierId?: number | null;
+    workshopName?: string | null;
+    workerName?: string | null;
+    invoiceNumber?: string | null;
+    ivaAmount?: number | null;
+    total?: number | null;
+    items?: Array<{
+      description: string;
+      quantity: number;
+      unitPrice: number;
+      subtotal: number;
+      imageUrl?: string | null;
+      imagePending?: boolean;
+    }>;
+  }) => {
+    if (!item) return;
+    try {
+      const newKey = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const label = result.invoiceNumber
+        ? `Factura · ${result.invoiceNumber}`
+        : `Evidencia · ${result.url.split("/").pop()?.slice(0, 40) ?? "adjunto"}`;
+      const newAttachment: MaintenanceAttachment & {
+        kind?: string;
+        supplierId?: number | null;
+        workshopName?: string | null;
+        workerName?: string | null;
+        amount?: number | null;
+        ivaAmount?: number | null;
+        items?: typeof result.items;
+        key?: string;
+      } = {
+        key: newKey,
+        url: result.url,
+        label,
+        uploadedAt: new Date().toISOString(),
+        ...(result.invoiceNumber
+          ? {
+              invoiceNumber: result.invoiceNumber,
+              kind: (result.kind ?? "repuesto"),
+              supplierId: result.supplierId ?? null,
+              workshopName: result.workshopName ?? null,
+              workerName: result.workerName ?? null,
+              amount: result.total ?? null,
+              ivaAmount: result.ivaAmount ?? null,
+              items: result.items ?? [],
+            }
+          : {}),
+      };
+      const nextAttachments = [...attachments, newAttachment];
+      await updateMut.mutateAsync({ id: item.id, body: { attachments: nextAttachments } });
+
+      // Propagacion bidireccional v3 — si la factura trae items, los creamos
+      // como repuestos del mantenimiento ya atados a este attachment via
+      // `attachmentKey`. Asi aparecen de una en el listado del drawer y
+      // suman al total del mantenimiento.
+      if (result.isInvoice && result.items && result.items.length > 0) {
+        try {
+          await addItemsMut.mutateAsync({
+            id: item.id,
+            items: result.items.map((it) => ({
+              name: it.description,
+              quantity: Number(it.quantity) || 0,
+              unitCost: Number(it.unitPrice) || 0,
+              photoUrl: it.imageUrl ?? null,
+              supplierId: result.supplierId ?? null,
+              attachmentKey: newKey,
+            })),
+          });
+          toast.success(`Factura agregada con ${result.items.length} item${result.items.length !== 1 ? "s" : ""}.`);
+        } catch (e) {
+          toast.error("Factura guardada, pero no se pudieron agregar los items al mantenimiento", {
+            description: (e as Error).message,
+          });
+        }
+      } else {
+        toast.success(result.invoiceNumber ? "Factura agregada." : "Evidencia agregada.");
+      }
+      refetch();
+      handleAttachmentModalClose();
+    } catch (err) {
+      toast.error("No se pudo guardar el adjunto", {
+        description: err instanceof Error ? err.message : "Error",
+      });
+    }
+  }, [item, attachments, updateMut, addItemsMut, refetch, handleAttachmentModalClose]);
+
   return (
-    <AnimatePresence>
-      {id && (
-        <>
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
-            onClick={onClose}
-          />
-          <motion.aside
-            initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
-            transition={{ type: "spring", stiffness: 320, damping: 32 }}
-            className="fixed right-0 top-0 z-50 flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl dark:bg-[#0b0f1a]"
-          >
-            {isLoading || !item ? (
-              <div className="flex h-full items-center justify-center text-sm text-gray-400">Cargando…</div>
-            ) : (
-              <>
-                {/* ─── Header ─── */}
-                <div
-                  className="relative shrink-0 border-b border-gray-200 dark:border-white/[0.06] px-5 pt-4 pb-4"
-                  style={{
+    <>
+      {/* jul 2026 — modal: factura o evidencia al subir archivo.
+          Aparece después de subir el archivo a storage, antes de guardarlo
+          en el mantenimiento. Decide los metadatos del attachment. */}
+      {pendingAttachment && (
+        <AttachmentFacturaModal
+          fileUrl={pendingAttachment.url}
+          fileMimeType={pendingAttachment.file.type}
+          fileLabel={pendingAttachment.file.name}
+          onClose={handleAttachmentModalClose}
+          onSubmit={handleAttachmentModalSubmit}
+        />
+      )}
+
+      <AnimatePresence>
+        {id && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
+              onClick={onClose}
+            />
+            <motion.aside
+              initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
+              transition={{ type: "spring", stiffness: 320, damping: 32 }}
+              className="fixed right-0 top-0 z-50 flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl dark:bg-[#0b0f1a]"
+            >
+              {isLoading || !item ? (
+                <div className="flex h-full items-center justify-center text-sm text-gray-400">Cargando…</div>
+              ) : (
+                <>
+                  {/* ─── Header ─── */}
+                  <div
+                    className="relative shrink-0 border-b border-gray-200 dark:border-white/[0.06] px-5 pt-4 pb-4"
+                    style={{
                     background:
                       `linear-gradient(135deg, ${statusGradient(item.status)} 0%, transparent 70%)`,
                   }}
@@ -461,7 +598,7 @@ export function MaintenanceDetailDrawer({
                         )}
                       </div>
                       <h2 className="mt-2 truncate text-lg font-bold text-gray-800 dark:text-white">
-                        {item.title ?? "Mantenimiento"}
+                        {item.title || "Mantenimiento"}
                       </h2>
                       <p className="mt-0.5 font-mono text-[11px] text-gray-400 dark:text-gray-500">
                         Folio #{item.id}
@@ -545,14 +682,14 @@ export function MaintenanceDetailDrawer({
 
                   {/* ── Vehículo ── */}
                   <Section icon={<Truck size={11} />} title="Vehículo">
-                    <Row label="Placa"  value={item.assetPlate ?? "—"} />
-                    <Row label="Nombre" value={item.assetName ?? "—"} />
+                    <Row label="Placa"  value={item.assetPlate || "—"} />
+                    <Row label="Nombre" value={item.assetName || "—"} />
                   </Section>
 
                   {/* ── Taller ── */}
                   {item.workshopName && (
                     <Section icon={<Wrench size={11} />} title="Taller">
-                      <Row label="Nombre" value={item.workshopName} />
+                      <Row label="Nombre"  value={item.workshopName} />
                     </Section>
                   )}
 
@@ -571,7 +708,7 @@ export function MaintenanceDetailDrawer({
 
                   {/* ── Programación ── */}
                   <Section icon={<Calendar size={11} />} title="Programación">
-                    <Row label="Programado" value={fmtDateTime(item.scheduledFor)} />
+                    <Row label="Programado"  value={fmtDateTime(item.scheduledFor)} />
                     {canEditDates ? (
                       <>
                         <EditDatesInline
@@ -592,7 +729,7 @@ export function MaintenanceDetailDrawer({
                     ) : (
                       <>
                         <Row label="Ejecutado"  value={fmtDateTime(item.executedAt)} />
-                        <Row label="Completado" value={fmtDateTime(item.completedAt)} />
+                        <Row label="Completado"  value={fmtDateTime(item.completedAt)} />
                       </>
                     )}
                     {item.odometerKm != null && (
@@ -638,16 +775,16 @@ export function MaintenanceDetailDrawer({
                       ) : (
                         <Kpi label="Repuestos / Extras" value={fmtMoney(partsCost)} accent="sky" />
                       )}
-                      <Kpi label="Total" value={fmtMoney(item.totalCost)} accent="emerald" />
+                      <Kpi label="Total"  value={fmtMoney(item.totalCost)} accent="emerald" />
                     </div>
                   </Section>
 
                   {/* ── Lavada: campos específicos ── */}
                   {isLavada && (
                     <Section icon={<MapPin size={11} />} title="Lavada">
-                      <Row icon={<Store size={11} />}    label="Lugar / Proveedor" value={item.carwashLocation ?? "—"} />
-                      <Row icon={<UserIcon size={11} />} label="Encargado"         value={item.carwashProvider ?? "—"} />
-                      <Row icon={<DollarSign size={11} />} label="Costo del servicio" value={(item.carwashTotal ?? 0) > 0 ? fmtMoney(item.carwashTotal!) : "—"} />
+                      <Row icon={<Store size={11} />} label="Lugar / Proveedor" value={item.carwashLocation || "—"} />
+                      <Row icon={<UserIcon size={11} />} label="Encargado"  value={item.carwashProvider || "—"} />
+                      <Row icon={<DollarSign size={11} />} label="Costo del servicio" value={(item.carwashTotal || 0) > 0 ? fmtMoney(item.carwashTotal!) : "—"} />
                       {item.carwashNotes && (
                         <div className="px-3 py-2 text-xs">
                           <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">Notas</p>
@@ -693,29 +830,66 @@ export function MaintenanceDetailDrawer({
                         </p>
                       ) : (
                         <ul className="divide-y divide-gray-100 dark:divide-white/[0.05]">
-                          {attachments.map((a) => (
-                            <li key={a.url} className="flex items-center gap-3 px-3 py-2.5 text-xs">
-                              <a
-                                href={a.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-gray-100 text-gray-500 dark:bg-white/[0.06]"
-                                title={a.label}
-                              >
-                                {isImageUrl(a.url) ? (
-                                  <img src={a.url} alt={a.label} className="h-full w-full object-cover" />
-                                ) : (
-                                  <FileText size={16} />
+                          {attachments.map((a) => {
+                            const isInvoice = a.invoiceNumber && String(a.invoiceNumber).trim().length > 0;
+                            return (
+                              <li key={a.url} className="flex items-center gap-3 px-3 py-2.5 text-xs">
+                                <a
+                                  href={a.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-gray-100 text-gray-500 dark:bg-white/[0.06]"
+                                  title={a.label}
+                                >
+                                  {isImageUrl(a.url) ? (
+                                    <img src={a.url} alt={a.label} className="h-full w-full object-cover" />
+                                  ) : (
+                                    <FileText size={16} />
+                                  )}
+                                </a>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-medium text-gray-800 dark:text-white">{a.label}</p>
+                                  {a.uploadedAt && (
+                                    <p className="text-[11px] text-gray-400 dark:text-gray-500">{fmtDateTime(a.uploadedAt)}</p>
+                                  )}
+                                </div>
+                                {isInvoice && (a as any).key && canUploadAttachment && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (!item) return;
+                                      if (!confirm(`Borrar la factura ${a.invoiceNumber}? Esto elimina sus items del mantenimiento y la fila del ledger Finanzas.`)) return;
+                                      try {
+                                        const targetKey = (a as any).key ?? null;
+                                        const nextAtt = attachments.filter((x: any) => (x as any).key !== targetKey);
+                                        await updateMut.mutateAsync({ id: item.id, body: { attachments: nextAtt } });
+                                        const itemsToKeep = (item.items || []).filter((it: any) => it.attachmentKey !== targetKey);
+                                        await addItemsMut.mutateAsync({
+                                          id: item.id,
+                                          items: itemsToKeep.map((it: any) => ({
+                                            name: it.name,
+                                            quantity: Number(it.quantity) || 0,
+                                            unitCost: Number(it.unitCost) || 0,
+                                            photoUrl: it.photoUrl ?? null,
+                                            supplierId: it.supplierId ?? null,
+                                            attachmentKey: it.attachmentKey ?? null,
+                                          })),
+                                        });
+                                        toast.success("Factura y sus items borrados.");
+                                        refetch();
+                                      } catch (e) {
+                                        toast.error((e as Error).message);
+                                      }
+                                    }}
+                                    className="rounded p-1 text-gray-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10"
+                                    title="Borrar factura"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
                                 )}
-                              </a>
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate font-medium text-gray-800 dark:text-white">{a.label}</p>
-                                {a.uploadedAt && (
-                                  <p className="text-[11px] text-gray-400 dark:text-gray-500">{fmtDateTime(a.uploadedAt)}</p>
-                                )}
-                              </div>
-                            </li>
-                          ))}
+                              </li>
+                            );
+                          })}
                         </ul>
                       )}
 
@@ -738,26 +912,94 @@ export function MaintenanceDetailDrawer({
                   {!isLavada && (isProceso || isCompleto) && canOperate && (
                     <Section icon={<Package size={11} />} title="Repuestos y avance">
                       {item.items && item.items.length > 0 && (
-                        <ul className="divide-y divide-gray-100 dark:divide-white/[0.05]">
-                          {item.items.map((it) => (
-                            <li key={it.id} className="flex items-start gap-3 px-3 py-2.5 text-xs">
-                              {it.photoUrl ? (
-                                <img src={it.photoUrl} alt={it.name} className="h-10 w-10 rounded-md object-cover" />
-                              ) : (
-                                <div className="flex h-10 w-10 items-center justify-center rounded-md bg-gray-100 text-gray-400 dark:bg-white/[0.04]">
-                                  <Package size={14} />
-                                </div>
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <p className="font-medium text-gray-800 dark:text-white truncate">{it.name}</p>
-                                <p className="text-[11px] text-gray-400 dark:text-gray-500">
-                                  {it.supplierName ? `${it.supplierName} · ` : ""}{it.quantity} × {fmtMoney(it.unitCost)}
-                                </p>
+                        <>
+                          {/* jul 2026 — Resumen agrupado por factura (Opcion A).
+                              Solo si hay al menos 1 attachment con invoiceNumber.
+                              Items con attachmentKey NULL quedan abajo en el
+                              listado plano. */}
+                          {attachmentsWithInvoice.length > 0 && (
+                            <div className="px-3 pb-3 pt-1">
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-2">
+                                Items por factura
+                              </p>
+                              <div className="space-y-2">
+                                {attachmentsWithInvoice.map((att, idx) => {
+                                  const attKey = att.key || `att-${idx}`;
+                                  const itemsInThis = (item.items || []).filter(
+                                    (it) => it.attachmentKey === attKey,
+                                  );
+                                  const subtotal = itemsInThis.reduce(
+                                    (acc, it) => acc + Number(it.subtotal || 0),
+                                    0,
+                                  );
+                                  if (itemsInThis.length === 0) return null;
+                                  return (
+                                    <div
+                                      key={attKey}
+                                      className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-gray-50/60 dark:bg-white/[0.03] px-2.5 py-2"
+                                    >
+                                      <div className="flex items-center justify-between mb-1.5">
+                                        <p className="text-[11px] font-semibold text-gray-700 dark:text-gray-200 truncate">
+                                          {att.label}
+                                          {att.invoiceNumber ? (
+                                            <span className="ml-1 font-mono text-[10px] text-gray-500 dark:text-gray-400">
+                                              · {att.invoiceNumber}
+                                            </span>
+                                          ) : null}
+                                        </p>
+                                        <span className="text-[11px] font-bold tabular-nums text-gray-700 dark:text-gray-200">
+                                          {fmtMoney(subtotal)}
+                                        </span>
+                                      </div>
+                                      <ul className="space-y-1">
+                                        {itemsInThis.map((it) => (
+                                          <li key={it.id} className="flex items-center justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
+                                            <span className="truncate flex-1">
+                                              <span className="font-medium">{it.quantity}</span>
+                                              <span className="text-gray-400 mx-1">×</span>
+                                              <span className="truncate">{it.name}</span>
+                                            </span>
+                                            <span className="font-mono tabular-nums text-gray-500 dark:text-gray-400">
+                                              ${(Number(it.subtotal) || 0).toFixed(2)}
+                                            </span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  );
+                                })}
+                                {/* Items sin factura asignada */}
+                                {(item.items || []).some((it) => !it.attachmentKey) && (
+                                  <p className="text-[10px] text-rose-600 dark:text-rose-300 italic">
+                                    Hay items sin factura asignada (mirá el listado plano).
+                                  </p>
+                                )}
                               </div>
-                              <p className="text-xs font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap">{fmtMoney(it.subtotal)}</p>
-                            </li>
-                          ))}
-                        </ul>
+                            </div>
+                          )}
+
+                          {/* Listado plano (siempre, complementario al resumen). */}
+                          <ul className="divide-y divide-gray-100 dark:divide-white/[0.05] border-t border-gray-100 dark:border-white/[0.05]">
+                            {item.items.map((it) => (
+                              <li key={it.id} className="flex items-start gap-3 px-3 py-2.5 text-xs">
+                                {it.photoUrl ? (
+                                  <img src={it.photoUrl} alt={it.name} className="h-10 w-10 rounded-md object-cover" />
+                                ) : (
+                                  <div className="flex h-10 w-10 items-center justify-center rounded-md bg-gray-100 text-gray-400 dark:bg-white/[0.04]">
+                                    <Package size={14} />
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium text-gray-800 dark:text-white truncate">{it.name}</p>
+                                  <p className="text-[11px] text-gray-400 dark:text-gray-500">
+                                    {it.supplierName ? `${it.supplierName} · ` : ""}{it.attachmentKey ? `factura · ${attachments.find((a) => (a.key || "main") === it.attachmentKey)?.invoiceNumber || ""} · ` : ""}{it.quantity} × {fmtMoney(it.unitCost)}
+                                  </p>
+                                </div>
+                                <p className="text-xs font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap">{fmtMoney(it.subtotal)}</p>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
                       )}
 
                       {isProceso && (
@@ -778,7 +1020,7 @@ export function MaintenanceDetailDrawer({
                                   onClick={async () => {
                                     try {
                                       // Guardar IVA% primero (si cambió)
-                                      if (ivaPercentDraft !== (item?.ivaPercent ?? 15)) {
+                                      if (ivaPercentDraft !== (item.ivaPercent || 15)) {
                                         await updateMut.mutateAsync({ id: item.id, body: { ivaPercent: ivaPercentDraft } });
                                       }
                                       // Guardar los repuestos
@@ -790,10 +1032,14 @@ export function MaintenanceDetailDrawer({
                                           unitCost: Number(it.unitCost) || 0,
                                           photoUrl: it.photoUrl,
                                           supplierId: it.supplierId,
+                                          // jul 2026 — Opcion A: vinculo lógico a
+                                          // la factura (attachment con invoiceNumber).
+                                          // Null si no hay factura asignada.
+                                          attachmentKey: it.attachmentKey,
                                         })),
                                       });
                                       setPendingItems([]);
-                                      setNewItem({ name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null });
+                                      setNewItem({ name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
                                       toast.success(`${pendingItems.length} repuesto${pendingItems.length !== 1 ? "s" : ""} agregado${pendingItems.length !== 1 ? "s" : ""}`);
                                       refetch();
                                     } catch (e) { toast.error((e as Error).message); }
@@ -862,7 +1108,7 @@ export function MaintenanceDetailDrawer({
                                           if (!f) return;
                                           setNewItem((p) => ({ ...p, uploading: true }));
                                           try {
-                                            const url = await uploadPartPhoto(f, session?.companyId ?? undefined);
+                                            const url = await uploadPartPhoto(f, session.companyId || undefined);
                                             setNewItem((p) => ({ ...p, photoUrl: url }));
                                             toast.success("Foto subida");
                                           } catch (err) {
@@ -886,13 +1132,38 @@ export function MaintenanceDetailDrawer({
 
                                 {/* Proveedor */}
                                 <select
-                                  value={newItem.supplierId ?? ""}
+                                  value={newItem.supplierId || ""}
                                   onChange={(e) => setNewItem((p) => ({ ...p, supplierId: e.target.value || null }))}
                                   className="min-w-[100px] rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
                                 >
                                   <option value="">Sin prov.</option>
                                   {suppliers.map((s) => (
                                     <option key={s.id} value={s.id}>{s.name}</option>
+                                  ))}
+                                </select>
+
+                                {/* jul 2026 — dropdown a que factura pertenece (Opcion A).
+                                    Solo se muestran las facturas YA subidas en este
+                                    mantenimiento (attachments con invoiceNumber).
+                                    Si no hay facturas, este item queda como
+                                    evidencia visual (sin factura asignada). */}
+                                <select
+                                  value={newItem.attachmentKey || ""}
+                                  onChange={(e) => setNewItem((p) => ({ ...p, attachmentKey: e.target.value || null }))}
+                                  disabled={attachmentsWithInvoice.length === 0}
+                                  title={
+                                    attachmentsWithInvoice.length === 0
+                                      ? "Subí una factura con número en 'Facturas y evidencias' para poder asignar este repuesto."
+                                      : "A qué factura pertenece este repuesto"
+                                  }
+                                  className="min-w-[120px] rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-400/40 disabled:opacity-50"
+                                >
+                                  <option value="">Sin factura</option>
+                                  {attachmentsWithInvoice.map((a, idx) => (
+                                    <option key={a.key || a.url || idx} value={a.key || `att-${idx}`}>
+                                      {a.label}
+                                      {a.invoiceNumber ? ` · ${a.invoiceNumber}` : ""}
+                                    </option>
                                   ))}
                                 </select>
                               </div>
@@ -933,7 +1204,7 @@ export function MaintenanceDetailDrawer({
                                   onClick={() => {
                                     if (!newItem.name.trim()) { toast.error("Nombre requerido"); return; }
                                     setPendingItems((prev) => [...prev, { ...newItem }]);
-                                    setNewItem({ name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null });
+                                    setNewItem({ name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
                                     toast.success("Repuesto agregado a la lista");
                                   }}
                                   className="mb-0 shrink-0 rounded-md border border-sky-200 dark:border-sky-500/40 bg-sky-50 dark:bg-sky-500/10 hover:bg-sky-100 dark:hover:bg-sky-500/20 px-3 py-1.5 text-xs font-semibold text-sky-700 dark:text-sky-300 transition"
@@ -1047,12 +1318,12 @@ export function MaintenanceDetailDrawer({
                             className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5 col-span-2"
                           />
                           <input
-                            type="number" min={0} placeholder="Cant." value={newExtra.quantity}
+                            type="number"  min={0} placeholder="Cant." value={newExtra.quantity}
                             onChange={(e) => setNewExtra((p) => ({ ...p, quantity: Number(e.target.value) }))}
                             className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
                           />
                           <input
-                            type="number" min={0} placeholder="Costo unit." value={newExtra.unitCost === 0 ? "" : newExtra.unitCost}
+                            type="number"  min={0} placeholder="Costo unit." value={newExtra.unitCost === 0 ? "" : newExtra.unitCost}
                             onChange={(e) => setNewExtra((p) => ({ ...p, unitCost: e.target.value === "" ? 0 : Number(e.target.value) }))}
                             className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
                           />
@@ -1092,7 +1363,7 @@ export function MaintenanceDetailDrawer({
                         <div className="grid grid-cols-3 gap-2 px-3 pb-3">
                           {carwashPhotos.map((p) => (
                             <figure key={p.id} className="overflow-hidden rounded-md border border-gray-200 dark:border-white/[0.06]">
-                              <img src={p.photoUrl} alt={p.caption ?? "Foto"} className="h-20 w-full object-cover" />
+                              <img src={p.photoUrl} alt={p.caption || "Foto"} className="h-20 w-full object-cover" />
                               {p.caption && <figcaption className="px-1.5 py-1 text-[10px] text-gray-500 dark:text-gray-400">{p.caption}</figcaption>}
                             </figure>
                           ))}
@@ -1110,7 +1381,7 @@ export function MaintenanceDetailDrawer({
                             multiple
                             ref={carwashPhotoInputRef}
                             onChange={async (e) => {
-                              const files = Array.from(e.target.files ?? []);
+                              const files = Array.from(e.target.files || []);
                               if (!files.length) return;
                               try {
                                 await addCarwashPhotoMut.mutateAsync({
@@ -1167,7 +1438,7 @@ export function MaintenanceDetailDrawer({
                               );
                             }
                             const ev = e as EventNode;
-                            const meta = KIND_META[ev.kind] ?? { label: ev.kind, dot: "bg-gray-400", ring: "ring-gray-300", tone: "text-gray-600" };
+                            const meta = KIND_META[ev.kind] || { label: ev.kind, dot: "bg-gray-400", ring: "ring-gray-300", tone: "text-gray-600" };
                             return (
                               <li key={ev.id} className="relative">
                                 <span className={`absolute -left-5 top-1.5 h-2.5 w-2.5 rounded-full ${meta.dot} ring-2 ring-white dark:ring-gray-900`} />
@@ -1180,20 +1451,20 @@ export function MaintenanceDetailDrawer({
                                     </p>
                                   )}
                                   <p className="text-[11px] text-gray-400 dark:text-gray-500">{fmtDateTime(ev.createdAt)}</p>
-                                  {ev.kind === "cancelled" && (ev.payload as any)?.reason && (
+                                  {ev.kind === "cancelled" && (ev.payload as any).reason && (
                                     <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-300">Motivo: {String((ev.payload as any).reason)}</p>
                                   )}
-                                  {ev.kind === "correction_requested" && (ev.payload as any)?.reason && (
+                                  {ev.kind === "correction_requested" && (ev.payload as any).reason && (
                                     <p className="mt-0.5 text-[11px] text-rose-700 dark:text-rose-300">
                                       Motivo: {String((ev.payload as any).reason)}
-                                      {(ev.payload as any)?.rescheduled && (ev.payload as any)?.newScheduledFor && (
+                                      {(ev.payload as any).rescheduled && (ev.payload as any).newScheduledFor && (
                                         <> · Reagendado para {fmtDateTime(String((ev.payload as any).newScheduledFor))}</>
                                       )}
                                     </p>
                                   )}
                                   {ev.kind === "item_added" && (
                                     <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                                      {String((ev.payload as any).count ?? 0)} {(ev.payload as any)?.kind === "carwash_extra" ? "adicional(es)" : "repuesto(s)"} — total {fmtMoney((ev.payload as any).totalAdded ?? 0)}
+                                      {String((ev.payload as any).count || 0)} {(ev.payload as any).kind === "carwash_extra" ? "adicional(es)" : "repuesto(s)"} — total {fmtMoney((ev.payload as any).totalAdded || 0)}
                                     </p>
                                   )}
                                   {ev.kind === "finalized" && (
@@ -1325,11 +1596,12 @@ export function MaintenanceDetailDrawer({
                   )}
                 </div>
               </>
-            )}
-          </motion.aside>
-        </>
-      )}
-    </AnimatePresence>
+              )}
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+    </>
   );
 }
 
@@ -1345,7 +1617,7 @@ function statusGradient(status: string): string {
     case "En proceso": return "rgba(56, 189, 248, 0.10)";
     case "Completado": return "rgba(16, 185, 129, 0.10)";
     case "Correccion": return "rgba(244, 63, 94, 0.10)";
-    default:           return "rgba(148, 163, 184, 0.10)";
+    default: return "rgba(148, 163, 184, 0.10)";
   }
 }
 
@@ -1356,7 +1628,7 @@ function StatusBadge({ status }: { status: string }) {
     Completado: { dot: "bg-emerald-500", cls: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-200" },
     Correccion: { dot: "bg-rose-500",    cls: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/15 dark:text-rose-200" },
   };
-  const c = map[status] ?? { dot: "bg-gray-400", cls: "border-gray-200 bg-gray-50 text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200" };
+  const c = map[status] || { dot: "bg-gray-400", cls: "border-gray-200 bg-gray-50 text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200" };
   const label = status === "Correccion" ? "Corrección" : status;
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${c.cls}`}>
@@ -1370,11 +1642,11 @@ function TypeBadge({ type }: { type: string }) {
   const map: Record<string, string> = {
     Programado: "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200",
     Correctivo: "border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200",
-    Lavada:     "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200",
+    Lavada: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200",
   };
   return (
-    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-semibold ${map[type] ?? "border-gray-200 bg-gray-50 text-gray-700"}`}>
-      {TYPE_LABEL[type] ?? type}
+    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-semibold ${map[type] || "border-gray-200 bg-gray-50 text-gray-700"}`}>
+      {TYPE_LABEL[type] || type}
     </span>
   );
 }

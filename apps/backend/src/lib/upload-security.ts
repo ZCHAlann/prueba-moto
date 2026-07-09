@@ -122,6 +122,33 @@ export function buildSafeStoragePath(
   return `${safeFolder}/${companyId}/${Date.now()}-${safeFilename}`;
 }
 
+// ─── validatePdfFile ─────────────────────────────────────────────────────────
+//
+// Defensa in-depth para endpoints que aceptan PDFs (handover, invoice, insurance).
+// Revisa mimetype + extensión. No confiamos solo en el `fileFilter` de multer
+// porque un cambio futuro del filter no debería abrir el endpoint.
+//
+// Aceptamos solo PDFs reales, no documentos disfrazados (Word, Excel, ZIP).
+// Lanza Error con mensaje descriptivo — el caller traduce a 400.
+
+const ALLOWED_PDF_MIME_TYPES = new Set<string>([
+  'application/pdf',
+]);
+
+const ALLOWED_PDF_EXTENSIONS = new Set<string>([
+  '.pdf',
+]);
+
+export function validatePdfFile(file: Express.Multer.File): void {
+  if (!file.mimetype || !ALLOWED_PDF_MIME_TYPES.has(file.mimetype)) {
+    throw new Error(`Tipo de archivo no permitido: ${file.mimetype ?? '(vacío)'} (esperado PDF)`);
+  }
+  const ext = path.extname(file.originalname ?? '').toLowerCase();
+  if (!ALLOWED_PDF_EXTENSIONS.has(ext)) {
+    throw new Error(`Extensión no permitida: ${ext || '(sin extensión)'} (esperado .pdf)`);
+  }
+}
+
 // ─── optimizeImageIfNeeded ───────────────────────────────────────────────────
 //
 // Re-codifica la imagen subida con sharp para reducir tamaño y estandarizar

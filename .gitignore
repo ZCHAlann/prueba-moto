@@ -90,3 +90,5 @@ apps/backend/migrations/**
 .mavis/**
 scripts/
 apps/backend/drizzle/
+apps/docs/**
+**/docs/

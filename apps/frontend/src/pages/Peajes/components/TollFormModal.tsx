@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   X, Banknote, Truck, Route, Calendar, Hash, Camera,
-  CreditCard, FileText, Loader2, AlertCircle,
+  CreditCard, FileText, Loader2, AlertCircle, Receipt,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ApiTollEntry, CreateTollPayload } from "../../../hooks/useToll";
@@ -63,6 +63,9 @@ type FormState = {
   axes:          string;
   notes:         string;
   photoUrl:      string;
+  // jul 2026 — numero de comprobante. Solo se envia al CREAR (el backend
+  // lo trata como inmutable post-creacion, igual que en combustible).
+  invoiceNumber: string;
 };
 
 type FormErrors = Partial<Record<keyof FormState, string>>;
@@ -79,9 +82,14 @@ const EMPTY: FormState = {
   axes:          "",
   notes:         "",
   photoUrl:      "",
+  invoiceNumber: "",
 };
 
 function toForm(e: ApiTollEntry): FormState {
+  // Track 2 (backend) agregara `invoiceNumber` al payload de respuesta
+  // de peajes; mientras tanto, el campo llega undefined y queda vacio.
+  // El input en modo edicion se renderiza deshabilitado de todos modos.
+  const existingInvoice = (e as unknown as { invoiceNumber?: string | null }).invoiceNumber ?? "";
   return {
     assetId:       e.assetId,
     date:          e.date,
@@ -94,6 +102,9 @@ function toForm(e: ApiTollEntry): FormState {
     axes:          e.axes != null ? String(e.axes) : "",
     notes:         e.notes ?? "",
     photoUrl:      e.photoUrl ?? "",
+    // En edicion el campo se muestra bloqueado (solo lectura) — el
+    // backend rechaza cambios post-creacion.
+    invoiceNumber: existingInvoice,
   };
 }
 
@@ -138,6 +149,8 @@ export function TollFormModal({ open, entry, assets, assetsLoading, companyId, s
       toast.error("Revisa los campos", { description: "Hay datos inválidos." });
       return;
     }
+    // jul 2026 v3 — invoiceNumber AUTO-generado server-side (PEAJ-NNN).
+    // El cliente ya no lo manda, asi que no lo enviamos en el payload.
     await onSave({
       assetId:       form.assetId,
       driverId:      entry?.driverId ?? null,
@@ -267,6 +280,8 @@ export function TollFormModal({ open, entry, assets, assetsLoading, companyId, s
                         className={inputCls}
                       />
                     </div>
+
+                    {/* N.° de factura: AUTO-generado por backend (PEAJ-NNN). Ya no se pide. */}
 
                     {/* Categoría */}
                     <div>

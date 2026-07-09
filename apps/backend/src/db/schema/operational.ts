@@ -172,9 +172,187 @@ export const companyDrivers = pgTable(
     status: varchar('status', { length: 40 }).default('Activo'),
     notes: text('notes'),
     photoUrl: text('photo_url'),
-    createdAt: timestamp('created_at').notNull().defaultNow(),
-    updatedAt: timestamp('updated_at').notNull().defaultNow(),
-  });
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+  updatedAt:    timestamp('updated_at').notNull().defaultNow(),
+});
+
+// ═════════════════════════════════════════════
+// NUEVO — Finanzas / Ledger de facturas  (jul 2026)
+// ═════════════════════════════════════════════
+//
+// `company_invoices` es la capa de datos del módulo Finanzas. Una fila es
+// el REGISTRO contable de una factura asociada a un evento operativo
+// (combustible, peaje o mantenimiento), NO un archivo adjunto.
+//
+// Cada entity origen puede tener 0..N facturas:
+//   • Combustible: 1 factura por carga (id del fuel entry ↔ id de invoice)
+//   • Peaje: 1 factura por pago (id del toll entry ↔ id de invoice)
+//   • Mantenimiento: N facturas (id del maintenance + attachment_key ↔ N
+//     invoices) — ej: factura de repuestos + factura de mano de obra.
+//
+// El discriminante de "qué invoice va con qué source" es la UNIQUE key
+// (company_id, source_module, source_entity_id, source_attachment_key).
+// Para casos single (combustible / peaje / primer factura de mantenimiento)
+// se usa source_attachment_key = 'main'. Para múltiples facturas dentro
+// de un mismo mantenimiento, syncMaintenanceInvoices genera keys únicos.
+//
+// Ver lib/invoices-sync.ts para las funciones que la app llama.
+
+export const invoiceSourceModuleEnum = pgEnum('invoice_source_module_enum', [
+  'combustible',
+  'peajes',
+  'mantenimiento',
+]);
+
+export const invoiceKindEnum = pgEnum('invoice_kind_enum', [
+  'combustible',
+  'peaje',
+  'repuesto',
+  'mano_obra',
+  'lavada',
+  'servicio',
+  'otro',
+]);
+
+export const financeInvoiceStatusEnum = pgEnum('finance_invoice_status_enum', [
+  'vigente',
+  'corregida',
+  'anulada',
+]);
+
+// ─── jul 2026 — ledger de comprobantes (NO modelo CxP contable) ─────────────
+//
+// Este enum SE VA. Era el modelo de Cuentas por Pagar (pendiente/pagado/
+// vencido/anulado). Decisión de producto: el módulo Finanzas NO es un sistema
+// contable — es un legajo de facturas del proveedor. Los pagos se manejan
+// offline y no se modelan acá.
+//
+// Se conserva la columna legacy `status` (vigente/corregida/anulada) que
+// representa la auditoría del comprobante — eso sigue vigente.
+
+export const companyInvoices = pgTable(
+  'company_invoices',
+  {
+    id:                    serial('id').primaryKey(),
+    companyId:             integer('company_id').notNull()
+                             .references(() => companies.id, { onDelete: 'cascade' }),
+    sourceModule:          invoiceSourceModuleEnum('source_module').notNull(),
+    sourceEntityId:        integer('source_entity_id').notNull(),
+    // Para la mayoría de casos vale 'main'. Mantenimientos usan keys
+    // generadas por lib/invoices-sync (slugify del label + index).
+    //
+    // NOT NULL con DEFAULT 'main' (jul 2026 — fix de uniqueness):
+    //   La UNIQUE key incluye sourceAttachmentKey, pero Postgres trata
+    //   NULL != NULL — sin NOT NULL, dos filas con key=NULL pasarían el
+    //   check. Forzando NOT NULL, el invariante se sostiene sin índices
+    //   parciales. lib/invoices-sync.syncSingleInvoice ya pasa 'main' como
+    //   default, así que ningún caller existente se ve afectado.
+    sourceAttachmentKey:   varchar('source_attachment_key', { length: 40 })
+                             .notNull()
+                             .default('main'),
+    kind:                  invoiceKindEnum('kind').notNull().default('otro'),
+    invoiceNumber:         varchar('invoice_number', { length: 60 }).notNull(),
+    invoiceDate:           date('invoice_date').notNull(),
+    amount:                numeric('amount', { precision: 12, scale: 2 }).notNull().default('0'),
+    currency:              varchar('currency', { length: 10 }).default('USD'),
+    supplierName:          varchar('supplier_name', { length: 160 }),
+    fileUrl:               text('file_url'),
+    fileMimeType:          varchar('file_mime_type', { length: 80 }),
+    status:                financeInvoiceStatusEnum('status').notNull().default('vigente'),
+    notes:                 text('notes'),
+
+    // ── jul 2026 — modelo real (no contable) ─────────────────────────────
+    // legal_number    : consecutivo "legal" oficial (DIAN/SRI/SUNAT/etc).
+    //                   DISTINTO de invoice_number que es el número interno
+    //                   del proveedor. Nullable — no todos los comprobantes
+    //                   tienen consecutivo oficial.
+    // client_tax_id   : NIT/RFC/cédula del proveedor (no siempre mapea al
+    //                   `nit` de company_suppliers).
+    // invoice_type_id : FK a company_invoice_types (categoría dinámica
+    //                   por empresa). ON DELETE SET NULL.
+    // supplier_id     : FK a company_suppliers (catálogo). ON DELETE SET NULL.
+    //                   Coexiste con supplierName (texto libre legacy).
+    //                   SIN due_date / payment_method / paid_at / balance /
+    //                   cxp_status — esos campos eran del modelo CxP que
+    //                   se removió (ver migration 0043).
+    // items           : solo para comprobantes MANUALES con detalle:
+    //                   [{ description, quantity, unitPrice, subtotal }]
+    legalNumber:          varchar('legal_number', { length: 60 }),
+    clientTaxId:          varchar('client_tax_id', { length: 60 }),
+    invoiceTypeId:        integer('invoice_type_id'),
+    supplierId:           integer('supplier_id'),
+    items:                jsonb('items').notNull().default([]),
+
+    // ── jul 2026 v3 — totales calculados server-side + datos contextuales ──
+    // subtotal     : Σ(subtotal de items[]).
+    // ivaPercent   : % editable (default 15 — Ecuador).
+    // ivaAmount    : round(subtotal * ivaPercent/100, 2).
+    // total        : subtotal + ivaAmount.
+    // workshopName : nombre del taller (solo cuando kind='mano_obra').
+    // workerName   : nombre del lavador (solo cuando kind='lavada').
+    // attachmentKey: key del attachment en el array jsonb de sourceEntity
+    //                (para mantenimientos). Coincide con
+    //                sourceAttachmentKey arriba — esto es redundante pero
+    //                ayuda a joins sin traer el mantenimiento entero.
+    subtotal:             numeric('subtotal', { precision: 14, scale: 2 }).notNull().default('0'),
+    ivaPercent:           numeric('iva_percent', { precision: 5, scale: 2 }).notNull().default('15'),
+    ivaAmount:            numeric('iva_amount', { precision: 14, scale: 2 }).notNull().default('0'),
+    total:                numeric('total', { precision: 14, scale: 2 }).notNull().default('0'),
+    workshopName:         varchar('workshop_name', { length: 160 }),
+    workerName:           varchar('worker_name', { length: 160 }),
+
+    createdAt:             timestamp('created_at').notNull().defaultNow(),
+    updatedAt:             timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => [
+    unique('company_invoices_source_unique').on(
+      table.companyId,
+      table.sourceModule,
+      table.sourceEntityId,
+      table.sourceAttachmentKey,
+    ),
+  ],
+);
+
+// ── jul 2026 — Tipos de comprobante configurables por empresa ────────────────
+//
+// Catálogo de tipos de comprobante financiero. El seed automático inserta 6
+// registros del sistema (is_system=true) por cada empresa nueva:
+//
+//   LIBRE / COMBUSTIBLE / PEAJE / REPUESTO / MANO DE OBRA / LAVADA
+//
+// Reglas:
+//   • `is_system = true` → sembrados por el seed (NO se pueden borrar, ni
+//                            desactivar — la idea es que existan siempre
+//                            como opción de filtro). Solo se permite
+//                            PATCH del nombre si la empresa quiere
+//                            renombrarlos (ej: "REPUESTO" → "REPUESTOS").
+//   • `is_active = false` → soft-delete. Solo aplica a tipos creados por el
+//                            admin (is_system=false). El listado principal
+//                            los oculta pero las facturas históricas los
+//                            siguen referenciando.
+//   • Hard delete: solo permitido si NO hay facturas que lo referencian
+//                  (chequeado en la ruta DELETE /:id antes del SQL).
+
+export const companyInvoiceTypes = pgTable(
+  'company_invoice_types',
+  {
+    id:         serial('id').primaryKey(),
+    companyId:  integer('company_id').notNull()
+                  .references(() => companies.id, { onDelete: 'cascade' }),
+    name:       varchar('name', { length: 80 }).notNull(),
+    isSystem:   boolean('is_system').notNull().default(false),
+    isActive:   boolean('is_active').notNull().default(true),
+    createdAt:  timestamp('created_at').notNull().defaultNow(),
+    updatedAt:  timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => [
+    unique('company_invoice_types_company_name_unique').on(
+      table.companyId,
+      table.name,
+    ),
+  ],
+);
 
 // ── Proveedores ───────────────────────────────────────────────────────────────
 export const companySuppliers = pgTable('company_suppliers', {
@@ -350,7 +528,12 @@ export const companyMaintenanceRecords = pgTable('company_maintenance_records', 
   carwashTotal:    numeric('carwash_total', { precision: 12, scale: 2 }).notNull().default('0'),
   // Adjuntos (facturas, fotos de evidencia, etc.) subidos durante
   // la ejecución del mantenimiento. Array jsonb:
-  //   [{ url: string, label: string, uploadedAt: string }]
+  //   [{ url: string, label: string, uploadedAt: string, kind: 'repuesto' |
+  //      'mano_obra' | 'lavada' | 'servicio' | 'otro', amount?: number,
+  //      invoiceNumber?: string }]
+  // Ver lib/invoices-sync.syncMaintenanceInvoices — cada attachment con
+  // invoiceNumber no-vacío genera/actualiza una fila en company_invoices
+  // (módulo Finanzas). El campo `kind` determina el invoice_kind_enum.
   attachments:     jsonb('attachments').notNull().default([]),
   parentId:        integer('parent_id'),
   createdBy:       integer('created_by').references(() => companyUsers.id, { onDelete: 'set null' }),
@@ -466,6 +649,12 @@ export const companyMaintenanceItems = pgTable('company_maintenance_items', {
   quantity:       numeric('quantity', { precision: 10, scale: 2 }).notNull().default('1'),
   unitCost:       numeric('unit_cost', { precision: 12, scale: 2 }).notNull().default('0'),
   subtotal:       numeric('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
+  // jul 2026 — FK lógica al attachment del array `attachments` del mismo
+  // mantenimiento. NULL = item de evidencia sin factura asignada.
+  // Idempotencia de aplicación: el chequeo "el attachment_key existe en
+  // el array attachments[]" se hace en lib/invoices-sync al llamar a
+  // syncMaterialize.
+  attachmentKey:  varchar('attachment_key', { length: 40 }),
 });
 
 // ── Adicionales de Lavada (items extra que el operador agrega al servicio) ───
@@ -575,6 +764,13 @@ export const companyTollEntries = pgTable('company_toll_entries', {
   axes: integer('axes'),
   notes: text('notes'),
   photoUrl: text('photo_url'),
+  // jul 2026 — número de factura del pago del peaje. Nullable. La columna
+  // existe en BD desde la migración 0041_finance_invoices.sql; la
+  // declaración TS se agregó al mismo tiempo para sincronizar el shape.
+  // El módulo Finanzas espeja este valor en company_invoices cuando el
+  // operador lo digita al registrar el cruce (ver lib/invoices-sync.ts
+  // + apps/backend/src/routes/company/toll.ts).
+  invoiceNumber: varchar('invoice_number', { length: 60 }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

@@ -167,6 +167,16 @@ export const MODULE_TREE = {
       peajes: "Peajes",
     },
   },
+  finanzas: {
+    label: "Finanzas",
+    submodules: {
+      // jul 2026 — ledger de comprobantes (facturas de combustible / peajes /
+      // mantenimiento). El submódulo `facturas` es el único consumidor hoy;
+      // en el futuro podrían agregarse `estadisticas` (KPIs agregados),
+      // `conciliacion`, etc.
+      facturas: "Facturas",
+    },
+  },
   geolocalizacion: {
     label: "Geolocalización",
     submodules: {

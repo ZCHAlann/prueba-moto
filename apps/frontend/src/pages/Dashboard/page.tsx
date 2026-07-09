@@ -38,7 +38,6 @@ import {
   FlotaPorGarajeCard,
   OcupacionGarajesCard,
   ConsumoPorVehiculoCard,
-  CostoPorVehiculoCard,
   ConsumoPorConductorCard,
   EstadoAsignacionesCard,
   DisponibilidadConductoresCard,
@@ -623,7 +622,6 @@ export function DashboardOverview() {
               {(vis.sections.combustible.consumoPorVehiculo || vis.sections.combustible.costoPorVehiculo || vis.sections.combustible.consumoPorConductor) && (
                 <AutoGrid minWidth={360}>
                   {vis.sections.combustible.consumoPorVehiculo && <ConsumoPorVehiculoCard data={an?.intelligent.consumoPorVehiculo ?? []} loading={loading} />}
-                  {vis.sections.combustible.costoPorVehiculo    && <CostoPorVehiculoCard     data={an?.intelligent.costoPorVehiculo    ?? []} loading={loading} />}
                   {vis.sections.combustible.consumoPorConductor && <ConsumoPorConductorCard />}
                 </AutoGrid>
               )}

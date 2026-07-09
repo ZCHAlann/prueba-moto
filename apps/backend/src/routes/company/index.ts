@@ -33,6 +33,8 @@ import reportsRouter from './reports';
 import estadisticasRouter from './estadisticas';
 import jarvisRouter from './jarvis';
 import formOptionsRouter from './formOptions';
+import financeInvoicesRouter from './finance-invoices';
+import financeInvoiceTypesRouter from './finance-invoice-types';
 
 const router = Router({ mergeParams: true });
 
@@ -78,6 +80,18 @@ router.use('/notifications', notificationsRouter);
 router.use('/reports', reportsRouter);
 router.use('/estadisticas', estadisticasRouter);
 router.use('/ai', jarvisRouter);
+
+// ── finanzas: ledger de facturas ─────────────────────────────────────────────
+// jul 2026 — endpoints de lectura (listado, GET individual, PATCH notes)
+// del módulo Finanzas. Las escrituras se hacen desde fuel/toll/maintenances
+// vía lib/invoices-sync — esta ruta solo expone el ledger.
+router.use('/finance-invoices', financeInvoicesRouter);
+
+// ── finanzas: tipos de comprobante configurables (CxP) ───────────────────────
+// jul 2026 — CRUD del catálogo `company_invoice_types`. Vive en el mismo
+// módulo "finanzas" para mantener todo el dominio agrupado, pero su URL
+// es independiente porque la entidad no es un invoice.
+router.use('/finance-invoice-types', financeInvoiceTypesRouter);
 
 
 export default router;

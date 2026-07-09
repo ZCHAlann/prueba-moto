@@ -3,7 +3,7 @@ import {
   X, Plus, Trash2, Save, Calendar as CalIcon,
   Building2, Package, ImagePlus, XCircle,
   Wrench, Droplet, MapPin, Store, DollarSign, Hash,
-  Receipt, FileText, Camera, Loader2,
+  Receipt, FileText, Camera, Loader2, Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -14,6 +14,7 @@ import {
   type Maintenance,
   type MaintenanceInput,
   type MaintenanceItemInput,
+  type MaintenanceAttachment,
   type MaintenanceType,
   type CadenceKind,
 } from "../../../hooks/useMaintenancesV2";
@@ -55,6 +56,19 @@ const CADENCES: { value: CadenceKind; label: string; needsValue: boolean; isKm?:
   { value: "days",     label: "Cada N días",    needsValue: true  },
   { value: "monthly",  label: "Cada mes (30d)", needsValue: false },
   { value: "km_based", label: "Cada N km",      needsValue: true, isKm: true },
+];
+
+// jul 2026 — categorias disponibles para un adjunto de mantenimiento.
+// Debe coincidir con el `attachmentSchema` del backend en
+// routes/company/maintenances.ts: repuesto / mano_obra / lavada /
+// servicio / otro. combustible y peaje NO aparecen aca porque son
+// modulos de origen independientes (tienen su propio flujo de facturas).
+const ATTACHMENT_KINDS: { value: NonNullable<MaintenanceAttachment["kind"]>; label: string }[] = [
+  { value: "repuesto",  label: "Repuesto" },
+  { value: "mano_obra", label: "Mano de obra" },
+  { value: "lavada",    label: "Lavada" },
+  { value: "servicio",  label: "Servicio" },
+  { value: "otro",      label: "Otro" },
 ];
 
 // ─── Extended item type (local only — photoUrl is UI state, not persisted via this type) ─
@@ -131,8 +145,10 @@ export function MaintenanceFormModal({
   const [items, setItems]                     = useState<ItemRow[]>([]);
   const [assignedUserId, setAssignedUserId]   = useState<string>("");
   // Adjuntos (facturas, fotos de evidencia) — sincronizados con
-  // maintenance.attachments.
-  const [attachments, setAttachments]         = useState<{ url: string; label: string; uploadedAt?: string }[]>([]);
+  // maintenance.attachments. Cada item puede traer metadata rica
+  // (kind / amount / invoiceNumber) que el backend usa para crear
+  // / actualizar filas en el ledger `company_invoices` (jul 2026).
+  const [attachments, setAttachments]         = useState<MaintenanceAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const attachmentFileRef                     = useRef<HTMLInputElement>(null);
   // Archivo elegido pero todavía sin clasificar (factura / evidencia).
@@ -140,6 +156,9 @@ export function MaintenanceFormModal({
   // abajo — así el label queda correcto sin tener que adivinarlo por
   // la extensión del archivo (una factura puede ser perfectamente un .jpg).
   const [pendingAttachmentFile, setPendingAttachmentFile] = useState<File | null>(null);
+  // jul 2026 — índice del attachment cuyo mini-panel de edicion esta
+  // expandido (kind/amount/invoiceNumber). null = todos cerrados.
+  const [editingAttachmentUrl, setEditingAttachmentUrl] = useState<string | null>(null);
   // Lavada
   const [carwashLocation, setCarwashLocation] = useState<string>("");
   const [carwashProvider, setCarwashProvider] = useState<string>("");
@@ -259,6 +278,12 @@ export function MaintenanceFormModal({
   // ─── Adjuntos (facturas / evidencias) ────────────────────────────────────
   // Sube el archivo ya elegido (pendingAttachmentFile) con el tipo que la
   // persona acaba de seleccionar en el mini-panel.
+  //
+  // jul 2026 — al elegir "Factura" el attachment se crea con kind='otro'
+  // por default y campos amount/invoiceNumber vacios. El usuario puede
+  // (y debe) refinarlos en el mini-panel inline que aparece debajo de
+  // cada attachment subido. Esos campos viajan al backend, que crea /
+  // actualiza la fila correspondiente en el ledger `company_invoices`.
   const uploadPendingAttachment = async (kind: "invoice" | "evidence") => {
     const file = pendingAttachmentFile;
     if (!file) return;
@@ -267,10 +292,13 @@ export function MaintenanceFormModal({
       const url = await uploadMaintenanceAttachment(file, Number(session?.companyId ?? 0));
       const baseName = file.name.replace(/\.[^.]+$/, "").slice(0, 40);
       const label = kind === "invoice" ? `Factura · ${baseName}` : `Evidencia · ${baseName}`;
-      setAttachments((p) => [
-        ...p,
-        { url, label, uploadedAt: new Date().toISOString() },
-      ]);
+      // Para "invoice" dejamos campos editables vacios; el usuario los
+      // completa en el editor inline. Para "evidence" los campos quedan
+      // en null para que el backend NO cree fila en el ledger.
+      const newAttachment: MaintenanceAttachment = kind === "invoice"
+        ? { url, label, uploadedAt: new Date().toISOString(), kind: "otro", amount: null, invoiceNumber: null }
+        : { url, label, uploadedAt: new Date().toISOString(), kind: "otro", amount: null, invoiceNumber: null };
+      setAttachments((p) => [...p, newAttachment]);
       toast.success(kind === "invoice" ? "Factura subida" : "Evidencia subida");
     } catch (err) {
       toast.error("No se pudo subir el adjunto", {
@@ -281,6 +309,17 @@ export function MaintenanceFormModal({
       setPendingAttachmentFile(null);
       if (attachmentFileRef.current) attachmentFileRef.current.value = "";
     }
+  };
+
+  /** Actualiza los campos editables (kind/amount/invoiceNumber) de un
+   *  attachment ya subido. Se llama desde los inputs inline. */
+  const updateAttachmentMeta = (
+    url: string,
+    patch: Partial<Pick<MaintenanceAttachment, "kind" | "amount" | "invoiceNumber" | "label">>,
+  ) => {
+    setAttachments((p) =>
+      p.map((a) => (a.url === url ? { ...a, ...patch } : a)),
+    );
   };
 
   // ─── Submit ─────────────────────────────────────────────────────────────
@@ -867,49 +906,132 @@ export function MaintenanceFormModal({
               {/* Lista de adjuntos */}
               {attachments.length > 0 && (
                 <ul className="space-y-1.5">
-                  {attachments.map((a, idx) => (
-                    <li
-                      key={a.url}
-                      className="flex items-center gap-3 rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] p-2"
-                    >
-                      <a
-                        href={a.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="shrink-0 flex h-12 w-12 items-center justify-center overflow-hidden rounded-md bg-gray-100 dark:bg-white/[0.06] text-gray-500"
-                        title={a.label}
+                  {attachments.map((a) => {
+                    const isExpanded = editingAttachmentUrl === a.url;
+                    const hasInvoiceData = !!(a.invoiceNumber && a.invoiceNumber.trim());
+                    return (
+                      <li
+                        key={a.url}
+                        className="rounded-lg border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04]"
                       >
-                        {/\.(jpe?g|png|webp|gif|heic|heif)$/i.test(a.url) ? (
-                          <img src={a.url} alt={a.label} className="h-full w-full object-cover" />
-                        ) : (
-                          <FileText size={20} />
+                        <div className="flex items-center gap-3 p-2">
+                          <a
+                            href={a.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="shrink-0 flex h-12 w-12 items-center justify-center overflow-hidden rounded-md bg-gray-100 dark:bg-white/[0.06] text-gray-500"
+                            title={a.label}
+                          >
+                            {/\.(jpe?g|png|webp|gif|heic|heif)$/i.test(a.url) ? (
+                              <img src={a.url} alt={a.label} className="h-full w-full object-cover" />
+                            ) : (
+                              <FileText size={20} />
+                            )}
+                          </a>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-medium text-gray-800 dark:text-white">
+                              {a.label}
+                            </p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <a
+                                href={a.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="truncate text-[10px] text-gray-400 dark:text-gray-500 hover:underline max-w-[180px]"
+                              >
+                                {a.url.split("/").pop()}
+                              </a>
+                              {hasInvoiceData && (
+                                <span className="inline-flex items-center rounded-md bg-emerald-100 dark:bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+                                  {a.invoiceNumber}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {!isReadOnly && (
+                            <button
+                              type="button"
+                              onClick={() => setEditingAttachmentUrl(isExpanded ? null : a.url)}
+                              className={`shrink-0 inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-semibold transition ${
+                                isExpanded
+                                  ? "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300"
+                                  : "text-sky-600 hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-500/10"
+                              }`}
+                              title="Editar metadata de factura"
+                            >
+                              <Pencil size={11} /> Factura
+                            </button>
+                          )}
+                          {!isReadOnly && (
+                            <button
+                              type="button"
+                              onClick={() => setAttachments((p) => p.filter((x) => x.url !== a.url))}
+                              className="shrink-0 inline-flex h-7 w-7 items-center justify-center rounded-md text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition"
+                              title="Quitar"
+                            >
+                              <X size={13} />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Mini-panel de edicion inline (kind / amount / invoiceNumber) */}
+                        {isExpanded && (
+                          <div className="border-t border-gray-200 dark:border-white/[0.06] bg-sky-50/60 dark:bg-sky-500/[0.04] p-3 space-y-2.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:text-sky-300">
+                              Metadata de factura
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                              <div className="sm:col-span-4">
+                                <label className={labelCls}>Tipo</label>
+                                <select
+                                  value={a.kind ?? "otro"}
+                                  disabled={isReadOnly}
+                                  onChange={(e) => updateAttachmentMeta(a.url, { kind: e.target.value as NonNullable<MaintenanceAttachment["kind"]> })}
+                                  className={`${inputCls} py-1.5 text-xs`}
+                                >
+                                  {ATTACHMENT_KINDS.map((k) => (
+                                    <option key={k.value} value={k.value}>{k.label}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="sm:col-span-3">
+                                <label className={labelCls}>Monto (USD)</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="0.01"
+                                  value={a.amount ?? ""}
+                                  disabled={isReadOnly}
+                                  placeholder="0"
+                                  onChange={(e) => updateAttachmentMeta(a.url, {
+                                    amount: e.target.value === "" ? null : Number(e.target.value),
+                                  })}
+                                  className={`${inputCls} py-1.5 text-xs`}
+                                />
+                              </div>
+                              <div className="sm:col-span-5">
+                                <label className={labelCls}>Numero de factura</label>
+                                <input
+                                  type="text"
+                                  maxLength={60}
+                                  value={a.invoiceNumber ?? ""}
+                                  disabled={isReadOnly}
+                                  placeholder="Vacio = sin factura"
+                                  onChange={(e) => updateAttachmentMeta(a.url, { invoiceNumber: e.target.value })}
+                                  className={`${inputCls} py-1.5 text-xs`}
+                                />
+                              </div>
+                            </div>
+                            <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                              Si completas el numero de factura, el backend creara o actualizara una fila
+                              en el ledger <code className="text-[10px]">company_invoices</code> para
+                              este mantenimiento.
+                            </p>
+                          </div>
                         )}
-                      </a>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium text-gray-800 dark:text-white">
-                          {a.label}
-                        </p>
-                        <a
-                          href={a.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="truncate text-[10px] text-gray-400 dark:text-gray-500 hover:underline"
-                        >
-                          {a.url.split("/").pop()}
-                        </a>
-                      </div>
-                      {!isReadOnly && (
-                        <button
-                          type="button"
-                          onClick={() => setAttachments((p) => p.filter((_, i) => i !== idx))}
-                          className="shrink-0 inline-flex h-7 w-7 items-center justify-center rounded-md text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition"
-                          title="Quitar"
-                        >
-                          <X size={13} />
-                        </button>
-                      )}
-                    </li>
-                  ))}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
 

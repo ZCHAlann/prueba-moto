@@ -17,6 +17,10 @@ import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 import { notifyEntityCrud } from '../../lib/notify-entity';
+import {
+  syncSingleInvoice,
+  deleteInvoicesForSource,
+} from '../../lib/invoices-sync';
 
 const router = Router({ mergeParams: true });
 
@@ -38,6 +42,8 @@ const createTollSchema = z.object({
   axes:          z.number().int().min(1).max(12).optional().nullable(),
   notes:         validators.longTextOptional,
   photoUrl:      z.string().min(1).max(2_000_000).nullable().optional(),
+  // jul 2026 v3 — N.° de factura AUTO-generado por backend
+  // (next_invoice_number(companyId, 'toll')). El cliente ya NO lo manda.
 });
 
 const updateTollSchema = createTollSchema.partial();
@@ -193,6 +199,15 @@ router.post(
         if (!driver) throw new NotFoundError('Conductor', body.driverId!);
       }
 
+      // jul 2026 v3 — Generamos invoice_number per-origen (PEAJ-NNN) por
+      // empresa usando la PL/pgSQL `next_invoice_number`. El cliente ya
+      // NO manda este campo.
+      const genRows = await db.execute(sql`
+        SELECT next_invoice_number(${companyId}, 'toll') AS invoice_number
+      `) as unknown as { rows: Array<{ invoice_number: string }> };
+      const tollInvoiceNumber: string =
+        genRows.rows?.[0]?.invoice_number ?? `PEAJ-${String(Date.now()).slice(-6)}`;
+
       const [created] = await db
         .insert(companyTollEntries)
         .values({
@@ -209,8 +224,33 @@ router.post(
           axes:          body.axes ?? null,
           notes:         body.notes ?? null,
           photoUrl:      body.photoUrl ?? null,
+          invoiceNumber: tollInvoiceNumber,
         })
         .returning();
+
+      // ── Sincronizar ledger Finanzas ──────────────────────────────────────────
+      // Si el operador digitó un invoiceNumber, lo espejamos en
+      // company_invoices. Si está vacío/null, syncSingleInvoice lo borra
+      // del ledger (no-op si nunca hubo fila).
+      try {
+        await syncSingleInvoice({
+          tx: db,
+          companyId,
+          sourceModule: 'peajes',
+          sourceEntityId: created.id,
+          data: {
+            invoiceNumber: created.invoiceNumber ?? '',
+            invoiceDate: created.date,
+            amount: created.amount,
+            supplierName: created.tollName ?? null,
+            fileUrl: created.photoUrl ?? null,
+            fileMimeType: created.photoUrl ? 'image/jpeg' : null,
+            kind: 'peaje',
+          },
+        });
+      } catch (invErr) {
+        console.warn('[toll] syncSingleInvoice falló (no crítico):', (invErr as Error).message);
+      }
 
       await logAudit(db, companyId, {
         entity: 'toll',
@@ -272,12 +312,41 @@ router.put(
       if (body.axes          !== undefined) updateData.axes = body.axes;
       if (body.notes         !== undefined) updateData.notes = body.notes;
       if (body.photoUrl      !== undefined) updateData.photoUrl = body.photoUrl;
+      // invoiceNumber: aceptamos null explícito (quiere decir "limpia") o
+      // string con valor nuevo. Si no viene en el body, NO tocamos la
+      // columna (preservamos el valor anterior en la fila fuente).
+      if (body.invoiceNumber !== undefined) updateData.invoiceNumber = body.invoiceNumber ?? null;
 
       const [updated] = await db
         .update(companyTollEntries)
         .set(updateData)
         .where(and(eq(companyTollEntries.id, tollId), eq(companyTollEntries.companyId, companyId)))
         .returning();
+
+      // ── Sincronizar ledger Finanzas tras la edición ──────────────────────────
+      // Pasamos SIEMPRE (incluso si no vino invoiceNumber en el body) porque
+      // syncSingleInvoice hace UPSERT idempotente: si la fila ya está al
+      // día, no toca nada. Si el operador limpió el invoiceNumber (mandó
+      // null explícito), syncSingleInvoice lo borra del ledger.
+      try {
+        await syncSingleInvoice({
+          tx: db,
+          companyId,
+          sourceModule: 'peajes',
+          sourceEntityId: updated.id,
+          data: {
+            invoiceNumber: updated.invoiceNumber ?? '',
+            invoiceDate: updated.date,
+            amount: updated.amount,
+            supplierName: updated.tollName ?? null,
+            fileUrl: updated.photoUrl ?? null,
+            fileMimeType: updated.photoUrl ? 'image/jpeg' : null,
+            kind: 'peaje',
+          },
+        });
+      } catch (invErr) {
+        console.warn('[toll] syncSingleInvoice falló en PUT (no crítico):', (invErr as Error).message);
+      }
 
       await logAudit(db, companyId, {
         entity: 'toll',
@@ -334,6 +403,20 @@ router.delete(
         .delete(companyTollEntries)
         .where(and(eq(companyTollEntries.id, tollId), eq(companyTollEntries.companyId, companyId)));
 
+      // ── Limpiar ledger Finanzas ──────────────────────────────────────────────
+      // Si este toll entry tenía factura sincronizada, la borramos del
+      // ledger para evitar huérfanas. No-op si nunca tuvo.
+      try {
+        await deleteInvoicesForSource({
+          tx: db,
+          companyId,
+          sourceModule: 'peajes',
+          sourceEntityId: tollId,
+        });
+      } catch (invErr) {
+        console.warn('[toll] deleteInvoicesForSource falló (no crítico):', (invErr as Error).message);
+      }
+
       await logAudit(db, companyId, {
         entity: 'toll',
         entityId: toId('toll', tollId),
@@ -381,6 +464,7 @@ function serializeToll(
     axes:          t.axes,
     notes:         t.notes,
     photoUrl:      t.photoUrl,
+    invoiceNumber: t.invoiceNumber ?? null, // NUEVO — espejo del ledger Finanzas
     // Enrichment: datos del activo para display sin hooks externos
     assetPlate: assetInfo?.plate ?? null,
     assetBrand: assetInfo?.brand ?? null,

@@ -38,10 +38,40 @@ export type MaintenanceEventKind =
   | 'finalized'
   | 'viewed';
 
+export interface MaintenanceAttachmentItem {
+  description: string;
+  quantity:    number;
+  unitPrice:   number;
+  subtotal:    number;
+}
+
 export interface MaintenanceAttachment {
   url:        string;
   label:      string;
   uploadedAt?: string;
+  // jul 2026 — metadata rica por adjunto para que el ledger de facturas
+  // (lib/invoices-sync.ts) pueda crear / mantener filas en
+  // `company_invoices` por cada attachment. Todos opcionales: si no
+  // vienen, el adjunto se considera evidencia sin factura asociada.
+  /** Identificador interno del attachment dentro del mantenimiento
+   *  (slugify del label + index). Lo usa el ledger para upsert sin
+   *  duplicados cuando el usuario edita el mantenimiento. */
+  key?:               string;
+  /** Categoría lógica del adjunto. Solo las categorías de mantenimiento
+   *  aplican aca (combustible/peaje son módulos de origen independientes,
+   *  no categorías de attachment). Backend schema `attachmentSchema`. */
+  kind?:              "repuesto" | "mano_obra" | "lavada" | "servicio" | "otro" | null;
+  /** Monto del comprobante (USD). Null si no aplica. */
+  amount?:            number | null;
+  /** Número de factura / comprobante. Vacío o ausente = no factura. */
+  invoiceNumber?:     string | null;
+  /** jul 2026 — FK lógica al supplier del catálogo (string para IDs serializados). */
+  supplierId?:        string | number | null;
+  /** jul 2026 — items desglosados del comprobante. Persistidos en
+   *  `company_invoices.items` (jsonb). Lo usa el PDF del comprobante
+   *  para mostrar las líneas, y los items del mantenimiento en el form
+   *  para agruparse por factura via `attachmentKey`. */
+  items?:             MaintenanceAttachmentItem[];
 }
 
 export interface MaintenanceItem {
@@ -54,6 +84,8 @@ export interface MaintenanceItem {
   unitCost:     number;
   subtotal:     number;
   photoUrl:     string | null;
+  // jul 2026 — Opcion A: FK logica al attachment (factura) al que pertenece.
+  attachmentKey?: string | null;
 }
 
 export interface MaintenanceEvent {
@@ -221,6 +253,8 @@ export interface MaintenanceItemInput {
   quantity:    number;
   unitCost:    number;
   photoUrl?:   string | null;
+  // jul 2026 — Opción A: vinculo lógico a la factura del array `attachments`.
+  attachmentKey?: string | null;
 }
 
 export interface MaintenanceInput {
@@ -844,7 +878,8 @@ export function useAddCarwashPhotos() {
         const upData = await upRes.json() as { urls?: string[] };
         const url = upData.urls?.[0];
         if (!url) throw new Error('El servidor no devolvió la URL de la foto.');
-        uploaded.push({ url, caption: p.caption ?? null });
+        // jul 2026 — el backend espera `photoUrl` en carwash-photos (no `url`)
+        uploaded.push({ photoUrl: url, caption: p.caption ?? null });
       }
       // 2) Persistir cada URL en la tabla de carwash-photos de la lavada.
       return jsonFetch<{ data: CarwashPhoto[] }>(

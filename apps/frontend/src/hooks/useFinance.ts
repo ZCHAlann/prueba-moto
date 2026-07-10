@@ -459,13 +459,17 @@ export function useFinance() {
       workerName?: string | null;
     }): Promise<MutationResult<{ invoiceId: number; created: boolean }>> => {
       if (!companyId) return { ok: false, error: "Sesión inválida" };
+      // jul 2026 v4-b — El backend usa :id en la URL, no en el body, y
+      // el Zod schema del endpoint tiene .strict() que rechaza keys
+      // desconocidas. Extraemos voucherId del body antes de stringify.
+      const { voucherId, ...body } = params;
       const res = await fetch(
-        `/api/company/${companyId}/finance/vouchers/${params.voucherId}/invoice`,
+        `/api/company/${companyId}/finance/vouchers/${voucherId}/invoice`,
         {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(params),
+          body: JSON.stringify(body),
         },
       );
       if (!res.ok) {

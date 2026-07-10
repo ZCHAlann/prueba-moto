@@ -16,6 +16,7 @@ import {
   notify,
   notifyAdminsExceptActor,
 } from '../../lib/notification-service';
+import { wsBroadcast } from '../../services/websocket';
 
 // ─── Helper: nombre corto del usuario (cargo) para mostrar en el toast ────
 //
@@ -46,9 +47,36 @@ const PLATFORM_ROLES = new Set([
   'superadmin',
 ]);
 
+// jul 2026 v4-b — Acciones de permisos aceptadas en el backend.
+// Coinciden con `ActionKey` del frontend (module-tree.ts). Cubre las
+// acciones básicas (ver/crear/editar/eliminar) más las custom que
+// usamos para Caja Chica, checklists y módulos de finanzas:
+//
+//   aprobar          - caja_chica (aprobar/rechazar solicitudes),
+//                      checklist.reautorizaciones, etc.
+//   reponer          - caja_chica (rellenar caja chica)
+//   ver_solicitudes  - caja_chica (muestra tab Solicitudes)
+//   ver_vales        - caja_chica (muestra tab Vales)
+//   ver_historial    - caja_chica (muestra tab Historial)
+//   configurar_caja  - caja_chica (muestra tab Configuración)
+//   ver_todos        - caja_chica (bypass de filtro por dueño)
+const PERMISSION_ACTIONS = [
+  "ver",
+  "crear",
+  "editar",
+  "eliminar",
+  "aprobar",
+  "reponer",
+  "ver_solicitudes",
+  "ver_vales",
+  "ver_historial",
+  "configurar_caja",
+  "ver_todos",
+] as const;
+
 const modulePermissionsSchema = z.record(
   z.string(),
-  z.record(z.string(), z.array(z.enum(["ver", "crear", "editar", "eliminar"])))
+  z.record(z.string(), z.array(z.enum(PERMISSION_ACTIONS)))
 ).default({});
 
 const createCompanyUserSchema = z.object({

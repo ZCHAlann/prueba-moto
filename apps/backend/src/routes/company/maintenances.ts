@@ -35,7 +35,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { eq, and, gte, lte, desc, ilike, or, inArray, sql, isNull, asc } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import { db } from '../../db/client';
+import { db, client } from '../../db/client';
 import {
   companyMaintenanceRecords,
   companyMaintenanceAssets,
@@ -114,6 +114,11 @@ const itemSchema = z.object({
   name:       safeString({ min: 1, max: 180, fieldLabel: 'Repuesto', allowEmpty: false }),
   quantity:   z.number().positive().max(1_000_000).default(1),
   unitCost:   z.number().nonnegative().max(1_000_000_000).default(0),
+  // jul 2026 v4-b — Migración 0050. Descuento + IVA por item.
+  //   discountPercent : 0..100, default 0
+  //   ivaPercent      : 0..100, default 15 (Ecuador IVA general)
+  discountPercent: z.number().min(0).max(100).default(0),
+  ivaPercent:      z.number().min(0).max(100).default(15),
   photoUrl:   z.string().min(1).optional().nullable(),
   // jul 2026 — FK lógica al attachment del array `attachments` del
   // mismo mantenimiento (Opción A). NULL = item sin factura.
@@ -363,26 +368,38 @@ async function recalcMaintenanceTotal(maintenanceId: number, companyId: number):
     .limit(1);
   if (!m) return 0;
 
-  const [extrasSum] = await db
-    .select({ s: sql<number>`COALESCE(SUM(${companyMaintenanceCarwashExtras.quantity} * ${companyMaintenanceCarwashExtras.unitCost}), 0)` })
+  // jul 2026 v4-b — Migración 0050. Usamos aggregateTotals para que
+  // el total del mantenimiento refleje qty * unit * (1-desc) + IVA.
+  const extrasRows = await db
+    .select({
+      quantity:         companyMaintenanceCarwashExtras.quantity,
+      unitCost:         companyMaintenanceCarwashExtras.unitCost,
+      discountPercent:  companyMaintenanceCarwashExtras.discountPercent,
+      ivaPercent:       companyMaintenanceCarwashExtras.ivaPercent,
+    })
     .from(companyMaintenanceCarwashExtras)
     .where(eq(companyMaintenanceCarwashExtras.maintenanceId, maintenanceId));
-
-  const extras = Number(extrasSum?.s ?? 0);
+  const extrasAgg = aggregateTotals(extrasRows);
+  const extrasTotal = extrasAgg.grandTotal;
 
   let total: number;
   if (m.type === 'Lavada') {
     // En lavada el Total = costo del servicio (carwashTotal) + adicionales.
     // No hay laborCost ni items en este tipo.
-    total = Number(m.carwashTotal ?? 0) + extras;
+    total = Number(m.carwashTotal ?? 0) + extrasTotal;
   } else {
-    const [itemsSum] = await db
-      .select({ s: sql<number>`COALESCE(SUM(${companyMaintenanceItems.quantity} * ${companyMaintenanceItems.unitCost}), 0)` })
+    const itemsRows = await db
+      .select({
+        quantity:         companyMaintenanceItems.quantity,
+        unitCost:         companyMaintenanceItems.unitCost,
+        discountPercent:  companyMaintenanceItems.discountPercent,
+        ivaPercent:       companyMaintenanceItems.ivaPercent,
+      })
       .from(companyMaintenanceItems)
       .where(eq(companyMaintenanceItems.maintenanceId, maintenanceId));
+    const itemsAgg = aggregateTotals(itemsRows);
     const labor = m.laborCost != null ? Number(m.laborCost) : 0;
-    const items = Number(itemsSum?.s ?? 0);
-    total = labor + items;
+    total = labor + itemsAgg.grandTotal;
   }
 
   await db
@@ -408,6 +425,11 @@ async function loadItemsMap(maintenanceIds: number[]): Promise<Map<number, any[]
       quantity:       companyMaintenanceItems.quantity,
       unitCost:       companyMaintenanceItems.unitCost,
       subtotal:       companyMaintenanceItems.subtotal,
+      // jul 2026 v4-b — Migración 0050. Descuento + IVA por item.
+      discountPercent: companyMaintenanceItems.discountPercent,
+      ivaPercent:      companyMaintenanceItems.ivaPercent,
+      ivaAmount:       companyMaintenanceItems.ivaAmount,
+      total:           companyMaintenanceItems.total,
       photoUrl:       companyMaintenanceItems.photoUrl,
       // jul 2026 — Opción A: vínculo lógico al attachment del array `attachments`.
       attachmentKey:  companyMaintenanceItems.attachmentKey,
@@ -466,18 +488,39 @@ async function loadEventsMap(maintenanceIds: number[]): Promise<Map<number, any[
   return map;
 }
 
+// jul 2026 v4-b — Migración 0050. Usa computeItemTotals para que
+// subtotal/iva/total reflejen la misma fórmula en backend y frontend.
+import { computeItemTotals, aggregateTotals } from '../../lib/maintenance-totals';
+
+// jul 2026 v4-b — Migración 0050. Subtotal/iva/total se calculan con
+// el helper de lib/maintenance-totals.ts (mismo fórmula que el frontend).
+import { computeItemTotals, aggregateTotals } from '../../lib/maintenance-totals';
+
 function buildItemValues(maintenanceId: number, items: z.infer<typeof itemSchema>[]) {
-  return items.map((i) => ({
-    maintenanceId,
-    supplierId: i.supplierId ? parseId('supplier', i.supplierId) : null,
-    name:       i.name,
-    quantity:   i.quantity.toFixed(2),
-    unitCost:   i.unitCost.toFixed(2),
-    subtotal:   (i.quantity * i.unitCost).toFixed(2),
-    photoUrl:   i.photoUrl ?? null,
-    // jul 2026 — Opción A: FK lógica al attachment del array `attachments`.
-    attachmentKey: i.attachmentKey ?? null,
-  }));
+  return items.map((i) => {
+    const t = computeItemTotals(i);
+    return {
+      maintenanceId,
+      // jul 2026 v4-b — IMPORTANTE: `null` literal, no `undefined`. Si un
+      // campo no está definido en el Zod schema (ej. i.attachmentKey
+      // cuando no hay factura), postgres-js rompe el bind de la query
+      // y tira "Failed query:" sin código SQL state. Normalizamos a
+      // null explícito para que drizzle envie NULL a Postgres.
+      supplierId: i.supplierId ? parseId('supplier', i.supplierId) : null,
+      name:       i.name,
+      quantity:   i.quantity.toFixed(2),
+      unitCost:   i.unitCost.toFixed(2),
+      subtotal:   t.subtotal.toFixed(2),
+      // jul 2026 v4-b — Migración 0050. Descuento + IVA por item.
+      discountPercent: (i.discountPercent ?? 0).toFixed(2),
+      ivaPercent:      (i.ivaPercent      ?? 15).toFixed(2),
+      ivaAmount:       t.ivaAmount.toFixed(2),
+      total:           t.total.toFixed(2),
+      photoUrl:   i.photoUrl ?? null,
+      // jul 2026 — Opción A: FK lógica al attachment del array `attachments`.
+      attachmentKey: i.attachmentKey == null ? null : String(i.attachmentKey),
+    };
+  });
 }
 
 function normalizeStatus(status: string): string {
@@ -1313,7 +1356,9 @@ router.post(
         .returning();
 
       if (body.type !== 'Lavada' && body.items?.length) {
-        await db.insert(companyMaintenanceItems).values(buildItemValues(created.id, body.items));
+        for (const values of buildItemValues(created.id, body.items)) {
+          await db.insert(companyMaintenanceItems).values(values);
+        }
       }
       await recalcMaintenanceTotal(created.id, companyId);
 
@@ -1557,7 +1602,37 @@ router.put(
             )!,
           );
         if (body.items.length) {
-          await db.insert(companyMaintenanceItems).values(buildItemValues(id, body.items));
+          // jul 2026 v4-b — Fix DEFINITIVO: drizzle 0.45.2 + postgres-js
+          // rompe el bindeo cuando un campo del objeto es `undefined`
+          // (lo strip'a del INSERT y queda un mismatch entre 12
+          // placeholders y 11 params → "Failed query:" sin SQL state).
+          // Saltamos la abstracción de drizzle y usamos client.unsafe
+          // con SQL parametrizado manual. Controlamos 100% qué se bindea.
+          const rows = buildItemValues(id, body.items);
+          for (const r of rows) {
+            await client.unsafe(
+              `INSERT INTO company_maintenance_items
+                 (maintenance_id, supplier_id, name, photo_url,
+                  quantity, unit_cost, subtotal,
+                  discount_percent, iva_percent, iva_amount, total,
+                  attachment_key)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+              [
+                r.maintenanceId,
+                r.supplierId,                 // null | number
+                r.name,                       // string
+                r.photoUrl,                   // null | string
+                r.quantity,                   // string numeric
+                r.unitCost,                   // string numeric
+                r.subtotal,                   // string numeric
+                r.discountPercent,            // string numeric
+                r.ivaPercent,                 // string numeric
+                r.ivaAmount,                  // string numeric
+                r.total,                      // string numeric
+                r.attachmentKey,              // null | string
+              ],
+            );
+          }
         }
       }
 
@@ -2798,7 +2873,9 @@ router.post(
 // borrar todos los items de un mantenimiento para limpiar la factura).
 // Permitimos items=[] como no-op: solo recalculamos el total.
       if (body.items.length > 0) {
-        await db.insert(companyMaintenanceItems).values(buildItemValues(id, body.items));
+        for (const values of buildItemValues(id, body.items)) {
+          await db.insert(companyMaintenanceItems).values(values);
+        }
       }
       const total = await recalcMaintenanceTotal(id, companyId);
 

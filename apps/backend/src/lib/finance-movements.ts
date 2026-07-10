@@ -219,20 +219,37 @@ export async function closePettyCashVoucher(params: {
 
   let refundAmount = 0;
   try {
+    // jul 2026 v4-b — postgres-js trata `undefined` JS como literal
+    // "undefined" y rompe el bind de tipos. Normalizamos TODOS los
+    // opcionales a string/number/Date/null para que la PL los acepte.
+    const safeNotes      = notes == null ? "" : String(notes);
+    const safeInvoiceId  = invoiceId == null ? null : Number(invoiceId);
     const rows = await db.execute<{ fn_close_petty_cash_voucher: number }>(sql`
       SELECT fn_close_petty_cash_voucher(
-        ${voucherId}::integer,
-        ${actualAmount}::numeric,
-        ${invoiceId ?? null}::integer,
-        ${notes ?? null}::text,
-        ${actorUserId}::integer
+        ${Number(voucherId)}::integer,
+        ${Number(actualAmount)}::numeric,
+        ${safeInvoiceId}::integer,
+        ${safeNotes}::text,
+        ${Number(actorUserId)}::integer
       )
     `) as unknown as Array<{ fn_close_petty_cash_voucher: number }>;
     refundAmount = Number(rows[0]?.fn_close_petty_cash_voucher ?? 0);
   } catch (err) {
+    // jul 2026 v4-b — logueo full del error para debug (postgres-js suele
+    // escupir "Failed query:" sin SQL state cuando algo falla en el bind).
+    console.error('[closePettyCashVoucher] FAILED', {
+      message: (err as Error)?.message,
+      code:    (err as any)?.code,
+      detail:  (err as any)?.detail,
+      hint:    (err as any)?.hint,
+      cause:   (err as any)?.cause?.message,
+      stack:   (err as Error)?.stack?.split('\n').slice(0, 5).join('\n'),
+      params: { voucherId, actualAmount, invoiceId, notes: notes?.slice(0, 80), actorUserId },
+    });
     const msg = (err as Error)?.message ?? '';
     if (msg.includes('ya está en estado')) throw new AppError(400, msg);
     if (msg.includes('no puede ser negativo')) throw new AppError(400, msg);
+    if (msg.includes('no existe')) throw new AppError(404, msg);
     throw err;
   }
 

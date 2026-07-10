@@ -264,6 +264,9 @@ export function CajaChicaPage() {
         canReplenish={canReplenish}
         activeTab={tab}
         onTabChange={setTab}
+        canTabVales={canTabVales}
+        canTabHistorial={canTabHistorial}
+        canTabConfig={canTabConfig}
       />
 
       {/* Tab content.
@@ -291,20 +294,30 @@ export function CajaChicaPage() {
 
 function Header({
   canCreate, canReplenish, activeTab, onTabChange,
+  canTabVales, canTabHistorial, canTabConfig,
 }: {
   canCreate: boolean;
   canReplenish: boolean;
   activeTab: "solicitudes" | "vales" | "historial" | "configuracion";
   onTabChange: (t: "solicitudes" | "vales" | "historial" | "configuracion") => void;
+  // jul 2026 v4-b — Flags por tab. El padre los computa usando
+  // `usePermissions()` con permisos granulares (`ver_vales`, etc.).
+  // El Header los recibe como props en vez de recalcularlos, para
+  // que coincidan con el gate del TabBodyRouter de abajo (si el tab
+  // aparece acá pero está bloqueado allá, el usuario lo ve sin
+  // contenido, que es peor UX).
+  canTabVales: boolean;
+  canTabHistorial: boolean;
+  canTabConfig: boolean;
 }) {
   const { session } = useAuth();
   const finance = useFinance();
-  // jul 2026 v4 — Header usa sus propios permisos para filtrar tabs por
-  // visibilidad. Antes dependía de `canApprove` del componente padre y
-  // crasheaba con "canApprove is not defined" cuando se renderizaba en
-  // una ruta profunda (tab Historial/Config).
-  const { can: canHeader } = usePermissions();
-  const canApproveHeader = canHeader("finanzas", "caja_chica", "aprobar");
+  // jul 2026 v4-b — La visibilidad de cada tab se pasa como prop
+  // desde el padre (CajaChicaPage) que es donde corre usePermissions().
+  // Antes el Header calculaba su propio `canApprove` y se usaba como
+  // gate para mostrar los tabs Vales/Historial, lo cual filtraba al
+  // operador aunque tuviera `ver_vales` tildado. Ahora la decisión
+  // viene del padre en las props canTabVales/Historial/Config.
   const [accounts, setAccounts] = useState<PettyCashAccountWithSite[]>([]);
   const [loadingAccount, setLoadingAccount] = useState(true);
   const [showReplenish, setShowReplenish] = useState(false);
@@ -435,9 +448,9 @@ function Header({
       <div className="flex border-b border-gray-200 dark:border-white/[0.08]">
         {([
           { key: "solicitudes", label: "Solicitudes" },
-          ...(canApproveHeader || canReplenish ? [{ key: "vales" as const, label: "Vales" }] : []),
-          ...(canApproveHeader || canReplenish ? [{ key: "historial" as const, label: "Historial" }] : []),
-          ...(canReplenish ? [{ key: "configuracion" as const, label: "Configuración" }] : []),
+          ...(canTabVales     ? [{ key: "vales" as const,       label: "Vales" }]       : []),
+          ...(canTabHistorial ? [{ key: "historial" as const,   label: "Historial" }]   : []),
+          ...(canTabConfig    ? [{ key: "configuracion" as const, label: "Configuración" }] : []),
         ] as const).map(({ key: t, label }) => (
           <button
             key={t}
@@ -495,7 +508,7 @@ function RequestsTab({ canApprove, canCreate }: { canApprove: boolean; canCreate
     <div className="space-y-4">
       {/* Sub-filtros */}
       <div className="flex flex-wrap gap-2">
-        {(["pending", "approved", "rejected", "cancelled", "all"] as const).map(f => (
+        {(["pending", "approved", "rejected", "cancelled"] as const).map(f => (
           <button
             key={f}
             type="button"
@@ -506,7 +519,7 @@ function RequestsTab({ canApprove, canCreate }: { canApprove: boolean; canCreate
                 : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300"
             }`}
           >
-            {f === "all" ? "Todas" : REQUEST_STATUS_LABEL[f]}
+            {REQUEST_STATUS_LABEL[f]}
           </button>
         ))}
       </div>
@@ -597,7 +610,7 @@ function RequestsTab({ canApprove, canCreate }: { canApprove: boolean; canCreate
 
 // ─── Tab: Vales ──────────────────────────────────────────────────────────────
 
-function VouchersTab() {
+function VouchersTab({ canSeeAll }: { canSeeAll: boolean }) {
   const { session } = useAuth();
   const finance = useFinance();
   const [filter, setFilter] = useState<"all" | "open" | "closed" | "cancelled">("open");
@@ -606,19 +619,34 @@ function VouchersTab() {
   const [selected, setSelected] = useState<Voucher | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const userId = session?.sub ? Number(String(session.sub).replace(/\D/g, "")) : null;
+  // jul 2026 v4-b — userId del dueño. El backend expone el id del
+  // usuario en `session.id` (no en `sub`), con shape "company-user-12".
+  // Extraemos los dígitos para comparar con assignedToUserId (number).
+  const userId = session?.id ? Number(String(session.id).replace(/\D/g, "")) : null;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const rows = await finance.vouchers.fetch({ status: filter });
+      // jul 2026 v4-b — Debug temporal: confirmar que userId y
+      // assignedToUserId están bien. Se puede quitar cuando validemos
+      // el flujo en producción.
+      if (typeof window !== "undefined") {
+        // eslint-disable-next-line no-console
+        console.log("[CajaChica VouchersTab]", {
+          sessionSub: session?.sub,
+          userId,
+          rowsCount: rows.length,
+          rows: rows.map(r => ({ id: r.numericId, assignedToUserId: r.assignedToUserId, status: r.status })),
+        });
+      }
       setVouchers(rows);
     } catch (err) {
       toast.error("Error al cargar vales");
     } finally {
       setLoading(false);
     }
-  }, [finance, filter, refreshKey]);
+  }, [finance, filter, refreshKey, session?.sub, userId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -675,7 +703,21 @@ function VouchersTab() {
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-white/[0.06]">
               {vouchers.map(v => {
-                const canClose = v.status === "open" && v.assignedToUserId === userId;
+                // jul 2026 v4-b — Regla de cierre: SÓLO el dueño del vale
+                // (assignedToUserId === userId de la sesión actual) puede
+                // ver el botón "Finalizar". Un admin o supervisor con
+                // aprobar/reponer no debe finalizar vales ajenos desde
+                // acá — eso le corresponde al operador dueño (o se hace
+                // por el flujo del drawer del mantenimiento, no por
+                // Caja Chica). Si en el futuro el admin quiere cancelar
+                // un vale, se agregará un botón "Cancelar" separado.
+                //
+                // Convertimos ambos a number para evitar mismatch por
+                // tipo (a veces el backend manda string según el path).
+                const ownerIdNum = Number(v.assignedToUserId);
+                const userIdNum  = Number(userId);
+                const isOwner = userIdNum > 0 && ownerIdNum === userIdNum;
+                const canClose = v.status === "open" && isOwner;
                 return (
                   <tr key={v.id} className="hover:bg-gray-50/50 dark:hover:bg-white/[0.03]">
                     <td className="px-4 py-3 text-sm font-mono text-gray-700 dark:text-gray-300">#{v.numericId}</td>
@@ -871,24 +913,43 @@ function HistoryTab({ canReplenish: _ }: { canReplenish: boolean }) {
 
 // ─── Modal: Crear Solicitud ──────────────────────────────────────────────────
 
-function CreateRequestModal({ onClose }: { onClose: () => void }) {
+function CreateRequestModal({ onClose, initialSiteId }: { onClose: () => void; initialSiteId?: number }) {
   const finance = useFinance();
   const [accounts, setAccounts] = useState<PettyCashAccountWithSite[]>([]);
-  const [siteId, setSiteId] = useState<number | null>(null);
+  const [siteId, setSiteId] = useState<number | null>(initialSiteId ?? null);
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    // jul 2026 v4-b — Si nos pasan un initialSiteId (caso "solicitar
+    // recurso desde un mantenimiento"), el modal no le pregunta al
+    // operador qué sede: ya la sabemos. Sólo cargamos las cuentas
+    // para validación posterior.
+    if (initialSiteId) {
+      void (async () => {
+        const data = await finance.pettyCash.fetchAccount();
+        if (data && "accounts" in data) {
+          setAccounts(data.accounts);
+        }
+      })();
+      return;
+    }
     void (async () => {
       const data = await finance.pettyCash.fetchAccount();
       if (data && "accounts" in data) {
         setAccounts(data.accounts);
-        if (data.accounts[0]) setSiteId(data.accounts[0].siteId);
+        // Si hay una sola cuenta, autoseccionamos y NO mostramos el
+        // dropdown (cero fricción para el caso más común).
+        if (data.accounts.length === 1) {
+          setSiteId(data.accounts[0].siteId);
+        } else if (data.accounts[0]) {
+          setSiteId(data.accounts[0].siteId);
+        }
       }
     })();
-  }, [finance]);
+  }, [finance, initialSiteId]);
 
   const submit = async () => {
     if (!siteId || !amount || !reason) {
@@ -920,7 +981,36 @@ function CreateRequestModal({ onClose }: { onClose: () => void }) {
   return (
     <ModalShell onClose={onClose} title="Nueva solicitud de caja chica" icon={Plus}>
       <div className="space-y-4">
-        <div>
+        {/* jul 2026 v4-b — Si initialSiteId viene del FinancePanel
+            (mantenimiento), no mostramos el select de sede: el sistema
+            ya sabe de dónde sale. Lo dejamos sólo cuando el operador
+            abre el modal desde "Nueva solicitud" y la empresa tiene
+            VARIAS cuentas activas. */}
+        {!initialSiteId && accounts.length > 1 && (
+          <div>
+            <label className={labelCls}>Sede de la caja</label>
+            <select
+              value={siteId ?? ""}
+              onChange={(e) => setSiteId(Number(e.target.value))}
+              className={inputCls}
+            >
+              {accounts.map(a => (
+                <option key={a.id} value={a.siteId}>{a.siteName ?? `Sede #${a.siteId}`}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {/* Cuando hay initialSiteId o una sola cuenta, mostramos solo
+            un banner informativo con la sede resuelta. */}
+        {(initialSiteId || accounts.length === 1) && siteId && (
+          <div className="rounded-xl bg-emerald-50 dark:bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-200">
+            <Building2 className="inline h-4 w-4 mr-1" />
+            Sede: <strong>
+              {accounts.find(a => a.siteId === siteId)?.siteName
+                ?? `Sede #${siteId}`}
+            </strong>
+          </div>
+        )}
           <label className={labelCls}>Sede</label>
           <select
             value={siteId ?? ""}
@@ -934,7 +1024,7 @@ function CreateRequestModal({ onClose }: { onClose: () => void }) {
               </option>
             ))}
           </select>
-        </div>
+      </div>
         <div>
           <label className={labelCls}>Monto (USD)</label>
           <input
@@ -980,7 +1070,6 @@ function CreateRequestModal({ onClose }: { onClose: () => void }) {
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             Crear solicitud
           </button>
-        </div>
       </div>
     </ModalShell>
   );
@@ -1275,8 +1364,8 @@ function CloseVoucherModal({
   //   - "repuesto"  → factura + items[] (obligatorio al menos 1 item)
   //   - "mano_obra" → factura + workshopName
   //   - "lavada"    → factura + workerName
-  //   - null/undef  → standalone, sin restricción (el operador solo
-  //     decide si subir factura o no).
+  //   - null/undef  → standalone, pero igual pide comprobante (regla
+  //     nueva: comprobante SIEMPRE obligatorio, no hay caso sin factura).
   const fclass: "repuesto" | "mano_obra" | "lavada" | null =
     (voucher.financeClassification ?? null) as any;
 
@@ -1315,8 +1404,10 @@ function CloseVoucherModal({
     }));
   };
 
-  // ¿Factura obligatoria? Sí cuando viene de mantenimiento con fclass.
-  const receiptRequired = hasMaintenance && fclass !== null;
+  // jul 2026 v4-b — Comprobante SIEMPRE obligatorio (sin importar
+  // si el vale viene de mantenimiento o es standalone). El backend
+  // rechaza el cierre con 400 si no hay invoiceId.
+  const receiptRequired = true;
   // ¿Items obligatorios? Sí cuando fclass === "repuesto".
   const itemsRequired  = hasMaintenance && fclass === "repuesto";
 
@@ -1326,7 +1417,7 @@ function CloseVoucherModal({
       return;
     }
     if (receiptRequired && !receipt) {
-      toast.error("Adjuntá el comprobante para este tipo de vale");
+      toast.error("Adjuntá el comprobante (imagen o PDF) — es obligatorio");
       return;
     }
     if (itemsRequired && items.length === 0) {
@@ -1345,9 +1436,7 @@ function CloseVoucherModal({
 
     let invoiceId: number | undefined;
 
-    // Subir comprobante + crear invoice si el operador subió algo.
-    // (Para vale de mantenimiento SIN comprobante subido, mantenemos el
-    // invoiceId ya existente — usualmente el del maintenance.)
+    // Siempre: subir comprobante + crear invoice antes de cerrar.
     if (receipt) {
       const upRes = await finance.vouchers.uploadReceipt(receipt);
       if (!upRes.ok) {
@@ -1433,9 +1522,8 @@ function CloseVoucherModal({
           <div className="flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-700 dark:bg-white/[0.04] dark:text-slate-300">
             <Receipt className="mt-0.5 h-4 w-4 flex-shrink-0" />
             <div>
-              Vale <strong>independiente</strong>. Opcionalmente podés adjuntar el
-              comprobante (imagen o PDF). Si no subís nada, el vale se cierra igual y
-              la factura se puede registrar después desde <em>Facturas</em>.
+              Vale <strong>independiente</strong>. Adjuntá el comprobante
+              (imagen o PDF) para registrar la factura en el ledger.
             </div>
           </div>
         )}
@@ -1536,36 +1624,101 @@ function CloseVoucherModal({
           </div>
         )}
 
-        {/* Comprobante (obligatorio si receiptRequired, opcional en otros casos) */}
+        {/* Comprobante — SIEMPRE obligatorio.
+            Visual: label con icono, área de drop con botón "Examinar…",
+            preview con tamaño controlado (no estirado) y opción de
+            reemplazar / quitar. */}
         <div>
           <label className={labelCls}>
-            Comprobante {receiptRequired ? "(obligatorio · imagen o PDF)" : "(opcional · imagen o PDF)"}
+            <Receipt className="mr-1 inline h-3 w-3" />
+            Comprobante (obligatorio · imagen o PDF)
           </label>
-          <div className="flex items-center gap-3 rounded-xl border border-dashed border-gray-300 px-3 py-3 dark:border-white/[0.1]">
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp,application/pdf"
-              onChange={handleReceiptChange}
-              className="flex-1 text-xs text-gray-700 file:mr-3 file:rounded-md file:border-0 file:bg-emerald-600 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-emerald-700 dark:text-gray-300"
-            />
-            {receipt && (
-              <button
-                type="button"
-                onClick={() => { setReceipt(null); setReceiptPreview(null); }}
-                className="rounded-lg p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/[0.06]"
-                aria-label="Quitar comprobante"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-          {receiptPreview && (
-            <img src={receiptPreview} alt="preview" className="mt-2 max-h-40 rounded-lg border border-gray-200 dark:border-white/[0.06]" />
-          )}
-          {receipt && !receiptPreview && (
-            <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-              Archivo seleccionado: <strong>{receipt.name}</strong> ({(receipt.size / 1024).toFixed(0)} KB)
-            </p>
+
+          {receipt ? (
+            <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-white/[0.08]">
+              {receiptPreview ? (
+                <div className="relative">
+                  <img
+                    src={receiptPreview}
+                    alt="Vista previa del comprobante"
+                    className="mx-auto block max-h-32 w-auto object-contain bg-gray-50 dark:bg-white/[0.04]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { setReceipt(null); setReceiptPreview(null); }}
+                    className="absolute right-2 top-2 rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80"
+                    aria-label="Quitar comprobante"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 p-3">
+                  <FileText className="h-5 w-5 shrink-0 text-rose-500" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-gray-700 dark:text-gray-200">
+                      {receipt.name}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {(receipt.size / 1024).toFixed(0)} KB
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setReceipt(null); setReceiptPreview(null); }}
+                    className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/[0.06]"
+                    aria-label="Quitar comprobante"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+              <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50 px-3 py-2 dark:border-white/[0.04] dark:bg-white/[0.03]">
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  {receipt.type.startsWith("image/") ? "Imagen" : "PDF"} · listo para enviar
+                </span>
+                <label
+                  htmlFor="voucher-receipt-replace"
+                  className="cursor-pointer rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+                >
+                  Reemplazar
+                </label>
+                <input
+                  id="voucher-receipt-replace"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,application/pdf"
+                  onChange={handleReceiptChange}
+                  className="hidden"
+                />
+              </div>
+            </div>
+          ) : (
+            <label
+              htmlFor="voucher-receipt-upload"
+              className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 bg-gray-50/50 px-4 py-6 text-center transition hover:border-emerald-400 hover:bg-emerald-50/40 dark:border-white/[0.1] dark:bg-white/[0.02] dark:hover:border-emerald-500/40 dark:hover:bg-emerald-500/5"
+            >
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300">
+                <Receipt className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                  Subí la foto o PDF del comprobante
+                </p>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  JPG, PNG, WebP o PDF · máx 16 MB
+                </p>
+              </div>
+              <span className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white">
+                Examinar archivo
+              </span>
+              <input
+                id="voucher-receipt-upload"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                onChange={handleReceiptChange}
+                className="hidden"
+              />
+            </label>
           )}
         </div>
 
@@ -1600,17 +1753,26 @@ function CloseVoucherModal({
 
 // ─── Componentes auxiliares ──────────────────────────────────────────────────
 
+/**
+ * jul 2026 v4-b — ModalShell con tres zonas:
+ *   1. Header (sticky, fijo arriba)
+ *   2. Body (scrolleable vertical si el contenido no entra)
+ *   3. Footer opcional (sticky, fijo abajo — usualmente para los
+ *      botones "Cancelar / Confirmar" que SIEMPRE deben verse).
+ *
+ * Sin esto, los modales largos (ej. CerrarVale con ítems, factura,
+ * taller/lavador) se estiraban a pantalla completa y los botones
+ * quedaban fuera del viewport.
+ */
 function ModalShell({
-  onClose, title, icon: Icon, children,
+  onClose, title, icon: Icon, children, footer,
 }: {
   onClose: () => void;
   title: string;
   icon: React.ComponentType<{ className?: string }>;
   children: React.ReactNode;
+  footer?: React.ReactNode;
 }) {
-  // jul 2026 v4 — createPortal al <body>: garantiza z-index sobre sidebar /
-  // tabs fijos y esquiva problemas de contenedor con backdrop-filter o
-  // transform (que vuelven a `position: fixed` relativo al padre, no al viewport).
   if (typeof document === "undefined") return null;
   return createPortal(
     <div
@@ -1618,10 +1780,10 @@ function ModalShell({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-gray-900"
+        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-gray-900"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-gray-100 p-4 dark:border-white/[0.06]">
+        <div className="flex shrink-0 items-center justify-between border-b border-gray-100 p-4 dark:border-white/[0.06]">
           <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-gray-100">
             <Icon className="h-5 w-5 text-emerald-500" />
             {title}
@@ -1634,7 +1796,12 @@ function ModalShell({
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="p-4">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div>
+        {footer && (
+          <div className="shrink-0 border-t border-gray-100 bg-gray-50 p-4 dark:border-white/[0.06] dark:bg-white/[0.04]">
+            {footer}
+          </div>
+        )}
       </div>
     </div>,
     document.body,
@@ -1856,7 +2023,7 @@ function ConfiguracionTab() {
             <ul className="mt-1 list-disc pl-4 space-y-0.5">
               <li><strong>Modo Acumulativo:</strong> la caja se rellena hasta un límite. Cuando se gasta, el saldo baja. Cuando se rellena, sube.</li>
               <li><strong>Modo Period:</strong> cada mes (o semana) la caja se resetea al monto inicial automáticamente.</li>
-              <li>Cuando el saldo llega a 0, se envía alerta a admin_empresa y owner_empresa para que rellenen.</li>
+              <li>Cuando el saldo llega a 0, se envía alerta al administraodor y dueño de la emprese para que rellene el recurso.</li>
             </ul>
           </div>
         </>

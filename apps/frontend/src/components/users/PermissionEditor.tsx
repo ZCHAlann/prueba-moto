@@ -620,7 +620,12 @@ export function PermissionEditor({
                                 )}
                               </div>
 
-                              <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                              {/* jul 2026 v4-b — Grid responsive en vez de flex-wrap
+                                  para que las acciones queden alineadas en
+                                  columnas, no amontonadas. Para Caja Chica
+                                  con 11 acciones, el grid se adapta a 3 o 4
+                                  columnas según el ancho del sub-row. */}
+                              <div className="grid w-full grid-cols-2 gap-1.5 sm:max-w-md sm:grid-cols-3 lg:grid-cols-4">
                                 {actionsFor(modKey, subKey).map((action) => {
                                   const v = ACTION_STYLES[action];
                                   const Icon = v.Icon;
@@ -632,7 +637,7 @@ export function PermissionEditor({
                                       onClick={() => toggle(modKey, subKey, action)}
                                       disabled={readOnlyWithFullAccess}
                                       title={v.description}
-                                      className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium transition ${
+                                      className={`inline-flex items-center justify-center gap-1 rounded-md border px-2.5 py-1 text-[11px] font-medium transition ${
                                         isActive ? v.active : v.inactive
                                       } ${readOnlyWithFullAccess ? "cursor-default" : ""}`}
                                     >

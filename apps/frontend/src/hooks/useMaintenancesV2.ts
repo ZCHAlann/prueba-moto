@@ -90,177 +90,13 @@ export interface MaintenanceItem {
   quantity:     number;
   unitCost:     number;
   subtotal:     number;
+  // jul 2026 v4-b — Migración 0050. Descuento + IVA por item.
+  discountPercent: number;
+  ivaPercent:      number;
+  ivaAmount:       number;
+  total:           number;
   photoUrl:     string | null;
   // jul 2026 — Opcion A: FK logica al attachment (factura) al que pertenece.
-  attachmentKey?: string | null;
-}
-
-export interface MaintenanceEvent {
-  id:             string;
-  maintenanceId:  string;
-  kind:           MaintenanceEventKind;
-  actorUserId:    string | null;
-  actorName:      string | null;
-  payload:        Record<string, unknown>;
-  createdAt:      string;
-}
-
-export interface Maintenance {
-  id:            string;
-  companyId:     string;
-  assetId:       string;
-  assetName:     string | null;
-  assetPlate:    string | null;
-  workshopId:    string | null;
-  workshopName:  string | null;
-  type:          MaintenanceType;
-  status:        MaintenanceStatus;
-  category:      string;                   // string libre (acepta customs)
-  title:         string | null;
-  description:   string | null;
-  odometerKm:    number | null;
-  // v3.1: mano de obra
-  laborCost:     number;
-  /** IVA porcentual aplicado (default 15 para Ecuador) */
-  ivaPercent:    number;
-  cadenceKind:   CadenceKind;
-  cadenceValue:  number | null;
-  nextTriggerKm: number | null;
-  scheduledFor:  string;
-  executedAt:    string | null;
-  completedAt:   string | null;
-  notes:         string | null;
-  totalCost:     number;
-  // v3.1: campos de lavada
-  carwashLocation: string | null;
-  carwashProvider: string | null;
-  carwashNotes:    string | null;
-  /** Costo explícito del servicio de lavada (lo que digitó el admin al crear). */
-  carwashTotal:    number;
-  /** Adjuntos: facturas, fotos de evidencia, etc. (subidos mientras
-   *  el mantenimiento está "En proceso" o "Completado"). */
-  attachments:     MaintenanceAttachment[];
-  parentId:      string | null;
-  createdBy:     string | null;
-  completedBy:   string | null;
-  // v3
-  assignedUserId:   string | null;
-  assignedUserName: string | null;
-  takenAt:          string | null;
-  isReprogrammed:   boolean;
-  reprogramReason:  string | null;
-  reprogrammedAt:   string | null;
-  reprogramCount:   number;
-  createdAt:     string;
-  updatedAt:     string;
-  items:         MaintenanceItem[];
-  events:        MaintenanceEvent[];
-  correctionReason: string | null;
-  correctionRequestedAt: string | null;
-  /** Atajo de presentación: derivado de `status === 'Atrasado'`. El backend
-   *  lo calcula comparando `scheduledFor` contra la fecha actual en el
-   *  response de la API; el frontend puede tolerar que llegue o no el
-   *  flag explícito y caer al status. Ver `isMaintenanceOverdue()`. */
-  isOverdue?: boolean;
-  /** jun 2026 — FK a la última solicitud de reautorización aprobada
-   *  que reabrió este mantenimiento. Permite trazabilidad sin releer
-   *  la tabla de eventos. NULL si nunca fue reautorizado. */
-  lastReauthorizationId?: string | null;
-  /** jun 2026 — ISO del momento en que se aprobó esa reautorización
-   *  (`updated_at` de la fila del mantenimiento al aprobar). El backend
-   *  lo expone junto a `lastReauthorizationId` para que el banner del
-   *  drawer pueda mostrar la fecha sin hacer una segunda query. */
-  lastReauthorizationAt?: string | null;
-}
-
-/** Acción solicitada en una reautorización:
- *  - 'open'       → reabrir (scheduledFor=HOY, status='Programado').
- *  - 'reschedule' → reprogramar (el admin elige la nueva fecha al aprobar).
- */
-export type MaintenanceReauthAction = "open" | "reschedule";
-
-/** Estados de una solicitud de reautorización (jun 2026). */
-export type MaintenanceReauthStatus = "Pendiente" | "Aprobada" | "Rechazada";
-
-/** Una fila de `company_maintenance_reauthorizations` tal como llega al
- *  frontend (ids serializados como 'reauth-N'). */
-export interface MaintenanceReauthorization {
-  id:                       string;
-  companyId:                string;
-  maintenanceId:            string;
-  /** Snapshot al pedir: status original (siempre 'Atrasado' al pedir). */
-  maintenanceStatus:        string;
-  maintenanceScheduledFor:  string;
-  action:                   MaintenanceReauthAction;
-  status:                   MaintenanceReauthStatus;
-  reason:                   string;
-  proposedScheduledFor:     string | null;
-  requestedByUserId:        string | null;
-  requestedByName:          string | null;
-  requestedByRole:          string | null;
-  decidedByUserId:          string | null;
-  decidedByName:            string | null;
-  decisionNotes:            string | null;
-  decidedAt:                string | null;
-  appliedScheduledFor:      string | null;
-  createdAt:                string;
-  updatedAt:                string;
-}
-
-/** Helper local: devuelve si un mantenimiento está atrasado. Prefiere el
- *  flag explícito que mande el backend, pero tolera que solo venga el
- *  status. Útil para mantener la UI consistente mientras la migración a
- *  `status: 'Atrasado'` se completa. */
-export function isMaintenanceOverdue(m: Pick<Maintenance, 'status' | 'isOverdue'>): boolean {
-  return m.isOverdue === true || m.status === 'Atrasado';
-}
-
-export interface CarwashExtra {
-  id:            string;
-  maintenanceId: string;
-  name:          string;
-  quantity:      number;
-  unitCost:      number;
-  subtotal:      number;
-  photoUrl:      string | null;
-  createdAt:     string;
-}
-
-export interface CarwashExtraInput {
-  name:     string;
-  quantity: number;
-  unitCost: number;
-  photoUrl?: string | null;
-}
-
-export interface CarwashPhoto {
-  id:            string;
-  maintenanceId: string;
-  photoUrl:      string;
-  caption:       string | null;
-  uploadedBy:    string | null;
-  uploadedByName: string | null;
-  createdAt:     string;
-}
-
-export interface CarwashPhotoInput {
-  /**
-   * Archivo a subir. El hook se encarga de hacer POST al endpoint
-   * `/upload/photos?category=maintenance&companyId=N` (separado por
-   * empresa en el filesystem) y luego persistir la URL resultante
-   * con `POST /company/:id/maintenances/:mid/carwash-photos`.
-   */
-  file: File;
-  caption?: string | null;
-}
-
-export interface MaintenanceItemInput {
-  supplierId?: string | null;
-  name:        string;
-  quantity:    number;
-  unitCost:    number;
-  photoUrl?:   string | null;
-  // jul 2026 — Opción A: vinculo lógico a la factura del array `attachments`.
   attachmentKey?: string | null;
 }
 
@@ -323,6 +159,34 @@ export interface MaintenanceCategory {
   color:      string;
   icon:       string;
   isSystem:   boolean;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * jul 2026 — Determina si un mantenimiento está vencido. La regla
+ * coincide con la del backend (cron maintenance-overdue, migración
+ * 0033): un mantenimiento está vencido si su `scheduledFor` ya pasó
+ * y sigue en estado "Programado" o "En proceso" (no se cuentan
+ * "Atrasado" porque ese es el estado terminal que setea el cron).
+ *
+ * Sirve para el listado, el dashboard y la badge "Atrasado" en el
+ * drawer del mantenimiento. El componente lo usa para resaltar
+ * visualmente las filas atrasadas sin esperar al cron.
+ */
+export function isMaintenanceOverdue(
+  m: Pick<Maintenance, 'status' | 'scheduledFor'>,
+): boolean {
+  if (m.status === 'Atrasado' || m.status === 'Completado' || m.status === 'Correccion') {
+    return false;
+  }
+  if (m.status !== 'Programado' && m.status !== 'En proceso') {
+    return false;
+  }
+  if (!m.scheduledFor) return false;
+  const due = new Date(m.scheduledFor).getTime();
+  if (Number.isNaN(due)) return false;
+  return due < Date.now();
 }
 
 // ─── Hooks ────────────────────────────────────────────────────────────────────

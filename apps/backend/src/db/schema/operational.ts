@@ -668,25 +668,18 @@ export const companyMaintenanceItems = pgTable('company_maintenance_items', {
   quantity:       numeric('quantity', { precision: 10, scale: 2 }).notNull().default('1'),
   unitCost:       numeric('unit_cost', { precision: 12, scale: 2 }).notNull().default('0'),
   subtotal:       numeric('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
-  // jul 2026 — FK lógica al attachment del array `attachments` del mismo
-  // mantenimiento. NULL = item de evidencia sin factura asignada.
-  // Idempotencia de aplicación: el chequeo "el attachment_key existe en
-  // el array attachments[]" se hace en lib/invoices-sync al llamar a
-  // syncMaterialize.
+  discountPercent: numeric('discount_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+  ivaPercent:      numeric('iva_percent',      { precision: 5, scale: 2 }).notNull().default('15'),
+  ivaAmount:       numeric('iva_amount',       { precision: 12, scale: 2 }).notNull().default('0'),
+  total:           numeric('total',            { precision: 12, scale: 2 }).notNull().default('0'),
   attachmentKey:  varchar('attachment_key', { length: 40 }),
-
-  // jul 2026 — vínculo opcional a la solicitud de caja chica lanzada
-  // desde este item de mantenimiento (botón "Solicitar recurso a finanzas"
-  // en el drawer). NULL = no se solicitó recurso para este item.
   financeRequestId: integer('finance_request_id'),
-
   // jul 2026 v4 — clasificación contable del item (migration 0047).
-  // NULL = sin clasificar todavía.
-  // 'petty_cash' = cubierto por un vale de caja chica aprobado.
-  // 'annual_expense' = registrado como gasto anual.
-  // La setea el aprobador de finanzas al aprobar la solicitud — NO el operador.
-  // Si está set, financeRequestId DEBE estar set también (constraint en BD).
-  financeClassification: varchar('finance_classification', { length: 20 }),
+  // NULL = sin clasificar todavía. La columna es text + CHECK en DB
+  // (no un enum de Postgres) porque la 0047 lo implementó como text
+  // para mantener idempotencia con el migration runner.
+  financeClassification: text('finance_classification'),
+  createdAt:      timestamp('created_at').notNull().defaultNow(),
 });
 
 // ── Adicionales de Lavada (items extra que el operador agrega al servicio) ───
@@ -697,6 +690,12 @@ export const companyMaintenanceCarwashExtras = pgTable('company_maintenance_carw
   quantity:       numeric('quantity', { precision: 10, scale: 2 }).notNull().default('1'),
   unitCost:       numeric('unit_cost', { precision: 12, scale: 2 }).notNull().default('0'),
   subtotal:       numeric('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
+  // jul 2026 v4-b — Migración 0050. Mismo cálculo que company_maintenance_items
+  // (descuento + IVA por item, ver migración).
+  discountPercent: numeric('discount_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+  ivaPercent:      numeric('iva_percent',      { precision: 5, scale: 2 }).notNull().default('15'),
+  ivaAmount:       numeric('iva_amount',       { precision: 12, scale: 2 }).notNull().default('0'),
+  total:           numeric('total',            { precision: 12, scale: 2 }).notNull().default('0'),
   photoUrl:       text('photo_url'),
   createdAt:      timestamp('created_at').notNull().defaultNow(),
 });

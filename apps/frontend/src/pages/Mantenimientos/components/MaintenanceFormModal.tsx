@@ -23,6 +23,7 @@ import { useSuppliers } from "../../../hooks/useSuppliers";
 import { useMaintenanceFormOptions } from "../../../hooks/useFormOptions";
 import { usePermissions } from "../../../hooks/usePermissions";
 import { useAuth } from "../../../context/AuthContext";
+import { computeItemTotals, aggregateTotals } from "../../../lib/maintenance-totals";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -251,7 +252,21 @@ export function MaintenanceFormModal({
 
   // ─── Items ──────────────────────────────────────────────────────────────
   const addItem = () => {
-    setItems((p) => [...p, { name: "", quantity: 1, unitCost: 0, photoUrl: null, uploading: false }]);
+    // jul 2026 v4-b — Migración 0050. Defaults: 15% IVA Ecuador,
+    // 0% descuento. quantity=1, unitCost=0. photoUrl null hasta que
+    // se suba.
+    setItems((p) => [
+      ...p,
+      {
+        name: "",
+        quantity: 1,
+        unitCost: 0,
+        discountPercent: 0,
+        ivaPercent: 15,
+        photoUrl: null,
+        uploading: false,
+      },
+    ]);
   };
   const updateItem = (idx: number, patch: Partial<ItemRow>) => {
     setItems((p) => p.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
@@ -343,6 +358,9 @@ export function MaintenanceFormModal({
       // Lavada: no items / no workshop / no cadencia
       items: isLavada ? [] : (items.length ? items.map((i) => ({
         name: i.name, quantity: i.quantity, unitCost: i.unitCost,
+        // jul 2026 v4-b — Migración 0050. Descuento + IVA por item.
+        discountPercent: i.discountPercent ?? 0,
+        ivaPercent:      i.ivaPercent ?? 15,
         photoUrl: i.photoUrl, supplierId: i.supplierId ?? null,
       })) : undefined),
       carwashLocation: isLavada ? (carwashLocation.trim() || null) : null,
@@ -375,7 +393,7 @@ export function MaintenanceFormModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0b0f1a]">
+      <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0b0f1a]">
         {/* Header */}
         <div className="relative shrink-0 border-b border-gray-100 dark:border-white/[0.06] bg-gradient-to-br from-violet-50 dark:from-violet-500/10 via-transparent to-transparent px-5 sm:px-7 py-4">
           <div className="flex items-start justify-between gap-3">
@@ -664,7 +682,12 @@ export function MaintenanceFormModal({
               "Completado", o cuando ya hay items cargados. Al agendar un
               mantenimiento nuevo (status=Programado, sin items), la sección
               está oculta — se desbloquea cuando el operador lo inicia y
-              empieza a cargar repuestos. */}
+              empieza a cargar repuestos.
+
+              jul 2026 v4-b — Layout nuevo: por cada item editable hay
+              Cantidad | Precio unitario | % Descuento | % IVA | Subtotal
+              | Total. En el footer del bloque se acumulan los totales
+              globales con desglose por % de IVA (0% exento / 12% / 15%). */}
           {!isLavada && (status === "En proceso" || status === "Completado" || items.length > 0) && (
             <div className="rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -688,88 +711,187 @@ export function MaintenanceFormModal({
                   Sin repuestos. El operador puede agregar después.
                 </p>
               )}
+
+              {/* Encabezado de columnas (solo desktop). 24 cols en total:
+                  Repuesto 6 · Proveedor 4 · Cant 2 · Precio 3 · %Desc 2 · %IVA 2 · Subtotal 3 · Acción 2. */}
+              {items.length > 0 && (
+                <div className="hidden md:grid grid-cols-24 gap-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                  <div className="col-span-6">Repuesto</div>
+                  <div className="col-span-4">Proveedor</div>
+                  <div className="col-span-2 text-right">Cant.</div>
+                  <div className="col-span-3 text-right">Precio unit.</div>
+                  <div className="col-span-2 text-right">% Desc.</div>
+                  <div className="col-span-2 text-right">% IVA</div>
+                  <div className="col-span-3 text-right">Subtotal</div>
+                  <div className="col-span-2" />
+                </div>
+              )}
+
               <div className="space-y-2">
-                {items.map((it, idx) => (
-                  <div key={idx} className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-2.5">
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-2 text-xs">
-                      <input
-                        placeholder="Nombre del repuesto"
-                        value={it.name}
-                        disabled={isReadOnly}
-                        onChange={(e) => updateItem(idx, { name: e.target.value })}
-                        className={`${inputCls} md:col-span-5 py-1.5`}
-                      />
-                      <select
-                        value={it.supplierId ?? ""}
-                        disabled={isReadOnly}
-                        onChange={(e) => updateItem(idx, { supplierId: e.target.value || null })}
-                        className={`${inputCls} md:col-span-3 py-1.5`}
-                      >
-                        <option value="">Sin proveedor</option>
-                        {suppliers.map((s) => (
-                          <option key={s.id} value={s.id}>{s.name}</option>
-                        ))}
-                      </select>
-                      <input
-                        type="number" min={0} placeholder="Cant."
-                        value={it.quantity}
-                        disabled={isReadOnly}
-                        onChange={(e) => updateItem(idx, { quantity: Number(e.target.value) })}
-                        className={`${inputCls} md:col-span-1 py-1.5`}
-                      />
-                      <input
-                        type="number" min={0} placeholder="$ unit."
-                        value={it.unitCost === 0 ? "" : it.unitCost}
-                        disabled={isReadOnly}
-                        onChange={(e) => updateItem(idx, { unitCost: e.target.value === "" ? 0 : Number(e.target.value) })}
-                        className={`${inputCls} md:col-span-2 py-1.5`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => removeItem(idx)}
-                        disabled={isReadOnly}
-                        className="md:col-span-1 inline-flex items-center justify-center text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-md p-1.5 transition"
-                        title="Quitar"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                    <div className="mt-2 flex items-center gap-2">
-                      {it.photoUrl ? (
-                        <div className="relative h-12 w-12 rounded-md overflow-hidden border border-gray-200 dark:border-white/[0.08]">
-                          <img src={it.photoUrl} alt="" className="h-full w-full object-cover" />
+                {items.map((it, idx) => {
+                  const t = computeItemTotals(it);
+                  return (
+                    <div key={idx} className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-2.5">
+                      {/* jul 2026 v4-b — Grid 24 cols en desktop para que
+                          los inputs Cant / Precio / %Desc / %IVA respiren
+                          (no se corten al escribir 5+ dígitos). */}
+                      <div className="grid grid-cols-12 md:grid-cols-24 gap-2 text-xs">
+                        <input
+                          placeholder="Nombre del repuesto"
+                          value={it.name}
+                          disabled={isReadOnly}
+                          onChange={(e) => updateItem(idx, { name: e.target.value })}
+                          className={`${inputCls} col-span-12 md:col-span-6 py-1.5`}
+                        />
+                        <select
+                          value={it.supplierId ?? ""}
+                          disabled={isReadOnly}
+                          onChange={(e) => updateItem(idx, { supplierId: e.target.value || null })}
+                          className={`${inputCls} col-span-12 md:col-span-4 py-1.5`}
+                        >
+                          <option value="">Sin proveedor</option>
+                          {suppliers.map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="number" min={0} step="0.01" placeholder="1"
+                          value={it.quantity}
+                          disabled={isReadOnly}
+                          onChange={(e) => updateItem(idx, { quantity: Number(e.target.value) })}
+                          className={`${inputCls} col-span-4 md:col-span-2 py-1.5 text-right tabular-nums`}
+                          title="Cantidad"
+                        />
+                        <input
+                          type="number" min={0} step="0.01" placeholder="0.00"
+                          value={it.unitCost === 0 ? "" : it.unitCost}
+                          disabled={isReadOnly}
+                          onChange={(e) => updateItem(idx, { unitCost: e.target.value === "" ? 0 : Number(e.target.value) })}
+                          className={`${inputCls} col-span-4 md:col-span-3 py-1.5 text-right tabular-nums`}
+                          title="Precio unitario"
+                        />
+                        <input
+                          type="number" min={0} max={100} step="0.01" placeholder="0"
+                          value={it.discountPercent ?? 0}
+                          disabled={isReadOnly}
+                          onChange={(e) => updateItem(idx, { discountPercent: e.target.value === "" ? 0 : Number(e.target.value) })}
+                          className={`${inputCls} col-span-2 md:col-span-2 py-1.5 text-right tabular-nums`}
+                          title="% Descuento"
+                        />
+                        <input
+                          type="number" min={0} max={100} step="0.01" placeholder="15"
+                          value={it.ivaPercent ?? 15}
+                          disabled={isReadOnly}
+                          onChange={(e) => updateItem(idx, { ivaPercent: e.target.value === "" ? 15 : Number(e.target.value) })}
+                          className={`${inputCls} col-span-2 md:col-span-2 py-1.5 text-right tabular-nums`}
+                          title="% IVA"
+                        />
+                        <div className="col-span-6 md:col-span-3 flex items-center justify-end gap-1 text-xs text-gray-700 dark:text-gray-200 tabular-nums">
+                          ${t.subtotal.toFixed(2)}
+                        </div>
+                        <div className="col-span-2 md:col-span-2 flex items-center justify-center">
                           <button
                             type="button"
-                            onClick={() => updateItem(idx, { photoUrl: null })}
-                            className="absolute top-0 right-0 bg-black/60 text-white p-0.5"
-                            title="Quitar foto"
+                            onClick={() => removeItem(idx)}
+                            disabled={isReadOnly}
+                            className="inline-flex items-center justify-center text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-md p-1.5 transition"
+                            title="Quitar"
                           >
-                            <XCircle size={12} />
+                            <Trash2 size={13} />
                           </button>
                         </div>
-                      ) : (
-                        <label className="inline-flex items-center gap-1.5 cursor-pointer rounded-md border border-dashed border-gray-300 dark:border-white/[0.08] px-2.5 py-1 text-xs text-gray-500 dark:text-gray-400 hover:border-violet-400 dark:hover:border-violet-500/50 transition">
-                          <ImagePlus size={12} /> {it.uploading ? "Subiendo…" : "Foto"}
-                          <input
-                            ref={uploadingIdx === idx ? fileInputRef : undefined}
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,application/pdf"
-                            disabled={isReadOnly || it.uploading}
-                            className="hidden"
-                            onChange={(e) => {
-                              const f = e.target.files?.[0];
-                              if (f) handleItemPhoto(idx, f);
-                            }}
-                          />
-                        </label>
-                      )}
-                      <span className="ml-auto text-xs text-gray-500 dark:text-gray-400">
-                        Subtotal: <strong className="text-gray-800 dark:text-white">${(it.quantity * it.unitCost).toLocaleString("es-CO")}</strong>
-                      </span>
+                      </div>
+
+                      {/* Segunda fila: foto + valores calculados por item */}
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {it.photoUrl ? (
+                          <div className="relative h-12 w-12 rounded-md overflow-hidden border border-gray-200 dark:border-white/[0.08]">
+                            <img src={it.photoUrl} alt="" className="h-full w-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => updateItem(idx, { photoUrl: null })}
+                              className="absolute top-0 right-0 bg-black/60 text-white p-0.5"
+                              title="Quitar foto"
+                            >
+                              <XCircle size={12} />
+                            </button>
+                          </div>
+                        ) : (
+                          <label className="inline-flex items-center gap-1.5 cursor-pointer rounded-md border border-dashed border-gray-300 dark:border-white/[0.08] px-2.5 py-1 text-xs text-gray-500 dark:text-gray-400 hover:border-violet-400 dark:hover:border-violet-500/50 transition">
+                            <ImagePlus size={12} /> {it.uploading ? "Subiendo…" : "Foto"}
+                            <input
+                              ref={uploadingIdx === idx ? fileInputRef : undefined}
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,application/pdf"
+                              disabled={isReadOnly || it.uploading}
+                              className="hidden"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) handleItemPhoto(idx, f);
+                              }}
+                            />
+                          </label>
+                        )}
+                        <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
+                          <span>
+                            IVA: <strong className="text-gray-700 dark:text-gray-200">${t.ivaAmount.toFixed(2)}</strong>
+                          </span>
+                          <span>
+                            Total item: <strong className="text-gray-800 dark:text-white">${t.total.toFixed(2)}</strong>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Footer con totales agregados (jul 2026 v4-b) */}
+              {items.length > 0 && (() => {
+                const agg = aggregateTotals(items);
+                const buckets = Object.entries(agg.byIvaPercent)
+                  .sort(([a], [b]) => Number(a) - Number(b));
+                return (
+                  <div className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-3 mt-2">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">
+                          Subtotal por % de IVA
+                        </p>
+                        <div className="space-y-0.5">
+                          {buckets.length === 0 && (
+                            <p className="text-gray-400 dark:text-gray-500">—</p>
+                          )}
+                          {buckets.map(([pct, b]) => (
+                            <div key={pct} className="flex items-center justify-between text-gray-600 dark:text-gray-300">
+                              <span>Subtotal {pct}%</span>
+                              <span className="font-mono">${b.subtotal.toFixed(2)} · IVA ${b.iva.toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-gray-600 dark:text-gray-300">
+                          <span>Subtotal sin IVA</span>
+                          <span className="font-mono">${agg.grandSubtotal.toFixed(2)}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-gray-600 dark:text-gray-300">
+                          <span>Total descuento</span>
+                          <span className="font-mono">- ${agg.totalDiscount.toFixed(2)}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-gray-600 dark:text-gray-300">
+                          <span>Total IVA</span>
+                          <span className="font-mono">${agg.grandIva.toFixed(2)}</span>
+                        </div>
+                        <div className="flex items-center justify-between border-t border-gray-200 dark:border-white/[0.06] pt-1 mt-1 text-gray-900 dark:text-white font-bold">
+                          <span>Valor total repuestos</span>
+                          <span className="font-mono">${agg.grandTotal.toFixed(2)}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                ))}
-              </div>
+                );
+              })()}
             </div>
           )}
 

@@ -93,6 +93,20 @@ function getUserId(req: any): number {
   return parseIdFlexible('company-user', String(req.user.sub));
 }
 
+// jul 2026 v4-b — Roles de admin a nivel empresa/plataforma. Estos
+// bypassean el filtro "ver solo lo mío" en /finance/requests y
+// /finance/vouchers, igual que el rol "BYPASS_ROLES" del middleware
+// requirePermission.
+const ADMIN_ROLES_BYPASS = new Set([
+  'superadmin',
+  'owner_empresa',
+  'admin_empresa',
+]);
+function isAdminRole(req: any): boolean {
+  const role = (req.user as any)?.role as string | undefined;
+  return !!role && ADMIN_ROLES_BYPASS.has(role);
+}
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // ─── GET /finance/petty-cash  ────────────────────────────────────────────────
@@ -295,6 +309,7 @@ router.get('/requests', async (req, res, next) => {
     const userPerms     = ((req.user as any)?.modulePermissions as Record<string, Record<string, string[]>>) ?? {};
     const cajaChicaPerms = new Set(userPerms.finanzas?.caja_chica ?? []);
     const canSeeAllRequests =
+      isAdminRole(req) ||  // admin/owner/superadmin bypassean siempre
       cajaChicaPerms.has('aprobar') ||
       cajaChicaPerms.has('reponer') ||
       cajaChicaPerms.has('ver_todos');
@@ -426,6 +441,23 @@ router.post('/requests',
       const maintenanceId     = body.maintenanceId     ? (typeof body.maintenanceId     === 'string' ? parseInt(body.maintenanceId, 10)     : body.maintenanceId)     : null;
       const maintenanceItemId = body.maintenanceItemId ? (typeof body.maintenanceItemId === 'string' ? parseInt(body.maintenanceItemId, 10) : body.maintenanceItemId) : null;
 
+      // jul 2026 v4-b — Para que la solicitud tenga una cuenta asociada
+      // (y más adelante el vale emitido por la aprobación), validamos
+      // que la sede tenga una cuenta de caja chica ACTIVA. Si no, la
+      // solicitud queda sin accountId y la aprobación falla después
+      // con "no hay caja chica activa". Lo cortamos acá con un mensaje
+      // claro.
+      if (siteId == null) {
+        throw new AppError(400, 'No se puede crear la solicitud sin sede (siteId es obligatorio).');
+      }
+      const account = await getActiveAccountForSite(companyId, siteId);
+      if (!account) {
+        throw new AppError(
+          400,
+          `La sede #${siteId} no tiene una cuenta de caja chica activa. Pedile al admin que cree una desde Caja Chica > Configuración.`
+        );
+      }
+
       const [created] = await db
         .insert(companyFinanceRequests)
         .values({
@@ -466,6 +498,11 @@ router.post('/requests',
       });
 
       return res.status(201).json({
+        // jul 2026 v4-b — id/numericId al top level (además del bloque
+        // `request`) para que el frontend pueda mostrar el toast "Solicitud
+        // #N creada" sin tener que acceder a .request.numericId.
+        id: toId('finance-request', created.id),
+        numericId: created.id,
         request: {
           id: toId('finance-request', created.id),
           numericId: created.id,
@@ -625,13 +662,15 @@ router.get('/vouchers', async (req, res, next) => {
     const siteId = siteIdRaw ? parseIdFlexible('any', String(siteIdRaw)) : null;
 
     // jul 2026 v4 — Filtro por permisos:
-    // - Si el usuario tiene finanzas.caja_chica.aprobar o .reponer o
-    //   .ver_todos (admin de finanzas / owner / superadmin), ve TODOS.
+    // - Si el usuario es admin/owner/superadmin (BYPASS_ROLES), ve TODO.
+    // - Si tiene finanzas.caja_chica.aprobar o .reponer o .ver_todos
+    //   (admin de finanzas), ve TODO.
     // - Si NO, ve solo los suyos (assignedToUserId = me).
     // - El query param `mine=true` fuerza el filtro de propios.
     const userPerms = ((req.user as any)?.modulePermissions as Record<string, Record<string, string[]>>) ?? {};
     const cajaChicaPerms = new Set(userPerms.finanzas?.caja_chica ?? []);
     const canSeeAll =
+      isAdminRole(req) ||
       cajaChicaPerms.has('aprobar')   ||
       cajaChicaPerms.has('reponer')   ||
       cajaChicaPerms.has('ver_todos');
@@ -761,9 +800,16 @@ router.get('/vouchers/:id/pdf', async (req, res, next) => {
 
 // ─── PATCH /finance/vouchers/:id/close  ──────────────────────────────────────
 
+// jul 2026 v4-b — invoiceId es OBLIGATORIO. Reglas de negocio:
+//   1. El comprobante SIEMPRE debe quedar registrado en company_invoices.
+//   2. El frontend sube el archivo a /upload/finance-receipts, crea la
+//      invoice con /finance/vouchers/:id/invoice y pasa el invoiceId acá.
+//   3. Sin invoiceId, el vale NO se cierra (devuelve 400).
+// Esto garantiza trazabilidad contable: cada vale cerrado está vinculado
+// a un comprobante físico en el ledger.
 const closeSchema = z.object({
   actualAmount: z.number().nonnegative(),
-  invoiceId:    z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).optional(),
+  invoiceId:    z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]),
   notes:        z.string().max(500).optional(),
 }).strict();
 
@@ -773,9 +819,9 @@ router.patch('/vouchers/:id/close', validate(closeSchema), async (req, res, next
     const userId    = getUserId(req);
     const body = req.body as z.infer<typeof closeSchema>;
 
-    const invoiceId = body.invoiceId
-      ? (typeof body.invoiceId === 'string' ? parseInt(body.invoiceId, 10) : body.invoiceId)
-      : null;
+    const invoiceId = typeof body.invoiceId === 'string'
+      ? parseInt(body.invoiceId, 10)
+      : body.invoiceId;
 
     const result = await closePettyCashVoucher({
       voucherId: numericId,

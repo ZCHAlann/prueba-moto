@@ -189,9 +189,18 @@ export async function notify(args: NotifyArgs): Promise<InferSelectModel<typeof 
   // postgres-js a veces lo infiere como undefined y el binary protocol
   // rechaza la query. Con client.unsafe + placeholders, el driver manda
   // los valores por separado al binary protocol, sin inferencia.
+  //
+  // jul 2026 v4-b — la columna `kind` es del enum `notification_kind_enum`.
+  // Si mandamos el bind como $3::text Postgres tira 42804 ("column kind is
+  // of type notification_kind_enum but expression is of type text").
+  // Si mandamos directo $3::notification_kind_enum y la conexión pooled
+  // tiene la versión vieja del enum cacheada, tira 22P02 (invalid input
+  // value for enum). El casteo cascada $3::text::notification_kind_enum
+  // resuelve AMBOS: el primer cast ::text satisface el tipo, el segundo
+  // ::notification_kind_enum valida contra el enum (latest value).
   const insertSql = `
     INSERT INTO company_notifications (company_id, user_id, kind, title, body, payload)
-    VALUES ($1::integer, $2::integer, $3::text, $4::text, $5::text, $6::jsonb)
+    VALUES ($1::integer, $2::integer, $3::text::notification_kind_enum, $4::text, $5::text, $6::jsonb)
     RETURNING id, company_id, user_id, kind, title, body, payload, read_at, created_at
   `;
   const insertResult = await client.unsafe(insertSql, [

@@ -189,11 +189,11 @@ function CajaChicaTab() {
       <div className={`${cardCls} flex flex-wrap items-end gap-3 p-4`}>
         <div className="min-w-[160px]">
           <label className={labelCls}>Desde</label>
-          <DatePicker value={fromDate} onChange={setFromDate} placeholder="Sin límite" />
+          <DatePicker compact value={fromDate} onChange={setFromDate} placeholder="Sin límite" />
         </div>
         <div className="min-w-[160px]">
           <label className={labelCls}>Hasta</label>
-          <DatePicker value={toDate} onChange={setToDate} placeholder="Hoy" />
+          <DatePicker compact value={toDate} onChange={setToDate} placeholder="Hoy" />
         </div>
         <div className="ml-auto flex gap-2">
           <button

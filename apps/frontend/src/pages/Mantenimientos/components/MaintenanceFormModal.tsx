@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import {
   useCreateMaintenance,
   useUpdateMaintenance,
+  useMaintenanceCategories,
   uploadMaintenanceAttachment,
   uploadPartPhoto,
   type Maintenance,
@@ -18,6 +19,7 @@ import {
   type MaintenanceType,
   type CadenceKind,
 } from "../../../hooks/useMaintenancesV2";
+import { CategoryQuickManager } from "./CategoryQuickManager";
 import { useWorkshops } from "../../../hooks/useWorkshops";
 import { useSuppliers } from "../../../hooks/useSuppliers";
 import { useMaintenanceFormOptions } from "../../../hooks/useFormOptions";
@@ -126,6 +128,11 @@ export function MaintenanceFormModal({
   const companyUsers = formOptions?.users ?? [];
   const { workshops = [] } = useWorkshops();
   const { suppliers = [] } = useSuppliers();
+  // jul 2026 v5 — Categorías custom que la empresa creó. Se muestran en
+  // el dropdown debajo de las built-in. También nos sirven para resolver
+  // el `categoryCustomId` cuando estamos editando un mantenimiento cuya
+  // categoría es custom.
+  const { data: customCats = [] } = useMaintenanceCategories();
 
   // ─── Form state ──────────────────────────────────────────────────────────
   const isEditing = !!maintenance;
@@ -133,7 +140,14 @@ export function MaintenanceFormModal({
   const [status, setStatus]                   = useState<string>("Programado");
   const [assetId, setAssetId]                 = useState<string>("");
   const [workshopId, setWorkshopId]           = useState<string>("");
+  // jul 2026 v5 — `category` es la key que se guarda en BD
+  // (built-in: "Primordial:Bombas"; custom: la `key` que eligió la
+  // empresa al crear la categoría, o "Otro" por default). `categoryCustomId`
+  // se manda solo si la categoría elegida es custom — el backend lo usa
+  // para hidratar la FK `category_id`. Si la categoría es built-in,
+  // `categoryCustomId` queda en null.
   const [category, setCategory]               = useState<string>("Otro");
+  const [categoryCustomId, setCategoryCustomId] = useState<string | null>(null);
   const [title, setTitle]                     = useState<string>("");
   const [description, setDescription]         = useState<string>("");
   const [odometerKm, setOdometerKm]           = useState<number | null>(null);
@@ -152,6 +166,10 @@ export function MaintenanceFormModal({
   const [attachments, setAttachments]         = useState<MaintenanceAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const attachmentFileRef                     = useRef<HTMLInputElement>(null);
+  // jul 2026 v5 — Modal chico para gestionar categorías custom (botón
+  // "+" al lado del dropdown de Categoría). Cuando se crea una nueva
+  // desde adentro, el `onCreated` la auto-selecciona acá.
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
   // Archivo elegido pero todavía sin clasificar (factura / evidencia).
   // Se sube recién cuando la persona elige el tipo en el mini-panel de
   // abajo — así el label queda correcto sin tener que adivinarlo por
@@ -175,7 +193,11 @@ export function MaintenanceFormModal({
       setStatus(maintenance.status);
       setAssetId(maintenance.assetId ?? "");
       setWorkshopId(maintenance.workshopId ?? "");
+      // jul 2026 v5 — el backend ahora devuelve `categoryId` (FK) en el
+      // response. Si viene, esa fila es custom. Si no, la categoría es
+      // built-in o un string libre.
       setCategory(maintenance.category);
+      setCategoryCustomId(maintenance.categoryId ?? null);
       setTitle(maintenance.title ?? "");
       setDescription(maintenance.description ?? "");
       setOdometerKm(maintenance.odometerKm);
@@ -199,6 +221,7 @@ export function MaintenanceFormModal({
       setAssetId(prefill?.assetId ?? "");
       setWorkshopId("");
       setCategory("Otro");
+      setCategoryCustomId(null);
       setTitle("");
       setDescription("");
       setOdometerKm(null);
@@ -225,8 +248,16 @@ export function MaintenanceFormModal({
     if (type === "Correctivo" || type === "Lavada") setStatus("En proceso");
     else setStatus("Programado");
     if (type === "Lavada" && items.length) setItems([]);
-    if (type === "Lavada") setCategory("Lavada");
-    else if (category === "Lavada") setCategory("Otro");
+    // jul 2026 v5 — al cambiar a Lavada, fijamos la categoría "Lavada"
+    // (built-in, no custom) y limpiamos el id. Al volver a Programado/
+    // Correctivo, si la categoría era Lavada, la reseteamos a "Otro".
+    if (type === "Lavada") {
+      setCategory("Lavada");
+      setCategoryCustomId(null);
+    } else if (category === "Lavada") {
+      setCategory("Otro");
+      setCategoryCustomId(null);
+    }
     // Auto-asignación del operador: si NO es full access y crea Correctivo/Lavada,
     // se auto-asigna (lo está haciendo él mismo).
     if (!isEditing && !isFullAccess && (type === "Correctivo" || type === "Lavada") && session?.id) {
@@ -346,6 +377,11 @@ export function MaintenanceFormModal({
 
     const payload: MaintenanceInput = {
       assetId, type, status, category, title,
+      // jul 2026 v5 — manda `categoryCustomId` solo si la categoría elegida
+      // es custom. El backend lo usa para hidratar la FK `category_id` y
+      // resolver el `key`. Si la categoría es built-in, no mandamos el id
+      // y el backend deja `category_id` en null.
+      ...(categoryCustomId ? { categoryCustomId } : {}),
       workshopId: isLavada ? null : (workshopId || null),
       description: description || null,
       odometerKm: odometerKm ?? null,
@@ -566,18 +602,53 @@ export function MaintenanceFormModal({
                     <span className="inline-flex items-center gap-1.5">
                       <Hash size={11} /> Categoría
                     </span>
+                    {/* jul 2026 v5 — Botón "+" al lado del label para abrir
+                        el modal de gestión rápida de categorías. Mismo
+                        permiso que "crear" (records.crear) — sin permiso,
+                        el botón no aparece. */}
+                    {canCreate && !isReadOnly && (
+                      <button
+                        type="button"
+                        onClick={() => setCategoryManagerOpen(true)}
+                        className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300 hover:text-violet-700 dark:hover:text-violet-200 transition"
+                        title="Crear o editar categorías"
+                      >
+                        <Plus size={10} /> Gestionar
+                      </button>
+                    )}
                   </label>
                   <select
                     className={inputCls}
+                    // jul 2026 v5 — el value del select es la `key` (built-in
+                    // o custom), no la `categoryCustomId`. El id lo trackeamos
+                    // aparte en `categoryCustomId` para mandar al backend.
                     value={category}
                     disabled={isReadOnly}
-                    onChange={(e) => setCategory(e.target.value)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCategory(v);
+                      // Si el value coincide con la `key` de una categoría
+                      // custom, seteamos su id. Si no, es built-in → null.
+                      const match = customCats.find((c) => c.key === v);
+                      setCategoryCustomId(match ? match.id : null);
+                    }}
                   >
-                    <option value="Primordial:Bombas">Primordial · Bombas e inyectores</option>
-                    <option value="Primordial:Motores">Primordial · Motores</option>
-                    <option value="Aceite:Cambio">Aceite · Cambio</option>
-                    <option value="Aceite:Inventario">Aceite · Inventario</option>
-                    <option value="Otro">Otro</option>
+                    {/* Built-in (no editables — vienen del sistema) */}
+                    <optgroup label="Del sistema">
+                      <option value="Primordial:Bombas">Primordial · Bombas e inyectores</option>
+                      <option value="Primordial:Motores">Primordial · Motores</option>
+                      <option value="Aceite:Cambio">Aceite · Cambio</option>
+                      <option value="Aceite:Inventario">Aceite · Inventario</option>
+                      <option value="Otro">Otro</option>
+                    </optgroup>
+                    {/* Custom: las que la empresa creó en el modal de gestión */}
+                    {customCats.length > 0 && (
+                      <optgroup label="De la empresa">
+                        {customCats.map((c) => (
+                          <option key={c.id} value={c.key}>{c.label}</option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
               </div>
@@ -1216,6 +1287,18 @@ export function MaintenanceFormModal({
           )}
         </div>
       </div>
+
+      {/* jul 2026 v5 — Modal de gestión rápida de categorías. Se abre
+          con el botón "+" del dropdown de Categoría. Al crear una
+          categoría nueva, la auto-seleccionamos en el select. */}
+      <CategoryQuickManager
+        open={categoryManagerOpen}
+        onClose={() => setCategoryManagerOpen(false)}
+        onCreated={(cat) => {
+          setCategory(cat.key);
+          setCategoryCustomId(cat.id);
+        }}
+      />
     </div>
   );
 }

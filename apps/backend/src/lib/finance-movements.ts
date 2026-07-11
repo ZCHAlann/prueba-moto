@@ -149,6 +149,25 @@ export async function applyFinanceRequestApproval(params: {
   const voucherId = row.voucher_id ?? null;
   const annualExpenseId = row.annual_expense_id ?? null;
 
+  // jul 2026 v5 — Copiar el `purpose` de la request al vale recién
+  // emitido por la PL. La PL no acepta purpose como parámetro
+  // (no queremos tocarla para no romper aprobaciónes concurrentes).
+  // Hacemos un UPDATE post-aprobación. Si por alguna razón la request
+  // no tiene purpose, no fallamos — purpose queda NULL.
+  if (voucherId) {
+    const [reqRow] = await db
+      .select({ purpose: companyFinanceRequests.purpose })
+      .from(companyFinanceRequests)
+      .where(eq(companyFinanceRequests.id, requestId))
+      .limit(1);
+    if (reqRow?.purpose) {
+      await db
+        .update(companyPettyCashVouchers)
+        .set({ purpose: reqRow.purpose, updatedAt: sql`now()` })
+        .where(eq(companyPettyCashVouchers.id, voucherId));
+    }
+  }
+
   // ── Emitir eventos WS + notification post-aprobación ─────────────────────
   await db.execute(sql`SELECT 1`); // ensure connection (no-op)
 
@@ -210,12 +229,29 @@ export async function closePettyCashVoucher(params: {
 }): Promise<{ refundAmount: number }> {
   const { voucherId, actualAmount, invoiceId, notes, actorUserId } = params;
 
+  // jul 2026 v4-b — Validaciones tempranas ANTES de la PL.
+  // (La PL tambien valida, pero aca cortamos antes para no ejecutar
+  // queries innecesarias y para devolver 400 con mensaje claro.)
+  if (!Number.isFinite(actualAmount)) {
+    throw new AppError(400, 'Monto gastado inválido.');
+  }
+  if (actualAmount <= 0) {
+    throw new AppError(400, 'El monto gastado debe ser mayor a 0.');
+  }
+
   const [voucher] = await db
     .select()
     .from(companyPettyCashVouchers)
     .where(eq(companyPettyCashVouchers.id, voucherId))
     .limit(1);
   if (!voucher) throw new AppError(404, `Vale ${voucherId} no existe`);
+
+  if (actualAmount > Number(voucher.issuedAmount)) {
+    throw new AppError(
+      400,
+      `El monto gastado ($${actualAmount.toFixed(2)}) no puede ser mayor al monto emitido ($${Number(voucher.issuedAmount).toFixed(2)}).`,
+    );
+  }
 
   let refundAmount = 0;
   try {
@@ -286,8 +322,8 @@ export async function closePettyCashVoucher(params: {
         kind: 'finance_voucher_closed',
         title: `Vale #${voucherId} cerrado por operador`,
         body: refundAmount > 0
-          ? `Emitido $${voucher.issuedAmount.toFixed(2)} · gastado $${actualAmount} · reembolso $${refundAmount.toFixed(2)}.`
-          : `Emitido $${voucher.issuedAmount.toFixed(2)} · gastado $${actualAmount} · sin reembolso.`,
+          ? `Emitido $${Number(voucher.issuedAmount).toFixed(2)} · gastado $${actualAmount} · reembolso $${refundAmount.toFixed(2)}.`
+          : `Emitido $${Number(voucher.issuedAmount).toFixed(2)} · gastado $${actualAmount} · sin reembolso.`,
         payload: { voucherId, actualAmount, refundAmount, invoiceId, actorUserId },
       });
     }

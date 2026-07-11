@@ -98,6 +98,75 @@ export interface MaintenanceItem {
   photoUrl:     string | null;
   // jul 2026 — Opcion A: FK logica al attachment (factura) al que pertenece.
   attachmentKey?: string | null;
+  // jul 2026 v4 — clasificación contable del item (migration 0047).
+  financeClassification?: string | null;
+  createdAt:    string;
+}
+
+// jul 2026 — Tipo que faltaba (era un type error latente del archivo).
+// El backend `serializeMaintenance` devuelve todos estos campos; los
+// usamos desde los hooks (useMaintenancesList, useMaintenance, etc.) y
+// desde los componentes (MaintenanceFormModal, MaintenanceListTab, etc.).
+// jul 2026 v5 — Se agrega `categoryId` para distinguir categorías built-in
+// de custom (FK a company_maintenance_categories). `category` es la key
+// (string) que se guarda en BD; `categoryId` es null para built-in.
+export interface Maintenance {
+  id:               string;
+  companyId:        string;
+  assetId:          string;
+  assetName?:       string | null;
+  assetPlate?:      string | null;
+  workshopId:       string | null;
+  workshopName?:    string | null;
+  type:             MaintenanceType;
+  status:           MaintenanceStatus;
+  isOverdue:        boolean;
+  category:         string;
+  /** FK a `company_maintenance_categories.id`. NULL para built-in. */
+  categoryId:       string | null;
+  title:            string | null;
+  description:      string | null;
+  odometerKm:       number | null;
+  laborCost:        number;
+  ivaPercent:       number;
+  cadenceKind:      CadenceKind;
+  cadenceValue:     number | null;
+  nextTriggerKm:    number | null;
+  scheduledFor:     string;
+  executedAt:       string | null;
+  completedAt:      string | null;
+  notes:            string | null;
+  totalCost:        number;
+  carwashLocation:  string | null;
+  carwashProvider:  string | null;
+  carwashNotes:     string | null;
+  carwashTotal:     number;
+  attachments:      MaintenanceAttachment[];
+  parentId:         string | null;
+  createdBy:        string | null;
+  completedBy:      string | null;
+  assignedUserId:   string | null;
+  assignedUserName: string | null;
+  takenAt:          string | null;
+  isReprogrammed:   boolean;
+  reprogramReason:  string | null;
+  reprogrammedAt:   string | null;
+  reprogramCount:   number;
+  correctionReason: string | null;
+  correctionRequestedAt: string | null;
+  lastReauthorizationId:  string | null;
+  lastReauthorizationAt:  string | null;
+  createdAt:        string;
+  updatedAt:        string;
+  items:            MaintenanceItem[];
+  events:           Array<{
+    id:         string;
+    kind:       MaintenanceEventKind | string;
+    actorUserId: number | null;
+    actorName:  string | null;
+    payload:    Record<string, unknown>;
+    createdAt:  string;
+  }>;
 }
 
 export interface MaintenanceInput {
@@ -835,6 +904,24 @@ export function useCreateMaintenanceCategory() {
       return jsonFetch<MaintenanceCategory>(
         `/api/company/${companyId}/maintenances/categories`,
         { method: 'POST', body: JSON.stringify(body) },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenance-categories'] });
+    },
+  });
+}
+
+// jul 2026 v5 — Editar una categoría custom (PUT). El backend no tenía
+// esta ruta hasta ahora; si no existe, la agregamos en el route.
+export function useUpdateMaintenanceCategory() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { id: string; body: { label?: string; shortLabel?: string | null; color?: string; icon?: string } }) => {
+      return jsonFetch<MaintenanceCategory>(
+        `/api/company/${companyId}/maintenances/categories/${args.id}`,
+        { method: 'PUT', body: JSON.stringify(args.body) },
       );
     },
     onSuccess: () => {

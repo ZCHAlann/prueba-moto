@@ -1026,13 +1026,11 @@ export function ReportsPage() {
   const { data: maintCategoriesRaw } = useMaintenanceCategories();
   const customMaintCategories = maintCategoriesRaw ?? [];
   // Lista COMPLETA de categorías (built-in + custom) para el dropdown de
-  // filtro por carpetita del reporte de Mantenimiento (rep-009). Antes acá
-  // solo se pasaban las categorías custom (useMaintenanceCategories solo
-  // trae las que la empresa creó manualmente), por eso el dropdown de
-  // Categoría no aparecía nunca en la práctica: categories.length > 0
-  // daba false. Las keys built-in deben calzar exacto con las que arma
-  // el backend en maintenance.category (ver `allCategories` en
-  // MaintenanceListTab.tsx, que es la fuente de verdad de este mapeo).
+  // filtro por carpetita del reporte de Mantenimiento (rep-009).
+  // jul 2026 v5 — la key de las custom pasó de `custom:N` a la `key`
+  // real que la empresa eligió (p.ej. "refrigeracion"). Esto matchea con
+  // el valor guardado en `company_maintenance_records.category` y por lo
+  // tanto el filtro del backend `WHERE category = ?` funciona.
   const maintCategories = useMemo(() => {
     const builtIn: { key: string; label: string }[] = [
       { key: "Primordial:Bombas",  label: "Primordial · Bombas"  },
@@ -1042,7 +1040,7 @@ export function ReportsPage() {
       { key: "Lavada",             label: "Lavada"               },
       { key: "Otro",               label: "Otro"                 },
     ];
-    const custom = customMaintCategories.map((c) => ({ key: `custom:${c.id}`, label: c.label }));
+    const custom = customMaintCategories.map((c) => ({ key: c.key, label: c.label }));
     return [...builtIn, ...custom];
   }, [customMaintCategories]);
 
@@ -1058,8 +1056,22 @@ export function ReportsPage() {
   const [activeId, setActiveId] = useState("rep-001");
   const [search, setSearch]     = useState("");
   const [page, setPage]         = useState(1);
-  const [draft, setDraft]       = useState<DateRange>({ from: "", to: "" });
-  const [applied, setApplied]   = useState<DateRange>({ from: "", to: "" });
+  // jul 2026 v5 — Default de rango: últimos 30 días. Antes arrancaba
+  // vacío ("Inicio abierto — Fin abierto") y la pantalla se veía vacía
+  // hasta que el usuario tocaba el filtro. Ahora se ven datos al entrar
+  // y el filtro es explícito (botón "Aplicar" después de cambiar las
+  // fechas).
+  const defaultRange = useMemo<DateRange>(() => {
+    const to   = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 30);
+    return {
+      from: from.toISOString().slice(0, 10),
+      to:   to.toISOString().slice(0, 10),
+    };
+  }, []);
+  const [draft, setDraft]       = useState<DateRange>(defaultRange);
+  const [applied, setApplied]   = useState<DateRange>(defaultRange);
   const [maintSubtab, setMaintSubtab] = useState<"todos" | "programados" | "en_proceso" | "completados" | "atrasados">("todos");
   // V2 solo tiene 3 tipos: Correctivo | Programado | Lavada (el legacy
   // tenía Preventivo/Predictivo/Emergencia, que ya no existen en el schema).
@@ -1416,6 +1428,12 @@ export function ReportsPage() {
           // "Aceite:Cambio", custom, "Otro", etc.). No es columna visible;
           // solo se usa para el dropdown de filtro por carpetita.
           categoryKey:   m.category ?? "Otro",
+          // jul 2026 v5 — Label legible de la categoría. Resuelve tanto
+          // built-in como custom (vía `maintCategories` ya armado arriba).
+          // Si la categoría se borró mientras el mantenimiento existía, cae
+          // a "Otro" para no mostrar la key cruda al usuario.
+          categoryName:  (maintCategories.find((c) => c.key === m.category)?.label)
+                          ?? (m.category ?? "Otro"),
           __status:      m.status,
           __date:        m.scheduledFor,
           __workshopId:  m.workshopId ?? null,
@@ -1669,6 +1687,7 @@ export function ReportsPage() {
                       </span>
                       <DatePicker
                         label=""
+                        compact
                         value={draft.from}
                         onChange={(v) => setDraft((p) => ({ ...p, from: v }))}
                         maxDate={draft.to || undefined}
@@ -1676,6 +1695,7 @@ export function ReportsPage() {
                       <span className="text-xs text-gray-400">—</span>
                       <DatePicker
                         label=""
+                        compact
                         value={draft.to}
                         onChange={(v) => setDraft((p) => ({ ...p, to: v }))}
                         minDate={draft.from || undefined}

@@ -271,8 +271,14 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
   }, [kpiProgramado, kpiEnProceso, kpiCompletado, kpiCorreccion, kpiAtrasado]);
 
   const { data: customCats = [] } = useMaintenanceCategories();
+  // jul 2026 v5 — El mapa de categorías está indexado por la `key` que
+  // se guarda en `m.category` (built-in: "Primordial:Bombas"; custom:
+  // la key que eligió la empresa, p.ej. "refrigeracion"). Antes usábamos
+  // `custom:N` como id del chip, pero eso NO matcheaba con el valor
+  // guardado en BD — el filtro no funcionaba para custom. Ahora todo va
+  // por `key` y funciona para built-in y custom.
   const allCategories = useMemo(() => {
-    const map: Record<string, { label: string; dot: string; cls: string }> = {
+    const map: Record<string, { label: string; dot: string; cls: string; color?: string }> = {
       "Primordial:Bombas":   { label: "Primordial · Bombas",  dot: "bg-amber-500",   cls: "text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10" },
       "Primordial:Motores":  { label: "Primordial · Motores", dot: "bg-cyan-500",    cls: "text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-500/10" },
       "Aceite:Cambio":       { label: "Aceite · Cambio",      dot: "bg-yellow-500",  cls: "text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-500/10" },
@@ -281,11 +287,13 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
       "Otro":                { label: "Otro",                  dot: "bg-gray-400",    cls: "text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-white/[0.04]" },
     };
     for (const c of customCats) {
-      const id = `custom:${c.id}`;
-      map[id] = {
+      // La key en el map es la MISMA key que se guarda en m.category.
+      // El color de la categoría custom se respeta para el dot del chip.
+      map[c.key] = {
         label: c.label,
-        dot:   "",
+        dot:   "",  // dot se renderiza inline con backgroundColor (ver dotFor)
         cls:   "text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-white/[0.06]",
+        color: c.color || "gray",
       };
     }
     return map;
@@ -296,10 +304,10 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
       if (key === "all") return <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />;
       const cfg = allCategories[key];
       if (!cfg) return <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />;
-      if (key.startsWith("custom:")) {
-        const id = key.replace("custom:", "");
-        const c = customCats.find((x) => x.id === id);
-        if (c) return <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: c.color }} />;
+      // Si la key es de una custom (está en `customCats`), usamos su color.
+      const custom = customCats.find((x) => x.key === key);
+      if (custom) {
+        return <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: custom.color }} />;
       }
       return <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />;
     };
@@ -313,8 +321,9 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
       { id: "Otro",                  label: "Otro",                  dot: dotFor("Otro") },
     ];
     for (const c of customCats) {
-      const key = `custom:${c.id}`;
-      base.push({ id: key, label: c.label, dot: dotFor(key) });
+      // El id del chip es la `key` (lo que matchea con m.category en BD).
+      // Antes era `custom:N` y el filtro no matcheaba.
+      base.push({ id: c.key, label: c.label, dot: dotFor(c.key) });
     }
     return base;
   }, [allCategories, customCats]);
@@ -552,8 +561,8 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
           </p>
         </div>
         <div className="flex flex-col sm:flex-row sm:items-end gap-2">
-          <DatePicker label="Desde" value={from} onChange={(v) => { setFrom(v); setPage(1); }} maxDate={to || undefined} />
-          <DatePicker label="Hasta" value={to}   onChange={(v) => { setTo(v); setPage(1); }}   minDate={from || undefined} />
+          <DatePicker compact label="Desde" value={from} onChange={(v) => { setFrom(v); setPage(1); }} maxDate={to || undefined} />
+          <DatePicker compact label="Hasta" value={to}   onChange={(v) => { setTo(v); setPage(1); }}   minDate={from || undefined} />
           <div className="relative flex-1 sm:flex-none">
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
             <input
@@ -698,10 +707,28 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium ${cat.cls}`}>
-                            <span className={`h-1.5 w-1.5 rounded-full ${cat.dot}`} />
-                            {cat.label}
-                          </span>
+                          {(() => {
+                            // jul 2026 v5 — Si la key de m.category no está
+                            // en el mapa (ej. una custom que se borró, o un
+                            // valor libre legado), caemos al default gris.
+                            // Si la key matchea con una custom, mostramos el
+                            // color guardado en la categoría.
+                            const customForThisRow = customCats.find((c) => c.key === m.category);
+                            const dotStyle = customForThisRow
+                              ? { backgroundColor: customForThisRow.color }
+                              : undefined;
+                            return (
+                              <span
+                                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium ${cat.cls}`}
+                              >
+                                <span
+                                  className={`h-1.5 w-1.5 rounded-full ${customForThisRow ? "" : cat.dot}`}
+                                  style={dotStyle}
+                                />
+                                {cat.label}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-200 font-medium">{fmtMoney(m.totalCost)}</td>
                         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>

@@ -100,6 +100,37 @@ function maintTitle(action: string, title?: string | null): string {
   return `${action}: ${t}`;
 }
 
+// jul 2026 v5 — Resuelve la categoría custom (si vino `categoryCustomId`)
+// y devuelve { categoryKey, categoryId } para guardar en la fila. Si NO
+// viene customId, devuelve lo que ya tenía `body.category` (built-in
+// o string libre) y `categoryId = null`.
+//
+// Reglas:
+//   - categoryCustomId presente y válido → key = cat.key, id = cat.id
+//   - categoryCustomId presente pero inválido/no pertenece a la empresa
+//     → error 400 (no silenciamos — el cliente envió algo que no
+//     debería existir).
+//   - categoryCustomId ausente → key = body.category ?? 'Otro', id = null
+//     (back-compat para todos los clientes que ya mandan `category`).
+async function resolveCategory(
+  companyId: number,
+  body: { category?: string; categoryCustomId?: string | null },
+): Promise<{ category: string; categoryId: number | null }> {
+  if (body.categoryCustomId) {
+    const id = parseId('maint-cat', body.categoryCustomId);
+    const [cat] = await db
+      .select()
+      .from(companyMaintenanceCategories)
+      .where(and(eq(companyMaintenanceCategories.id, id), eq(companyMaintenanceCategories.companyId, companyId)))
+      .limit(1);
+    if (!cat) {
+      throw new AppError(400, `La categoría custom "${body.categoryCustomId}" no existe o no pertenece a esta empresa.`);
+    }
+    return { category: cat.key, categoryId: cat.id };
+  }
+  return { category: body.category ?? 'Otro', categoryId: null };
+}
+
 // ─── Enums ────────────────────────────────────────────────────────────────────
 // "En curso" fue renombrado a "En proceso" (UX) — backend lo acepta como alias.
 const MAINT_STATUSES = ['Programado', 'En proceso', 'En curso', 'Completado'] as const;
@@ -179,8 +210,14 @@ const createMaintenanceSchema = z.object({
   workshopId:     z.string().optional().nullable(),
   type:           z.enum(MAINT_TYPES).default('Programado'),
   status:         z.enum(MAINT_STATUSES).default('Programado'),
-  category:       z.string().min(1).default('Otro'),  // acepta customs
-  categoryCustomId: z.string().optional().nullable(),
+  // jul 2026 v5 — Categoría administrable. Acepta cualquier string de
+  // hasta 60 chars (built-in 'Primordial:Bombas' o custom 'refrigeracion').
+  // Si llega `categoryCustomId`, el server sobreescribe `category` con el
+  // `key` de la categoría custom y guarda `categoryId` para FK.
+  category:       z.string().min(1).max(60).default('Otro'),
+  // ID serializado de la categoría custom (formato 'maint-cat-N'). Si viene,
+  // se valida que pertenezca a la empresa y se prefiere sobre `category`.
+  categoryCustomId: z.string().min(1).optional().nullable(),
   title:          safeString({ min: 3, max: 200, fieldLabel: 'Título', allowEmpty: false }),
   description:    validators.longTextOptional,
   odometerKm:     z.number().int().nonnegative().max(10_000_000).optional().nullable(),
@@ -212,8 +249,8 @@ const updateMaintenanceSchema = z.object({
   workshopId:     z.string().optional().nullable(),
   type:           z.enum(MAINT_TYPES).optional(),
   status:         z.enum(MAINT_STATUSES).optional(),
-  category:       z.string().min(1).optional(),
-  categoryCustomId: z.string().optional().nullable(),
+  category:       z.string().min(1).max(60).optional(),
+  categoryCustomId: z.string().min(1).optional().nullable(),
   title:          safeString({ min: 3, max: 200, fieldLabel: 'Título', allowEmpty: false }).optional(),
   description:    validators.longTextOptional,
   odometerKm:     z.number().int().nonnegative().max(10_000_000).optional().nullable(),
@@ -548,6 +585,11 @@ function serializeMaintenance(m: any, items: any[], events: any[] = []) {
     // comparar strings.
     isOverdue:     m.status === 'Atrasado',
     category:      m.category,
+    // jul 2026 v5 — FK a la categoría custom. NULL para built-in
+    // (no hay fila en company_maintenance_categories para esas keys).
+    // El frontend lo usa para decidir si el `category` que viene
+    // en `m.category` se mapea a una built-in o a una custom.
+    categoryId:    m.categoryId != null ? toId('maint-cat', m.categoryId) : null,
     title:         m.title,
     description:   m.description,
     odometerKm:    m.odometerKm,
@@ -1296,6 +1338,8 @@ router.post(
 
       const assetId = parseId('asset', body.assetId);
       const workshopId = body.workshopId ? parseId('workshop', body.workshopId) : null;
+      // jul 2026 v5 — resuelve categoría (customId manda sobre `category`).
+      const resolvedCategory = await resolveCategory(companyId, body);
 
       let assignedUserId: number | null = null;
       if (body.assignedUserId) {
@@ -1332,7 +1376,8 @@ router.post(
           workshopId,
           type:           body.type,
           status:         finalStatus,
-          category:       body.category ?? 'Otro',
+          category:       resolvedCategory.category,
+          categoryId:     resolvedCategory.categoryId,
           title:          body.title,
           description:    body.description ?? null,
           odometerKm:     body.odometerKm ?? null,
@@ -1541,7 +1586,19 @@ router.put(
       if (body.workshopId !== undefined) updateData.workshopId = body.workshopId ? parseId('workshop', body.workshopId) : null;
       if (body.type !== undefined) updateData.type = body.type;
       if (body.status !== undefined) updateData.status = normalizeStatus(body.status);
-      if (body.category !== undefined) updateData.category = body.category;
+      // jul 2026 v5 — Si viene categoryCustomId, ese manda y se sobreescriben
+      // tanto `category` (con el `key` de la custom) como `categoryId`.
+      // Si NO viene customId pero sí `category`, eso es lo que se guarda
+      // (built-in o string libre). Si no viene ninguno, no se toca la
+      // categoría actual del mantenimiento.
+      if (body.categoryCustomId !== undefined) {
+        const resolved = await resolveCategory(companyId, body);
+        updateData.category   = resolved.category;
+        updateData.categoryId = resolved.categoryId;
+      } else if (body.category !== undefined) {
+        updateData.category   = body.category;
+        updateData.categoryId = null; // vuelve a built-in / string libre
+      }
       if (body.title !== undefined) updateData.title = body.title;
       if (body.description !== undefined) updateData.description = body.description;
       if (body.odometerKm !== undefined) updateData.odometerKm = body.odometerKm;
@@ -1804,6 +1861,61 @@ router.post(
         }
         throw e;
       }
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── PUT /categories/:catId ────────────────────────────────────────────────────
+// jul 2026 v5 — Editar una categoría custom (label, shortLabel, color, icon).
+// NO se permite tocar la `key` después de creada (rompería los filtros
+// de los mantenimientos existentes que la usen como value en `category`).
+router.put(
+  '/categories/:catId',
+  requireModule('mantenimiento'),
+  requireAdmin,
+  validate(z.object({
+    label:      z.string().min(2).max(120).optional(),
+    shortLabel: z.string().min(1).max(40).optional().nullable(),
+    color:      z.string().min(2).max(20).optional(),
+    icon:       z.string().min(2).max(40).optional(),
+  })),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const catId = parseId('maint-cat', req.params.catId);
+      const body = req.body as { label?: string; shortLabel?: string | null; color?: string; icon?: string };
+      const [cat] = await db
+        .select()
+        .from(companyMaintenanceCategories)
+        .where(and(eq(companyMaintenanceCategories.id, catId), eq(companyMaintenanceCategories.companyId, companyId)))
+        .limit(1);
+      if (!cat) throw new NotFoundError('Categoría', req.params.catId);
+      if (cat.isSystem) throw new ForbiddenError('No se puede editar una categoría del sistema.');
+
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (body.label !== undefined)      updateData.label      = body.label;
+      if (body.shortLabel !== undefined) updateData.shortLabel = body.shortLabel;
+      if (body.color !== undefined)      updateData.color      = body.color;
+      if (body.icon !== undefined)       updateData.icon       = body.icon;
+
+      const [updated] = await db
+        .update(companyMaintenanceCategories)
+        .set(updateData)
+        .where(and(eq(companyMaintenanceCategories.id, catId), eq(companyMaintenanceCategories.companyId, companyId)))
+        .returning();
+
+      res.json({
+        id: toId('maint-cat', updated.id),
+        companyId: toId('company', updated.companyId),
+        key: updated.key,
+        label: updated.label,
+        shortLabel: updated.shortLabel,
+        color: updated.color,
+        icon: updated.icon,
+        isSystem: updated.isSystem,
+      });
     } catch (err) {
       next(err);
     }

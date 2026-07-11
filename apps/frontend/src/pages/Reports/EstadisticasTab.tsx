@@ -639,9 +639,9 @@ export function EstadisticasTab({ companyId }: { companyId: string }) {
                 }`}><Clock size={11} /> Rango</button>
               {dateOpen && (
                 <div className="flex items-center gap-2">
-                  <DatePicker label="Desde" value={fechaDesde} onChange={setFechaDesde} maxDate={fechaHasta} />
+                  <DatePicker compact label="Desde" value={fechaDesde} onChange={setFechaDesde} maxDate={fechaHasta} />
                   <span className="text-xs text-gray-400">—</span>
-                  <DatePicker label="Hasta" value={fechaHasta} onChange={setFechaApHasta} minDate={fechaDesde} />
+                  <DatePicker compact label="Hasta" value={fechaHasta} onChange={setFechaApHasta} minDate={fechaDesde} />
                   <button type="button" onClick={applyDates}
                     className="rounded-xl bg-gray-900 hover:bg-gray-800 dark:bg-white dark:text-gray-900 px-3 py-1.5 text-[12px] font-bold text-white">Aplicar</button>
                 </div>

@@ -30,6 +30,7 @@ import {
   Calendar, CalendarDays, Building2, User, Hash, FileText, Send, Tag,
   TrendingUp, TrendingDown, RefreshCw, ExternalLink,
   Settings, Save, Edit2, Trash2, MapPin, PowerOff, PlusCircle, Wallet2, CircleDollarSign,
+  ClipboardCheck, AlertOctagon, RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../../context/AuthContext";
@@ -41,7 +42,22 @@ import {
   type PettyCashMovement,
   type PettyCashAccountWithSite,
 } from "../../hooks/useFinance";
+import {
+  useInvoiceReviews,
+  type InvoiceReviewRow,
+  type ReviewChecks,
+  type ReviewCheckKey,
+  isCorrectionExpired,
+  getCorrectionRemainingMs,
+  formatRemaining,
+} from "../../hooks/useInvoiceReviews";
+import { SemaforoPill } from "../../components/finanzas/SemaforoPill";
+import { InvoiceViewerModal } from "../../components/finanzas/InvoiceViewerModal";
+import { ChecklistReviewModal } from "../../components/finanzas/ChecklistReviewModal";
+import { ReviewVoucherDetailModal } from "../../components/finanzas/ReviewVoucherDetailModal";
+import { ReuploadInvoiceModal } from "../../components/finanzas/ReuploadInvoiceModal";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
+import { ModalShell } from "../../components/ui/modal/ModalShell";
 
 // ─── Styles (consistente con FacturasPage.tsx) ──────────────────────────────
 
@@ -159,12 +175,14 @@ const MOVEMENT_TYPE_BADGE: Record<string, string> = {
  * el cuerpo del componente (regla de hooks).
  */
 function TabBodyRouter(props: {
-  tab: "solicitudes" | "vales" | "historial" | "configuracion";
-  setTab: (t: "solicitudes" | "vales" | "historial" | "configuracion") => void;
+  tab: "solicitudes" | "vales" | "historial" | "configuracion" | "facturas" | "correcciones";
+  setTab: (t: "solicitudes" | "vales" | "historial" | "configuracion" | "facturas" | "correcciones") => void;
   canTabSolicitudes: boolean;
   canTabVales: boolean;
   canTabHistorial: boolean;
   canTabConfig: boolean;
+  canTabFacturas: boolean;
+  canTabCorrecciones: boolean;
   canApprove: boolean;
   canCreate: boolean;
   canReplenish: boolean;
@@ -174,6 +192,7 @@ function TabBodyRouter(props: {
   const {
     tab, setTab,
     canTabSolicitudes, canTabVales, canTabHistorial, canTabConfig,
+    canTabFacturas, canTabCorrecciones,
     canApprove, canCreate, canReplenish,
     canSeeAllRequests, canSeeAllVouchers,
   } = props;
@@ -181,12 +200,14 @@ function TabBodyRouter(props: {
   // Redirigir si la pestaña actual no tiene permiso.
   useEffect(() => {
     const allowed =
-      (tab === "solicitudes" && canTabSolicitudes) ||
-      (tab === "vales"       && canTabVales) ||
-      (tab === "historial"   && canTabHistorial) ||
-      (tab === "configuracion" && canTabConfig);
+      (tab === "solicitudes"    && canTabSolicitudes) ||
+      (tab === "vales"          && canTabVales) ||
+      (tab === "historial"      && canTabHistorial) ||
+      (tab === "configuracion"  && canTabConfig) ||
+      (tab === "facturas"       && canTabFacturas) ||
+      (tab === "correcciones"   && canTabCorrecciones);
     if (!allowed) setTab("solicitudes");
-  }, [tab, canTabSolicitudes, canTabVales, canTabHistorial, canTabConfig, setTab]);
+  }, [tab, canTabSolicitudes, canTabVales, canTabHistorial, canTabConfig, canTabFacturas, canTabCorrecciones, setTab]);
 
   if (tab === "solicitudes" && canTabSolicitudes) {
     return <RequestsTab canApprove={canApprove} canCreate={canCreate} canSeeAll={canSeeAllRequests} />;
@@ -199,6 +220,13 @@ function TabBodyRouter(props: {
   }
   if (tab === "configuracion" && canTabConfig) {
     return <ConfiguracionTab />;
+  }
+  // jul 2026 v5 — Tabs nuevas: "Facturas por revisar" y "Correcciones".
+  if (tab === "facturas" && canTabFacturas) {
+    return <FacturasPorRevisarTab />;
+  }
+  if (tab === "correcciones" && canTabCorrecciones) {
+    return <CorreccionesTab />;
   }
   return (
     <div className="flex min-h-[40vh] items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400">
@@ -226,6 +254,16 @@ export function CajaChicaPage() {
   const canCreate   = can("finanzas", "caja_chica", "crear");
   const canApprove  = can("finanzas", "caja_chica", "aprobar");
   const canReplenish = can("finanzas", "caja_chica", "reponer");
+  // jul 2026 v4-b — Permisos granulares para las cards de saldo.
+  //   ver_saldo_total → card "Saldo total" (suma de todas las cajas)
+  //   ver_saldo_sede  → cards por sede
+  // admin/owner/superadmin bypasean via usePermissions.
+  const canSeeTotalBalance = can("finanzas", "caja_chica", "ver_saldo_total");
+  const canSeeSiteBalance  = can("finanzas", "caja_chica", "ver_saldo_sede");
+
+  // jul 2026 v5 — Permiso para acceder a las pestañas de revisión
+  // contable. admin/owner/superadmin bypasean.
+  const canReviewInvoices = can("finanzas", "caja_chica", "revisar_facturas");
 
   // ── Acciones virtuales por pestaña ──
   // El usuario con la nueva acción "X" la tiene; si no, vemos si coincide
@@ -235,6 +273,10 @@ export function CajaChicaPage() {
   const canTabVales        = can("finanzas", "caja_chica", "ver_vales")        || canApprove;
   const canTabHistorial    = can("finanzas", "caja_chica", "ver_historial")    || canApprove || canReplenish;
   const canTabConfig       = can("finanzas", "caja_chica", "configurar_caja")  || canReplenish;
+  // jul 2026 v5 — Las nuevas pestañas "Facturas por revisar" y
+  // "Correcciones" requieren `revisar_facturas` (o bypass por rol).
+  const canTabFacturas     = canReviewInvoices;
+  const canTabCorrecciones = canReviewInvoices;
 
   // `ver_todos` es el permiso de "admin de finanzas" — bypass de filtros
   // por dueño tanto en solicitudes como en vales. Si no lo tiene, ve
@@ -242,7 +284,8 @@ export function CajaChicaPage() {
   const canSeeAllRequests  = can("finanzas", "caja_chica", "ver_todos") || canApprove || canReplenish;
   const canSeeAllVouchers  = can("finanzas", "caja_chica", "ver_todos") || canApprove || canReplenish;
 
-  const tab = (searchParams.get("tab") ?? "solicitudes") as "solicitudes" | "vales" | "historial" | "configuracion";
+  const tab = (searchParams.get("tab") ?? "solicitudes") as
+    "solicitudes" | "vales" | "historial" | "configuracion" | "facturas" | "correcciones";
   const setTab = (t: typeof tab) => setSearchParams({ tab: t });
 
   if (!canView) {
@@ -267,6 +310,10 @@ export function CajaChicaPage() {
         canTabVales={canTabVales}
         canTabHistorial={canTabHistorial}
         canTabConfig={canTabConfig}
+        canTabFacturas={canTabFacturas}
+        canTabCorrecciones={canTabCorrecciones}
+        canSeeTotalBalance={canSeeTotalBalance}
+        canSeeSiteBalance={canSeeSiteBalance}
       />
 
       {/* Tab content.
@@ -280,6 +327,8 @@ export function CajaChicaPage() {
         canTabVales={canTabVales}
         canTabHistorial={canTabHistorial}
         canTabConfig={canTabConfig}
+        canTabFacturas={canTabFacturas}
+        canTabCorrecciones={canTabCorrecciones}
         canApprove={canApprove}
         canCreate={canCreate}
         canReplenish={canReplenish}
@@ -295,11 +344,13 @@ export function CajaChicaPage() {
 function Header({
   canCreate, canReplenish, activeTab, onTabChange,
   canTabVales, canTabHistorial, canTabConfig,
+  canTabFacturas, canTabCorrecciones,
+  canSeeTotalBalance, canSeeSiteBalance,
 }: {
   canCreate: boolean;
   canReplenish: boolean;
-  activeTab: "solicitudes" | "vales" | "historial" | "configuracion";
-  onTabChange: (t: "solicitudes" | "vales" | "historial" | "configuracion") => void;
+  activeTab: "solicitudes" | "vales" | "historial" | "configuracion" | "facturas" | "correcciones";
+  onTabChange: (t: "solicitudes" | "vales" | "historial" | "configuracion" | "facturas" | "correcciones") => void;
   // jul 2026 v4-b — Flags por tab. El padre los computa usando
   // `usePermissions()` con permisos granulares (`ver_vales`, etc.).
   // El Header los recibe como props en vez de recalcularlos, para
@@ -309,6 +360,14 @@ function Header({
   canTabVales: boolean;
   canTabHistorial: boolean;
   canTabConfig: boolean;
+  // jul 2026 v5 — Tabs nuevas para revisión contable.
+  canTabFacturas: boolean;
+  canTabCorrecciones: boolean;
+  // jul 2026 v4-b — Flags para las cards de saldo (perfil granular).
+  // Tambien vienen del padre para que coincidan con el permiso
+  // ya calculado en CajaChicaPage (no recalcular con otro usePermissions).
+  canSeeTotalBalance: boolean;
+  canSeeSiteBalance: boolean;
 }) {
   const { session } = useAuth();
   const finance = useFinance();
@@ -385,48 +444,58 @@ function Header({
         </div>
       </div>
 
-      {/* Saldo card por sede */}
-      {loadingAccount ? (
-        <div className={`${cardCls} flex items-center justify-center p-6`}>
-          <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
-        </div>
-      ) : accounts.length === 0 ? (
-        <div className={`${cardCls} p-6`}>
-          <div className="flex items-start gap-3">
-            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
-            <div>
-              <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                No hay caja chica configurada en ninguna sede.
-              </p>
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                {canReplenish
-                  ? "Configurá la primera cuenta desde la sección de configuración de empresa."
-                  : "Pedile a un administrador que configure la caja chica para empezar a usarla."}
-              </p>
+      {/* jul 2026 v5 — Bloque de saldos. Si el user NO tiene NINGÚN
+          permiso de saldo (`ver_saldo_total` NI `ver_saldo_sede`),
+          no se renderiza NADA — ni el esqueleto de carga, ni el
+          banner de "no hay cajas". La sección simplemente desaparece. */}
+      {(canSeeTotalBalance || canSeeSiteBalance) && (
+        loadingAccount ? (
+          <div className={`${cardCls} flex items-center justify-center p-6`}>
+            <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+          </div>
+        ) : accounts.length === 0 ? (
+          <div className={`${cardCls} p-6`}>
+            <div className="flex items-start gap-3">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+              <div>
+                <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                  No hay caja chica configurada en ninguna sede.
+                </p>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  {canReplenish
+                    ? "Configurá la primera cuenta desde la sección de configuración de empresa."
+                    : "Pedile a un administrador que configure la caja chica para empezar a usarla."}
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div className={`${cardCls} p-4`}>
-            <p className={labelCls}>Saldo total</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-              {fmtMoney(totalBalance)}
-            </p>
-            {totalLimit > 0 && (
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Límite total: {fmtMoney(totalLimit)}
-              </p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {/* jul 2026 v4-b — Saldo total: solo si tiene permiso
+                `ver_saldo_total` (o admin/owner que bypasean). */}
+            {canSeeTotalBalance && (
+              <div className={`${cardCls} p-4`}>
+                <p className={labelCls}>Saldo total</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                  {fmtMoney(totalBalance)}
+                </p>
+                {totalLimit > 0 && (
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Límite total: {fmtMoney(totalLimit)}
+                  </p>
+                )}
+              </div>
             )}
-          </div>
-          {accounts.map(a => (
-            <div key={a.id} className={`${cardCls} p-4`}>
-              <p className={labelCls}>
-                {a.siteName ?? `Sede #${a.siteId}`}
-                {a.siteCode && <span className="ml-1 text-gray-400">· {a.siteCode}</span>}
-              </p>
-              <p className="text-xl font-bold text-gray-900 dark:text-gray-100">
-                {fmtMoney(a.currentBalance)}
+            {/* jul 2026 v4-b — Saldo por sede: solo si tiene permiso
+                `ver_saldo_sede` (o admin/owner que bypasean). */}
+            {canSeeSiteBalance && accounts.map(a => (
+              <div key={a.id} className={`${cardCls} p-4`}>
+                <p className={labelCls}>
+                  {a.siteName ?? `Sede #${a.siteId}`}
+                  {a.siteCode && <span className="ml-1 text-gray-400">· {a.siteCode}</span>}
+                </p>
+                <p className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                  {fmtMoney(a.currentBalance)}
               </p>
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 {a.mode === "period"
@@ -436,6 +505,7 @@ function Header({
             </div>
           ))}
         </div>
+        )
       )}
 
       {/* Tabs
@@ -445,18 +515,20 @@ function Header({
             Historial     - finanzas.caja_chica.aprobar | .reponer (auditoria)
             Configuracion - finanzas.caja_chica.reponer (admin/owner)
          Operadores puros (solo ver+crear) caen siempre en Solicitudes. */}
-      <div className="flex border-b border-gray-200 dark:border-white/[0.08]">
+      <div className="flex flex-wrap border-b border-gray-200 dark:border-white/[0.08]">
         {([
           { key: "solicitudes", label: "Solicitudes" },
-          ...(canTabVales     ? [{ key: "vales" as const,       label: "Vales" }]       : []),
-          ...(canTabHistorial ? [{ key: "historial" as const,   label: "Historial" }]   : []),
-          ...(canTabConfig    ? [{ key: "configuracion" as const, label: "Configuración" }] : []),
+          ...(canTabVales          ? [{ key: "vales" as const,          label: "Vales" }]          : []),
+          ...(canTabFacturas       ? [{ key: "facturas" as const,       label: "Facturas por revisar", icon: ClipboardCheck }]       : []),
+          ...(canTabCorrecciones   ? [{ key: "correcciones" as const,   label: "Correcciones",     icon: AlertOctagon }]   : []),
+          ...(canTabHistorial      ? [{ key: "historial" as const,      label: "Historial" }]      : []),
+          ...(canTabConfig         ? [{ key: "configuracion" as const,  label: "Configuración" }]  : []),
         ] as const).map(({ key: t, label }) => (
           <button
             key={t}
             type="button"
             onClick={() => onTabChange(t)}
-            className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
+            className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
               activeTab === t
                 ? "border-emerald-500 text-emerald-700 dark:text-emerald-300"
                 : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
@@ -617,6 +689,9 @@ function VouchersTab({ canSeeAll }: { canSeeAll: boolean }) {
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Voucher | null>(null);
+  // jul 2026 v4-b — modal de solo-lectura para ver el detalle del vale
+  // (emitido, gastado, reembolso, comprobante, vale origen, items).
+  const [viewing, setViewing] = useState<Voucher | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   // jul 2026 v4-b — userId del dueño. El backend expone el id del
@@ -749,6 +824,14 @@ function VouchersTab({ canSeeAll }: { canSeeAll: boolean }) {
                         )}
                         <button
                           type="button"
+                          onClick={() => setViewing(v)}
+                          className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-sky-600 dark:hover:bg-white/[0.06] dark:hover:text-sky-300"
+                          title="Ver detalle del vale"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => void downloadPdf(v)}
                           className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/[0.06]"
                           title="Descargar vale PDF"
@@ -769,6 +852,13 @@ function VouchersTab({ canSeeAll }: { canSeeAll: boolean }) {
         <CloseVoucherModal
           voucher={selected}
           onClose={() => { setSelected(null); setRefreshKey(k => k + 1); }}
+        />
+      )}
+
+      {viewing && (
+        <ViewVoucherModal
+          voucher={viewing}
+          onClose={() => setViewing(null)}
         />
       )}
     </div>
@@ -839,7 +929,6 @@ function HistoryTab({ canReplenish: _ }: { canReplenish: boolean }) {
             onChange={e => setSiteId(e.target.value ? Number(e.target.value) : undefined)}
             className={inputCls}
           >
-            <option value="">Todas</option>
             {accounts.map(a => (
               <option key={a.id} value={a.siteId}>
                 {a.siteName ?? `Sede #${a.siteId}`} {a.siteCode ? `(${a.siteCode})` : ""}
@@ -915,18 +1004,36 @@ function HistoryTab({ canReplenish: _ }: { canReplenish: boolean }) {
 
 function CreateRequestModal({ onClose, initialSiteId }: { onClose: () => void; initialSiteId?: number }) {
   const finance = useFinance();
+  const { session } = useAuth();
+  // jul 2026 v5 — Sede del usuario (de `session.siteId`). Si existe,
+  // autoseccionamos la sede del operador y NO mostramos el dropdown
+  // (el operador no debería poder elegir a qué sede va su propia
+  // solicitud). Si es `null` (admin / plataforma / sin sede
+  // asignada), dejamos el dropdown para que elija entre todas las
+  // cuentas activas.
+  const userSiteId = session?.siteId ?? null;
   const [accounts, setAccounts] = useState<PettyCashAccountWithSite[]>([]);
-  const [siteId, setSiteId] = useState<number | null>(initialSiteId ?? null);
+  const [siteId, setSiteId] = useState<number | null>(initialSiteId ?? userSiteId ?? null);
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // jul 2026 v5 — Migración 0051. Clasificación de la solicitud:
+  //   repuesto = entra al flujo de revisión contable
+  //   otro     = no se revisa
+  // Si el modal se abre desde un mantenimiento, el purpose es fijo
+  // a 'repuesto' (no se muestra el dropdown).
+  const [purpose, setPurpose] = useState<"repuesto" | "otro" | "">("");
+  const isFromMaintenance = !!initialSiteId;
+  useEffect(() => {
+    if (isFromMaintenance && purpose === "") {
+      setPurpose("repuesto");
+    }
+  }, [isFromMaintenance, purpose]);
 
   useEffect(() => {
-    // jul 2026 v4-b — Si nos pasan un initialSiteId (caso "solicitar
-    // recurso desde un mantenimiento"), el modal no le pregunta al
-    // operador qué sede: ya la sabemos. Sólo cargamos las cuentas
-    // para validación posterior.
+    // Si el modal se abre desde un mantenimiento, ya tenemos el
+    // siteId resuelto. Sólo cargamos las cuentas para validación.
     if (initialSiteId) {
       void (async () => {
         const data = await finance.pettyCash.fetchAccount();
@@ -940,16 +1047,28 @@ function CreateRequestModal({ onClose, initialSiteId }: { onClose: () => void; i
       const data = await finance.pettyCash.fetchAccount();
       if (data && "accounts" in data) {
         setAccounts(data.accounts);
-        // Si hay una sola cuenta, autoseccionamos y NO mostramos el
-        // dropdown (cero fricción para el caso más común).
+        // jul 2026 v5 — Resolución de la sede del vale:
+        //   1) Si el user tiene siteId, autoseccionamos ESA sede.
+        //   2) Si no, y hay 1 sola cuenta, esa.
+        //   3) Si no, queda null y se muestra el dropdown (admin).
+        if (userSiteId) {
+          const match = data.accounts.find(a => a.siteId === userSiteId);
+          if (match) {
+            setSiteId(userSiteId);
+            return;
+          }
+          // userSiteId no coincide con ninguna cuenta activa (raro).
+          // Caemos al fallback del admin.
+        }
         if (data.accounts.length === 1) {
           setSiteId(data.accounts[0].siteId);
         } else if (data.accounts[0]) {
-          setSiteId(data.accounts[0].siteId);
+          // No autoseccionamos — dejamos que el admin elija.
+          setSiteId(null);
         }
       }
     })();
-  }, [finance, initialSiteId]);
+  }, [finance, initialSiteId, userSiteId]);
 
   const submit = async () => {
     if (!siteId || !amount || !reason) {
@@ -961,6 +1080,10 @@ function CreateRequestModal({ onClose, initialSiteId }: { onClose: () => void; i
       toast.error("Monto inválido");
       return;
     }
+    if (!isFromMaintenance && !purpose) {
+      toast.error("Elegí si el vale es para repuestos u otro");
+      return;
+    }
     setSubmitting(true);
     const result = await finance.requests.create({
       siteId,
@@ -968,6 +1091,9 @@ function CreateRequestModal({ onClose, initialSiteId }: { onClose: () => void; i
       reason,
       justificationNotes: notes || undefined,
       origin: "standalone",
+      ...(isFromMaintenance
+        ? {}
+        : { purpose: purpose as "repuesto" | "otro" }),
     });
     setSubmitting(false);
     if (result.ok) {
@@ -978,53 +1104,47 @@ function CreateRequestModal({ onClose, initialSiteId }: { onClose: () => void; i
     }
   };
 
+  // jul 2026 v5 — El dropdown de sede se muestra SOLO si:
+  //   - El user es admin/plataforma (no tiene userSiteId)
+  //   - Y hay más de 1 cuenta activa
+  // En cualquier otro caso, autoseccionamos y mostramos el banner
+  // verde de "Sede resuelta".
+  const showSiteDropdown = !userSiteId && accounts.length > 1;
+  const resolvedSiteName =
+    accounts.find(a => a.siteId === siteId)?.siteName
+      ?? (siteId != null ? `Sede #${siteId}` : null);
+
   return (
     <ModalShell onClose={onClose} title="Nueva solicitud de caja chica" icon={Plus}>
       <div className="space-y-4">
-        {/* jul 2026 v4-b — Si initialSiteId viene del FinancePanel
-            (mantenimiento), no mostramos el select de sede: el sistema
-            ya sabe de dónde sale. Lo dejamos sólo cuando el operador
-            abre el modal desde "Nueva solicitud" y la empresa tiene
-            VARIAS cuentas activas. */}
-        {!initialSiteId && accounts.length > 1 && (
+        {/* Sede — jul 2026 v5: autoseccionada al user; dropdown solo
+            si es admin y hay varias cuentas. */}
+        {showSiteDropdown ? (
           <div>
             <label className={labelCls}>Sede de la caja</label>
             <select
               value={siteId ?? ""}
-              onChange={(e) => setSiteId(Number(e.target.value))}
+              onChange={e => setSiteId(Number(e.target.value))}
               className={inputCls}
             >
+              {accounts.length === 0 && <option value="">— No hay cajas activas —</option>}
               {accounts.map(a => (
-                <option key={a.id} value={a.siteId}>{a.siteName ?? `Sede #${a.siteId}`}</option>
+                <option key={a.id} value={a.siteId}>
+                  {a.siteName ?? `Sede #${a.siteId}`} — saldo {fmtMoney(a.currentBalance)}
+                </option>
               ))}
             </select>
           </div>
+        ) : (
+          // Banner verde: sede resuelta (autoselected por el sistema).
+          resolvedSiteName && (
+            <div className="rounded-xl bg-emerald-50 dark:bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-200">
+              <Building2 className="inline h-4 w-4 mr-1" />
+              Sede: <strong>{resolvedSiteName}</strong>
+            </div>
+          )
         )}
-        {/* Cuando hay initialSiteId o una sola cuenta, mostramos solo
-            un banner informativo con la sede resuelta. */}
-        {(initialSiteId || accounts.length === 1) && siteId && (
-          <div className="rounded-xl bg-emerald-50 dark:bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-200">
-            <Building2 className="inline h-4 w-4 mr-1" />
-            Sede: <strong>
-              {accounts.find(a => a.siteId === siteId)?.siteName
-                ?? `Sede #${siteId}`}
-            </strong>
-          </div>
-        )}
-          <label className={labelCls}>Sede</label>
-          <select
-            value={siteId ?? ""}
-            onChange={e => setSiteId(Number(e.target.value))}
-            className={inputCls}
-          >
-            {accounts.length === 0 && <option value="">— No hay cajas activas —</option>}
-            {accounts.map(a => (
-              <option key={a.id} value={a.siteId}>
-                {a.siteName ?? `Sede #${a.siteId}`} — saldo {fmtMoney(a.currentBalance)}
-              </option>
-            ))}
-          </select>
-      </div>
+
         <div>
           <label className={labelCls}>Monto (USD)</label>
           <input
@@ -1046,6 +1166,31 @@ function CreateRequestModal({ onClose, initialSiteId }: { onClose: () => void; i
             placeholder="Ej: bombilla para camioneta X"
             className={inputCls}
           />
+        </div>
+        {/* jul 2026 v5 — Migración 0051. Si la solicitud viene de un
+            mantenimiento, purpose se fuerza a 'repuesto' y no se
+            muestra el dropdown. Si es standalone, el operador elige
+            entre repuesto (entra al flujo de revisión contable) y
+            otro (no se revisa). */}
+        <div>
+          <label className={labelCls}>
+            Destino del vale {isFromMaintenance && <span className="text-[10px] text-emerald-600">(asignado por mantenimiento)</span>}
+          </label>
+          {isFromMaintenance ? (
+            <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200">
+              Repuestos (asignado automáticamente)
+            </div>
+          ) : (
+            <select
+              value={purpose}
+              onChange={e => setPurpose(e.target.value as "repuesto" | "otro" | "")}
+              className={inputCls}
+            >
+              <option value="">— Seleccionar —</option>
+              <option value="repuesto">Repuestos (entra a revisión contable)</option>
+              <option value="otro">Otro (combustible, peaje, etc.)</option>
+            </select>
+          )}
         </div>
         <div>
           <label className={labelCls}>Notas adicionales (opcional)</label>
@@ -1070,6 +1215,7 @@ function CreateRequestModal({ onClose, initialSiteId }: { onClose: () => void; i
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             Crear solicitud
           </button>
+        </div>
       </div>
     </ModalShell>
   );
@@ -1354,7 +1500,22 @@ function CloseVoucherModal({
   const [workerName, setWorkerName] = useState("");
 
   const actualNum = parseFloat(actual);
-  const willRefund = Number.isFinite(actualNum) && actualNum < voucher.issuedAmount;
+
+  // jul 2026 v4-b — Validaciones inline del monto gastado.
+  //   - No se permite vacio o no-numerico.
+  //   - No se permite 0 ni negativos.
+  //   - No se permite mayor al monto emitido.
+  // El error se muestra abajo del input Y bloquea el submit.
+  let actualNumError: string | null = null;
+  if (actual === "" || !Number.isFinite(actualNum)) {
+    actualNumError = null; // todavia no escribio — no es error todavia
+  } else if (actualNum <= 0) {
+    actualNumError = "El monto gastado debe ser mayor a 0.";
+  } else if (actualNum > voucher.issuedAmount) {
+    actualNumError = `El monto gastado no puede ser mayor al emitido (${fmtMoney(voucher.issuedAmount)}).`;
+  }
+
+  const willRefund = Number.isFinite(actualNum) && actualNum > 0 && actualNum < voucher.issuedAmount;
   const refundPreview = willRefund ? voucher.issuedAmount - actualNum : 0;
 
   const origin = voucher.origin ?? "standalone";
@@ -1412,8 +1573,16 @@ function CloseVoucherModal({
   const itemsRequired  = hasMaintenance && fclass === "repuesto";
 
   const submit = async () => {
-    if (!Number.isFinite(actualNum) || actualNum < 0) {
-      toast.error("Monto inválido");
+    if (actual === "" || !Number.isFinite(actualNum)) {
+      toast.error("Ingresá el monto gastado");
+      return;
+    }
+    if (actualNum <= 0) {
+      toast.error("El monto gastado debe ser mayor a 0");
+      return;
+    }
+    if (actualNum > voucher.issuedAmount) {
+      toast.error(`El monto gastado ($${actualNum.toFixed(2)}) no puede ser mayor al emitido ($${voucher.issuedAmount.toFixed(2)})`);
       return;
     }
     if (receiptRequired && !receipt) {
@@ -1531,21 +1700,36 @@ function CloseVoucherModal({
         <div>
           <label className={labelCls}>Monto realmente gastado (USD)</label>
           <input
-            type="number"
-            step="0.01"
-            min="0"
+            type="text"
+            inputMode="decimal"
+            // jul 2026 v4-b — Validacion inline. No se permiten
+            // valores negativos ni mayores al monto emitido.
+            // Usamos string + regex para no perder el "." mientras
+            // el operador tipea.
             value={actual}
-            onChange={e => setActual(e.target.value)}
+            onChange={e => {
+              const raw = e.target.value
+                .replace(/[^0-9.]/g, "")
+                .replace(/(\..*)\./g, "$1");
+              setActual(raw);
+            }}
             placeholder="0.00"
-            className={inputCls}
+            className={`${inputCls} ${
+              actualNumError ? "border-rose-400 focus:border-rose-400 focus:ring-rose-400/30" : ""
+            }`}
             autoFocus
           />
+          {actualNumError && (
+            <p className="mt-1 text-xs font-medium text-rose-600 dark:text-rose-300">
+              {actualNumError}
+            </p>
+          )}
+          {!actualNumError && willRefund && (
+            <div className="mt-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+              Se devolverán <strong>{fmtMoney(refundPreview)}</strong> a caja chica.
+            </div>
+          )}
         </div>
-        {willRefund && (
-          <div className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
-            Se devolverán <strong>{fmtMoney(refundPreview)}</strong> a caja chica.
-          </div>
-        )}
 
         {/* Bloque dinámico por fclass: nombre del taller / lavador */}
         {hasMaintenance && fclass === "mano_obra" && (
@@ -1752,61 +1936,6 @@ function CloseVoucherModal({
 }
 
 // ─── Componentes auxiliares ──────────────────────────────────────────────────
-
-/**
- * jul 2026 v4-b — ModalShell con tres zonas:
- *   1. Header (sticky, fijo arriba)
- *   2. Body (scrolleable vertical si el contenido no entra)
- *   3. Footer opcional (sticky, fijo abajo — usualmente para los
- *      botones "Cancelar / Confirmar" que SIEMPRE deben verse).
- *
- * Sin esto, los modales largos (ej. CerrarVale con ítems, factura,
- * taller/lavador) se estiraban a pantalla completa y los botones
- * quedaban fuera del viewport.
- */
-function ModalShell({
-  onClose, title, icon: Icon, children, footer,
-}: {
-  onClose: () => void;
-  title: string;
-  icon: React.ComponentType<{ className?: string }>;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
-}) {
-  if (typeof document === "undefined") return null;
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-gray-900"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex shrink-0 items-center justify-between border-b border-gray-100 p-4 dark:border-white/[0.06]">
-          <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-gray-100">
-            <Icon className="h-5 w-5 text-emerald-500" />
-            {title}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/[0.06]"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div>
-        {footer && (
-          <div className="shrink-0 border-t border-gray-100 bg-gray-50 p-4 dark:border-white/[0.06] dark:bg-white/[0.04]">
-            {footer}
-          </div>
-        )}
-      </div>
-    </div>,
-    document.body,
-  );
-}
 
 function DetailRow({
   icon: Icon, label, value,
@@ -2397,6 +2526,611 @@ function ConfiguracionReplenishModal({
       </div>
     </div>,
     document.body,
+  );
+}
+
+// ─── Modal: Ver detalle del vale (solo lectura) ─────────────────────────────
+
+/** jul 2026 v4-b — Modal de solo lectura para ver toda la info de un vale.
+ *  Muestra: identificación (número, estado, fecha), emisor (operador, sede),
+ *  montos (emitido, gastado, reembolso), origen (mantenimiento, request,
+ *  finance_classification) y, si el vale está cerrado, la factura
+ *  asociada con sus items y comprobante embebido.  Acciones: descargar
+ *  PDF y, si está cerrado, abrir el comprobante en pestaña nueva. */
+function ViewVoucherModal({ voucher, onClose }: { voucher: Voucher; onClose: () => void }) {
+  const finance = useFinance();
+  const [invoice, setInvoice] = useState<any | null>(null);
+  const [loadingInvoice, setLoadingInvoice] = useState(false);
+
+  // Si el vale está cerrado y tiene closedInvoiceId, levantamos la factura
+  // del backend para mostrar los items y el comprobante.
+  useEffect(() => {
+    if (voucher.status !== "closed" || !voucher.closedInvoiceId) {
+      setInvoice(null);
+      return;
+    }
+    let cancelled = false;
+    setLoadingInvoice(true);
+    finance.invoices
+      .get(voucher.closedInvoiceId)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.ok) setInvoice(res.data.invoice ?? null);
+      })
+      .catch(() => { if (!cancelled) setInvoice(null); })
+      .finally(() => { if (!cancelled) setLoadingInvoice(false); });
+    return () => { cancelled = true; };
+  }, [voucher.status, voucher.closedInvoiceId, finance]);
+
+  const downloadPdf = async () => {
+    try {
+      await finance.vouchers.downloadPdf(voucher.numericId);
+    } catch {
+      toast.error("Error al generar el PDF");
+    }
+  };
+
+  const isImage = (url: string) => /\.(jpe?g|png|webp|gif)$/i.test(url);
+
+  return (
+    <ModalShell onClose={onClose} title={`Vale #${voucher.numericId}`} icon={Eye}>
+      {/* jul 2026 v4-b — Modal compacto. max-w-md (no 3xl) para que entre
+          en pantalla sin scrollear. Densidad de info alta pero readable. */}
+      <div className="max-h-[70vh] space-y-2 overflow-y-auto text-xs">
+        {/* Header: estado + fecha */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${VOUCHER_STATUS_BADGE[voucher.status]}`}>
+            {VOUCHER_STATUS_LABEL[voucher.status]}
+          </span>
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            Emitido el {fmtDate(voucher.createdAt)}
+            {voucher.closedAt && ` · Cerrado el ${fmtDate(voucher.closedAt)}`}
+          </span>
+        </div>
+
+        {/* Asignación */}
+        <div className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 dark:bg-white/[0.03]">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Operador</p>
+            <p className="text-sm font-semibold text-gray-800 dark:text-white">
+              {voucher.assignedToName ?? `User #${voucher.assignedToUserId}`}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Sede</p>
+            <p className="text-sm font-semibold text-gray-800 dark:text-white">
+              {voucher.siteName ?? `Sede #${voucher.siteId}`}
+            </p>
+          </div>
+        </div>
+
+        {/* Montos */}
+        <div className="grid grid-cols-3 gap-2 rounded-lg border border-gray-200 p-3 dark:border-white/[0.08]">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Emitido</p>
+            <p className="text-base font-bold text-gray-900 dark:text-white">{fmtMoney(voucher.issuedAmount)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Gastado</p>
+            <p className="text-base font-bold text-gray-700 dark:text-gray-200">
+              {voucher.closedActualAmount !== null ? fmtMoney(voucher.closedActualAmount) : <span className="text-gray-400">—</span>}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Reembolso</p>
+            <p className={`text-base font-bold ${voucher.refundAmount > 0 ? "text-amber-600 dark:text-amber-400" : "text-gray-400"}`}>
+              {voucher.refundAmount > 0 ? `+ ${fmtMoney(voucher.refundAmount)}` : "—"}
+            </p>
+          </div>
+        </div>
+
+        {/* Origen */}
+        {(voucher.origin || voucher.maintenanceId || voucher.reason) && (
+          <div className="rounded-lg border border-gray-200 p-3 dark:border-white/[0.08]">
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-gray-500">Origen</p>
+            <ul className="space-y-1 text-xs">
+              {voucher.maintenanceId && (
+                <li>
+                  Mantenimiento: <strong>#{voucher.maintenanceId}</strong>
+                </li>
+              )}
+              {voucher.financeClassification && (
+                <li>
+                  Clasificación: <strong>{voucher.financeClassification}</strong>
+                </li>
+              )}
+              {voucher.reason && (
+                <li className="whitespace-pre-wrap text-gray-600 dark:text-gray-300">
+                  Motivo: {voucher.reason}
+                </li>
+              )}
+            </ul>
+          </div>
+        )}
+
+        {/* Notas de cierre */}
+        {voucher.closedNotes && (
+          <div className="rounded-lg border border-gray-200 p-3 dark:border-white/[0.08]">
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-gray-500">Notas de cierre</p>
+            <p className="whitespace-pre-wrap text-xs text-gray-700 dark:text-gray-300">{voucher.closedNotes}</p>
+          </div>
+        )}
+
+        {/* Factura cerrada (si hay) */}
+        {voucher.status === "closed" && voucher.closedInvoiceId && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 dark:border-emerald-500/30 dark:bg-emerald-500/5">
+            <div className="mb-1 flex items-center justify-between">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-700 dark:text-emerald-300">
+                Factura #{voucher.closedInvoiceId}
+              </p>
+              {loadingInvoice && <Loader2 size={12} className="animate-spin text-emerald-500" />}
+            </div>
+            {invoice ? (
+              <div className="space-y-2 text-xs">
+                <p className="text-gray-700 dark:text-gray-200">
+                  <strong>N°:</strong> {invoice.invoiceNumber ?? "—"} ·{" "}
+                  <strong>Emisión:</strong>{" "}
+                  {invoice.invoiceDate ? fmtDate(invoice.invoiceDate) : "—"}
+                </p>
+                {Array.isArray(invoice.items) && invoice.items.length > 0 && (
+                  <ul className="divide-y divide-emerald-200/60 rounded border border-emerald-200/60 bg-white/50 dark:divide-emerald-500/20 dark:border-emerald-500/20 dark:bg-white/[0.02]">
+                    {invoice.items.map((it: any, idx: number) => (
+                      <li key={idx} className="flex items-center justify-between gap-2 px-2 py-1.5 text-[11px]">
+                        <span className="truncate">
+                          {it.description ?? it.name ?? "—"} ·{" "}
+                          {it.quantity ?? 0} × ${Number(it.unitPrice ?? it.unitCost ?? 0).toFixed(2)}
+                        </span>
+                        <span className="font-semibold tabular-nums">
+                          ${Number(it.subtotal ?? (Number(it.quantity ?? 0) * Number(it.unitPrice ?? it.unitCost ?? 0))).toFixed(2)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="text-right text-sm font-bold text-emerald-700 dark:text-emerald-200">
+                  Total: {fmtMoney(Number(invoice.total ?? invoice.amount ?? voucher.closedActualAmount ?? 0))}
+                </p>
+                {invoice.fileUrl && (
+                  <div>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-emerald-700 dark:text-emerald-300">Comprobante</p>
+                    {isImage(invoice.fileUrl) ? (
+                      <a href={invoice.fileUrl} target="_blank" rel="noreferrer">
+                        <img
+                          src={invoice.fileUrl}
+                          alt="Comprobante"
+                          className="max-h-48 w-auto rounded border border-emerald-200/60"
+                        />
+                      </a>
+                    ) : (
+                      <a
+                        href={invoice.fileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-sky-600 hover:underline dark:text-sky-300"
+                      >
+                        <FileText size={12} /> Abrir comprobante
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              !loadingInvoice && <p className="text-xs text-gray-500">No se pudo cargar la factura.</p>
+            )}
+          </div>
+        )}
+
+        {/* Acciones */}
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-200"
+          >
+            Cerrar
+          </button>
+          <button
+            type="button"
+            onClick={downloadPdf}
+            className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-700"
+          >
+            <FileDown size={13} /> Descargar PDF
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+// ─── Tab: Facturas por revisar (jul 2026 v5) ────────────────────────────────
+//
+// Lista las facturas de vales de repuestos que están en cualquier estado
+// del semáforo EXCEPTO 'not_required'. El revisor (admin/owner o quien
+// tenga `revisar_facturas`) abre el detalle y ejecuta el flujo:
+//   pending_review → seen (botón "Marcar como vista")
+//   seen           → under_review (botón "Revisar factura" abre checklist)
+//   under_review   → approved (checklist completo) o correction_requested
+//   correction_requested (la factura vuelve al operador, se ve en tab
+//   "Correcciones").
+//
+// Render: tabla con columnas Vale · Solicitante · Sede · Total · Estado
+// (semáforo) · Acciones (abrir detalle). Filtros por estado arriba.
+
+type DetailModalState =
+  | { kind: "none" }
+  | { kind: "detail"; review: InvoiceReviewRow }
+  | { kind: "viewer"; review: InvoiceReviewRow }
+  | { kind: "checklist"; review: InvoiceReviewRow }
+  | { kind: "reupload"; review: InvoiceReviewRow };
+
+function FacturasPorRevisarTab() {
+  const reviews = useInvoiceReviews();
+  const [filter, setFilter] = useState<
+    "pending_review" | "seen" | "under_review" | "correction_requested" | "approved" | "all"
+  >("pending_review");
+  const [rows, setRows] = useState<InvoiceReviewRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [modal, setModal] = useState<DetailModalState>({ kind: "none" });
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await reviews.list({ tab: filter });
+      setRows(data);
+    } catch (err) {
+      toast.error("Error al cargar facturas por revisar");
+    } finally {
+      setLoading(false);
+    }
+  }, [reviews, filter, refreshKey]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  return (
+    <div className="space-y-4">
+      {/* Filtros por estado */}
+      <div className="flex flex-wrap gap-2">
+        {([
+          { k: "pending_review" as const,        l: "Pendientes",  c: "bg-blue-500" },
+          { k: "seen" as const,                  l: "Vistas",      c: "bg-orange-500" },
+          { k: "under_review" as const,          l: "En revisión", c: "bg-amber-500" },
+          { k: "correction_requested" as const,  l: "Corrección",  c: "bg-rose-500" },
+          { k: "approved" as const,              l: "Aprobadas",   c: "bg-emerald-500" },
+          { k: "all" as const,                   l: "Todas",       c: "bg-slate-400" },
+        ]).map(({ k, l, c }) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setFilter(k)}
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+              filter === k
+                ? "bg-emerald-600 text-white"
+                : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300"
+            }`}
+          >
+            <span className={`h-2 w-2 rounded-full ${c}`} />
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* Tabla */}
+      {loading ? (
+        <div className={`${cardCls} flex items-center justify-center p-10`}>
+          <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+        </div>
+      ) : rows.length === 0 ? (
+        <div className={`${cardCls} p-10 text-center`}>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            No hay facturas en este estado.
+          </p>
+        </div>
+      ) : (
+        <div className={`${cardCls} overflow-hidden`}>
+          <table className="w-full">
+            <thead className="bg-gray-50 dark:bg-white/[0.04]">
+              <tr>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500">Vale</th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500">Solicitante</th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500">Sede</th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500">Factura</th>
+                <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-gray-500">Total</th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500">Semáforo</th>
+                <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-gray-500">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-white/[0.06]">
+              {rows.map(r => (
+                <tr key={r.numericId} className="hover:bg-gray-50/50 dark:hover:bg-white/[0.03]">
+                  <td className="px-4 py-3 text-sm font-mono text-gray-700 dark:text-gray-300">#{r.voucher.numericId}</td>
+                  <td className="px-4 py-3 text-sm text-gray-800 dark:text-gray-200">{r.requesterName ?? "—"}</td>
+                  <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{r.voucher.siteName ?? `Sede #${r.voucher.siteId}`}</td>
+                  <td className="px-4 py-3 text-sm font-mono text-gray-700 dark:text-gray-300">{r.invoice.invoiceNumber}</td>
+                  <td className="px-4 py-3 text-right text-sm font-mono text-gray-800 dark:text-gray-100">
+                    {new Intl.NumberFormat("es-EC", { style: "currency", currency: "USD" }).format(r.invoice.total)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <SemaforoPill status={r.status} />
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => setModal({ kind: "detail", review: r })}
+                      className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
+                    >
+                      <Eye size={12} />
+                      Abrir
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Modales anidados */}
+      {modal.kind === "detail" && (
+        <ReviewVoucherDetailModal
+          review={modal.review}
+          mode="review"
+          onClose={() => setModal({ kind: "none" })}
+          onAction={() => { setModal({ kind: "none" }); setRefreshKey(k => k + 1); }}
+          onOpenViewer={(r) => setModal({ kind: "viewer", review: r })}
+          onOpenChecklist={(r) => setModal({ kind: "checklist", review: r })}
+          onReupload={(r) => setModal({ kind: "reupload", review: r })}
+        />
+      )}
+
+      {modal.kind === "viewer" && (
+        <InvoiceViewerModal
+          review={modal.review}
+          onClose={() => setModal({ kind: "detail", review: modal.review })}
+          onStartReview={async () => {
+            // Marcar como vista (pending → seen) y abrir el checklist
+            // (seen → under_review) en una sola transición.
+            const seenR = await reviews.markSeen(modal.review.numericId);
+            if (!seenR.ok) {
+              toast.error(seenR.error);
+              return;
+            }
+            const startR = await reviews.markStart(modal.review.numericId);
+            if (!startR.ok) {
+              toast.error(startR.error);
+              return;
+            }
+            toast.success("Checklist abierto");
+            setRefreshKey(k => k + 1);
+            setModal({ kind: "checklist", review: modal.review });
+          }}
+        />
+      )}
+
+      {modal.kind === "checklist" && (
+        <ChecklistReviewModal
+          review={modal.review}
+          onClose={() => setModal({ kind: "detail", review: modal.review })}
+          onApprove={async (checks) => {
+            const r = await reviews.approve(modal.review.numericId, checks);
+            if (!r.ok) {
+              toast.error(r.error);
+              return;
+            }
+            toast.success("Factura aprobada");
+            setRefreshKey(k => k + 1);
+            setModal({ kind: "none" });
+          }}
+          onSendToCorrection={async (note, failedKeys) => {
+            const r = await reviews.sendToCorrection(
+              modal.review.numericId,
+              note,
+              failedKeys as string[],
+            );
+            if (!r.ok) {
+              toast.error(r.error);
+              return;
+            }
+            toast.success("Enviada a corrección. Se notificó al solicitante.");
+            setRefreshKey(k => k + 1);
+            setModal({ kind: "none" });
+          }}
+        />
+      )}
+
+      {modal.kind === "reupload" && (
+        <ReuploadInvoiceModal
+          review={modal.review}
+          onClose={() => setModal({ kind: "detail", review: modal.review })}
+          onSuccess={() => { setRefreshKey(k => k + 1); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Tab: Correcciones (jul 2026 v5) ────────────────────────────────────────
+//
+// Lista las facturas que el revisor mandó a corregir. El solicitante
+// del vale (o un admin) puede re-subir la foto desde acá. La modal
+// muestra la timeline horizontal con todas las fases por las que pasó
+// la factura (created → reviewer_seen → reviewer_started →
+// correction_requested → photo_reuploaded → ...).
+
+function CorreccionesTab() {
+  const reviews = useInvoiceReviews();
+  const [rows, setRows] = useState<InvoiceReviewRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [modal, setModal] = useState<DetailModalState>({ kind: "none" });
+  const [refreshKey, setRefreshKey] = useState(0);
+  // jul 2026 v5 — Tick para refrescar el countdown del plazo de 1 día.
+  const [now, setNow] = useState<number>(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await reviews.list({ tab: "correction_requested" });
+      setRows(data);
+    } catch (err) {
+      toast.error("Error al cargar correcciones");
+    } finally {
+      setLoading(false);
+    }
+  }, [reviews, refreshKey]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  return (
+    <div className="space-y-4">
+      <div className={`${cardCls} p-3`}>
+        <p className="text-xs text-gray-600 dark:text-gray-300">
+          Facturas que un revisor envió a corrección. El operador tiene
+          <span className="font-semibold"> 1 día </span>
+          para subir una nueva foto. Pasado ese plazo, el botón de
+          re-subir se bloquea y hay que pedirle al admin que reabra la
+          corrección. Hacé click en una fila para ver la línea de
+          tiempo completa.
+        </p>
+      </div>
+
+      {loading ? (
+        <div className={`${cardCls} flex items-center justify-center p-10`}>
+          <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+        </div>
+      ) : rows.length === 0 ? (
+        <div className={`${cardCls} p-10 text-center`}>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            No hay facturas pendientes de corrección.
+          </p>
+        </div>
+      ) : (
+        <div className={`${cardCls} overflow-hidden`}>
+          <table className="w-full">
+            <thead className="bg-gray-50 dark:bg-white/[0.04]">
+              <tr>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500">Vale</th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500">Solicitante</th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500">Factura</th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500">Motivo</th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500">Plazo</th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500">Semáforo</th>
+                <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-gray-500">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-white/[0.06]">
+              {rows.map(r => {
+                const remaining = getCorrectionRemainingMs(r.lastCorrectionAt, now);
+                const expired = isCorrectionExpired(r.lastCorrectionAt, now);
+                return (
+                  <tr key={r.numericId} className="hover:bg-gray-50/50 dark:hover:bg-white/[0.03]">
+                    <td className="px-4 py-3 text-sm font-mono text-gray-700 dark:text-gray-300">#{r.voucher.numericId}</td>
+                    <td className="px-4 py-3 text-sm text-gray-800 dark:text-gray-200">{r.requesterName ?? "—"}</td>
+                    <td className="px-4 py-3 text-sm font-mono text-gray-700 dark:text-gray-300">{r.invoice.invoiceNumber}</td>
+                    <td className="px-4 py-3 text-xs text-rose-700 dark:text-rose-300">
+                      {r.lastCorrectionNote ? r.lastCorrectionNote.slice(0, 60) + (r.lastCorrectionNote.length > 60 ? "…" : "") : "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {remaining === null ? (
+                        <span className="text-xs text-gray-400">—</span>
+                      ) : expired ? (
+                        <span
+                          title="El operador ya no puede re-subir. Pedile al admin que reabra la corrección."
+                          className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800 ring-1 ring-rose-200 dark:bg-rose-500/20 dark:text-rose-200 dark:ring-rose-500/40"
+                        >
+                          <Clock size={11} />
+                          Vencido · {formatRemaining(remaining)}
+                        </span>
+                      ) : (
+                        <span
+                          title="Tiempo que le queda al operador para subir la nueva foto."
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-200 dark:ring-amber-500/30"
+                        >
+                          <Clock size={11} />
+                          {formatRemaining(remaining)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <SemaforoPill status={r.status} />
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setModal({ kind: "detail", review: r })}
+                        disabled={expired}
+                        title={expired ? "El plazo venció. Pedile al admin que reabra la corrección." : "Re-subir la foto de la factura"}
+                        className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-2 py-1 text-xs font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500 dark:disabled:bg-slate-700 dark:disabled:text-slate-500"
+                      >
+                        <RotateCcw size={12} />
+                        Re-subir foto
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modal.kind === "detail" && (
+        <ReviewVoucherDetailModal
+          review={modal.review}
+          mode="correction"
+          onClose={() => setModal({ kind: "none" })}
+          onAction={() => { setModal({ kind: "none" }); setRefreshKey(k => k + 1); }}
+          onOpenViewer={(r) => setModal({ kind: "viewer", review: r })}
+          onOpenChecklist={(r) => setModal({ kind: "checklist", review: r })}
+          onReupload={(r) => setModal({ kind: "reupload", review: r })}
+        />
+      )}
+
+      {modal.kind === "viewer" && (
+        <InvoiceViewerModal
+          review={modal.review}
+          onClose={() => setModal({ kind: "detail", review: modal.review })}
+          onStartReview={async () => {
+            const startR = await reviews.markStart(modal.review.numericId);
+            if (!startR.ok) { toast.error(startR.error); return; }
+            setRefreshKey(k => k + 1);
+            setModal({ kind: "checklist", review: modal.review });
+          }}
+        />
+      )}
+
+      {modal.kind === "checklist" && (
+        <ChecklistReviewModal
+          review={modal.review}
+          onClose={() => setModal({ kind: "detail", review: modal.review })}
+          onApprove={async (checks) => {
+            const r = await reviews.approve(modal.review.numericId, checks);
+            if (!r.ok) { toast.error(r.error); return; }
+            toast.success("Factura aprobada");
+            setRefreshKey(k => k + 1);
+            setModal({ kind: "none" });
+          }}
+          onSendToCorrection={async (note, failedKeys) => {
+            const r = await reviews.sendToCorrection(modal.review.numericId, note, failedKeys as string[]);
+            if (!r.ok) { toast.error(r.error); return; }
+            toast.success("Volvió a corrección");
+            setRefreshKey(k => k + 1);
+            setModal({ kind: "none" });
+          }}
+        />
+      )}
+
+      {modal.kind === "reupload" && (
+        <ReuploadInvoiceModal
+          review={modal.review}
+          onClose={() => setModal({ kind: "detail", review: modal.review })}
+          onSuccess={() => { setRefreshKey(k => k + 1); }}
+        />
+      )}
+    </div>
   );
 }
 

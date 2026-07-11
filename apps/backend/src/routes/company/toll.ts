@@ -41,7 +41,8 @@ const createTollSchema = z.object({
   odometer:      z.number().nonnegative().max(100_000_000).optional().nullable(),
   axes:          z.number().int().min(1).max(12).optional().nullable(),
   notes:         validators.longTextOptional,
-  photoUrl:      z.string().min(1).max(2_000_000).nullable().optional(),
+  // jul 2026 v4-b — Foto de la factura OBLIGATORIA al registrar peaje.
+  photoUrl:      z.string().min(1, 'La foto de la factura es obligatoria').max(2_000_000),
   // jul 2026 v3 — N.° de factura AUTO-generado por backend
   // (next_invoice_number(companyId, 'toll')). El cliente ya NO lo manda.
 });

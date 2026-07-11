@@ -62,13 +62,20 @@ import {
   companyAssets,
   companyInvoiceTypes,
   companySuppliers,
+  // jul 2026 v4-b — hidratación de facturas cerradas desde Caja Chica.
+  companyPettyCashVouchers,
+  companyPettyCashAccounts,
+  companyFinanceRequests,
+  companySites,
 } from '../../db/schema/operational';
+import { companyUsers } from '../../db/schema/platform';
 import { requirePermission } from '../../middlewares/requirePermission';
 import { AppError, NotFoundError } from '../../lib/errors';
 import { toId, parseId, parseIdFlexible } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { buildInvoicePDF } from '../../lib/invoice-pdf';
 import type { InvoicePdfInput } from '../../lib/invoice-pdf';
+import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
 const router = Router({ mergeParams: true });
 
@@ -179,10 +186,21 @@ function serializeInvoice(
     // jul 2026 v3 — Totales + items[] para que el drawer del módulo
     // Finanzas muestre el desglose. `row.items` puede ser null/array
     // legacy (string). Lo normalizamos a array de objetos.
-    subtotal:    row.subtotal != null ? Number(row.subtotal) : 0,
+    //
+    // jul 2026 v4-b — Fallback: invoices legacy (creadas antes de la
+    // migración 0050) tienen subtotal/total = 0. Caemos a `amount` (que
+    // SIEMPRE estuvo populado) para mantener consistencia con la query
+    // mensual de /stats que también usa `amount` como fuente de verdad.
+    subtotal:    row.subtotal != null && Number(row.subtotal) > 0
+                   ? Number(row.subtotal)
+                   : (row.amount != null ? Number(row.amount) : 0),
     ivaPercent:   row.ivaPercent != null ? Number(row.ivaPercent) : 15,
-    ivaAmount:    row.ivaAmount != null ? Number(row.ivaAmount) : 0,
-    total:        row.total != null ? Number(row.total) : 0,
+    ivaAmount:    row.ivaAmount != null && Number(row.ivaAmount) > 0
+                   ? Number(row.ivaAmount)
+                   : 0,
+    total:        row.total != null && Number(row.total) > 0
+                   ? Number(row.total)
+                   : (row.amount != null ? Number(row.amount) : 0),
     workshopName: row.workshopName ?? null,
     workerName:   row.workerName ?? null,
     items:        Array.isArray(row.items) ? row.items : [],
@@ -215,7 +233,12 @@ async function hydrateSourceRefs(
   const maintIds = inputs.filter((i) => i.sourceModule === 'mantenimiento').map((i) => i.sourceEntityId);
 
   // ── Fuel ────────────────────────────────────────────────────────────────
-  let fuelMap = new Map<number, { date: string; assetCode: string | null; assetPlate: string | null }>();
+  // jul 2026 v4-b — `assetId` se guarda en el value para que /stats pueda
+  // agrupar el `byVehicle` por asset real (no por `(module, entity)`).
+  // Antes: sourceRef solo exponía `assetCode`/`assetPlate` y el byVehicle
+  // generaba keys compuestas `${sourceModule}-${sourceEntityId}` que
+  // duplicaban la misma placa N veces.
+  let fuelMap = new Map<number, { date: string; assetId: number | null; assetCode: string | null; assetPlate: string | null }>();
   if (fuelIds.length) {
     const rows = await db
       .select({
@@ -244,6 +267,7 @@ async function hydrateSourceRefs(
       const a = assetMap.get(r.assetId);
       return [r.id, {
         date: r.date,
+        assetId: r.assetId ?? null,
         assetCode: a?.code ?? null,
         assetPlate: a?.plate ?? null,
       }];
@@ -251,7 +275,7 @@ async function hydrateSourceRefs(
   }
 
   // ── Toll ────────────────────────────────────────────────────────────────
-  let tollMap = new Map<number, { date: string; tollName: string | null; assetCode: string | null; assetPlate: string | null }>();
+  let tollMap = new Map<number, { date: string; tollName: string | null; assetId: number | null; assetCode: string | null; assetPlate: string | null }>();
   if (tollIds.length) {
     const rows = await db
       .select({
@@ -282,6 +306,7 @@ async function hydrateSourceRefs(
       return [r.id, {
         date: r.date,
         tollName: r.tollName,
+        assetId: r.assetId ?? null,
         assetCode: a?.code ?? null,
         assetPlate: a?.plate ?? null,
       }];
@@ -289,10 +314,13 @@ async function hydrateSourceRefs(
   }
 
   // ── Maintenance ────────────────────────────────────────────────────────
+  // jul 2026 v4-b — `assetId` se guarda en el value (igual que fuel/toll)
+  // para que /stats pueda agrupar el `byVehicle` por asset real.
   let maintMap = new Map<number, {
     scheduledFor: string;
     completedAt: string | null;
     title: string | null;
+    assetId: number | null;
     assetCode: string | null;
     assetPlate: string | null;
   }>();
@@ -336,13 +364,149 @@ async function hydrateSourceRefs(
         scheduledFor,
         completedAt,
         title: r.title ?? null,
+        assetId: r.assetId ?? null,
         assetCode: a?.code ?? null,
         assetPlate: a?.plate ?? null,
       }];
     }));
   }
 
+  // jul 2026 v4-b — Vales de caja chica. Cada factura cerrada desde
+  // CajaChicaPage tiene sourceModule='petty_cash' y sourceEntityId =
+  // id del vale (company_petty_cash_vouchers). Hidratamos:
+  //   - valeNumericId, issuedAmount, refundAmount
+  //   - accountName / siteName
+  //   - requesterName (solicitante), approverName (aprobador)
+  //   - assignedToName (operador dueño del vale)
+  let voucherMap = new Map<number, {
+    voucherNumericId: number;
+    issuedAmount: number;
+    refundAmount: number;
+    accountName: string | null;
+    siteName: string | null;
+    requesterName: string | null;
+    approverName: string | null;
+    assignedToName: string | null;
+    financeClassification: 'repuesto' | 'mano_obra' | 'lavada' | null;
+  }>();
+  // jul 2026 v4-b — Envolvemos toda la hydration de vouchers en un
+  // try/catch. Si por algún motivo la query contra company_users /
+  // company_sites / company_petty_cash_accounts / etc. rompe (ej. una
+  // FK nula, una columna nueva sin migrar, o un bug de drizzle con
+  // el join), seguimos sin romper el listado. Solo logueamos el error
+  // para debug.
+  const voucherIds = inputs.filter((i) => i.sourceModule === 'petty_cash').map((i) => i.sourceEntityId);
+  if (voucherIds.length) try {
+    // jul 2026 v4-b — OJO: companyPettyCashVouchers NO tiene
+    // `financeClassification` como columna. La clasificación vive en
+    // company_finance_requests (relacionada por requestId). Por eso
+    // NO la seleccionamos del voucher acá, la joineamos desde la
+    // finance_request más abajo.
+    const vrows = await db
+      .select({
+        id:                 companyPettyCashVouchers.id,
+        siteId:             companyPettyCashVouchers.siteId,
+        issuedAmount:       companyPettyCashVouchers.issuedAmount,
+        refundAmount:       companyPettyCashVouchers.refundAmount,
+        requestId:          companyPettyCashVouchers.requestId,
+        assignedToUserId:   companyPettyCashVouchers.assignedToUserId,
+      })
+      .from(companyPettyCashVouchers)
+      .where(and(
+        eq(companyPettyCashVouchers.companyId, companyId),
+        inArray(companyPettyCashVouchers.id, voucherIds),
+      ));
+
+    // Hidratar cuentas de caja chica (para siteName / accountName)
+    const accountIds = Array.from(new Set(vrows.map((v) => v.siteId).filter(Boolean))) as number[];
+    let accountMap = new Map<number, { siteName: string | null; accountName: string | null }>();
+    if (accountIds.length) {
+      const arows = await db
+        .select({
+          id:        companyPettyCashAccounts.id,
+          siteId:    companyPettyCashAccounts.siteId,
+          siteName:  companySites.name,
+        })
+        .from(companyPettyCashAccounts)
+        .leftJoin(companySites, eq(companySites.id, companyPettyCashAccounts.siteId))
+        .where(inArray(companyPettyCashAccounts.id, accountIds));
+      accountMap = new Map(arows.map((a) => [a.id, { siteName: a.siteName ?? null, accountName: a.siteName ? `Caja · ${a.siteName}` : null }]));
+    }
+
+    // Hidratar requester + approver + finance_classification + assignedTo
+    // (de company_finance_requests y company_users).
+    const requestIds = Array.from(new Set(vrows.map((v) => v.requestId).filter(Boolean))) as number[];
+    let requestMap = new Map<number, { requesterName: string | null; approverName: string | null; financeClassification: 'repuesto' | 'mano_obra' | 'lavada' | null }>();
+    if (requestIds.length) {
+      const rrows = await db
+        .select({
+          id:                    companyFinanceRequests.id,
+          requesterUserId:       companyFinanceRequests.requesterUserId,
+          approverUserId:        companyFinanceRequests.approverUserId,
+          financeClassification: companyFinanceRequests.financeClassification,
+        })
+        .from(companyFinanceRequests)
+        .where(inArray(companyFinanceRequests.id, requestIds));
+      const userIds = Array.from(new Set([
+        ...rrows.map((r) => r.requesterUserId).filter(Boolean),
+        ...rrows.map((r) => r.approverUserId).filter(Boolean),
+      ])) as number[];
+      let userMap = new Map<number, string>();
+      if (userIds.length) {
+        const urows = await db
+          .select({ id: companyUsers.id, name: companyUsers.fullName })
+          .from(companyUsers)
+          .where(inArray(companyUsers.id, userIds));
+        userMap = new Map(urows.map((u) => [u.id, u.name ?? ""]));
+      }
+      requestMap = new Map(rrows.map((r) => [r.id, {
+        requesterName: r.requesterUserId ? (userMap.get(r.requesterUserId) ?? null) : null,
+        approverName:  r.approverUserId  ? (userMap.get(r.approverUserId)  ?? null) : null,
+        financeClassification: (r.financeClassification as 'repuesto' | 'mano_obra' | 'lavada' | null) ?? null,
+      }]));
+    }
+
+    const assignedIds = Array.from(new Set(vrows.map((v) => v.assignedToUserId).filter(Boolean))) as number[];
+    let assignedMap = new Map<number, string>();
+    if (assignedIds.length) {
+      const arows = await db
+        .select({ id: companyUsers.id, name: companyUsers.fullName })
+        .from(companyUsers)
+        .where(inArray(companyUsers.id, assignedIds));
+      assignedMap = new Map(arows.map((u) => [u.id, u.name ?? ""]));
+    }
+
+    voucherMap = new Map(vrows.map((v) => {
+      const acc = accountMap.get(v.siteId);
+      const req = requestMap.get(v.requestId);
+      return [v.id, {
+        voucherNumericId: v.id,
+        issuedAmount:     Number(v.issuedAmount),
+        refundAmount:     Number(v.refundAmount ?? 0),
+        accountName:      acc?.accountName ?? null,
+        siteName:         acc?.siteName ?? null,
+        requesterName:    req?.requesterName ?? null,
+        approverName:     req?.approverName ?? null,
+        assignedToName:   assignedMap.get(v.assignedToUserId) ?? null,
+        // financeClassification vive en company_finance_requests, no
+        // en company_petty_cash_vouchers. La joineamos vía requestId.
+        financeClassification: req?.financeClassification ?? null,
+      }];
+    }));
+  } catch (e) {
+    // jul 2026 v4-b — Si la hydration de vouchers rompe, logueamos
+    // y seguimos con voucherMap vacío. El listado no se rompe.
+    console.error('[finance-invoices] voucher hydration FAILED:', {
+      message: (e as Error)?.message,
+      stack:   (e as Error)?.stack?.split('\n').slice(0, 6).join('\n'),
+    });
+  }
+
   // ── Stitch ─────────────────────────────────────────────────────────────
+  // jul 2026 v4-b — El stitch ahora también expone `assetId` en el ref.
+  // Antes solo exponía `assetCode`/`assetPlate`; eso obligaba a /stats
+  // a agrupar `byVehicle` por `${sourceModule}-${sourceEntityId}`,
+  // duplicando la misma placa N veces (una por factura del mismo auto).
   for (const inp of inputs) {
     let ref: Record<string, unknown> | null = null;
     if (inp.sourceModule === 'combustible') {
@@ -350,6 +514,7 @@ async function hydrateSourceRefs(
       if (f) {
         ref = {
           fuelDate:   f.date,
+          assetId:    f.assetId,
           assetCode:  f.assetCode,
           assetPlate: f.assetPlate,
         };
@@ -360,6 +525,7 @@ async function hydrateSourceRefs(
         ref = {
           tollDate:   t.date,
           tollName:   t.tollName,
+          assetId:    t.assetId,
           assetCode:  t.assetCode,
           assetPlate: t.assetPlate,
         };
@@ -371,8 +537,24 @@ async function hydrateSourceRefs(
           maintenanceScheduledFor: m.scheduledFor,
           maintenanceCompletedAt:   m.completedAt,
           maintenanceTitle:         m.title,
+          assetId:                  m.assetId,
           assetCode:                m.assetCode,
           assetPlate:               m.assetPlate,
+        };
+      }
+    } else if (inp.sourceModule === 'petty_cash') {
+      const v = voucherMap.get(inp.sourceEntityId);
+      if (v) {
+        ref = {
+          voucherNumericId:        v.voucherNumericId,
+          voucherIssuedAmount:     v.issuedAmount,
+          voucherRefundAmount:     v.refundAmount,
+          voucherAccountName:      v.accountName,
+          voucherSiteName:         v.siteName,
+          voucherRequesterName:    v.requesterName,
+          voucherApproverName:     v.approverName,
+          voucherAssignedToName:   v.assignedToName,
+          voucherFinanceClassification: v.financeClassification,
         };
       }
     }
@@ -516,6 +698,15 @@ router.get(
     try {
       const companyId = ensureCompanyId(req.companyId);
 
+      // jul 2026 v4-b — DEBUG temporal: loguear el error con stack para
+      // encontrar el "Cannot convert undefined or null to object".
+      // Lo saco cuando identifiquemos la línea exacta.
+      const _dbg = (label: string, e: any) => {
+        console.error(`[finance-invoices GET] ${label}:`, e?.message, '\n',
+          'cause:', e?.cause?.message, '\n',
+          'stack:', e?.stack?.split('\n').slice(0, 8).join('\n'));
+      };
+
       // ── Parsear y validar query params ────────────────────────────────────
       const sourceModuleParam = parseSourceModule(req.query.sourceModule);
       if (req.query.sourceModule !== undefined && sourceModuleParam === null) {
@@ -623,9 +814,22 @@ router.get(
       }
       if (supplierQ) conds.push(ilike(companyInvoices.supplierName, supplierQ));
 
-      // Búsqueda libre (jul 2026 v3): match en invoice_number, supplier_name,
-      // workshop_name, worker_name. case-insensitive. OR entre los 4.
+      // Búsqueda libre (jul 2026 v3 / v4-b): matchea en:
+      //   - invoice_number, supplier_name, workshop_name, worker_name
+      //     (texto en la propia invoice — match directo).
+      //   - status, source_module (texto — match case-insensitive).
+      //   - Para facturas cerradas desde Caja Chica, también matchea
+      //     contra el operador, sede, vale, solicitante, aprobador.
+      //     Esto se hace con EXISTS a company_petty_cash_vouchers +
+      //     joins a users/sites.
       if (q) {
+        // jul 2026 v3 — Búsqueda libre contra campos de texto de la invoice.
+        // v4-b — Simplificado: solo text columns (NO sourceModule/status
+        // que son pgEnum y rompen el cast ILIKE en drizzle 0.45.2).
+        // Para Caja Chica el `q` matchea contra invoiceNumber ("GEN-..." o
+        // "CC-...") y supplierName del comprobante. La búsqueda por
+        // operador / sede / vale se hace client-side (ya están visibles
+        // en cada fila) o vía endpoint dedicado en una vuelta futura.
         const qClauses = [
           ilike(companyInvoices.invoiceNumber, q),
           ilike(companyInvoices.supplierName,  q),
@@ -971,6 +1175,467 @@ function formatDateOnly(d: Date | string | null): string {
   return d.toISOString().slice(0, 10);
 }
 
+// ─── GET /company/:id/finance-invoices/stats ──────────────────────────────────
+// jul 2026 v4-b — Submódulo Estadísticas del módulo Finanzas.
+// Devuelve agregaciones por mes para un año + vehículo + categoría
+// (combustible | peaje | mantenimiento) + breakdown por categoría.
+// El frontend usa esto para el gráfico de barras y la tabla drill-down.
+// jul 2026 v4-b permisos: este endpoint NO usa 'finanzas.facturas.ver'
+// (no lista facturas fila-por-fila). Usa el submódulo propio
+// 'finanzas.estadisticas.ver' para que un admin pueda darle Estadísticas
+// a un usuario SIN darle el listado completo de Facturas.
+router.get(
+  '/stats',
+  requirePermission('finanzas', 'estadisticas', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = ensureCompanyId(req.companyId);
+      const year  = clampInt(req.query.year,  new Date().getUTCFullYear(), 2000, 2100);
+      const catRaw = typeof req.query.category === 'string' ? req.query.category : '';
+      const category = ['combustible', 'peaje', 'mantenimiento', 'manual'].includes(catRaw)
+        ? (catRaw as 'combustible' | 'peaje' | 'mantenimiento' | 'manual')
+        : null;
+      // jul 2026 v4-b fix — la DB tiene source_module = 'peajes' (plural).
+      // El frontend del submódulo Estadísticas envía la categoría "peaje"
+      // (singular) o "peajes" (plural). Ambos deben mapear a 'peajes'.
+      // Antes: 'peaje' → 'combustible', por lo que filtrar por Peajes
+      // mostraba SOLO facturas de combustible y dejaba el resto en $0.00.
+      //
+      // El tipo del record usa el union EXACTO que acepta la columna
+      // company_invoices.source_module en la DB ('combustible' | 'peajes'
+      // | 'mantenimiento' | 'petty_cash' | 'manual').
+      const moduleMap: Record<string, 'combustible' | 'peajes' | 'mantenimiento' | 'manual'> = {
+        combustible: 'combustible',
+        peajes: 'peajes',
+        peaje: 'peajes',
+        mantenimiento: 'mantenimiento',
+        manual: 'manual',
+      };
+      const sourceModuleFilter = catRaw ? moduleMap[catRaw] ?? null : null;
+
+      // jul 2026 v4-b — DEBUG temporal. Loguea en consola del backend
+      // qué source_modules existen en company_invoices para esta empresa,
+      // agrupados por año. Sirve para diagnosticar por qué una categoría
+      // muestra $0 (data en source_module inesperado, en otro año, etc).
+      // BORRAR después de validar con el usuario.
+      try {
+        const debugSourceModules = await db
+          .select({
+            sourceModule: companyInvoices.sourceModule,
+            year:         sql<number>`EXTRACT(YEAR FROM ${companyInvoices.invoiceDate})::int`,
+            count:        sql<number>`cast(count(*) as int)`,
+            total:        sql<string>`COALESCE(SUM(${companyInvoices.total}), 0)::text`,
+            amount:       sql<string>`COALESCE(SUM(${companyInvoices.amount}), 0)::text`,
+          })
+          .from(companyInvoices)
+          .where(eq(companyInvoices.companyId, companyId))
+          .groupBy(
+            companyInvoices.sourceModule,
+            sql`EXTRACT(YEAR FROM ${companyInvoices.invoiceDate})`,
+          )
+          .orderBy(sql`EXTRACT(YEAR FROM ${companyInvoices.invoiceDate})`, companyInvoices.sourceModule);
+        // jul 2026 v4-b — Además, mostramos las primeras 5 invoices raw
+        // para ver qué tienen en `invoiceDate`, `total`, `amount`,
+        // `subtotal`, `iva_amount`. Eso nos dice si la columna `total`
+        // está null y por qué el COALESCE a `amount` no funciona.
+        const sampleInvoices = await db
+          .select({
+            id:            companyInvoices.id,
+            sourceModule:  companyInvoices.sourceModule,
+            invoiceDate:   companyInvoices.invoiceDate,
+            amount:        companyInvoices.amount,
+            subtotal:      companyInvoices.subtotal,
+            ivaAmount:     companyInvoices.ivaAmount,
+            total:         companyInvoices.total,
+          })
+          .from(companyInvoices)
+          .where(eq(companyInvoices.companyId, companyId))
+          .orderBy(companyInvoices.invoiceDate)
+          .limit(5);
+        // eslint-disable-next-line no-console
+        console.log('[STATS DEBUG]', JSON.stringify({
+          companyId, year, catRaw, category, sourceModuleFilter,
+          sourceModuleBreakdown: debugSourceModules,
+          sampleInvoices,
+        }));
+      } catch (debugErr) {
+        // eslint-disable-next-line no-console
+        console.warn('[STATS DEBUG] failed:', (debugErr as Error).message);
+      }
+
+      // jul 2026 v4-b — Traer TODOS los vehículos de la empresa para
+      // el dropdown. Lo hacemos ANTES del short-circuit de "manual+asset"
+      // porque ese short-circuit también necesita devolver `vehicles`.
+      const allCompanyAssets = await db
+        .select({
+          id:    companyAssets.id,
+          plate: companyAssets.plate,
+          name:  companyAssets.name,
+          code:  companyAssets.code,
+        })
+        .from(companyAssets)
+        .where(eq(companyAssets.companyId, companyId))
+        .orderBy(companyAssets.plate);
+
+      // jul 2026 v4-b — Mapeo a la shape que consume el frontend
+      // (asset-3 → "ABM-4662", fallback al code o name si no hay placa).
+      const vehicles = allCompanyAssets.map((a) => ({
+        id:    toId('asset', a.id),
+        plate: a.plate ?? a.code ?? a.name ?? `Asset #${a.id}`,
+      }));
+
+      // `filterEntityIdsByAsset` solo conoce los 3 módulos con tabla
+      // fuente única (combustible | peajes | mantenimiento). Si la
+      // categoría es 'manual' (vouchers de caja chica), no hay tabla
+      // fuente única que filtrar — pasamos null = "todos los módulos".
+      const sourceModuleForFilter: SourceModule | null =
+        sourceModuleFilter && sourceModuleFilter !== 'manual'
+          ? sourceModuleFilter
+          : null;
+
+      // Filtro de vehículo: si viene assetId, resolvemos los sourceEntityIds
+      // por módulo (fuel / toll / maintenance) para usar en el WHERE.
+      let assetFilter: ReturnType<typeof sql> | null = null;
+      if (typeof req.query.assetId === 'string' && req.query.assetId && req.query.assetId !== 'all') {
+        try {
+          const raw = String(req.query.assetId);
+          if (/^asset-\d+$/.test(raw) || /^\d+$/.test(raw)) {
+            const assetIdNum = parseIdFlexible('asset', raw);
+            const perMod = await filterEntityIdsByAsset(companyId, sourceModuleForFilter, assetIdNum);
+            if (perMod.every((p) => p.ids.length === 0)) {
+              // Sin matches, devolver array vacío.
+              return res.json({
+                year,
+                category: catRaw || 'all',
+                monthly: Array.from({ length: 12 }, (_, i) => ({
+                  year, month: i + 1,
+                  subtotal: 0, ivaAmount: 0, total: 0, count: 0,
+                  byCategory: { combustible: 0, peaje: 0, mantenimiento: 0 },
+                })),
+                byCategory: { combustible: 0, peaje: 0, mantenimiento: 0 },
+                byVehicle: [],
+                totals: { subtotal: 0, ivaAmount: 0, total: 0, count: 0 },
+              });
+            }
+            const orClauses = perMod
+              .filter((p) => p.ids.length > 0)
+              .map((p) => and(
+                eq(companyInvoices.sourceModule, p.module),
+                inArray(companyInvoices.sourceEntityId, p.ids),
+              )!);
+            if (orClauses.length > 0) {
+              assetFilter = or(...orClauses);
+            }
+          }
+        } catch {
+          // ignore malformed assetId
+        }
+      }
+
+      // jul 2026 v4-b — Short-circuit para `category=manual` con `assetId`.
+      // Las invoices de Caja Chica / manuales NO tienen assetId. Si el
+      // usuario filtra por un vehículo específico con category=manual,
+      // el filtro de asset no matchea nada (no hay datos). Retornamos
+      // ceros directamente en vez de ejecutar la query pesada.
+      if (catRaw === 'manual' && assetFilter) {
+        return res.json({
+          year,
+          category: 'manual',
+          monthly: Array.from({ length: 12 }, (_, i) => ({
+            year, month: i + 1,
+            subtotal: 0, ivaAmount: 0, total: 0, count: 0,
+            byCategory: { combustible: 0, peaje: 0, mantenimiento: 0 },
+          })),
+          byCategory: { combustible: 0, peaje: 0, mantenimiento: 0 },
+          byVehicle: [],
+          vehicles,
+          totals: { subtotal: 0, ivaAmount: 0, total: 0, count: 0 },
+        });
+      }
+
+      // WHERE principal: company + año + módulo + asset.
+      const conds: any[] = [eq(companyInvoices.companyId, companyId)];
+      conds.push(sql`EXTRACT(YEAR FROM ${companyInvoices.invoiceDate}) = ${year}`);
+      if (sourceModuleFilter) {
+        conds.push(eq(companyInvoices.sourceModule, sourceModuleFilter));
+      }
+      if (assetFilter) {
+        conds.push(assetFilter);
+      }
+      const where = and(...conds);
+
+      // jul 2026 v4-b — Agregación por (mes, source_module).
+      // SIMPLIFICADO: usamos `amount` directamente. Es la única columna
+      // que SIEMPRE estuvo poblada (incluso en invoices legacy antes de
+      // la migración 0050). El doble COALESCE anidado dentro de SUM con
+      // cast ::numeric que tenía antes rompía el bind de postgres-js
+      // (tiraba "Failed query:" con `undefined` en params). Ahora es
+      // un solo COALESCE plano.
+      //
+      // Para nuevas invoices con IVA, `amount` es el subtotal antes de
+      // IVA. El frontend puede estimar el total con iva como
+      // `amount * 1.15` para Ecuador. Para esta iteración, mostramos
+      // `amount` como `subtotal` y `total` (= amount sin IVA por ahora).
+      const aggRows = await db
+        .select({
+          month:        sql<number>`EXTRACT(MONTH FROM ${companyInvoices.invoiceDate})::int`,
+          sourceModule: companyInvoices.sourceModule,
+          subtotal:     sql<string>`COALESCE(SUM(${companyInvoices.amount}), 0)::text`,
+          ivaAmount:    sql<string>`0::text`,
+          total:        sql<string>`COALESCE(SUM(${companyInvoices.amount}), 0)::text`,
+          count:        sql<number>`cast(count(*) as int)`,
+        })
+        .from(companyInvoices)
+        .where(where)
+        .groupBy(
+          sql`EXTRACT(MONTH FROM ${companyInvoices.invoiceDate})`,
+          companyInvoices.sourceModule,
+        );
+
+      // Normalizar a 12 meses con shape consistente.
+      const monthMap = new Map<number, {
+        year: number; month: number;
+        subtotal: number; ivaAmount: number; total: number; count: number;
+        byCategory: { combustible: number; peaje: number; mantenimiento: number };
+      }>();
+      for (let m = 1; m <= 12; m++) {
+        monthMap.set(m, {
+          year: year, month: m,
+          subtotal: 0, ivaAmount: 0, total: 0, count: 0,
+          byCategory: { combustible: 0, peaje: 0, mantenimiento: 0 },
+        });
+      }
+      let totals = { subtotal: 0, ivaAmount: 0, total: 0, count: 0 };
+      const byCategory: Record<'combustible' | 'peaje' | 'mantenimiento', number> = {
+        combustible: 0, peaje: 0, mantenimiento: 0,
+      };
+      for (const r of aggRows) {
+        const m = Number(r.month);
+        const slot = monthMap.get(m);
+        if (!slot) continue;
+        const sub = Number(r.subtotal);
+        const iva = Number(r.ivaAmount);
+        const tot = Number(r.total);
+        const cnt = Number(r.count);
+        slot.subtotal  += sub;
+        slot.ivaAmount += iva;
+        slot.total     += tot;
+        slot.count     += cnt;
+        // Mapear source_module a category para byCategory.
+        const key = r.sourceModule === 'combustible' ? 'combustible'
+                  : r.sourceModule === 'peajes'     ? 'peaje'
+                  : r.sourceModule === 'mantenimiento' ? 'mantenimiento'
+                  : null;
+        if (key) {
+          slot.byCategory[key] += tot;
+          byCategory[key] += tot;
+        }
+        totals.subtotal  += sub;
+        totals.ivaAmount += iva;
+        totals.total     += tot;
+        totals.count     += cnt;
+      }
+
+      // jul 2026 v4-b — Lista de vehículos disponibles para el dropdown
+      // del submódulo Estadísticas. Se trae DIRECTO de la tabla de
+      // Top vehículos por gasto.
+      // jul 2026 v4-b fix — Antes el `groupBy` era por (sourceModule,
+      // sourceEntityId), por lo que el mismo vehículo aparecía N veces
+      // (una por cada factura). Ahora seguimos trayendo filas a ese
+      // nivel porque necesitamos el sourceModule para la hidratación,
+      // pero abajo dedupeamos por `assetId` real del sourceRef.
+      const byVehicleRows = await db
+        .select({
+          sourceModule: companyInvoices.sourceModule,
+          sourceEntityId: companyInvoices.sourceEntityId,
+          // jul 2026 v4-b — Usar `amount` directo (mismo motivo que arriba:
+          // las invoices legacy tienen `total = 0`).
+          total: sql<string>`COALESCE(SUM(${companyInvoices.amount}), 0)::text`,
+        })
+        .from(companyInvoices)
+        .where(where)
+        .groupBy(companyInvoices.sourceModule, companyInvoices.sourceEntityId);
+
+      // Hidratar source_ref para traer assetId + placa.
+      const inputs: HydrationInput[] = byVehicleRows.map((r) => ({
+        sourceModule: r.sourceModule as SourceModule,
+        sourceEntityId: r.sourceEntityId,
+      }));
+      const refMap = await hydrateSourceRefs(companyId, inputs);
+
+      // Agrupamos por `assetId` REAL (no por key compuesta). Las filas
+      // sin `ref.assetId` (fuente manual / petty_cash / huérfanas) se
+      // EXCLUYEN del `byVehicle` y del dropdown: no son vehículos.
+      const vehicleMap = new Map<string, { assetId: string; plate: string; total: number; byCategory: Record<string, number> }>();
+      for (const r of byVehicleRows) {
+        const ref = refMap.get(`${r.sourceModule}:${r.sourceEntityId}`) ?? null;
+        const realAssetId = typeof ref?.assetId === 'number' && ref.assetId > 0
+          ? ref.assetId
+          : null;
+        if (realAssetId == null) continue;  // manual/petty_cash/orphan → no es vehículo
+        const assetIdStr = toId('asset', realAssetId);
+        const plate = ref?.assetPlate ?? null;
+        if (!plate) continue;  // vehículo sin placa legible → tampoco va
+        const slot = vehicleMap.get(assetIdStr) ?? {
+          assetId: assetIdStr,
+          plate,
+          total: 0,
+          byCategory: { combustible: 0, peaje: 0, mantenimiento: 0 },
+        };
+        const tot = Number(r.total);
+        slot.total += tot;
+        const key = r.sourceModule === 'combustible' ? 'combustible'
+                  : r.sourceModule === 'peajes'     ? 'peaje'
+                  : r.sourceModule === 'mantenimiento' ? 'mantenimiento'
+                  : null;
+        if (key) slot.byCategory[key] += tot;
+        vehicleMap.set(assetIdStr, slot);
+      }
+      const byVehicle = Array.from(vehicleMap.values()).sort((a, b) => b.total - a.total);
+
+      res.json({
+        year,
+        category: catRaw || 'all',
+        monthly: Array.from(monthMap.values()),
+        byCategory,
+        byVehicle,
+        vehicles,
+        totals,
+      });
+    } catch (err) {
+      // jul 2026 v4-b — loguear el error con stack para debug.
+      console.error('[finance-invoices /stats] FAILED:', {
+        message: (err as Error)?.message,
+        stack:   (err as Error)?.stack?.split('\n').slice(0, 8).join('\n'),
+      });
+      next(err);
+    }
+  },
+);
+
+// ─── GET /company/:id/finance-invoices/drill ─────────────────────────────────
+// jul 2026 v4-b — Drill-down: devuelve la lista de invoices filtrada para
+// un (year, month, assetId?, category?). El frontend agrupa por semana/día
+// según el nivel de expansión.
+// jul 2026 v4-b permisos: misma regla que /stats — submódulo propio
+// 'finanzas.estadisticas.ver', NO 'finanzas.facturas.ver'.
+router.get(
+  '/drill',
+  requirePermission('finanzas', 'estadisticas', 'ver'),
+  async (req, res, next) => {
+    try {
+      const companyId = ensureCompanyId(req.companyId);
+      const year  = clampInt(req.query.year,  new Date().getUTCFullYear(), 2000, 2100);
+      const month = clampInt(req.query.month, 0, 0, 12); // 0 = all
+      const catRaw = typeof req.query.category === 'string' ? req.query.category : '';
+      // jul 2026 v4-b fix — mismo mapeo que en /stats. 'peaje'/'peajes'
+      // mapean a source_module='peajes' (plural, según la DB), no a
+      // 'combustible'. Antes filtraba por la categoría equivocada.
+      const moduleMap: Record<string, 'combustible' | 'peajes' | 'mantenimiento' | 'manual'> = {
+        combustible: 'combustible',
+        peajes: 'peajes',
+        peaje: 'peajes',
+        mantenimiento: 'mantenimiento',
+        manual: 'manual',
+      };
+      const sourceModuleFilter = catRaw ? moduleMap[catRaw] ?? null : null;
+
+      // 'manual' (vouchers de caja chica) no tiene tabla fuente propia.
+      // Para `filterEntityIdsByAsset`, lo tratamos como "todos los módulos".
+      const sourceModuleForFilter: SourceModule | null =
+        sourceModuleFilter && sourceModuleFilter !== 'manual'
+          ? sourceModuleFilter
+          : null;
+
+      const conds: any[] = [eq(companyInvoices.companyId, companyId)];
+      conds.push(sql`EXTRACT(YEAR FROM ${companyInvoices.invoiceDate}) = ${year}`);
+      if (month > 0) {
+        conds.push(sql`EXTRACT(MONTH FROM ${companyInvoices.invoiceDate}) = ${month}`);
+      }
+      if (sourceModuleFilter) {
+        conds.push(eq(companyInvoices.sourceModule, sourceModuleFilter));
+      }
+
+      // Filtro por vehículo.
+      if (typeof req.query.assetId === 'string' && req.query.assetId && req.query.assetId !== 'all') {
+        try {
+          const raw = String(req.query.assetId);
+          if (/^asset-\d+$/.test(raw) || /^\d+$/.test(raw)) {
+            const assetIdNum = parseIdFlexible('asset', raw);
+            const perMod = await filterEntityIdsByAsset(companyId, sourceModuleForFilter, assetIdNum);
+            const orClauses = perMod
+              .filter((p) => p.ids.length > 0)
+              .map((p) => and(
+                eq(companyInvoices.sourceModule, p.module),
+                inArray(companyInvoices.sourceEntityId, p.ids),
+              )!);
+            if (orClauses.length > 0) conds.push(or(...orClauses));
+            else return res.json({ rows: [] });
+          }
+        } catch { /* ignore */ }
+      }
+
+      const where = and(...conds);
+
+      // jul 2026 v4-b — Paginación canónica del proyecto (parsePageParams).
+      // Antes el endpoint tenía un .limit(500) hardcoded; ahora usa el
+      // sistema estándar: ?page=1&pageSize=50 (max 200). Devuelve la shape
+      // { data, total, page, pageSize, totalPages } (buildPageResponse).
+      const { page, pageSize, offset } = parsePageParams(
+        req.query as Record<string, unknown>,
+        { pageSize: 50, maxPageSize: 200 },
+      );
+
+      const [rows, [countRow]] = await Promise.all([
+        db
+          .select()
+          .from(companyInvoices)
+          .where(where)
+          .orderBy(desc(companyInvoices.invoiceDate), desc(companyInvoices.id))
+          .limit(pageSize)
+          .offset(offset),
+        db
+          .select({ value: sql<number>`cast(count(*) as int)` })
+          .from(companyInvoices)
+          .where(where),
+      ]);
+      const total = Number(countRow?.value ?? 0);
+
+      // Hidratar source_ref + typeName + supplierName.
+      const inputs: HydrationInput[] = rows.map((r) => ({
+        sourceModule: r.sourceModule as SourceModule,
+        sourceEntityId: r.sourceEntityId,
+      }));
+      const refMap = await hydrateSourceRefs(companyId, inputs);
+      const { types: tMap, suppliers: sMap } =
+        await hydrateTypeAndSupplierFull(
+          rows.map((r) => ({ invoiceTypeId: r.invoiceTypeId, supplierId: r.supplierId })),
+        );
+      const serialized = rows.map((r) => {
+        const t = r.invoiceTypeId != null ? tMap.get(r.invoiceTypeId) : undefined;
+        const s = r.supplierId    != null ? sMap.get(r.supplierId)    : undefined;
+        return serializeInvoice(r, refMap.get(`${r.sourceModule}:${r.sourceEntityId}`) ?? null, {
+          invoiceTypeName: t?.name ?? null,
+          invoiceTypeIsActive: t?.isActive ?? null,
+          supplierCanonicalName: s?.name ?? null,
+          supplierNit: s?.nit ?? null,
+        });
+      });
+      res.json(buildPageResponse(serialized, total, page, pageSize));
+    } catch (err) {
+      // jul 2026 v4-b — DEBUG temporal del 500.
+      console.error('[finance-invoices GET /] FAILED:', {
+        message: (err as Error)?.message,
+        code:    (err as any)?.code,
+        detail:  (err as any)?.detail,
+        hint:    (err as any)?.hint,
+        stack:   (err as Error)?.stack?.split('\n').slice(0, 10).join('\n'),
+      });
+      next(err);
+    }
+  },
+);
+
 // ─── GET /company/:id/finance-invoices/:id ────────────────────────────────────
 
 router.get(
@@ -1111,6 +1776,11 @@ router.get(
           legalNumber:     row.legalNumber,
           issueDate:       String(row.invoiceDate),
           amount:          String(row.amount),
+          // jul 2026 v4-b — totales desglosados para el PDF.
+          subtotal:        row.subtotal != null ? String(row.subtotal) : null,
+          ivaPercent:      row.ivaPercent != null ? String(row.ivaPercent) : null,
+          ivaAmount:       row.ivaAmount != null ? String(row.ivaAmount) : null,
+          total:           row.total != null ? String(row.total) : null,
           notes:           row.notes,
           items:           (row.items as Array<{
                               description: string;
@@ -1119,7 +1789,9 @@ router.get(
                               subtotal: string | number;
                             }> | null) ?? [],
           invoiceTypeName: t?.name ?? null,
-          sourceModule:    row.sourceModule as 'combustible' | 'peajes' | 'mantenimiento' | 'manual',
+          // jul 2026 v4-b — agregamos 'petty_cash' al union.
+          sourceModule:    row.sourceModule as
+            'combustible' | 'peajes' | 'mantenimiento' | 'petty_cash' | 'manual',
           sourceRef:       (serialized.sourceRef ?? null) as InvoicePdfInput['invoice']['sourceRef'],
         },
         supplier: supplierForPdf,

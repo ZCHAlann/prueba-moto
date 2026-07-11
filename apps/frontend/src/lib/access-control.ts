@@ -38,6 +38,13 @@ const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub
   // tenga `finanzas.caja_chica.ver`, y al revés.
   { test: (h) => h === "/finanzas/caja-chica" || h.startsWith("/finanzas/caja-chica"),                    mod: "finanzas",      sub: "caja_chica"  },
   { test: (h) => h === "/finanzas/transacciones" || h.startsWith("/finanzas/transacciones"),              mod: "finanzas",      sub: "transacciones" },
+  // jul 2026 v4-b — Estadísticas tiene su propio submódulo (no comparte
+  // el permiso de facturas). Regla específica ANTES del catch-all `/finanzas`
+  // para que gane. Si no estuviera acá, /finanzas/estadisticas caería en
+  // el fallback y exigiría `finanzas.facturas.ver`, lo que forzaría a
+  // cualquier user con Estadísticas a tener también acceso al listado
+  // completo de facturas.
+  { test: (h) => h === "/finanzas/estadisticas" || h.startsWith("/finanzas/estadisticas"),                mod: "finanzas",      sub: "estadisticas" },
   // Fallback de la familia: /finanzas o /finanzas/facturas o cualquier futuro sub.
   { test: (h) => h === "/finanzas" || h.startsWith("/finanzas"),                                          mod: "finanzas",      sub: "facturas"    },
   { test: (h) => h === "/geolocalizacion" || h.startsWith("/geolocalizacion"),                            mod: "geolocalizacion", sub: "geolocalizacion" },

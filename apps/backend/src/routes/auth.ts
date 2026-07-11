@@ -406,6 +406,7 @@ router.get("/session", authenticate, async (req, res, next) => {
           // para que cambios recientes se reflejen sin re-login.
           dbRole:             companyUsers.role,
           dbModulePermissions: companyUsers.modulePermissions,
+          dbProfileData:      companyUsers.profileData,
           dbUpdatedAt:         companyUsers.updatedAt,
         })
         .from(companyUsers)
@@ -417,6 +418,15 @@ router.get("/session", authenticate, async (req, res, next) => {
       photoUrl    = row?.photoUrl    ?? null;
       userDni     = row?.dni         ?? null;
       dbUpdatedAt = row?.dbUpdatedAt ?? null;
+      // jul 2026 v5 — Sede principal del usuario (vive en
+      // `company_users.profile_data->>'siteId'`). Si es null, el
+      // usuario es admin / plataforma / sin sede asignada.
+      const userSiteIdFromProfile = (() => {
+        const pd = row?.dbProfileData as Record<string, unknown> | null | undefined;
+        const raw = pd?.siteId;
+        const n = typeof raw === "string" ? parseInt(raw, 10) : Number(raw);
+        return Number.isFinite(n) && n > 0 ? n : null;
+      })();
 
       // Recalcular permisos desde BD (catálogo rol + override)
       const isAdminRole = ["owner_empresa", "admin_empresa"].includes(row?.dbRole ?? "");
@@ -461,6 +471,12 @@ router.get("/session", authenticate, async (req, res, next) => {
       // jun 2026 — cédula/DNI del usuario logueado. Se usa para
       // autorrellenar la firma del responsable en el acta PDF.
       dni:               userDni,
+      // jul 2026 v5 — Sede principal del usuario (vive en
+      // `company_users.profile_data->>'siteId'`). Sirve para que el
+      // modal de "Nueva solicitud" de Caja Chica autoseccione la
+      // sede del operador y NO le dé a elegir entre varias (los
+      // admins, que no tienen siteId, sí ven el dropdown).
+      siteId:            userSiteIdFromProfile,
       // Timestamp de la última modificación del usuario. Sirve al
       // frontend para invalidar la sesión si quedó desincronizada
       // con BD (cambio de rol, de permisos, etc.).

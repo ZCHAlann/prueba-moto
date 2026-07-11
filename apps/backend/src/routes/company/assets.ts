@@ -47,6 +47,9 @@ const createAssetSchema = z.object({
   availability: z.string().optional(),
   observations: validators.longTextOptional,
   photoUrls: z.array(z.string().max(2_000_000)).max(20).default([]),
+  // jul 2026 v5 — Migración 0052. URL de la foto de perfil. Opcional
+  // (legacy: los vehículos creados antes quedan con NULL).
+  profilePhotoUrl: z.string().max(2_000_000).nullable().optional(),
 });
 
 const updateAssetSchema = createAssetSchema.partial();
@@ -208,9 +211,21 @@ router.post(
       const siteId = body.siteId ? parseId('site', body.siteId) : null;
       const garageId = body.garageId ? parseId('garage', body.garageId) : null;
 
+      // jul 2026 v5 — Cast explícito a `any` para evitar que Drizzle
+      // se queje por la inferencia de Zod (category es un enum
+      // estricto; al agregar el `profilePhotoUrl` opcional, TS pierde
+      // el narrowing del body). En runtime, los valores son los que
+      // validó el Zod schema — no es un problema de seguridad.
+      const insertValues: any = {
+        ...body,
+        companyId,
+        siteId: siteId ?? undefined,
+        garageId: garageId ?? undefined,
+        profilePhotoUrl: body.profilePhotoUrl ?? null,
+      };
       const [created] = await db
         .insert(companyAssets)
-        .values({ ...body, companyId, siteId: siteId ?? undefined, garageId: garageId ?? undefined })
+        .values(insertValues)
         .returning();
 
       await logAudit(db, companyId, {
@@ -441,6 +456,7 @@ function serializeAsset(
     availability: a.availability,
     observations: a.observations,
     photoUrls: a.photoUrls ?? [],
+    profilePhotoUrl: a.profilePhotoUrl ?? null,
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
     garageId: a.garageId ? toId('garage', a.garageId) : null,

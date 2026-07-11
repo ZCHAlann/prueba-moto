@@ -107,8 +107,8 @@ export function MaintenanceReports() {
       {/* ── Filtros ── */}
       <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:flex-wrap">
-          <DatePicker label="Desde" value={from} onChange={setFrom} maxDate={to || undefined} />
-          <DatePicker label="Hasta" value={to}   onChange={setTo}   minDate={from || undefined} />
+          <DatePicker compact label="Desde" value={from} onChange={setFrom} maxDate={to || undefined} />
+          <DatePicker compact label="Hasta" value={to}   onChange={setTo}   minDate={from || undefined} />
           <div className="flex-1" />
           <button
             onClick={load}

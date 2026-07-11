@@ -304,6 +304,15 @@ export const navigationSections: NavigationSection[] = [
         description: "Linea de tiempo de caja chica + gastos anuales",
         accent: "emerald",
       },
+      {
+        // jul 2026 v4-b — Submódulo Estadísticas (gráfico de barras +
+        // tabla drill-down mes→semana→día con recharts + framer-motion).
+        label: "Estadísticas",
+        href: "/finanzas/estadisticas",
+        icon: "ES",
+        description: "Gastos por vehículo, categoría y mes. Drill-down semanal/diario",
+        accent: "emerald",
+      },
     ],
   },
   {

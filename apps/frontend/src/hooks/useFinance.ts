@@ -111,6 +111,8 @@ export type FinanceRequest = {
 
 export type VoucherStatus = "open" | "closed" | "cancelled";
 
+export type VoucherPurpose = "repuesto" | "otro";
+
 export type Voucher = {
   id: string;
   numericId: number;
@@ -140,6 +142,9 @@ export type Voucher = {
   //   "lavada"        → factura + workerName (NO items)
   //   null/undefined  → standalone, sin restricción
   financeClassification?: 'repuesto' | 'mano_obra' | 'lavada' | null;
+  // jul 2026 v5 — Migración 0051. Indica si el vale entra al flujo
+  // de revisión contable. NULL = legacy (no se revisa).
+  purpose?: VoucherPurpose | null;
 };
 
 export type TransactionItem = {
@@ -259,6 +264,9 @@ export function useFinance() {
       origin?: FinanceRequestOrigin;
       maintenanceId?: number;
       maintenanceItemId?: number;
+      // jul 2026 v5 — Migración 0051. Sólo aplica a standalone. Si
+      // viene de mantenimiento, el backend lo fuerza a 'repuesto'.
+      purpose?: VoucherPurpose;
     }): Promise<MutationResult<{ id: string; numericId: number }>> => {
       if (!companyId) return { ok: false, error: "Sesión inválida" };
       const res = await fetch(`/api/company/${companyId}/finance/requests`, {
@@ -496,6 +504,26 @@ export function useFinance() {
       return res.json();
     };
 
+    // jul 2026 v4-b — Detalle de UNA factura. Usado por ViewVoucherModal
+    // para mostrar los items + comprobante del vale cerrado.
+    // El backend espera el ID con prefijo `invoice-N` (lo parsea con
+    // parseId('invoice', id)). Si llega pelado, tira 400 "ID inválido".
+    const getInvoice = async (invoiceId: number | string): Promise<MutationResult<{ invoice: any }>> => {
+      if (!companyId) return { ok: false, error: "Sesión inválida" };
+      const idStr = String(invoiceId);
+      // Prefijar solo si NO viene ya con `invoice-`.
+      const finalId = /^invoice-\d+$/.test(idStr) ? idStr : `invoice-${idStr}`;
+      const res = await fetch(
+        `/api/company/${companyId}/finance-invoices/${finalId}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) {
+        return { ok: false, error: (await res.text().catch(() => "")) || `HTTP ${res.status}` };
+      }
+      const data = await res.json();
+      return { ok: true, data };
+    };
+
     // ════════════════════════════════════════════════════════════════════
     // TRANSACTIONS
     // ════════════════════════════════════════════════════════════════════
@@ -562,6 +590,9 @@ export function useFinance() {
       },
       maintenance: {
         fetchFinance: fetchMaintenanceFinance,
+      },
+      invoices: {
+        get: getInvoice,
       },
       transactions: {
         fetch: fetchTransactions,

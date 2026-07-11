@@ -130,6 +130,11 @@ export const companyAssets = pgTable(
     availability: assetAvailabilityEnum('availability'),
     observations: text('observations'),
     photoUrls: text('photo_urls').array().default([]),
+    // jul 2026 v5 — Migración 0052. Foto de perfil del vehículo.
+    // Aparece en la tabla de Flotas, en los modales Crear/Editar, en
+    // el drawer de detalle. Es independiente de `photoUrls[]` (que
+    // es la galería histórica de inspecciones).
+    profilePhotoUrl: text('profile_photo_url'),
 
     // ── NUEVO: telemática ────────────────────
     engineOn: boolean('engine_on').default(false),
@@ -476,6 +481,13 @@ export const maintenanceStatusEnum = pgEnum('maintenance_status_enum', [
   'Atrasado',
 ]);
 
+// jul 2026 — Categorías de mantenimiento administrables por empresa.
+// La columna en company_maintenance_records pasó de `maintenance_category_enum`
+// a `varchar(60)` (migración 0052) para que cada empresa pueda crear sus
+// propias categorías además de las built-in. Este enum queda en el schema
+// solo como referencia documental de las built-in; la columna real ya no
+// lo usa. NO LO BORRES hasta confirmar que no hay triggers/funciones que
+// dependan del type name en la BD.
 export const maintenanceCategoryEnum = pgEnum('maintenance_category_enum', [
   'Primordial:Bombas',
   'Primordial:Motores',
@@ -522,7 +534,20 @@ export const companyMaintenanceRecords = pgTable('company_maintenance_records', 
   workshopId:      integer('workshop_id').references(() => companyWorkshops.id, { onDelete: 'set null' }),
   type:            maintenanceTypeEnum('type').notNull().default('Programado'),
   status:          maintenanceStatusEnum('status').notNull().default('Programado'),
-  category:        maintenanceCategoryEnum('category').notNull().default('Otro'),
+  // jul 2026 v5 — Categoría administrable por empresa. Cambió de enum a
+  // varchar(60) en la migration 0052. La forma del valor:
+  //   - Built-in: 'Primordial:Bombas' | 'Primordial:Motores' |
+  //               'Aceite:Cambio' | 'Aceite:Inventario' | 'Lavada' | 'Otro'
+  //   - Custom:   `custom:<maint-cat id>` o el `key` que la empresa eligió
+  //               al crear la categoría (vía company_maintenance_categories).
+  // El filtro `WHERE category = ?` funciona para ambos casos sin distinción
+  // — el backend devuelve el valor crudo y el frontend lo mapea a label.
+  category:        varchar('category', { length: 60 }).notNull().default('Otro'),
+  // FK opcional al registro de categoría custom. NULL para built-in
+  // (no hay fila en company_maintenance_categories para ellas). Sirve
+  // para JOINs rápidos en reportes y para resolver el label sin tener
+  // que volver a pedir la lista completa.
+  categoryId:      integer('category_id').references(() => companyMaintenanceCategories.id, { onDelete: 'set null' }),
   title:           varchar('title', { length: 200 }),
   description:     text('description'),
   odometerKm:      integer('odometer_km'),
@@ -1712,6 +1737,39 @@ export const pettyCashVoucherStatusEnum = pgEnum(
   ['open', 'closed', 'cancelled'],
 );
 
+// jul 2026 v5 — Migración 0051. Clasifica el destino del vale para
+// saber si entra al flujo de revisión contable.
+export const pettyCashVoucherPurposeEnum = pgEnum(
+  'petty_cash_voucher_purpose_enum',
+  ['repuesto', 'otro'],
+);
+
+// jul 2026 v5 — Estados del semáforo de revisión contable.
+export const invoiceReviewStatusEnum = pgEnum(
+  'invoice_review_status_enum',
+  [
+    'pending_review',
+    'seen',
+    'under_review',
+    'correction_requested',
+    'approved',
+    'not_required',
+  ],
+);
+
+// jul 2026 v5 — Eventos de la timeline de revisión.
+export const invoiceReviewEventKindEnum = pgEnum(
+  'invoice_review_event_kind_enum',
+  [
+    'created',
+    'reviewer_seen',
+    'reviewer_started',
+    'correction_requested',
+    'photo_reuploaded',
+    'approved',
+  ],
+);
+
 export const pettyCashMovementTypeEnum = pgEnum(
   'petty_cash_movement_type_enum',
   [
@@ -1797,6 +1855,10 @@ export const companyFinanceRequests = pgTable(
     status:              financeRequestStatusEnum('status').notNull().default('pending'),
     rejectionReason:     text('rejection_reason'),
     reviewedAt:          timestamp('reviewed_at'),
+    // jul 2026 v5 — Migración 0051. Se setea al crear la solicitud.
+    // Si origin=maintenance* se fuerza a 'repuesto' en el backend.
+    // Se copia al vale en la aprobación.
+    purpose:             pettyCashVoucherPurposeEnum('purpose'),
     createdAt:           timestamp('created_at').notNull().defaultNow(),
     updatedAt:           timestamp('updated_at').notNull().defaultNow(),
   },
@@ -1820,6 +1882,10 @@ export const companyPettyCashVouchers = pgTable(
     closedInvoiceId:      integer('closed_invoice_id').references(() => companyInvoices.id, { onDelete: 'set null' }),
     closedNotes:          text('closed_notes'),
     refundAmount:         numeric('refund_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+    // jul 2026 v5 — Migración 0051. Si 'repuesto' el vale entra al
+    // flujo de revisión contable. Los vales con maintenance_id
+    // se backfillean a 'repuesto' en la migración.
+    purpose:              pettyCashVoucherPurposeEnum('purpose'),
     createdAt:            timestamp('created_at').notNull().defaultNow(),
     updatedAt:            timestamp('updated_at').notNull().defaultNow(),
   },
@@ -1848,5 +1914,48 @@ export const companyAnnualExpenses = pgTable(
     actorUserId:           integer('actor_user_id').references(() => companyUsers.id, { onDelete: 'set null' }),
     createdAt:             timestamp('created_at').notNull().defaultNow(),
     updatedAt:             timestamp('updated_at').notNull().defaultNow(),
+  },
+);
+
+// ─── jul 2026 v5 — Revisión contable de facturas (migración 0051) ────────────
+//
+// Estado de revisión por factura. 1:1 con company_invoices. Status pasa
+// por: pending_review → seen → under_review → (correction_requested ↔
+// photo_reuploaded ↔ seen/under) → approved. not_required para vales
+// que no son de repuestos (no se revisan).
+
+export const companyInvoiceReviews = pgTable(
+  'company_invoice_reviews',
+  {
+    id:                   serial('id').primaryKey(),
+    companyId:            integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+    invoiceId:            integer('invoice_id').notNull().unique().references(() => companyInvoices.id, { onDelete: 'cascade' }),
+    voucherId:            integer('voucher_id').notNull().references(() => companyPettyCashVouchers.id, { onDelete: 'cascade' }),
+    status:               invoiceReviewStatusEnum('status').notNull().default('pending_review'),
+    currentReviewerId:    integer('current_reviewer_id').references(() => companyUsers.id, { onDelete: 'set null' }),
+    lastCorrectionNote:   text('last_correction_note'),
+    lastCorrectionAt:     timestamp('last_correction_at'),
+    lastCorrectionBy:     integer('last_correction_by').references(() => companyUsers.id, { onDelete: 'set null' }),
+    approvedBy:           integer('approved_by').references(() => companyUsers.id, { onDelete: 'set null' }),
+    approvedAt:           timestamp('approved_at'),
+    createdAt:            timestamp('created_at').notNull().defaultNow(),
+    updatedAt:            timestamp('updated_at').notNull().defaultNow(),
+  },
+);
+
+// jul 2026 v5 — Log append-only de eventos. Es la fuente del timeline
+// horizontal en la pestaña Correcciones.
+
+export const companyInvoiceReviewEvents = pgTable(
+  'company_invoice_review_events',
+  {
+    id:              serial('id').primaryKey(),
+    companyId:       integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+    reviewId:        integer('review_id').notNull().references(() => companyInvoiceReviews.id, { onDelete: 'cascade' }),
+    kind:            invoiceReviewEventKindEnum('kind').notNull(),
+    actorUserId:     integer('actor_user_id').references(() => companyUsers.id, { onDelete: 'set null' }),
+    note:            text('note'),
+    metadata:        jsonb('metadata').notNull().default({}),
+    createdAt:       timestamp('created_at').notNull().defaultNow(),
   },
 );

@@ -42,6 +42,10 @@ export type Asset = {
   oilType: string;
   oilCapacity: string;
   photoUrls: string[]; 
+  // jul 2026 v5 — Migración 0052. Foto de perfil del vehículo (la
+  // "principal"). Aparece en la tabla, modales Crear/Editar y drawer.
+  // Si es null, se muestra un placeholder con ícono de auto.
+  profilePhotoUrl: string | null;
   garageId: string | null;
   // ── Backend enrichment (display-only) ──────────────────────────────────────
   /** Current active driver via assignment — avoids separate useDrivers() call */

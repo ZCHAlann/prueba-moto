@@ -259,12 +259,14 @@ export function PeajesPage() {
             />
           </div>
           <DatePicker
+            compact
             label="Desde"
             value={dateFrom}
             onChange={(v) => { setDateFrom(v); setPage(1); }}
             maxDate={dateTo || undefined}
           />
           <DatePicker
+            compact
             label="Hasta"
             value={dateTo}
             onChange={(v) => { setDateTo(v); setPage(1); }}

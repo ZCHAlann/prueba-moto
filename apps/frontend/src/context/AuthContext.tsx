@@ -43,6 +43,12 @@ export type AuthSession = {
    *  en `/auth/session`. Sirve para que el frontend invalide la sesión
    *  si el JWT tiene una versión vieja. */
   permissionsUpdatedAt: string | null;
+  /** jul 2026 v5 — Sede principal del usuario (de `profileData.siteId`).
+   *  Si es `null`, el usuario no tiene sede asignada (admin / plataforma
+   *  / owner). El modal de "Nueva solicitud" de Caja Chica usa este
+   *  campo para autoseccionar la sede del operador y NO darle a
+   *  elegir entre varias. */
+  siteId: number | null;
   /** JWT crudo (no la cookie httpOnly, sino el valor que viene en el body
    *  del login). Se usa SOLO para el upgrade del WebSocket (los browsers
    *  no envían cookies en conexiones WS). NUNCA persistir en disco. */
@@ -94,6 +100,9 @@ function buildSession(data: Record<string, unknown>): AuthSession {
     photoUrl:             (data.photoUrl as string | null) ?? null,
     dni:                  (data.dni as string | null) ?? null,
     permissionsUpdatedAt: (data.permissionsUpdatedAt as string | null) ?? null,
+    // jul 2026 v5 — Sede principal del usuario. null = admin/plataforma
+    // o usuario sin sede asignada.
+    siteId:               (data.siteId as number | null) ?? null,
     token:                (data.token as string | undefined) ?? null,
   };
 }

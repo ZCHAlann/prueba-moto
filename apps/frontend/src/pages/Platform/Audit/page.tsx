@@ -350,6 +350,7 @@ export function AuditPage() {
           className="flex flex-wrap items-center gap-2 self-start"
         >
           <DatePicker
+            compact
             value={from}
             onChange={val => { setFrom(val); }}
             placeholder="Desde"
@@ -357,6 +358,7 @@ export function AuditPage() {
           />
           <span className="text-sm text-gray-300 dark:text-gray-600">—</span>
           <DatePicker
+            compact
             value={to}
             onChange={val => { setTo(val); }}
             placeholder="Hasta"

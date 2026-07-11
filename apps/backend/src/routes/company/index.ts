@@ -36,6 +36,7 @@ import formOptionsRouter from './formOptions';
 import financeInvoicesRouter from './finance-invoices';
 import financeInvoiceTypesRouter from './finance-invoice-types';
 import financePettyCashRouter from './finance-petty-cash';
+import financeInvoiceReviewsRouter from './finance-invoice-reviews';
 
 const router = Router({ mergeParams: true });
 
@@ -104,6 +105,22 @@ router.use('/finance-invoice-types', financeInvoiceTypesRouter);
 //   - Admin_empresa / owner rellenan la caja (POST /finance/petty-cash/replenish)
 //   - Lectura del historial en /finance/transactions (con export PDF)
 router.use('/finance', financePettyCashRouter);
+
+// ── finanzas: revisión contable de facturas de caja chica (jul 2026 v5) ─────
+//
+// Sistema de semáforo + checklist para que el equipo contable apruebe las
+// facturas de vales de repuestos antes de aceptarlas. Solo aplica a
+// vales con purpose='repuesto'. Los vales de 'otro' quedan como
+// not_required (no entran al flujo).
+//   - GET    /finance/invoice-reviews?tab=              → listado por estado
+//   - GET    /finance/invoice-reviews/:id              → detalle
+//   - POST   /finance/invoice-reviews/:id/seen         → revisor abrió la foto
+//   - POST   /finance/invoice-reviews/:id/start        → revisor abrió checklist
+//   - POST   /finance/invoice-reviews/:id/approve      → aprueba
+//   - POST   /finance/invoice-reviews/:id/send-to-correction → corrige + notifica
+//   - POST   /finance/invoice-reviews/:id/reupload     → nueva foto
+//   - GET    /finance/invoice-reviews/:id/timeline     → eventos
+router.use('/finance', financeInvoiceReviewsRouter);
 
 
 export default router;

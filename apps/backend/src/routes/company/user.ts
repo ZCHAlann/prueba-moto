@@ -60,6 +60,11 @@ const PLATFORM_ROLES = new Set([
 //   ver_historial    - caja_chica (muestra tab Historial)
 //   configurar_caja  - caja_chica (muestra tab Configuración)
 //   ver_todos        - caja_chica (bypass de filtro por dueño)
+//   ver_saldo_total  - caja_chica (card "Saldo total")
+//   ver_saldo_sede   - caja_chica (card por sede)
+//   revisar_facturas - caja_chica (acceso a pestañas "Facturas por revisar"
+//                     y "Correcciones", y a los modales de revisión).
+//                     admin/owner/superadmin bypasean via usePermissions.
 const PERMISSION_ACTIONS = [
   "ver",
   "crear",
@@ -72,6 +77,9 @@ const PERMISSION_ACTIONS = [
   "ver_historial",
   "configurar_caja",
   "ver_todos",
+  "ver_saldo_total",
+  "ver_saldo_sede",
+  "revisar_facturas",
 ] as const;
 
 const modulePermissionsSchema = z.record(

@@ -21,7 +21,7 @@ import {
   Plus, Search, Car, Wrench, Trash2, Pencil, X, Loader2,
   ChevronDown, Filter, MoreHorizontal, MapPin, User, Fuel,
   Droplets, Calendar, Hash, AlertTriangle, FileText,
-  ChevronLeft, ChevronRight, Eye, Warehouse,
+  ChevronLeft, ChevronRight, Eye, Warehouse, Upload, Camera,
 } from "lucide-react";
 import { useDrivers } from "@/hooks/useDrivers";
 import { useSites } from "@/hooks/useSites";
@@ -86,7 +86,10 @@ type VehicleFormData = {
   serial: string; plate: string; year: string; color: string; maxLoad: string;
   fuelType: AssetFuelType; oilType: string; oilCapacity: string; location: string;
   availability: string; observations: string; utilization: string; nextMaintenance: string;
-  lastInspection: string; alerts: number; photoUrls: string[]; garageId: string | null;
+  lastInspection: string; alerts: number; photoUrls: string[];
+  // jul 2026 v5 — Migración 0052. Foto de perfil del vehículo.
+  profilePhotoUrl: string | null;
+  garageId: string | null;
 };
 
 const EMPTY_FORM: VehicleFormData = {
@@ -94,7 +97,9 @@ const EMPTY_FORM: VehicleFormData = {
   site: "", responsible: "", siteId: null, brand: "", model: "", serial: "", plate: "", year: "", color: "",
   maxLoad: "", fuelType: "Diesel", oilType: "", oilCapacity: "", location: "",
   availability: "Disponible", observations: "", utilization: "0%",
-  nextMaintenance: "", lastInspection: "", alerts: 0, photoUrls: [], garageId: null,
+  nextMaintenance: "", lastInspection: "", alerts: 0, photoUrls: [],
+  profilePhotoUrl: null,
+  garageId: null,
 };
 
 interface VehicleFormProps {
@@ -106,6 +111,118 @@ interface VehicleFormProps {
   spanCls: string;
 }
 
+// ─── jul 2026 v5 — Input de foto de perfil del vehículo ────────────────────
+//
+// El operador/admin elige un archivo. Se sube al endpoint genérico de
+// upload (mismo que usa el vale de caja chica: /upload/part-photos) y
+// la URL devuelta se setea en `form.profilePhotoUrl`. Si ya hay una
+// foto, muestra la preview con botones "Cambiar" y "Quitar".
+
+function VehiclePhotoInput({
+  value, onChange,
+}: {
+  value: string | null;
+  onChange: (url: string | null) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const onPick = async (f: File | null) => {
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) {
+      toast.error("La foto no puede pesar más de 10 MB");
+      return;
+    }
+    if (!f.type.startsWith("image/")) {
+      toast.error("El archivo debe ser una imagen (JPG, PNG, WEBP…)");
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      // jul 2026 v5 — El field esperado por el backend es "photo" (multer
+      // config: `.single('photo')`). Antes mandábamos "file" y multer
+      // tiraba "Unexpected field LIMIT_UNEXPECTED_FILE" — 500.
+      fd.append("photo", f);
+      // jul 2026 v5 — El endpoint es /upload/part-photos (NO
+      // /company/:id/upload/...). El companyId sale del JWT, no del
+      // query. Por eso NO mandamos `?companyId=`.
+      const res = await fetch(
+        `/api/upload/part-photos`,
+        { method: "POST", credentials: "include", body: fd },
+      );
+      if (!res.ok) {
+        toast.error(`Error al subir la foto (${res.status})`);
+        return;
+      }
+      const json = await res.json();
+      const url: string | undefined = json.url ?? json.fileUrl;
+      if (!url) {
+        toast.error("El backend no devolvió URL del archivo");
+        return;
+      }
+      onChange(url);
+      toast.success("Foto cargada");
+    } catch (err) {
+      toast.error("Error inesperado al subir la foto");
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-4">
+      {/* Preview */}
+      <div className="flex h-20 w-20 flex-shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04]">
+        {value ? (
+          <img
+            src={value}
+            alt="Foto del vehículo"
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <Car size={28} className="text-gray-300 dark:text-gray-600" />
+        )}
+      </div>
+      <div className="flex-1">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Foto de perfil</p>
+        <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+          Aparece en la tabla de Flotas y en el detalle del vehículo.
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={e => void onPick(e.target.files?.[0] ?? null)}
+          />
+          <button
+            type="button"
+            disabled={uploading}
+            onClick={() => inputRef.current?.click()}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-60 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200 dark:hover:bg-sky-500/20"
+          >
+            {uploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+            {value ? "Cambiar foto" : "Subir foto"}
+          </button>
+          {value && (
+            <button
+              type="button"
+              onClick={() => onChange(null)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200 dark:hover:bg-rose-500/20"
+            >
+              <Trash2 size={12} />
+              Quitar
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function VehicleFormFields({ form, set, inputCls, selectCls, labelCls, spanCls }: VehicleFormProps) {
   const { sites } = useSites();
   const { drivers } = useDrivers();
@@ -113,6 +230,14 @@ function VehicleFormFields({ form, set, inputCls, selectCls, labelCls, spanCls }
 
   return (
     <>
+      {/* jul 2026 v5 — Foto de perfil del vehículo (migración 0052) */}
+      <section>
+        <VehiclePhotoInput
+          value={form.profilePhotoUrl}
+          onChange={(url) => set("profilePhotoUrl", url)}
+        />
+      </section>
+
       {/* Identificación */}
       <section>
         <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-gray-400">Identificación</p>
@@ -330,14 +455,17 @@ function EditVehicleModal({ vehicle, onClose, onUpdated }: {
   const [form, setForm] = useState<VehicleFormData>({
     code: vehicle.code, name: vehicle.name, assetType: vehicle.assetType,
     category: vehicle.category, status: vehicle.status, site: vehicle.site,
-    siteId: vehicle.siteId ?? null, responsible: vehicle.responsible, 
+    siteId: vehicle.siteId ?? null, responsible: vehicle.responsible,
     brand: vehicle.brand, model: vehicle.model,
     serial: vehicle.serial, plate: vehicle.plate, year: vehicle.year, color: vehicle.color,
     maxLoad: vehicle.maxLoad, fuelType: vehicle.fuelType, oilType: vehicle.oilType,
     oilCapacity: vehicle.oilCapacity, location: vehicle.location, availability: vehicle.availability,
     observations: vehicle.observations, utilization: vehicle.utilization,
     nextMaintenance: vehicle.nextMaintenance, lastInspection: vehicle.lastInspection,
-    alerts: vehicle.alerts, photoUrls: vehicle.photoUrls, garageId: vehicle.garageId ?? null,
+    alerts: vehicle.alerts, photoUrls: vehicle.photoUrls,
+    // jul 2026 v5 — Migración 0052.
+    profilePhotoUrl: vehicle.profilePhotoUrl ?? null,
+    garageId: vehicle.garageId ?? null,
   });
   const [saving, setSaving] = useState(false);
 
@@ -641,10 +769,19 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance, canEd
 
         <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 dark:bg-sky-500/10">
-                <Car size={18} className="text-sky-500" />
-              </div>
+            <div className="flex items-center gap-3">
+              {/* jul 2026 v5 — Foto de perfil del vehículo en el drawer */}
+              {vehicle.profilePhotoUrl ? (
+                <img
+                  src={vehicle.profilePhotoUrl}
+                  alt={vehicle.plate || vehicle.name}
+                  className="h-12 w-12 shrink-0 rounded-xl object-cover ring-1 ring-gray-200 dark:ring-white/[0.08]"
+                />
+              ) : (
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-sky-50 dark:bg-sky-500/10">
+                  <Car size={20} className="text-sky-500" />
+                </div>
+              )}
               <div className="min-w-0">
                 <p className="text-lg font-black text-gray-800 dark:text-white">{vehicle.plate}</p>
                 <p className="truncate text-xs text-gray-400">{vehicle.brand} {vehicle.model} · {vehicle.year}</p>
@@ -832,7 +969,20 @@ function VehicleRow({ vehicle, index, garageName, onView, onEdit, onMaintenance,
 }) {
   return (
     <tr className="group cursor-pointer border-b border-gray-100 transition-colors hover:bg-gray-50/80 dark:border-white/[0.04] dark:hover:bg-white/[0.02]" onClick={onView}>
-      <td className="px-4 py-3.5 text-xs font-semibold text-gray-400">{index + 1}</td>
+      <td className="px-4 py-3.5">
+        {/* jul 2026 v5 — Foto de perfil (migración 0052) */}
+        {vehicle.profilePhotoUrl ? (
+          <img
+            src={vehicle.profilePhotoUrl}
+            alt={vehicle.plate || vehicle.name}
+            className="h-10 w-10 rounded-lg object-cover ring-1 ring-gray-200 dark:ring-white/[0.08]"
+          />
+        ) : (
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-50 ring-1 ring-sky-100 dark:bg-sky-500/10 dark:ring-sky-500/20">
+            <Car size={18} className="text-sky-500" />
+          </div>
+        )}
+      </td>
       <td className="px-4 py-3.5">
         <p className="font-black text-gray-800 dark:text-white">{vehicle.plate}</p>
         <p className="mt-0.5 text-[11px] text-gray-400">Chasis {vehicle.serial || "—"}</p>
@@ -1073,7 +1223,7 @@ export default function FlotasPage() {
               <table className="w-full min-w-[1000px]">
                 <thead>
                   <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                    {["#", "Placa", "Vehículo", "Responsable", "Garaje", "Combustible / aceite", "Estado", ""].map((h, i) => (
+                    {["Foto", "Placa", "Vehículo", "Responsable", "Garaje", "Combustible / aceite", "Estado", ""].map((h, i) => (
                       <th key={i} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">{h}</th>
                     ))}
                   </tr>

@@ -459,18 +459,26 @@ function reencodeVideo(_inputPath: string, _outputPath: string): Promise<void> {
 // ─── Fotos de repuestos / insumos ─────────────────────────────────────────────
 
 router.post('/part-photos', (req: Request, res: Response, next: NextFunction) => {
-  // El router /upload no es company-scoped (no pasa por `requireCompany`).
-  // Por eso leemos `req.user.companyId` directamente del JWT para validar
-  // que el companyId del query coincida con el del usuario autenticado.
-  let companyId: number;
-  try {
-    companyId = validateUploadCompanyId(
-      req.query.companyId as string | undefined,
-      req.user?.companyId ?? undefined,
-    );
-  } catch (e) {
-    return next(new AppError(403, (e as Error).message));
+  // jul 2026 v5 — El companyId sale EXCLUSIVAMENTE del JWT.
+  // NO aceptamos `?companyId=` en el query. Si por compatibilidad
+  // alguien lo manda, validamos que coincida con el del token (defense
+  // in depth); si no viene, usamos el del token.
+  const authCompanyId = req.user?.companyId;
+  if (authCompanyId == null) {
+    return next(new AppError(401, 'Sesión inválida — no se pudo obtener companyId del token.'));
   }
+  const queryCompanyId = req.query.companyId as string | undefined;
+  if (queryCompanyId !== undefined) {
+    // Si el cliente lo mandó, validamos que coincida. Esto evita que
+    // un cliente envíe un companyId distinto para subir archivos al
+    // folder de otra empresa.
+    try {
+      validateUploadCompanyId(queryCompanyId, authCompanyId);
+    } catch (e) {
+      return next(new AppError(403, (e as Error).message));
+    }
+  }
+  const companyId = authCompanyId;
 
   const folder = `parts/${companyId}`;
 

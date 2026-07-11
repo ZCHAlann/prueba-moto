@@ -54,12 +54,15 @@ import {
   companySites,
   companyMaintenanceItems,
   companyMaintenanceRecords,
+  companyInvoiceReviews,
+  companyInvoiceReviewEvents,
 } from '../../db/schema/operational';
 import { companyUsers } from '../../db/schema/platform';
 import { requirePermission } from '../../middlewares/requirePermission';
 import { AppError, NotFoundError } from '../../lib/errors';
 import { toId, parseIdFlexible } from '../../lib/ids';
 import { validate } from '../../lib/validate';
+import { isAdminRole, hasPermOrAdmin } from '../../lib/finance-bypass';
 import {
   applyFinanceRequestApproval,
   rejectFinanceRequest,
@@ -96,16 +99,7 @@ function getUserId(req: any): number {
 // jul 2026 v4-b — Roles de admin a nivel empresa/plataforma. Estos
 // bypassean el filtro "ver solo lo mío" en /finance/requests y
 // /finance/vouchers, igual que el rol "BYPASS_ROLES" del middleware
-// requirePermission.
-const ADMIN_ROLES_BYPASS = new Set([
-  'superadmin',
-  'owner_empresa',
-  'admin_empresa',
-]);
-function isAdminRole(req: any): boolean {
-  const role = (req.user as any)?.role as string | undefined;
-  return !!role && ADMIN_ROLES_BYPASS.has(role);
-}
+// requirePermission. La definición vive en lib/finance-bypass.ts.
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -419,6 +413,10 @@ const createRequestSchema = z.object({
   origin:             z.enum(['maintenance', 'maintenance_item', 'standalone']).default('standalone'),
   maintenanceId:      z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).optional(),
   maintenanceItemId:  z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]).optional(),
+  // jul 2026 v5 — Migración 0051. Clasifica el destino del vale.
+  // Si viene de un mantenimiento, se fuerza a 'repuesto' (ignora lo
+  // que mande el cliente). Para standalone, el operador elige.
+  purpose:            z.enum(['repuesto', 'otro']).optional(),
 }).strict().refine(
   // Si origin es 'maintenance' o 'maintenance_item', maintenanceId es obligatorio.
   (data) => data.origin === 'standalone' || !!data.maintenanceId,
@@ -427,6 +425,11 @@ const createRequestSchema = z.object({
   // maintenanceItemId solo es obligatorio para 'maintenance_item' (item puntual).
   (data) => data.origin !== 'maintenance_item' || !!data.maintenanceItemId,
   { message: 'maintenanceItemId es obligatorio cuando origin="maintenance_item"' },
+).refine(
+  // jul 2026 v5 — Si es standalone, el operador DEBE elegir purpose.
+  // Si viene de mantenimiento, se setea automáticamente a 'repuesto'.
+  (data) => data.origin !== 'standalone' || !!data.purpose,
+  { message: 'purpose es obligatorio cuando la solicitud es standalone (repuesto | otro)' },
 );
 
 router.post('/requests',
@@ -470,6 +473,9 @@ router.post('/requests',
           origin: body.origin,
           maintenanceId,
           maintenanceItemId,
+          // jul 2026 v5 — Si viene de mantenimiento forzamos 'repuesto'.
+          // Si es standalone, el operador eligió purpose.
+          purpose: body.origin === 'standalone' ? (body.purpose ?? null) : 'repuesto',
         })
         .returning();
 
@@ -743,6 +749,9 @@ router.get('/vouchers', async (req, res, next) => {
           // exigir al cerrar (repuesto exige items; mano de obra/lavada
           // solo monto + nombre).
           financeClassification: r.reqFinanceClassification ?? null,
+          // v5 — Migración 0051. Indica si el vale entra al flujo de
+          // revisión contable. NULL = legacy (no se revisa).
+          purpose: r.v.purpose ?? null,
         };
       }),
     });
@@ -1027,6 +1036,60 @@ router.post('/vouchers/:id/invoice', validate(
 
     if (!result.id) {
       throw new AppError(500, 'No se pudo crear la factura.');
+    }
+
+    // jul 2026 v5 — Crear la review de la factura si el vale es de
+    // repuestos. Los vales de "otro" quedan como not_required (fuera
+    // del flujo de revisión contable).
+    const [voucherRow] = await db
+      .select({ purpose: companyPettyCashVouchers.purpose })
+      .from(companyPettyCashVouchers)
+      .where(eq(companyPettyCashVouchers.id, voucherId))
+      .limit(1);
+    const isRepuesto = voucherRow?.purpose === 'repuesto';
+    if (isRepuesto) {
+      // Sólo crear si no existe (idempotente si el cliente reintenta).
+      const [existing] = await db
+        .select({ id: companyInvoiceReviews.id })
+        .from(companyInvoiceReviews)
+        .where(eq(companyInvoiceReviews.invoiceId, result.id))
+        .limit(1);
+      if (!existing) {
+        const [review] = await db
+          .insert(companyInvoiceReviews)
+          .values({
+            companyId,
+            invoiceId:   result.id,
+            voucherId,
+            status:      'pending_review',
+          })
+          .returning({ id: companyInvoiceReviews.id });
+        if (review) {
+          await db.insert(companyInvoiceReviewEvents).values({
+            companyId,
+            reviewId: review.id,
+            kind:     'created',
+            note:     'Vale cerrado con factura — entra al flujo de revisión contable.',
+            metadata: { voucherId, invoiceId: result.id },
+          });
+        }
+      }
+    } else {
+      // Marcar como not_required para que la query de /invoice-reviews
+      // lo ignore por defecto. No creamos eventos porque no se revisa.
+      const [existing] = await db
+        .select({ id: companyInvoiceReviews.id })
+        .from(companyInvoiceReviews)
+        .where(eq(companyInvoiceReviews.invoiceId, result.id))
+        .limit(1);
+      if (!existing) {
+        await db.insert(companyInvoiceReviews).values({
+          companyId,
+          invoiceId:   result.id,
+          voucherId,
+          status:      'not_required',
+        });
+      }
     }
 
     return res.json({

@@ -496,117 +496,40 @@ export function FacturasPage() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-12">
-          {/* jul 2026 v3 — Buscador libre con auto-search (debounce 250ms).
-              Coincide en invoice_number, supplier_name, workshop_name, worker_name. */}
-          <div className="lg:col-span-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12">
+          {/* jul 2026 v4-b — Buscador único ancho + rango de fechas con
+              gap-4 (antes gap-3 + col-span-2 los dejaba pegados). */}
+          <div className="lg:col-span-5">
             <label className={labelCls}><Search size={10} className="inline mr-1" />Buscar</label>
             <input
               type="text"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="N° factura, proveedor, taller..."
+              placeholder="N° factura, proveedor, taller, vehículo, vale, operador..."
               className={inputCls}
             />
           </div>
 
-          {/* Vehículo */}
-          <div className="lg:col-span-3">
-            <label className={labelCls}><Truck size={10} className="inline mr-1" />Vehículo</label>
-            <select
-              value={assetId}
-              onChange={(e) => setAssetId(e.target.value)}
-              disabled={assetsLoading}
-              className={inputCls}
-            >
-              <option value="all">{assetsLoading ? "Cargando vehículos…" : "Todos los vehículos"}</option>
-              {assetsList.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.plate ? `${a.plate}` : a.name}
-                  {a.brand || a.model ? ` — ${[a.brand, a.model].filter(Boolean).join(" ")}` : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Taller */}
-          <div className="lg:col-span-3">
-            <label className={labelCls}><WrenchIcon size={10} className="inline mr-1" />Taller</label>
-            <select
-              value={workshopId}
-              onChange={(e) => setWorkshopId(e.target.value)}
-              disabled={workshopsLoading}
-              className={inputCls}
-            >
-              <option value="all">{workshopsLoading ? "Cargando talleres…" : "Todos los talleres"}</option>
-              {workshops.map((w: { id: number; name: string }) => (
-                <option key={w.id} value={w.id}>{w.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Tipo (catálogo) */}
-          <div className="lg:col-span-3">
-            <label className={labelCls}><Tag size={10} className="inline mr-1" />Tipo</label>
-            <select
-              value={typeId}
-              onChange={(e) => setTypeId(e.target.value)}
-              disabled={typesLoading}
-              className={inputCls}
-            >
-              <option value="all">Todos los tipos</option>
-              {types.filter((t) => t.isActive).map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                  {t.isSystem ? "" : " (custom)"}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Origen */}
-          <div className="lg:col-span-3">
-            <label className={labelCls}>Origen</label>
-            <select
-              value={sourceModule}
-              onChange={(e) => setSourceModule(e.target.value as typeof sourceModule)}
-              className={inputCls}
-            >
-              <option value="all">Todos los orígenes</option>
-              <option value="combustible">Combustible</option>
-              <option value="peajes">Peajes</option>
-              <option value="mantenimiento">Mantenimiento</option>
-              <option value="manual">Manual</option>
-            </select>
-          </div>
-
-          {/* Fechas */}
+          {/* Fechas — cada una con 2.5 cols para que tengan ancho cómodo
+              y no se peguen entre sí. */}
           <div className="lg:col-span-3">
             <label className={labelCls}><Calendar size={10} className="inline mr-1" />Desde</label>
-            <DatePicker value={from} onChange={setFrom} />
+            <DatePicker compact value={from} onChange={setFrom} />
           </div>
           <div className="lg:col-span-3">
             <label className={labelCls}><Calendar size={10} className="inline mr-1" />Hasta</label>
-            <DatePicker value={to} onChange={setTo} />
+            <DatePicker compact value={to} onChange={setTo} />
           </div>
 
           {/* Acciones */}
-          <div className="lg:col-span-6 flex items-center justify-end gap-2">
+          <div className="lg:col-span-1 flex items-end justify-end">
             <button
               type="button"
               onClick={onClearFilters}
-              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-gray-200 px-4 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.04]"
+              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-gray-200 px-3 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.04]"
+              title="Limpiar filtros"
             >
               <X size={13} /> Limpiar
-            </button>
-            <button
-              type="button"
-              onClick={onSearch}
-              disabled={loading}
-              className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {loading ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
-              Buscar
             </button>
           </div>
         </div>
@@ -663,18 +586,46 @@ export function FacturasPage() {
                     >
                       <td className="px-3 py-2.5 text-xs">
                         <div className="flex flex-col">
-                          <span className="font-medium">
-                            {inv.sourceRef?.assetPlate ?? inv.sourceRef?.assetCode ?? "—"}
-                          </span>
-                          {inv.sourceRef?.assetCode && inv.sourceRef?.assetPlate && (
-                            <span className="text-[10px] text-gray-400 dark:text-gray-500">
-                              {inv.sourceRef.assetCode}
-                            </span>
+                          {/* jul 2026 v4-b — Para facturas de Caja Chica, no
+                              hay vehículo. Mostramos el # de vale en su lugar. */}
+                          {inv.sourceModule === "petty_cash" ? (
+                            <>
+                              <span className="font-mono font-medium text-emerald-700 dark:text-emerald-300">
+                                {inv.sourceRef?.voucherNumericId
+                                  ? `Vale #${inv.sourceRef.voucherNumericId}`
+                                  : "—"}
+                              </span>
+                              {inv.sourceRef?.voucherSiteName && (
+                                <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                                  {inv.sourceRef.voucherSiteName}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <span className="font-medium">
+                                {inv.sourceRef?.assetPlate ?? inv.sourceRef?.assetCode ?? "—"}
+                              </span>
+                              {inv.sourceRef?.assetCode && inv.sourceRef?.assetPlate && (
+                                <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                                  {inv.sourceRef.assetCode}
+                                </span>
+                              )}
+                            </>
                           )}
                         </div>
                       </td>
                       <td className="px-3 py-2.5 text-xs">
-                        {inv.sourceRef?.workshopName ?? <span className="text-gray-400 dark:text-gray-500">—</span>}
+                        {/* jul 2026 v4-b — Para Caja Chica, "Taller" no
+                            aplica. Mostramos el operador dueño del vale
+                            para que la fila tenga contexto. */}
+                        {inv.sourceModule === "petty_cash" ? (
+                          inv.sourceRef?.voucherAssignedToName ?? (
+                            <span className="text-gray-400 dark:text-gray-500">—</span>
+                          )
+                        ) : (
+                          inv.sourceRef?.workshopName ?? <span className="text-gray-400 dark:text-gray-500">—</span>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-3 py-2.5">
                         <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ring-1 ${badgeCls}`}>

@@ -42,7 +42,10 @@ const createFuelSchema = z.object({
   station: safeString({ max: 120, fieldLabel: 'Estación', allowEmpty: true }).nullable().optional(),
   fuelType: z.enum(['Diesel', 'Gasolina', 'Electrico', 'Hibrido']).optional().nullable(),
   notes: validators.longTextOptional,
-  photoUrl: z.string().min(1).max(2_000_000).nullable().optional(),
+  // jul 2026 v4-b — Foto de la factura OBLIGATORIA al registrar combustible.
+  // Sin foto, no se puede crear la entrada. El endpoint /upload/fuel-photos
+  // es el que genera la URL. Si se omite, el POST retorna 400.
+  photoUrl: z.string().min(1, 'La foto de la factura es obligatoria').max(2_000_000),
   odometerPhotoUrl: z.string().min(1).max(2_000_000).nullable().optional(),
 });
 
@@ -56,7 +59,10 @@ const updateFuelSchema = z.object({
   station: safeString({ max: 120, fieldLabel: 'Estación', allowEmpty: true }).nullable().optional(),
   fuelType: z.enum(['Diesel', 'Gasolina', 'Electrico', 'Hibrido']).optional().nullable(),
   notes: validators.longTextOptional,
-  photoUrl: z.string().min(1).max(2_000_000).nullable().optional(),
+  // jul 2026 v4-b — Foto OBLIGATORIA también en update (si viene el campo).
+  // En update, si el body no incluye photoUrl, no se modifica (la fila
+  // existente mantiene su foto). Pero si lo incluye, debe ser válido.
+  photoUrl: z.string().min(1, 'La foto de la factura es obligatoria').max(2_000_000).optional(),
   odometerPhotoUrl: z.string().min(1).max(2_000_000).nullable().optional(),
 });
 

@@ -1070,9 +1070,9 @@ gallons:  `${fmt(e.gallons, 2)} gal`,
 
             <div className="flex shrink-0 items-center gap-2">
               <Calendar size={13} className="shrink-0 text-gray-400" />
-              <DatePicker value={dateFrom} onChange={handleDateFrom} placeholder="Desde" maxDate={dateTo || undefined} />
+              <DatePicker compact value={dateFrom} onChange={handleDateFrom} placeholder="Desde" maxDate={dateTo || undefined} />
               <span className="text-xs text-gray-400">—</span>
-              <DatePicker value={dateTo}   onChange={handleDateTo}   placeholder="Hasta" minDate={dateFrom || undefined} />
+              <DatePicker compact value={dateTo}   onChange={handleDateTo}   placeholder="Hasta" minDate={dateFrom || undefined} />
               {hasDateFilter && (
                 <button
                   type="button"

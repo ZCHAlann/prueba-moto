@@ -29,6 +29,7 @@ import { PeajesPage } from "./pages/Peajes/page";
 import { FacturasPage } from "./pages/finanzas/FacturasPage";
 import { CajaChicaPage } from "./pages/finanzas/CajaChicaPage";
 import { TransaccionesPage } from "./pages/finanzas/TransaccionesPage";
+import { EstadisticasPage } from "./pages/finanzas/EstadisticasPage";
 import { ProfilePage } from "./pages/Profile/page";
 import { SettingsPage } from "./pages/Settings/page";
 import FlotasPage from "./pages/Gestion/Flotas/page";
@@ -191,6 +192,7 @@ export default function App() {
           <Route path="/finanzas/facturas" element={<FacturasPage />} />
           <Route path="/finanzas/caja-chica" element={<CajaChicaPage />} />
           <Route path="/finanzas/transacciones" element={<TransaccionesPage />} />
+          <Route path="/finanzas/estadisticas" element={<EstadisticasPage />} />
           <Route path="/perfil" element={<ProfilePage />} />
           <Route path="/configuracion" element={<SettingsPage />} />
           <Route path="/flotas" element={<FlotasPage />} />

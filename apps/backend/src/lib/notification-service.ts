@@ -31,8 +31,8 @@ import { db, client } from '../db/client';
 import {
   companyNotifications,
   companyDeviceTokens,
-  companyUsers,
 } from '../db/schema/operational';
+import { companyUsers } from '../db/schema/platform';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { wsBroadcast } from '../services/websocket';
 import type { InferSelectModel } from 'drizzle-orm';
@@ -84,7 +84,9 @@ export type NotificationKind =
   | 'finance_voucher_issued'
   | 'finance_voucher_closed'
   | 'finance_petty_cash_limit_reached'
-  | 'finance_petty_cash_replenished';
+  | 'finance_petty_cash_replenished'
+  // ── jul 2026 v5 — Sistema de revisión contable de facturas (migration 0051)
+  | 'finance_invoice_correction_requested';
 
 export interface NotifyArgs {
   companyId:   number;

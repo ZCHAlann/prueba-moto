@@ -367,11 +367,19 @@ export type DatePickerProps = {
   minDate?: string;
   maxDate?: string;
   className?: string;
+  /**
+   * Si true, el picker se renderiza en formato compacto (altura 32px,
+   * padding reducido, ancho "auto" en vez de 100%). Útil cuando va
+   * inline con otros controles en una fila (ej. filtros de reportes).
+   * Default: false (formato extendido, ancho 100%).
+   */
+  compact?: boolean;
 };
 
 export function DatePicker({
   value, onChange, label, placeholder = "Seleccionar fecha",
   minDate, maxDate, className = "",
+  compact = false,
 }: DatePickerProps) {
   const [open, setOpen]   = useState(false);
   const [pos, setPos]     = useState<React.CSSProperties>({});
@@ -412,23 +420,34 @@ export function DatePicker({
   }, [open]);
 
   return (
-    <div className={`date-picker-root ${className}`} style={{ position: "relative", display: "inline-block" }}>
+    <div
+      className={`date-picker-root ${className}`}
+      style={{
+        position: "relative",
+        display: "block",
+        // jul 2026 v5 — modo `compact`: ancho automático para que el
+        // picker se acomode al contenido (ideal cuando va en row con
+        // otros controles). Sin `compact`, conserva el 100% legacy.
+        width: compact ? "auto" : "100%",
+      }}
+    >
       <style>{`
         .dp-trigger {
           display: flex;
           align-items: center;
           gap: 8px;
-          height: 40px;
-          padding: 0 14px;
-          border-radius: 12px;
+          width: 100%;
+          height: ${compact ? 32 : 40}px;
+          padding: 0 ${compact ? 10 : 14}px;
+          border-radius: ${compact ? 8 : 12}px;
           border: 1px solid;
           cursor: pointer;
-          font-size: 14px;
+          font-size: ${compact ? 12 : 14}px;
           font-weight: 500;
           font-family: inherit;
           transition: border-color 0.15s, background 0.15s;
           white-space: nowrap;
-          min-width: 180px;
+          min-width: ${compact ? 130 : 180}px;
         }
         /* Light theme */
         :root:not(.dark) .dp-trigger,

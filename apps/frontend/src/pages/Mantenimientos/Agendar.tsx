@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useMaintenanceFormOptions } from "../../hooks/useFormOptions";
-import { useMaintenanceAgenda } from "../../hooks/useMaintenancesV2";
+import { useMaintenanceAgenda, useMaintenanceCategories } from "../../hooks/useMaintenancesV2";
 import { useAuth } from "../../context/AuthContext";
 import { usePermissions } from "../../hooks/usePermissions";
 import { MaintenanceFormModal } from "./components/MaintenanceFormModal";
@@ -34,6 +34,19 @@ const STATUS_LABEL: Record<string, string> = {
   PendienteAtencion: "Pendiente atención",
   Completado:        "Completado",
   Cancelado:         "Cancelado",
+};
+
+// jul 2026 v5 — Labels legibles de las categorías built-in. Las custom
+// se resuelven aparte con `categoryLabelMap`. Antes se mostraba la key
+// cruda (ej. "Primordial:Bombas") en el calendario — ahora se muestra
+// el label.
+const CATEGORY_LABEL: Record<string, string> = {
+  "Primordial:Bombas":   "Primordial · Bombas",
+  "Primordial:Motores":  "Primordial · Motores",
+  "Aceite:Cambio":       "Aceite · Cambio",
+  "Aceite:Inventario":   "Aceite · Inventario",
+  "Lavada":              "Lavada",
+  "Otro":                "Otro",
 };
 
 const DAYS_ES    = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
@@ -142,11 +155,12 @@ function FloatingDragCard({ asset, dateLabel, pos }: {
 }
 
 // ─── DayListModal — lista de mantenimientos del día ──────────────────────────
-function DayListModal({ date, events, onClose, onSelect }: {
+function DayListModal({ date, events, onClose, onSelect, resolveCategoryLabel }: {
   date: string;
   events: Maintenance[];
   onClose: () => void;
   onSelect: (m: Maintenance) => void;
+  resolveCategoryLabel: (key?: string | null) => string;
 }) {
   // Trap focus / close on overlay click
   return (
@@ -197,7 +211,7 @@ function DayListModal({ date, events, onClose, onSelect }: {
                     {m.assetPlate ?? m.assetName ?? "Vehículo"}
                   </p>
                   <p className="text-[11px] text-gray-400 dark:text-gray-500 truncate">
-                    {m.title ?? m.category}
+                    {m.title ?? resolveCategoryLabel(m.category)}
                   </p>
                 </div>
 
@@ -225,11 +239,12 @@ function DayListModal({ date, events, onClose, onSelect }: {
 }
 
 // ─── MaintenanceDetailModal — detalles del mantenimiento ─────────────────────
-function MaintenanceDetailModal({ maintenance, onClose, onEdit, canEdit }: {
+function MaintenanceDetailModal({ maintenance, onClose, onEdit, canEdit, resolveCategoryLabel }: {
   maintenance: Maintenance;
   onClose: () => void;
   onEdit: () => void;
   canEdit: boolean;
+  resolveCategoryLabel: (key?: string | null) => string;
 }) {
   const m     = maintenance;
   const color = STATUS_COLOR[m.status] ?? "#7c3aed";
@@ -259,7 +274,7 @@ function MaintenanceDetailModal({ maintenance, onClose, onEdit, canEdit }: {
               </div>
               <div className="min-w-0">
                 <p className="text-base font-bold text-gray-900 dark:text-white truncate leading-tight">
-                  {m.title ?? m.category}
+                  {m.title ?? resolveCategoryLabel(m.category)}
                 </p>
                 <p className="text-[12px] text-gray-500 dark:text-gray-400 truncate">
                   {m.assetPlate ?? m.assetName ?? "Vehículo"}
@@ -386,6 +401,19 @@ export function MantenimientosAgendar() {
   const { data: formOptions } = useMaintenanceFormOptions();
   const assetsList = formOptions?.assets ?? [];
   const { data: agenda, isLoading } = useMaintenanceAgenda(viewRange);
+  // jul 2026 v5 — categorías custom. Las usamos para resolver el label
+  // legible de `m.category` en los tooltips / modales del calendario.
+  // Si la categoría es built-in, caemos al fallback `CATEGORY_LABEL`.
+  const { data: customCats = [] } = useMaintenanceCategories();
+  const categoryLabelMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of customCats) map[c.key] = c.label;
+    return map;
+  }, [customCats]);
+  const resolveCategoryLabel = (key?: string | null): string => {
+    if (!key) return "—";
+    return categoryLabelMap[key] ?? CATEGORY_LABEL[key] ?? key;
+  };
 
   // ── Lookup por fecha ──────────────────────────────────────────────────────
   const eventsByDate = useMemo(() => {
@@ -720,6 +748,7 @@ export function MantenimientosAgendar() {
           events={dayListModal.events}
           onClose={() => setDayListModal(null)}
           onSelect={(m) => setDetailModal(m)}
+          resolveCategoryLabel={resolveCategoryLabel}
         />
       )}
 
@@ -729,6 +758,7 @@ export function MantenimientosAgendar() {
           maintenance={detailModal}
           onClose={() => setDetailModal(null)}
           canEdit={canEdit}
+          resolveCategoryLabel={resolveCategoryLabel}
           onEdit={() => {
             setEditing(detailModal);
             setDetailModal(null);
@@ -898,7 +928,7 @@ export function MantenimientosAgendar() {
               viewDidMount={() => { const api = calendarRef.current?.getApi(); if (api) setFcTitle(api.view.title); }}
               eventDidMount={(info) => {
                 const m = info.event.extendedProps.maintenance as Maintenance | undefined;
-                if (m) info.el.setAttribute("title", `${m.title ?? m.category} · ${m.type} · ${m.status}`);
+                if (m) info.el.setAttribute("title", `${m.title ?? resolveCategoryLabel(m.category)} · ${m.type} · ${m.status}`);
               }}
               slotMinTime="06:00:00"
               slotMaxTime="22:00:00"

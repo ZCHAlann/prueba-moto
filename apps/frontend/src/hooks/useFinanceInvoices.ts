@@ -15,7 +15,7 @@
 //
 // Devuelve paginación con page/pageSize (default 15, max 200).
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -56,6 +56,16 @@ export type FinanceInvoiceSourceRef = {
   assetPlate?:                string | null;
   /** ID del asset (vehículo/equipo) asociado. */
   assetId?:                   number | null;
+  // jul 2026 v4-b — Hidratación para facturas cerradas desde Caja Chica.
+  voucherNumericId?:          number | null;
+  voucherIssuedAmount?:       number | null;
+  voucherRefundAmount?:       number | null;
+  voucherAccountName?:        string | null;
+  voucherSiteName?:           string | null;
+  voucherRequesterName?:      string | null;
+  voucherApproverName?:       string | null;
+  voucherAssignedToName?:     string | null;
+  voucherFinanceClassification?: "repuesto" | "mano_obra" | "lavada" | null;
 };
 
 export type FinanceInvoiceSupplier = {
@@ -197,6 +207,17 @@ function mapApi(raw: Record<string, unknown>): ApiFinanceInvoice {
         assetCode:               asStringOrNull(sourceRefRaw.assetCode),
         assetPlate:              asStringOrNull(sourceRefRaw.assetPlate),
         assetId:                 asNumberOrNull(sourceRefRaw.assetId),
+        // jul 2026 v4-b — Hidratación de facturas cerradas desde Caja Chica.
+        voucherNumericId:            asNumberOrNull(sourceRefRaw.voucherNumericId),
+        voucherIssuedAmount:         asNumberOrNull(sourceRefRaw.voucherIssuedAmount),
+        voucherRefundAmount:         asNumberOrNull(sourceRefRaw.voucherRefundAmount),
+        voucherAccountName:          asStringOrNull(sourceRefRaw.voucherAccountName),
+        voucherSiteName:             asStringOrNull(sourceRefRaw.voucherSiteName),
+        voucherRequesterName:        asStringOrNull(sourceRefRaw.voucherRequesterName),
+        voucherApproverName:         asStringOrNull(sourceRefRaw.voucherApproverName),
+        voucherAssignedToName:       asStringOrNull(sourceRefRaw.voucherAssignedToName),
+        voucherFinanceClassification: asStringOrNull(sourceRefRaw.voucherFinanceClassification) as
+          | "repuesto" | "mano_obra" | "lavada" | null,
       }
     : null;
 
@@ -227,10 +248,13 @@ function mapApi(raw: Record<string, unknown>): ApiFinanceInvoice {
     supplier,
 
     // jul 2026 v3 — totales + datos contextuales para el desglose.
-    subtotal:    Number(raw.subtotal ?? 0),
+    // jul 2026 v4-b — Fallback: si subtotal/total son 0 (invoices legacy
+    // creadas antes de la migración 0050), caemos a `amount`. Usamos
+    // `||` en lugar de `??` porque `0 ?? x` retorna `0` (no es null).
+    subtotal:    Number(raw.subtotal || raw.amount || 0),
     ivaPercent:  Number(raw.ivaPercent ?? 15),
-    ivaAmount:   Number(raw.ivaAmount ?? 0),
-    total:       Number(raw.total ?? raw.amount ?? 0),
+    ivaAmount:   Number(raw.ivaAmount || 0),
+    total:       Number(raw.total || raw.amount || 0),
     workshopName: asStringOrNull(raw.workshopName ?? raw.workshop_name),
     workerName:   asStringOrNull(raw.workerName ?? raw.worker_name),
     items,
@@ -549,4 +573,130 @@ export function useManageInvoiceTypes() {
   );
 
   return { createType, updateType, deleteType, saving, error };
+}
+
+// ─── jul 2026 v4-b — Estadísticas ────────────────────────────────────────────
+// Agregaciones mensuales del ledger de Finanzas para el submódulo
+// "Estadísticas". Filtra por vehículo, año y categoría (combustible,
+// peaje, mantenimiento, manual). El frontend renderiza gráfico +
+// tabla drill-down.
+
+export type FinanceStatsCategory = 'all' | 'combustible' | 'peaje' | 'mantenimiento';
+
+export interface FinanceMonthlyPoint {
+  year: number;
+  month: number;
+  subtotal: number;
+  ivaAmount: number;
+  total: number;
+  count: number;
+  byCategory: { combustible: number; peaje: number; mantenimiento: number };
+}
+
+export interface FinanceVehicleTotal {
+  assetId: string;
+  plate: string;
+  total: number;
+  byCategory: { combustible: number; peaje: number; mantenimiento: number };
+}
+
+export interface FinanceStatsResponse {
+  year: number;
+  category: FinanceStatsCategory | string;
+  monthly: FinanceMonthlyPoint[];
+  byCategory: { combustible: number; peaje: number; mantenimiento: number };
+  byVehicle: FinanceVehicleTotal[];
+  // jul 2026 v4-b — Lista de vehículos de la empresa, para el dropdown
+  // de filtro. Lo trae el backend directo de company_assets (no del
+  // join de invoices), para que aparezcan todos los vehículos aunque
+  // no tengan invoices en el año.
+  vehicles: Array<{ id: string; plate: string }>;
+  totals: { subtotal: number; ivaAmount: number; total: number; count: number };
+}
+
+export function useFinanceStats(opts: {
+  year: number;
+  assetId?: string;
+  category?: FinanceStatsCategory;
+}) {
+  const { companyId } = useAuth();
+  const [data, setData]       = useState<FinanceStatsResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
+  const [tick, setTick]       = useState(0);
+
+  const refresh = useCallback(() => setTick((n) => n + 1), []);
+
+  useEffect(() => {
+    if (!companyId) return;
+    setLoading(true);
+    setError(null);
+    const params = new URLSearchParams();
+    params.set('year', String(opts.year));
+    if (opts.assetId && opts.assetId !== 'all') params.set('assetId', opts.assetId);
+    if (opts.category && opts.category !== 'all') params.set('category', opts.category);
+    fetch(`/api/company/${companyId}/finance-invoices/stats?${params.toString()}`, {
+      credentials: 'include',
+    })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((body: FinanceStatsResponse) => setData(body))
+      .catch((err) => setError(err instanceof Error ? err.message : 'Error'))
+      .finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, opts.year, opts.assetId, opts.category, tick]);
+
+  return { data, loading, error, refresh };
+}
+
+export function useFinanceDrill(opts: {
+  year: number;
+  month?: number;
+  assetId?: string;
+  category?: FinanceStatsCategory;
+  page?: number;
+  pageSize?: number;
+  enabled?: boolean;
+}) {
+  const { companyId } = useAuth();
+  const [rows, setRows]       = useState<ApiFinanceInvoice[]>([]);
+  const [total, setTotal]     = useState(0);
+  const [page, setPage]       = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
+  const [tick, setTick]       = useState(0);
+
+  const refresh = useCallback(() => setTick((n) => n + 1), []);
+
+  useEffect(() => {
+    if (!companyId || opts.enabled === false) return;
+    setLoading(true);
+    setError(null);
+    const params = new URLSearchParams();
+    params.set('year', String(opts.year));
+    if (opts.month && opts.month > 0) params.set('month', String(opts.month));
+    if (opts.assetId && opts.assetId !== 'all') params.set('assetId', opts.assetId);
+    if (opts.category && opts.category !== 'all') params.set('category', opts.category);
+    // jul 2026 v4-b — paginación canónica (mismo helper que el resto del
+    // backend). Antes: limit 500 hardcoded. Ahora: ?page=N&pageSize=50.
+    params.set('page',     String(opts.page     ?? 1));
+    params.set('pageSize', String(opts.pageSize ?? 50));
+    fetch(`/api/company/${companyId}/finance-invoices/drill?${params.toString()}`, {
+      credentials: 'include',
+    })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((body: { data: ApiFinanceInvoice[]; total: number; page: number; pageSize: number; totalPages: number }) => {
+        setRows(body.data ?? []);
+        setTotal(body.total ?? 0);
+        setPage(body.page ?? 1);
+        setPageSize(body.pageSize ?? 50);
+        setTotalPages(body.totalPages ?? 1);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : 'Error'))
+      .finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, opts.year, opts.month, opts.assetId, opts.category, opts.page, opts.pageSize, opts.enabled, tick]);
+
+  return { rows, total, page, pageSize, totalPages, loading, error, refresh };
 }

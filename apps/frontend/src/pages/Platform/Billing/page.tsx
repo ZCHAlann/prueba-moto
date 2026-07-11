@@ -521,9 +521,9 @@ export function BillingPage() {
           transition={{ duration: 0.3, delay: 0.1 }}
           className="flex flex-wrap items-center gap-2 self-start"
         >
-          <DatePicker value={from} onChange={setFrom} placeholder="Desde" maxDate={to || undefined} />
+          <DatePicker compact value={from} onChange={setFrom} placeholder="Desde" maxDate={to || undefined} />
           <span className="text-sm text-gray-300 dark:text-gray-600">—</span>
-          <DatePicker value={to} onChange={setTo} placeholder="Hasta" minDate={from || undefined} />
+          <DatePicker compact value={to} onChange={setTo} placeholder="Hasta" minDate={from || undefined} />
           <button type="button" onClick={applyFilters}
             className="rounded-xl bg-brand-500 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-600 transition">
             Aplicar

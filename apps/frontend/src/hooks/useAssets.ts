@@ -47,6 +47,8 @@ function mapApiToAsset(data: Record<string, unknown>, companyId: string): Asset 
     oilCapacity: String(data.oilCapacity ?? data.oil_capacity ?? ""),
     garageId: data.garageId ? String(data.garageId) : null,
     photoUrls: Array.isArray(data.photoUrls ?? data.photo_urls) ? (data.photoUrls ?? data.photo_urls) as string[] : [],
+    // jul 2026 v5 — Migración 0052. Foto de perfil del vehículo.
+    profilePhotoUrl: (data.profilePhotoUrl ?? data.profile_photo_url ?? null) as string | null,
     // ── Backend enrichment ──────────────────────────────────────────────────────
     currentDriver: (data.currentDriver as { name: string; code: string; phone: string; photoUrl: string | null } | null) ?? null,
     currentAssignment: (data.currentAssignment as Asset["currentAssignment"]) ?? null,
@@ -81,6 +83,7 @@ function mapAssetToApi(input: CreateAssetInput | UpdateAssetInput) {
     oilCapacity: input.oilCapacity,
     siteId: input.siteId ?? null,
     garageId: input.garageId ?? null,
+    profilePhotoUrl: input.profilePhotoUrl ?? null,
   };
 }
 

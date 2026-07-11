@@ -171,9 +171,7 @@ export const MODULE_TREE = {
     label: "Finanzas",
     submodules: {
       // jul 2026 — ledger de comprobantes (facturas de combustible / peajes /
-      // mantenimiento). El submódulo `facturas` es el único consumidor hoy;
-      // en el futuro podrían agregarse `estadisticas` (KPIs agregados),
-      // `conciliacion`, etc.
+      // mantenimiento).
       facturas: "Facturas",
       // jul 2026 v4 — Caja Chica:
       //   ver    = ver pestaña + listar solicitudes/vales/historial
@@ -184,6 +182,12 @@ export const MODULE_TREE = {
       // jul 2026 v4 — Transacciones: línea de tiempo global (caja chica +
       // gastos anuales), filtros, exportar PDF.
       transacciones: "Transacciones",
+      // jul 2026 v4-b — Submódulo Estadísticas: agregaciones (gráfico de
+      // barras 12 meses, drill-down semana/día, top vehículos). Permiso
+      // independiente de facturas: un usuario puede ver Estadísticas SIN
+      // tener acceso al listado fila-por-fila de facturas. Coherente con
+      // como caja_chica y transacciones tienen su propio permission path.
+      estadisticas: "Estadísticas",
     },
   },
   geolocalizacion: {
@@ -234,18 +238,38 @@ export type ModuleKey    = keyof typeof MODULE_TREE;
 //   ver_vales        = puede ver la pestaña Vales
 //   ver_historial    = puede ver la pestaña Historial (timeline movimientos)
 //   configurar_caja  = pestaña Configuración (reponer / crear cuenta)
+//   ver_saldo_total  = puede ver la card "Saldo total" (suma de todas las cajas)
+//   ver_saldo_sede   = puede ver la card por sede (su caja chica asignada).
+//                       Si solo tiene `ver_saldo_sede`, no ve la card de total.
+//                       admin_empresa / owner_empresa / superadmin bypasean.
+//   revisar_facturas = acceso a las pestañas "Facturas por revisar" y
+//                       "Correcciones" del submódulo Caja Chica, y a los
+//                       modales de revisión contable. admin/owner/superadmin bypasean.
 export type ActionKey    = "ver" | "crear" | "editar" | "eliminar" | "aprobar" | "reponer"
                           | "ver_solicitudes" | "ver_vales" | "ver_historial" | "configurar_caja"
-                          | "ver_todos";
+                          | "ver_todos"
+                          | "ver_saldo_total" | "ver_saldo_sede"
+                          | "revisar_facturas";
 export type PermissionMap = Record<string, Record<string, ActionKey[]>>;
 
 export const ACTION_LABELS: Record<ActionKey, string> = {
-  ver:      "Ver",
-  crear:    "Crear",
-  editar:   "Editar",
-  eliminar: "Eliminar",
-  aprobar:  "Aprobar",
-  reponer:  "Reponer",
+  ver:                "Ver",
+  crear:              "Crear",
+  editar:             "Editar",
+  eliminar:           "Eliminar",
+  aprobar:            "Aprobar",
+  reponer:            "Reponer",
+  ver_solicitudes:    "Ver Solicitudes",
+  ver_vales:          "Ver Vales",
+  ver_historial:      "Ver Historial",
+  configurar_caja:    "Configurar Caja",
+  ver_todos:          "Ver Todos",
+  ver_saldo_total:    "Ver Saldo Total",
+  ver_saldo_sede:     "Ver Saldo por Sede",
+  // jul 2026 v5 — Permiso granular para revisar facturas de
+  // repuestos. Configurable desde Accesos → Usuarios para darlo
+  // individualmente a quien deba revisar (admin/owner bypasean).
+  revisar_facturas:   "Revisar Facturas",
 };
 
 export const ACTION_COLORS: Record<ActionKey, { active: string; inactive: string }> = {
@@ -263,6 +287,52 @@ export const ACTION_COLORS: Record<ActionKey, { active: string; inactive: string
   },
   eliminar: {
     active:   "bg-red-600 text-white border-red-600",
+    inactive: "bg-transparent text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]",
+  },
+  aprobar:  {
+    active:   "bg-violet-600 text-white border-violet-600",
+    inactive: "bg-transparent text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]",
+  },
+  reponer:  {
+    active:   "bg-cyan-600 text-white border-cyan-600",
+    inactive: "bg-transparent text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]",
+  },
+  // jul 2026 v5 — Acciones granulares. Todas comparten el "inactive"
+  // gris (no tienen un color fuerte asignado). El editor las muestra
+  // como toggles adicionales; si no se tildan, no aparecen en el
+  // mapa `modulePermissions` del usuario.
+  ver_solicitudes: {
+    active:   "bg-slate-700 text-white border-slate-700",
+    inactive: "bg-transparent text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]",
+  },
+  ver_vales: {
+    active:   "bg-slate-700 text-white border-slate-700",
+    inactive: "bg-transparent text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]",
+  },
+  ver_historial: {
+    active:   "bg-slate-700 text-white border-slate-700",
+    inactive: "bg-transparent text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]",
+  },
+  configurar_caja: {
+    active:   "bg-slate-700 text-white border-slate-700",
+    inactive: "bg-transparent text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]",
+  },
+  ver_todos: {
+    active:   "bg-slate-700 text-white border-slate-700",
+    inactive: "bg-transparent text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]",
+  },
+  ver_saldo_total: {
+    active:   "bg-slate-700 text-white border-slate-700",
+    inactive: "bg-transparent text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]",
+  },
+  ver_saldo_sede: {
+    active:   "bg-slate-700 text-white border-slate-700",
+    inactive: "bg-transparent text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]",
+  },
+  // jul 2026 v5 — Acento violeta para distinguir "Revisar Facturas"
+  // del resto (es la acción de contabilidad, la más "pesada").
+  revisar_facturas: {
+    active:   "bg-violet-600 text-white border-violet-600",
     inactive: "bg-transparent text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]",
   },
 };

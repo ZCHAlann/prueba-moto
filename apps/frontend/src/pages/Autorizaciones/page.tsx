@@ -599,9 +599,9 @@ function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, d
         </div>
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
           <Calendar size={11} /> Desde
-          <DatePicker value={dateFrom} onChange={onChangeDateFrom} placeholder="Fecha desde" />
+          <DatePicker compact value={dateFrom} onChange={onChangeDateFrom} placeholder="Fecha desde" />
           <span>→</span>
-          <DatePicker value={dateTo} onChange={onChangeDateTo} placeholder="Fecha hasta" />
+          <DatePicker compact value={dateTo} onChange={onChangeDateTo} placeholder="Fecha hasta" />
         </div>
       </div>
 

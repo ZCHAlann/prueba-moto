@@ -49,6 +49,12 @@ export interface InvoicePdfInput {
     legalNumber:   string | null;
     issueDate:     string;     // YYYY-MM-DD
     amount:        string;     // decimal string
+    // jul 2026 v4-b — desglose de totales. Si vienen null, el PDF
+    // muestra solo `TOTAL = amount` (compat con facturas legacy).
+    subtotal?:     string | null;
+    ivaPercent?:   string | null;
+    ivaAmount?:    string | null;
+    total?:        string | null;
     notes:         string | null;
     items:         Array<{
       description: string;
@@ -57,7 +63,9 @@ export interface InvoicePdfInput {
       subtotal:    string | number;
     }>;
     invoiceTypeName: string | null;
-    sourceModule: 'combustible' | 'peajes' | 'mantenimiento' | 'manual';
+    // jul 2026 v4-b — agregamos 'petty_cash' para facturas cerradas
+    // desde Caja Chica.
+    sourceModule: 'combustible' | 'peajes' | 'mantenimiento' | 'petty_cash' | 'manual';
     sourceRef: {
       assetCode:   string | null;
       assetPlate:  string | null;
@@ -69,6 +77,16 @@ export interface InvoicePdfInput {
       maintenanceCompletedAt:  string | null;
       maintenanceTitle:        string | null;
       workshopName:            string | null;
+      // jul 2026 v4-b — Hydratación desde Caja Chica.
+      voucherNumericId?:          number | null;
+      voucherIssuedAmount?:       number | null;
+      voucherRefundAmount?:       number | null;
+      voucherAccountName?:        string | null;
+      voucherSiteName?:           string | null;
+      voucherRequesterName?:      string | null;
+      voucherApproverName?:       string | null;
+      voucherAssignedToName?:     string | null;
+      voucherFinanceClassification?: 'repuesto' | 'mano_obra' | 'lavada' | null;
     } | null;
   };
   supplier: {
@@ -217,13 +235,35 @@ export function buildInvoicePDF(input: InvoicePdfInput): Buffer {
   const totalsX = W - M - 60;
   const totalsW = 60;
 
-  // Subtotal = amount - IVA asumida (15%); si no tiene items, Subtotal = amount.
-  // Para el MVP mostramos solo: Subtotal, Total, Saldo.
+  // jul 2026 v4-b — Subtotal / IVA / Total. Si la invoice tiene
+  // `ivaAmount` y `subtotal` poblados (modelo v4+), los mostramos.
+  // Si no, caemos al total simple (compat con facturas legacy).
   const amount = parseFloat(input.invoice.amount);
+  const subtotal = input.invoice.subtotal != null
+    ? parseFloat(String(input.invoice.subtotal))
+    : amount;
+  const ivaAmount = input.invoice.ivaAmount != null
+    ? parseFloat(String(input.invoice.ivaAmount))
+    : 0;
+  const ivaPercent = input.invoice.ivaPercent != null
+    ? parseFloat(String(input.invoice.ivaPercent))
+    : 0;
+  const total = ivaAmount > 0 ? subtotal + ivaAmount : amount;
 
-  setText(COLOR_HEAD, 10, true);
+  setText(COLOR_TEXT, 9);
+  if (ivaAmount > 0) {
+    doc.text('Subtotal', totalsX, y);
+    doc.text(fmtMoney(subtotal), totalsX + totalsW, y, { align: 'right' });
+    y += 5;
+    doc.text(`IVA (${ivaPercent.toFixed(2)}%)`, totalsX, y);
+    doc.text(fmtMoney(ivaAmount), totalsX + totalsW, y, { align: 'right' });
+    y += 5;
+    rule(y - 0.5);
+  }
+
+  setText(COLOR_HEAD, 11, true);
   doc.text('TOTAL', totalsX, y);
-  doc.text(fmtMoney(amount), totalsX + totalsW, y, { align: 'right' });
+  doc.text(fmtMoney(total), totalsX + totalsW, y, { align: 'right' });
   y += 6;
 
   rule(y);
@@ -232,7 +272,7 @@ export function buildInvoicePDF(input: InvoicePdfInput): Buffer {
   // (jul 2026 — REMOVIDO bloque CxP: el módulo ya no maneja estados de pago
   // ni saldos. El PDF muestra solo la metadata del comprobante + origen.)
 
-  // ─── 5) Source ref (si viene de combustible/peajes/mantenimiento) ─────
+  // ─── 5) Source ref (si viene de combustible/peajes/mantenimiento/caja_chica) ──
   if (input.invoice.sourceModule !== 'manual' && input.invoice.sourceRef) {
     ensureSpace(20);
     setText(COLOR_HEAD, 10, true);
@@ -255,6 +295,38 @@ export function buildInvoicePDF(input: InvoicePdfInput): Buffer {
     }
     if (sr.workshopName) {
       doc.text(`Taller:          ${sr.workshopName}`, M, y); y += 4;
+    }
+    // jul 2026 v4-b — Sección Caja Chica.
+    if (input.invoice.sourceModule === 'petty_cash') {
+      if (sr.voucherNumericId != null) {
+        doc.text(`Vale:            #${sr.voucherNumericId}`, M, y); y += 4;
+      }
+      if (sr.voucherIssuedAmount != null) {
+        doc.text(`Monto emitido:   ${fmtMoney(sr.voucherIssuedAmount)}`, M, y); y += 4;
+      }
+      if (sr.voucherRefundAmount != null && sr.voucherRefundAmount > 0) {
+        doc.text(`Reembolso:       ${fmtMoney(sr.voucherRefundAmount)}`, M, y); y += 4;
+      }
+      if (sr.voucherSiteName) {
+        doc.text(`Sede / cuenta:   ${sr.voucherSiteName}`, M, y); y += 4;
+      }
+      if (sr.voucherAssignedToName) {
+        doc.text(`Operador:        ${sr.voucherAssignedToName}`, M, y); y += 4;
+      }
+      if (sr.voucherRequesterName) {
+        doc.text(`Solicitante:     ${sr.voucherRequesterName}`, M, y); y += 4;
+      }
+      if (sr.voucherApproverName) {
+        doc.text(`Aprobador:       ${sr.voucherApproverName}`, M, y); y += 4;
+      }
+      if (sr.voucherFinanceClassification) {
+        const clsLabel: Record<string, string> = {
+          repuesto:  "Repuesto",
+          mano_obra: "Mano de obra",
+          lavada:    "Lavada",
+        };
+        doc.text(`Clasificación:   ${clsLabel[sr.voucherFinanceClassification] ?? sr.voucherFinanceClassification}`, M, y); y += 4;
+      }
     }
   }
 

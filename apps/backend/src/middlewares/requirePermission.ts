@@ -53,7 +53,14 @@ function resolveModuleSub(
 export const requirePermission = (
   module: string,
   submodule: string,
-  action: "ver" | "crear" | "editar" | "eliminar" | "aprobar" | "reponer",
+  // jul 2026 v5 — Aceptamos cualquier string. La validación real es
+  // contra `user.modulePermissions[module][submodule]` (un array de
+  // strings). Los actions legacy (ver/crear/editar/eliminar/aprobar/
+  // reponer) más los nuevos (ver_solicitudes, ver_vales, …,
+  // revisar_facturas, etc.) viven en module-tree.ts del frontend y
+  // en user.ts del backend. Typear como string evita acoplar el
+  // middleware a la lista.
+  action: string,
 ) => (req: Request, _res: Response, next: NextFunction): void => {
   const user = req.user;
 
@@ -89,7 +96,7 @@ export const requirePermission = (
  */
 export const requirePermissionAny = (
   entries: Array<{ module: string; submodule: string }>,
-  action: "ver" | "crear" | "editar" | "eliminar" | "aprobar" | "reponer",
+  action: string,
 ) => (req: Request, _res: Response, next: NextFunction): void => {
   const user = req.user;
 

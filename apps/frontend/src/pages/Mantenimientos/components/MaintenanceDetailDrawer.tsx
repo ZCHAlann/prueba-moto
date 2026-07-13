@@ -1125,32 +1125,39 @@ export function MaintenanceDetailDrawer({
                             )}
 
                             {/* Formulario: agregar nuevo repuesto */}
-                            <div className="px-3 py-2.5 space-y-2">
+                            <div className="px-3 py-2.5 space-y-2.5">
                               <div className="flex items-center justify-between gap-3">
                                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
                                   {pendingItems.length === 0 ? "Agregar repuestos" : "Agregar más"}
                                 </p>
-                                <div className="flex items-center gap-1.5">
-                                  <label className="text-[10px] font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                                {/* jul 2026 v5 — IVA% GLOBAL: ya no se repite por cada
+                                    item. Un único cuadrito arriba a la derecha aplica
+                                    a TODOS los repuestos que se agreguen. Al apretar
+                                    "Agregar" se snapshotea en el item pendiente. */}
+                                <div className="flex items-center gap-2">
+                                  <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 whitespace-nowrap">
                                     IVA %
                                   </label>
                                   <input
                                     type="text"
                                     inputMode="decimal"
-                                    value={ivaPercentDraft}
+                                    value={String(ivaPercentDraft)}
                                     onChange={(e) => {
                                       const raw = e.target.value.replace(/[^0-9.]/g, "");
                                       setIvaPercentDraft(Number(raw) || 0);
                                     }}
-                                    className="w-14 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2 py-1 text-[11px] text-gray-700 dark:text-white text-center focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                                    className="w-16 rounded-md border border-sky-300 dark:border-sky-500/40 bg-white dark:bg-gray-800 px-2 py-1 text-[11px] font-semibold text-sky-700 dark:text-sky-300 text-center focus:outline-none focus:ring-1 focus:ring-sky-400/40 tabular-nums"
+                                    title="Este % se aplica a todos los repuestos que agregues"
                                   />
                                 </div>
                               </div>
 
-                              {/* Campos: foto | nombre | proveedor */}
-                              <div className="flex items-end gap-2 text-xs overflow-x-auto">
+                              {/* Línea única: foto · nombre · proveedor · factura · cant · precio · desc · + Agregar.
+                                  jul 2026 v5 — mismo layout que MaintenanceFormModal. Sin
+                                  input de IVA por item (ya está arriba como global). */}
+                              <div className="grid grid-cols-12 gap-2 text-xs">
                                 {/* Foto */}
-                                <div className="shrink-0">
+                                <div className="col-span-1 shrink-0">
                                   {newItem.photoUrl ? (
                                     <div className="relative h-9 w-9 rounded-md overflow-hidden border border-gray-200 dark:border-white/[0.08]">
                                       <img src={newItem.photoUrl} alt="" className="h-full w-full object-cover" />
@@ -1199,26 +1206,22 @@ export function MaintenanceDetailDrawer({
                                   placeholder="Nombre del repuesto"
                                   value={newItem.name}
                                   onChange={(e) => setNewItem((p) => ({ ...p, name: e.target.value }))}
-                                  className="min-w-[100px] flex-1 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-1.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                                  className="col-span-3 min-w-0 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
                                 />
 
                                 {/* Proveedor */}
                                 <select
                                   value={newItem.supplierId || ""}
                                   onChange={(e) => setNewItem((p) => ({ ...p, supplierId: e.target.value || null }))}
-                                  className="min-w-[100px] rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                                  className="col-span-2 min-w-0 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-2 text-sm text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
                                 >
-                                  <option value="">Sin prov.</option>
+                                  <option value="">Sin proveedor</option>
                                   {suppliers.map((s) => (
                                     <option key={s.id} value={s.id}>{s.name}</option>
                                   ))}
                                 </select>
 
-                                {/* jul 2026 — dropdown a que factura pertenece (Opcion A).
-                                    Solo se muestran las facturas YA subidas en este
-                                    mantenimiento (attachments con invoiceNumber).
-                                    Si no hay facturas, este item queda como
-                                    evidencia visual (sin factura asignada). */}
+                                {/* Factura (Opcion A) */}
                                 <select
                                   value={newItem.attachmentKey || ""}
                                   onChange={(e) => setNewItem((p) => ({ ...p, attachmentKey: e.target.value || null }))}
@@ -1228,7 +1231,7 @@ export function MaintenanceDetailDrawer({
                                       ? "Subí una factura con número en 'Facturas y evidencias' para poder asignar este repuesto."
                                       : "A qué factura pertenece este repuesto"
                                   }
-                                  className="min-w-[120px] rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-400/40 disabled:opacity-50"
+                                  className="col-span-2 min-w-0 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-2 text-sm text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-400/40 disabled:opacity-50"
                                 >
                                   <option value="">Sin factura</option>
                                   {attachmentsWithInvoice.map((a, idx) => (
@@ -1238,80 +1241,73 @@ export function MaintenanceDetailDrawer({
                                     </option>
                                   ))}
                                 </select>
-                              </div>
 
-                              {/* Campos: cantidad y precio unitario con labels */}
-                              <div className="flex items-end gap-2">
                                 {/* Cantidad */}
-                                <div className="shrink-0">
-                                  <label className="mb-0.5 block text-[9.5px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                    Cant.
-                                  </label>
-                                  <input
-                                    type="text"
-                                    inputMode="decimal"
-                                    value={newItem.quantity}
-                                    onChange={(e) => setNewItem((p) => ({ ...p, quantity: e.target.value }))}
-                                    className="w-16 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-1.5 text-sm text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-sky-400/40"
-                                  />
-                                </div>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  placeholder="Cant."
+                                  value={newItem.quantity}
+                                  onChange={(e) => setNewItem((p) => ({ ...p, quantity: e.target.value }))}
+                                  className="col-span-1 min-w-0 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-2 text-sm text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-sky-400/40 tabular-nums text-right"
+                                  title="Cantidad"
+                                />
 
-                                {/* Precio unitario */}
-                                <div className="shrink-0">
-                                  <label className="mb-0.5 block text-[9.5px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                    Precio unit. (USD)
-                                  </label>
-                                  <input
-                                    type="text"
-                                    inputMode="decimal"
-                                    placeholder="0.00"
-                                    value={newItem.unitCost}
-                                    onChange={(e) => setNewItem((p) => ({ ...p, unitCost: e.target.value }))}
-                                    className="w-20 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-1.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
-                                  />
-                                </div>
+                                {/* Precio unitario (USD) */}
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  placeholder="Precio"
+                                  value={newItem.unitCost}
+                                  onChange={(e) => setNewItem((p) => ({ ...p, unitCost: e.target.value }))}
+                                  className="col-span-1 min-w-0 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-2 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40 tabular-nums text-right"
+                                  title="Precio unitario (USD)"
+                                />
 
                                 {/* jul 2026 v4-c — Descuento (importe monetario) */}
-                                <div className="shrink-0">
-                                  <label className="mb-0.5 block text-[9.5px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                    $ Desc.
-                                  </label>
-                                  <input
-                                    type="text"
-                                    inputMode="decimal"
-                                    placeholder="0.00"
-                                    value={newItem.discountValue}
-                                    onChange={(e) => setNewItem((p) => ({ ...p, discountValue: e.target.value }))}
-                                    className="w-16 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-1.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
-                                  />
-                                </div>
-
-                                {/* IVA % */}
-                                <div className="shrink-0">
-                                  <label className="mb-0.5 block text-[9.5px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                    % IVA
-                                  </label>
-                                  <input
-                                    type="text"
-                                    inputMode="decimal"
-                                    placeholder="15"
-                                    value={newItem.ivaPercent}
-                                    onChange={(e) => setNewItem((p) => ({ ...p, ivaPercent: e.target.value }))}
-                                    className="w-14 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-1.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
-                                  />
-                                </div>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  placeholder="$ Desc."
+                                  value={newItem.discountValue}
+                                  // jul 2026 v5 — normalización de coma/punto. Antes
+                                  // se guardaba el string crudo y "0,50" → NaN al
+                                  // hacer Number() → 0, lo que hacía que el
+                                  // descuento pareciera "no guardarse".
+                                  onChange={(e) => {
+                                    const v = e.target.value.replace(/[^0-9.,]/g, "").replace(",", ".");
+                                    setNewItem((p) => ({ ...p, discountValue: v }));
+                                  }}
+                                  className="col-span-1 min-w-0 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-2 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40 tabular-nums text-right"
+                                  title="Descuento (importe monetario, ej: 0.50)"
+                                />
 
                                 {/* Agregar a la lista */}
                                 <button
                                   onClick={() => {
                                     if (!newItem.name.trim()) { toast.error("Nombre requerido"); return; }
-                                    setPendingItems((prev) => [...prev, { ...newItem }]);
-                                    setNewItem({ name: "", quantity: "1", unitCost: "", discountValue: "", ivaPercent: "15", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
+                                    // jul 2026 v5 — al pushear, snapshot del IVA global.
+                                    // (Antes se guardaba el del input por item, pero como
+                                    // ahora NO hay input por item, usamos el global.)
+                                    // También normalizamos qty/unitCost/desc.
+                                    const toNum = (s: string) => {
+                                      const v = Number(String(s).replace(",", "."));
+                                      return Number.isFinite(v) ? v : 0;
+                                    };
+                                    const pending = {
+                                      ...newItem,
+                                      quantity:      String(toNum(newItem.quantity) || 1),
+                                      unitCost:      String(toNum(newItem.unitCost)),
+                                      discountValue: String(toNum(newItem.discountValue)),
+                                      ivaPercent:    String(ivaPercentDraft),
+                                    };
+                                    setPendingItems((prev) => [...prev, pending]);
+                                    setNewItem({ name: "", quantity: "1", unitCost: "", discountValue: "", ivaPercent: String(ivaPercentDraft), photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
                                     toast.success("Repuesto agregado a la lista");
                                   }}
-                                  className="mb-0 shrink-0 rounded-md border border-sky-200 dark:border-sky-500/40 bg-sky-50 dark:bg-sky-500/10 hover:bg-sky-100 dark:hover:bg-sky-500/20 px-3 py-1.5 text-xs font-semibold text-sky-700 dark:text-sky-300 transition"
+                                  className="col-span-1 inline-flex items-center justify-center gap-1 rounded-md border border-sky-200 dark:border-sky-500/40 bg-sky-50 dark:bg-sky-500/10 hover:bg-sky-100 dark:hover:bg-sky-500/20 px-2.5 py-2 text-xs font-semibold text-sky-700 dark:text-sky-300 transition whitespace-nowrap"
                                 >
-                                  <Plus size={11} className="inline mr-0.5" />Agregar
+                                  <Plus size={11} /> Agregar
                                 </button>
                               </div>
 
@@ -1331,7 +1327,7 @@ export function MaintenanceDetailDrawer({
                                       {it.supplierId && (
                                         <span className="text-[10px] text-gray-400">{suppliers.find(s => s.id === it.supplierId)?.name}</span>
                                       )}
-                                      <span className="text-[10px] text-gray-500">
+                                      <span className="text-[10px] text-gray-500 tabular-nums">
                                         {it.quantity} × {fmtMoney(Number(it.unitCost) || 0)}
                                         {Number(it.discountValue) > 0 && (
                                           <span className="ml-1 text-rose-600 dark:text-rose-400">- {fmtMoney(Number(it.discountValue))}</span>

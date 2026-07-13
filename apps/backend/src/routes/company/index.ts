@@ -8,6 +8,7 @@ import {
   writeOnly,
   readOnly,
 } from '../../middlewares/rateLimit';
+import { getCompanyLimitsHandler } from '../platform/companies';
 import settingsRouter from './settings';
 import sitesRouter from './sites';
 import assetsRouter from './assets';
@@ -146,6 +147,23 @@ router.use('/finance', financeInvoiceReviewsRouter);
 //   - GET    /ai-usage?from&to  → métricas de uso
 //   - GET    /ai-providers      → catálogo de providers/models
 router.use(companyAiSettingsRouter);
+
+// ── Límites del plan (jul 2026 v6) ──────────────────────────────────────────
+// jul 2026 v6 — Para que el admin de empresa pueda ver los límites del
+// plan de SU empresa (y el front esconda el botón "Nuevo usuario" /
+// "Nuevo vehículo" cuando se llega al máximo), exponemos el mismo
+// handler del panel de plataforma acá. El superadmin sigue usando
+// /api/platform/companies/:id/limits sin cambios.
+router.get('/limits', async (req, res, next) => {
+  try {
+    const companyId = req.companyId as number;
+    if (!companyId) return res.status(400).json({ error: 'companyId requerido' });
+    const data = await getCompanyLimitsHandler(companyId);
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
 
 
 export default router;

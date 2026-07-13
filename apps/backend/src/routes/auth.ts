@@ -401,6 +401,12 @@ router.get("/session", authenticate, async (req, res, next) => {
     // fuente de verdad (catálogo de roles + override per-user).
     let modulePermissions: ModulePermissionMap = user.modulePermissions ?? {};
     let dbUpdatedAt: Date | null = null;
+    // jul 2026 v5 — Sede principal del usuario (vive en
+    // `company_users.profile_data->>'siteId'`). Si es null, el usuario
+    // es admin / plataforma / sin sede asignada. Se declara ACÁ para que
+    // esté en scope tanto en el `if (user.companyId)` como en el
+    // `else` (usuarios de plataforma).
+    let userSiteIdFromProfile: number | null = null;
 
     if (user.companyId) {
       const companyUserId = Number(user.sub.replace('company-user-', ''));
@@ -430,12 +436,12 @@ router.get("/session", authenticate, async (req, res, next) => {
       // jul 2026 v5 — Sede principal del usuario (vive en
       // `company_users.profile_data->>'siteId'`). Si es null, el
       // usuario es admin / plataforma / sin sede asignada.
-      const userSiteIdFromProfile = (() => {
+      {
         const pd = row?.dbProfileData as Record<string, unknown> | null | undefined;
         const raw = pd?.siteId;
         const n = typeof raw === "string" ? parseInt(raw, 10) : Number(raw);
-        return Number.isFinite(n) && n > 0 ? n : null;
-      })();
+        userSiteIdFromProfile = Number.isFinite(n) && n > 0 ? n : null;
+      }
 
       // Recalcular permisos desde BD (catálogo rol + override)
       const isAdminRole = ["owner_empresa", "admin_empresa"].includes(row?.dbRole ?? "");

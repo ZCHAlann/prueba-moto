@@ -4,7 +4,6 @@ import { eq } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companySettings } from '../../db/schema/operational';
 import { validate } from '../../lib/validate';
-import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
 import { logAudit } from '../../lib/audit';
 import { toId } from '../../lib/ids';
@@ -31,7 +30,13 @@ const updateSettingsSchema = z.object({
 
 // ─── GET /company/:id/settings ───────────────────────────────────────────────
 
-router.get('/', requireModule('configuracion'), async (req, res, next) => {
+// El módulo "configuracion" NO se gatea por enabledModules: Configuración
+// del sistema es un recurso permanente de la empresa (no se compra, no se
+// apaga). El user ya está autenticado y el tenant se valida por
+// companyId. Si se quisiera proteger lectura, debería ser a nivel de
+// permisos granulares, no de módulo de empresa.
+
+router.get('/', async (req, res, next) => {
   try {
     const companyId = req.companyId!;
 
@@ -49,7 +54,7 @@ router.get('/', requireModule('configuracion'), async (req, res, next) => {
         checklistRequired: true,
         fuelCurrency: 'USD',
         alertEmail: null,
-        alertConfigs: [], 
+        alertConfigs: [],
         updatedAt: null,
       });
     }
@@ -64,7 +69,6 @@ router.get('/', requireModule('configuracion'), async (req, res, next) => {
 
 router.put(
   '/',
-  requireModule('configuracion'),
   requireAdmin,
   validate(updateSettingsSchema),
   async (req, res, next) => {

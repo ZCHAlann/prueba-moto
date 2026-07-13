@@ -4,6 +4,13 @@ interface ModalActionsProps {
   submitLabel?: string;
   cancelLabel?: string;
   danger?: boolean;     // para acciones destructivas (rojo)
+  /**
+   * Si se pasa, el botón de submit dispara este callback en lugar de
+   * hacer submit del form. Útil cuando el footer está fuera del <form>
+   * (caso típico de PlatformModal, donde el footer se renderiza por
+   * separado del children).
+   */
+  onConfirm?: () => void;
 }
 
 export function ModalActions({
@@ -12,7 +19,9 @@ export function ModalActions({
   submitLabel = "Guardar",
   cancelLabel = "Cancelar",
   danger = false,
+  onConfirm,
 }: ModalActionsProps) {
+  const submitType: "submit" | "button" = onConfirm ? "button" : "submit";
   return (
     <>
       <button
@@ -25,7 +34,8 @@ export function ModalActions({
         {cancelLabel}
       </button>
       <button
-        type="submit"
+        type={submitType}
+        onClick={onConfirm}
         disabled={submitting}
         className={`inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-semibold
           text-white shadow-sm transition active:scale-95 disabled:opacity-60

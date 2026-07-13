@@ -3,61 +3,65 @@ export const MODULE_TREE = {
     label: "Dashboard",
     submodules: {
       // ── KPIs globales ──
-      kpis_flotas:                  "KPIs de flota",
-      kpis_mantenimiento:           "KPIs de mantenimiento",
-      kpis_combustible:             "KPIs de combustible",
-      kpis_conductores:             "KPIs de conductores",
+      // jul 2026 v6 — Cada submódulo declara de cuál módulo real
+      // depende (requires). El editor de permisos los oculta si la
+      // empresa no tiene ese módulo habilitado, así no se asignan
+      // permisos a submódulos que no existen para la empresa.
+      kpis_flotas:                  { label: "KPIs de flota",                  requires: ["gestion"] },
+      kpis_mantenimiento:           { label: "KPIs de mantenimiento",         requires: ["mantenimiento"] },
+      kpis_combustible:             { label: "KPIs de combustible",            requires: ["combustible"] },
+      kpis_conductores:             { label: "KPIs de conductores",           requires: ["gestion"] },
 
       // ── Gráficas de series ──
-      chart_combustible_mes:        "Gráfica combustible por mes",
-      chart_mantenimientos_mes:     "Gráfica mantenimientos por mes",
-      chart_flotas_estado:          "Gráfica flota por estado",
-      chart_flotas_categoria:       "Gráfica flota por categoría",
-      chart_conductores_licencia:   "Gráfica conductores por licencia",
+      chart_combustible_mes:        { label: "Gráfica combustible por mes",    requires: ["combustible"] },
+      chart_mantenimientos_mes:     { label: "Gráfica mantenimientos por mes", requires: ["mantenimiento"] },
+      chart_flotas_estado:          { label: "Gráfica flota por estado",      requires: ["gestion"] },
+      chart_flotas_categoria:       { label: "Gráfica flota por categoría",   requires: ["gestion"] },
+      chart_conductores_licencia:   { label: "Gráfica conductores por licencia", requires: ["gestion"] },
 
       // ── Alertas: pieza consolidada ──
-      feed_alertas:                 "Feed de alertas activas",
+      feed_alertas:                 { label: "Feed de alertas activas",       requires: ["alertas"] },
 
       // ── Actividad y próximos ──
-      timeline_actividad:           "Timeline de actividad reciente",
-      tabla_proximos_mantenimientos: "Tabla próximos mantenimientos",
+      timeline_actividad:           { label: "Timeline de actividad reciente", requires: ["alertas"] },
+      tabla_proximos_mantenimientos: { label: "Tabla próximos mantenimientos", requires: ["mantenimiento"] },
 
       // ── Por sede ──
-      flota_por_sede:               "Flota agrupada por sede",
-      kpis_por_sede:                "KPIs por sede",
+      flota_por_sede:               { label: "Flota agrupada por sede",       requires: ["gestion"] },
+      kpis_por_sede:                { label: "KPIs por sede",                 requires: ["gestion"] },
 
       // ── Por garaje ──
-      flota_por_garaje:             "Flota agrupada por garaje",
-      ocupacion_garajes:            "Ocupación de garajes",
+      flota_por_garaje:             { label: "Flota agrupada por garaje",     requires: ["gestion"] },
+      ocupacion_garajes:            { label: "Ocupación de garajes",          requires: ["gestion"] },
 
       // ── Combustible profundo ──
-      consumo_por_vehiculo:         "Consumo de combustible por vehículo",
-      costo_por_vehiculo:           "Costo de combustible por vehículo",
-      consumo_por_conductor:        "Consumo de combustible por conductor",
+      consumo_por_vehiculo:         { label: "Consumo de combustible por vehículo", requires: ["combustible"] },
+      costo_por_vehiculo:           { label: "Costo de combustible por vehículo",    requires: ["combustible"] },
+      consumo_por_conductor:        { label: "Consumo de combustible por conductor", requires: ["combustible"] },
 
       // ── Asignaciones y conductores ──
-      estado_asignaciones:           "Estado de asignaciones",
-      disponibilidad_conductores:   "Disponibilidad de conductores",
-      kpis_mis_vehiculos:           "Mis vehículos asignados",
+      estado_asignaciones:           { label: "Estado de asignaciones",       requires: ["gestion"] },
+      disponibilidad_conductores:   { label: "Disponibilidad de conductores", requires: ["gestion"] },
+      kpis_mis_vehiculos:           { label: "Mis vehículos asignados",       requires: ["gestion"] },
 
       // ── Seguros ──
-      polizas_por_vencer:           "Pólizas de seguro por vencer",
-      cobertura_activos:             "Cobertura de seguros en activos",
+      polizas_por_vencer:           { label: "Pólizas de seguro por vencer",  requires: ["seguros"] },
+      cobertura_activos:             { label: "Cobertura de seguros en activos", requires: ["seguros"] },
 
       // ── Checklists ──
-      kpis_checklists:               "KPIs de inspecciones",
-      checklists_pendientes:         "Inspecciones pendientes",
+      kpis_checklists:               { label: "KPIs de inspecciones",          requires: ["checklist"] },
+      checklists_pendientes:         { label: "Inspecciones pendientes",      requires: ["checklist"] },
 
       // ── Aceite ──
-      proximo_cambio_aceite:         "Próximos cambios de aceite",
+      proximo_cambio_aceite:         { label: "Próximos cambios de aceite",   requires: ["gestion"] },
 
       // ── Aires acondicionados ──
-      kpis_ac:                       "KPIs de aires acondicionados",
-      servicios_ac_pendientes:       "Servicios de A/C pendientes",
+      kpis_ac:                       { label: "KPIs de aires acondicionados",  requires: ["ac"] },
+      servicios_ac_pendientes:       { label: "Servicios de A/C pendientes",   requires: ["ac"] },
 
       // ── Auditoría ──
-      actividad_por_usuario:         "Actividad por usuario",
-      actividad_por_entidad:        "Actividad por entidad",
+      actividad_por_usuario:         { label: "Actividad por usuario",         requires: ["alertas"] },
+      actividad_por_entidad:        { label: "Actividad por entidad",        requires: ["alertas"] },
     },
   },
   gestion: {
@@ -251,6 +255,20 @@ export type ActionKey    = "ver" | "crear" | "editar" | "eliminar" | "aprobar" |
                           | "ver_saldo_total" | "ver_saldo_sede"
                           | "revisar_facturas";
 export type PermissionMap = Record<string, Record<string, ActionKey[]>>;
+
+// jul 2026 v6 — Cada submódulo puede declarar de cuáles módulos de la
+// empresa depende. Si la empresa no tiene esos módulos activos, el
+// PermissionEditor (y otros consumidores) lo ocultan. Útil para el
+// `dashboard.*` que agrupa submódulos que viven en módulos reales
+// (mantenimiento, combustible, alertas, gestion, etc.) pero que están
+// anidados bajo `dashboard` para el permission system.
+export interface SubmoduleDef {
+  label: string;
+  /** Módulos de empresa requeridos. Si la empresa no tiene TODOS estos
+   *  módulos habilitados, el submódulo se oculta en el editor. Vacío
+   *  = siempre visible (no depende de nada). */
+  requires?: string[];
+}
 
 export const ACTION_LABELS: Record<ActionKey, string> = {
   ver:                "Ver",

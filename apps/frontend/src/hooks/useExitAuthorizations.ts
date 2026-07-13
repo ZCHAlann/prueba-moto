@@ -32,6 +32,11 @@ export type ExitAuthorization = {
   assetLabel: string | null;
   assetName: string | null;
   assetPlate: string | null;
+  // jul 2026 v6 — Foto de perfil del vehículo que arma la autorización
+  // (la misma que se ve en Flotas). El backend la trae como
+  // `asset_photo_url` en el SELECT del listado/detalle y la expone
+  // como `assetPhotoUrl` en el JSON de salida.
+  assetPhotoUrl: string | null;
   driverName: string | null;
   decidedByName: string | null;
   aiAnalysisStatus: string | null;
@@ -57,7 +62,7 @@ export type CreateExitAuthorizationInput = {
 
 export type ConductorContext = {
   driverId: number | null;
-  asset: { id: string; plate: string; brand: string; model: string } | null;
+  asset: { id: string; plate: string; brand: string; model: string; profilePhotoUrl: string | null } | null;
   authorizations: ExitAuthorization[];
 };
 
@@ -112,10 +117,11 @@ function mapRow(raw: Record<string, unknown>): ExitAuthorization {
     requestedAt:               String(raw.requestedAt ?? raw.requested_at ?? ""),
     createdAt:                 String(raw.createdAt   ?? raw.created_at   ?? ""),
     updatedAt:                 String(raw.updatedAt   ?? raw.updated_at   ?? ""),
-    assetLabel:   (raw.assetLabel  as string | null) ?? (raw.asset_label  as string | null) ?? null,
-    assetName:    (raw.assetName   as string | null) ?? (raw.asset_name   as string | null) ?? null,
-    assetPlate:   (raw.assetPlate  as string | null) ?? (raw.asset_plate  as string | null) ?? null,
-    driverName:   (raw.driverName  as string | null) ?? (raw.driver_name  as string | null) ?? null,
+    assetLabel:    (raw.assetLabel    as string | null) ?? (raw.asset_label    as string | null) ?? null,
+    assetName:     (raw.assetName     as string | null) ?? (raw.asset_name     as string | null) ?? null,
+    assetPlate:    (raw.assetPlate    as string | null) ?? (raw.asset_plate    as string | null) ?? null,
+    assetPhotoUrl: (raw.assetPhotoUrl as string | null) ?? (raw.asset_photo_url as string | null) ?? null,
+    driverName:    (raw.driverName    as string | null) ?? (raw.driver_name    as string | null) ?? null,
     decidedByName: (raw.decidedByName as string | null) ?? (raw.decided_by_name as string | null) ?? null,
   };
 }

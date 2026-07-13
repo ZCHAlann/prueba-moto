@@ -1,12 +1,12 @@
 // src/pages/Platform/Users/page.tsx
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Users, ShieldCheck, Building2, UserPlus,
   Pencil, Trash2, X, Search, Filter,
   Mail, User, Lock, ChevronRight, Eye, EyeOff,
-  Crown, Wrench, Headphones, TrendingUp,
-  BadgeCheck, UserCog,
+  Crown, Wrench, Headphones,
+  BadgeCheck, UserCog, ChevronDown 
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../../../context/AuthContext";
@@ -27,7 +27,7 @@ import type {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const PLATFORM_ROLES: PlatformUserRow["role"][] = ["superadmin", "admin_saas", "comercial", "soporte"];
+const PLATFORM_ROLES: PlatformUserRow["role"][] = ["superadmin", "admin_saas", "soporte"];
 const COMPANY_ROLES:  CompanyUserRow["role"][]  = ["owner_empresa", "admin_empresa", "supervisor", "operador", "conductor"];
 const MODULE_KEYS = Object.keys(MODULE_TREE) as ModuleKey[];
 
@@ -37,7 +37,6 @@ const PLATFORM_ROLE_META: Record<PlatformUserRow["role"], {
 }> = {
   superadmin: { label: "Superadmin",  icon: <Crown size={11} />,      bg: "bg-violet-50 dark:bg-violet-500/10",  text: "text-violet-700 dark:text-violet-300",  border: "border-violet-200 dark:border-violet-500/20" },
   admin_saas: { label: "Admin SaaS",  icon: <ShieldCheck size={11} />,bg: "bg-brand-50 dark:bg-brand-500/10",    text: "text-brand-700 dark:text-brand-300",    border: "border-brand-200 dark:border-brand-500/20"   },
-  comercial:  { label: "Comercial",   icon: <TrendingUp size={11} />, bg: "bg-emerald-50 dark:bg-emerald-500/10",text: "text-emerald-700 dark:text-emerald-300", border: "border-emerald-200 dark:border-emerald-500/20"},
   soporte:    { label: "Soporte",     icon: <Headphones size={11} />, bg: "bg-amber-50 dark:bg-amber-500/10",    text: "text-amber-700 dark:text-amber-300",    border: "border-amber-200 dark:border-amber-500/20"   },
 };
 
@@ -532,6 +531,152 @@ function UserTable<T extends PlatformUserRow | CompanyUserRow>({
   );
 }
 
+// ─── Agrupador por empresa (jul 2026 v6) ────────────────────────────────────
+//
+// En la tab "Empresas", en vez de mostrar una tabla plana con todos los
+// usuarios mezclados (y un columna "Empresa" repetida), los agrupamos
+// por empresa en "carpetitas" colapsables. Cada grupo tiene su header
+// con el nombre de la empresa, contador de usuarios y un botón para
+// expandir/colapsar. Mantiene la coherencia con el resto del proyecto
+// (mismo look&feel que los `Section` de Companies/page.tsx).
+
+function GroupedCompanyUsers<T extends CompanyUserRow>({
+  users, onDetail, onEdit, onDelete, isSuperadmin,
+}: {
+  users: T[];
+  onDetail: (u: T) => void;
+  onEdit: (u: T) => void;
+  onDelete: (u: T) => void;
+  isSuperadmin: boolean;
+}) {
+  // Agrupamos por (companyId, companyName). Si un user no tiene
+  // companyName (data legacy), caemos en "Sin empresa".
+  const groups = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; users: T[] }>();
+    for (const u of users) {
+      const cu = u as CompanyUserRow;
+      const id   = cu.companyId ?? "none";
+      const name = cu.companyName ?? "Sin empresa";
+      if (!map.has(id)) map.set(id, { id, name, users: [] });
+      map.get(id)!.users.push(u);
+    }
+    // Orden: por cantidad de users desc, luego alfabético. Así la
+    // empresa con más usuarios queda arriba.
+    return Array.from(map.values()).sort((a, b) => {
+      if (b.users.length !== a.users.length) return b.users.length - a.users.length;
+      return a.name.localeCompare(b.name);
+    });
+  }, [users]);
+
+  // Por defecto TODAS las carpetas colapsadas. El superadmin abre las
+  // que quiere con un click (o "Expandir todo" si quiere ver todo).
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  // Si cambia la cantidad de grupos (filtros / búsqueda), respetamos
+  // los que el user ya tenía abiertos y descartamos los que se fueron.
+  useEffect(() => {
+    setExpanded(prev => {
+      const next = new Set<string>();
+      for (const g of groups) {
+        if (prev.has(g.id)) next.add(g.id);
+      }
+      return next;
+    });
+  }, [groups]);
+
+  const toggle = (id: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const expandAll   = () => setExpanded(new Set(groups.map(g => g.id)));
+  const collapseAll = () => setExpanded(new Set());
+
+  if (groups.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 py-16">
+        <Users size={20} className="text-gray-300 dark:text-gray-600" />
+        <p className="text-sm font-medium text-gray-400">Sin usuarios</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-gray-100 dark:divide-white/[0.04]">
+      {/* Toolbar: expandir/colapsar todo. Útil cuando hay 10+ empresas. */}
+      {groups.length > 1 && (
+        <div className="flex items-center justify-end gap-2 px-5 py-2 text-xs">
+          <button type="button" onClick={expandAll}
+            className="rounded-md px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/[0.04]">
+            Expandir todo
+          </button>
+          <button type="button" onClick={collapseAll}
+            className="rounded-md px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/[0.04]">
+            Colapsar todo
+          </button>
+        </div>
+      )}
+
+      {groups.map(group => {
+        const isOpen = expanded.has(group.id);
+        return (
+          <div key={group.id}>
+            {/* Header de la carpetita */}
+            <button type="button"
+              onClick={() => toggle(group.id)}
+              aria-expanded={isOpen}
+              className="group flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition-colors
+                hover:bg-gray-50/60 dark:hover:bg-white/[0.02]">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-400">
+                  <Building2 size={14} />
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-gray-800 dark:text-white">
+                    {group.name}
+                  </p>
+                  <p className="text-[11px] text-gray-400">
+                    {group.users.length} usuario{group.users.length !== 1 ? "s" : ""}
+                  </p>
+                </div>
+              </div>
+              <ChevronDown size={14}
+                className={`shrink-0 text-gray-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+            </button>
+
+            {/* Body: tabla de la empresa. AnimatePresence para que abra/cierre
+                con animación suave, sin parpadeos. */}
+            <AnimatePresence initial={false}>
+              {isOpen && (
+                <motion.div
+                  key="body"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.22, ease: "easeOut" }}
+                  className="overflow-hidden"
+                >
+                  <UserTable
+                    users={group.users}
+                    type="company"
+                    onDetail={onDetail}
+                    onEdit={onEdit}
+                    onDelete={onDelete}
+                    isSuperadmin={isSuperadmin}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 type TabType = "platform" | "company";
@@ -794,9 +939,11 @@ export function PlatformUsersPage() {
                   isSuperadmin={isSuperadmin}
                 />
               ) : (
-                <UserTable
+                // jul 2026 v6 — En la tab "Empresas", agrupamos por
+                // empresa (carpetitas colapsables) en vez de mostrar
+                // una tabla plana con todos mezclados.
+                <GroupedCompanyUsers
                   users={filteredCompany}
-                  type="company"
                   onDetail={u => setDrawerCU(u as CompanyUserRow)}
                   onEdit={openEdit}
                   onDelete={u => { setDeletingUser(u); setDeleteOpen(true); }}

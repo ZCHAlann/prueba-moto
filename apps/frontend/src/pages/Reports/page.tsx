@@ -105,17 +105,30 @@ type ModuleDef = {
   /** Paleta del sistema: emerald / amber / rose / blue / cyan / violet / orange / fuchsia / teal. */
   palette: "emerald" | "amber" | "rose" | "blue" | "cyan" | "violet" | "orange" | "fuchsia" | "teal";
   short: string;
+  /**
+   * jul 2026 v6 — Módulo de empresa requerido para que esta sección
+   * del sidebar de reportes se muestre. Si la empresa no tiene este
+   * módulo activo, el item se oculta del sidebar. Coincide con la
+   * `MODULE_TREE` key del backend (gestion, mantenimiento, combustible,
+   * checklist, alertas, autorizaciones, etc.).
+   */
+  requiresModule?: string;
 };
 
 const REPORT_MODULES: ModuleDef[] = [
+  // jul 2026 v6 — `requiresModule` filtra el sidebar interno de /reportes
+  // según los módulos activos de la empresa. Si la empresa no tiene
+  // `mantenimiento` activo, "Mantenimiento" no aparece en este sidebar.
+  // El backend ya valida con `requireModule(...)` en cada endpoint, pero
+  // esta capa evita mostrar opciones que romperían al clickear.
   { id: "rep-001", label: "Gerencial",       icon: ShieldCheck, palette: "emerald", short: "Estado general de la flota"          },
-  { id: "rep-002", label: "Asignaciones",    icon: Users,       palette: "blue",    short: "Conductor, placa y disponibilidad"  },
-  { id: "rep-003", label: "Gastos",          icon: Wallet,      palette: "amber",   short: "Combustible + mantenimiento"       },
-  { id: "rep-004", label: "Checklist",       icon: ClipboardList, palette: "cyan",  short: "Inspecciones y hallazgos"           },
-  { id: "rep-005", label: "Combustible",     icon: Fuel,        palette: "orange",  short: "Cargas, km, costo por estación"    },
-  { id: "rep-006", label: "Alertas",         icon: Bell,        palette: "rose",    short: "Severidad y estado"                 },
-  { id: "rep-008", label: "Autorizaciones",  icon: ShieldCheck, palette: "teal",    short: "Salidas de vehículos"               },
-  { id: "rep-009", label: "Mantenimiento",   icon: Wrench,      palette: "fuchsia", short: "Órdenes de trabajo"                 },
+  { id: "rep-002", label: "Asignaciones",    icon: Users,       palette: "blue",    short: "Conductor, placa y disponibilidad",  requiresModule: "gestion"        },
+  { id: "rep-003", label: "Gastos",          icon: Wallet,      palette: "amber",   short: "Combustible + mantenimiento",       requiresModule: "combustible"    },
+  { id: "rep-004", label: "Checklist",       icon: ClipboardList, palette: "cyan",  short: "Inspecciones y hallazgos",           requiresModule: "checklist"      },
+  { id: "rep-005", label: "Combustible",     icon: Fuel,        palette: "orange",  short: "Cargas, km, costo por estación",    requiresModule: "combustible"    },
+  { id: "rep-006", label: "Alertas",         icon: Bell,        palette: "rose",    short: "Severidad y estado",                 requiresModule: "alertas"        },
+  { id: "rep-008", label: "Autorizaciones",  icon: ShieldCheck, palette: "teal",    short: "Salidas de vehículos",               requiresModule: "autorizaciones" },
+  { id: "rep-009", label: "Mantenimiento",   icon: Wrench,      palette: "fuchsia", short: "Órdenes de trabajo",                 requiresModule: "mantenimiento"  },
 ];
 
 const ADMIN_ROLES = new Set(["owner_empresa", "admin_empresa", "superadmin"]);
@@ -417,9 +430,11 @@ function KpiCard({
 function ModuleSidebar({
   activeId,
   onSelect,
+  modules,
 }: {
   activeId: string;
   onSelect: (id: string) => void;
+  modules: ModuleDef[];
 }) {
   const [pinned, setPinned] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -458,7 +473,7 @@ function ModuleSidebar({
         </div>
 
         <ul className="flex-1 space-y-1 overflow-y-auto overflow-x-hidden">
-          {REPORT_MODULES.map((m) => {
+          {modules.map((m) => {
             const isActive = activeId === m.id;
             const Icon = m.icon;
             const p = PALETTE[m.palette];
@@ -1004,6 +1019,20 @@ function GroupedReportTable({
 export function ReportsPage() {
   const { session } = useAuth();
   const isAdmin = !!session && ADMIN_ROLES.has(session.role as string);
+  // jul 2026 v6 — Filtramos los módulos del sidebar interno de
+  // /reportes según los módulos activos de la empresa. Si `enabledModules`
+  // no viene (modo system / sin restricción), mostramos todos. Para
+  // superadmin de plataforma mostramos todo también.
+  const companyModules = (session?.companyModules ?? []) as string[];
+  const isPlatformAdmin = session?.scope === "plataforma";
+  const visibleReportModules = useMemo(() => {
+    if (isPlatformAdmin) return REPORT_MODULES;
+    if (companyModules.length === 0) return REPORT_MODULES;
+    return REPORT_MODULES.filter((m) =>
+      !m.requiresModule || companyModules.includes(m.requiresModule)
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyModules, isPlatformAdmin, REPORT_MODULES.length]);
   const { assets,       loading: loadingAssets }       = useAssets();
   const { drivers,      loading: loadingDrivers }      = useDrivers();
   const { assignments,  loading: loadingAssignments }  = useAssignments();
@@ -1053,7 +1082,7 @@ export function ReportsPage() {
     loadingMaintenances || loadingChecklists || loadingAlerts ||
     loadingFuel || loadingExitAuths;
 
-  const [activeId, setActiveId] = useState("rep-001");
+  const [activeId, setActiveId] = useState(() => visibleReportModules[0]?.id ?? "rep-001");
   const [search, setSearch]     = useState("");
   const [page, setPage]         = useState(1);
   // jul 2026 v5 — Default de rango: últimos 30 días. Antes arrancaba
@@ -1086,7 +1115,14 @@ export function ReportsPage() {
   // drawer específico delegar según `__raw`.
   const [selectedRow, setSelectedRow] = useState<ReportRow | null>(null);
 
-  const activeModule = REPORT_MODULES.find((m) => m.id === activeId) ?? REPORT_MODULES[0];
+  // jul 2026 v6 — Si el activeId quedó apuntando a un módulo que la
+  // empresa no tiene habilitado (ej. porque cambió el plan o el owner
+  // desactivó el módulo), caemos al primer módulo visible. Mismo
+  // fallback si la lista quedó vacía.
+  const activeModule = useMemo(
+    () => visibleReportModules.find((m) => m.id === activeId) ?? visibleReportModules[0] ?? REPORT_MODULES[0],
+    [visibleReportModules, activeId],
+  );
   const activePalette = PALETTE[activeModule.palette];
 
   function handleTabChange(id: string) {
@@ -1391,11 +1427,7 @@ export function ReportsPage() {
 
     if (activeId === "rep-009") {
       const columns: ReportColumn[] = [
-        { key: "title",         label: "Título"      },
         { key: "kind",          label: "Tipo"        },
-        { key: "priority",      label: "Prioridad"   },
-        { key: "assetPlate",    label: "Vehículo"    },
-        { key: "workshop",      label: "Taller"      },
         { key: "status",        label: "Estado"      },
         { key: "scheduledDate", label: "Programado"  },
         { key: "completedDate", label: "Completado"  },
@@ -1405,18 +1437,12 @@ export function ReportsPage() {
         { key: "cost",          label: "Costo total" },
       ];
       const rows: ReportRow[] = maintenances.map((m) => {
-        const plate = m.assetPlate ?? m.assetName ?? assets.find((x) => x.id === m.assetId)?.plate ?? "—";
         const labor = m.laborCost ?? 0;
         // V2: totalCost ya viene recalculado por el backend (labor + items).
         const total = m.totalCost ?? labor;
         const parts = Math.max(0, total - labor);
-        const workshop = workshops.find((w) => w.id === m.workshopId);
         return {
-          title:         m.title ?? "—",
           kind:          m.type ?? "—",
-          priority:      "—", // V2 no tiene campo `priority`; el legacy sí lo tenía.
-          assetPlate:    plate,
-          workshop:      m.workshopName ?? workshop?.name ?? "—",
           status:        m.status,
           scheduledDate: m.scheduledFor ? m.scheduledFor.slice(0, 10) : "—",
           completedDate: m.completedAt  ? m.completedAt.slice(0, 10)  : "—",
@@ -1437,7 +1463,10 @@ export function ReportsPage() {
           __status:      m.status,
           __date:        m.scheduledFor,
           __workshopId:  m.workshopId ?? null,
-          __raw:         { maintenance: m, workshop: workshop ?? null, asset: assets.find((x) => x.id === m.assetId) ?? null },
+          // __raw ya no incluye el objeto `workshop`: la columna visual se
+          // eliminó. Mantenemos solo `maintenance` y `asset` (que el
+          // CostBreakdownPanel sigue consumiendo).
+          __raw:         { maintenance: m, asset: assets.find((x) => x.id === m.assetId) ?? null },
         };
       });
       return {
@@ -1578,7 +1607,11 @@ export function ReportsPage() {
 
           {/* ── Sidebar de módulos (hover-expand, sticky) ── */}
           <div className="sticky top-4 self-start">
-            <ModuleSidebar activeId={activeId} onSelect={handleTabChange} />
+            <ModuleSidebar
+              activeId={activeId}
+              onSelect={handleTabChange}
+              modules={visibleReportModules}
+            />
           </div>
 
           {/* ── Panel principal con animación de cambio de módulo ── */}

@@ -34,9 +34,9 @@ attachWebSocket(server);
 
 // Seed del catálogo de módulos + 4 planes (Starter/Pro/Business/Enterprise).
 // Idempotente: corre las veces que sea. No bloquea el arranque si falla.
-void seedPlatformCatalog()
-  .then(() => console.log('✓ Catalog seed ready'))
-  .catch((err) => console.warn('[boot] seed platform catalog failed:', err?.message ?? err));
+//void seedPlatformCatalog()
+  //.then(() => console.log('✓ Catalog seed ready'))
+  //.catch((err) => console.warn('[boot] seed platform catalog failed:', err?.message ?? err));
 
 // Cron jobs (opcional, se apaga con MAINTENANCE_CRON_ENABLED != true)
 startMaintenanceCron();

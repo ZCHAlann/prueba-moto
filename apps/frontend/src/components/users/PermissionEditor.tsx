@@ -159,6 +159,33 @@ const ACTION_STYLES: Record<ActionKey, {
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 
+// jul 2026 v6 — Normaliza el shape de `submodules` del MODULE_TREE. Los
+// submódulos pueden ser un string plano (caso legacy) o un objeto
+// { label, requires? } (caso nuevo con gating por módulo de empresa).
+function subLabel(mod: string, sub: string): string {
+  const def = (MODULE_TREE[mod as keyof typeof MODULE_TREE]?.submodules as Record<string, unknown> | undefined)?.[sub];
+  if (typeof def === "string") return def;
+  if (def && typeof def === "object" && "label" in (def as Record<string, unknown>)) {
+    return String((def as { label: string }).label);
+  }
+  return sub;
+}
+
+function subRequires(mod: string, sub: string): string[] {
+  const def = (MODULE_TREE[mod as keyof typeof MODULE_TREE]?.submodules as Record<string, unknown> | undefined)?.[sub];
+  if (def && typeof def === "object" && "requires" in (def as Record<string, unknown>)) {
+    const r = (def as { requires?: string[] }).requires;
+    return Array.isArray(r) ? r : [];
+  }
+  return [];
+}
+
+// jul 2026 v6 — Wrapper simple para que el JSX quede legible. Acepta
+// submódulos como string (legacy) o como { label, requires? }.
+function renderSubLabel(mod: string, sub: string): string {
+  return subLabel(mod, sub);
+}
+
 function isModuleAll(perms: PermissionMap, mod: string): boolean {
   const modDef = MODULE_TREE[mod as keyof typeof MODULE_TREE];
   if (!modDef) return false;
@@ -213,6 +240,15 @@ type Props = {
    * lo que él defina. Por defecto false.
    */
   combineWithRole?: boolean;
+  /**
+   * Lista de módulos habilitados para la empresa (lo que el owner/admin
+   * configuró al crear/editar la empresa, p.ej. ["flotas", "conductores"]).
+   * Si se pasa, el editor SOLO muestra los módulos de esta lista — no se
+   * pueden asignar permisos a un módulo que la empresa no tiene activo.
+   * Si es undefined o vacío, se muestran todos los del MODULE_TREE
+   * (modo "system" donde no hay restricción de empresa).
+   */
+  enabledModules?: string[];
 };
 
 /** True si el objeto de permisos tiene al menos una acción en cualquier
@@ -235,6 +271,7 @@ export function PermissionEditor({
   readOnlyWithFullAccess = false,
   originalPermissions,
   combineWithRole = false,
+  enabledModules,
 }: Props) {
   const hasUserOverride = hasAnyPermission(permissions);
 
@@ -245,7 +282,30 @@ export function PermissionEditor({
   const [openModule, setOpenModule] = useState<string | null>(null);
   const [filter, setFilter] = useState<"todos" | "asignados" | "vacios">("todos");
 
-  const moduleKeys = Object.keys(MODULE_TREE);
+  // Si `enabledModules` está definido y no está vacío, el editor SOLO
+  // expone los módulos habilitados por la empresa. Si es undefined o
+  // vacío, mostramos todos los del MODULE_TREE (modo "system / sin
+  // restricción de empresa" — ej. superadmin de plataforma).
+  const moduleKeys = useMemo(() => {
+    const all = Object.keys(MODULE_TREE);
+    if (!enabledModules || enabledModules.length === 0) return all;
+    const set = new Set(enabledModules);
+    return all.filter((m) => set.has(m));
+  }, [enabledModules]);
+
+  // Limpia cualquier permiso cuyo módulo ya no esté habilitado por la
+  // empresa, para que al guardar no se queden permisos "huérfanos" sobre
+  // módulos que la empresa desactivó.
+  const stripDisabledModules = (next: PermissionMap): PermissionMap => {
+    if (!enabledModules || enabledModules.length === 0) return next;
+    const set = new Set(enabledModules);
+    const out: PermissionMap = {};
+    for (const [mod, subs] of Object.entries(next)) {
+      if (!set.has(mod)) continue;
+      out[mod] = subs;
+    }
+    return out;
+  };
 
   // Si combineWithRole es true, el editor VISUALIZA los permisos del rol
   // (defaultPermissions) sumados a los del user (permissions), pero al
@@ -279,14 +339,15 @@ export function PermissionEditor({
   // guardamos en el override per-user SOLO si difiere de los permisos
   // del rol. Si coincide con el rol, no lo guardamos (no se duplica).
   const handleChange = (next: PermissionMap) => {
+    const cleaned = stripDisabledModules(next);
     if (!combineWithRole || !defaultPermissions) {
-      onChange(next);
+      onChange(cleaned);
       return;
     }
     // next es la vista combinada. Extraemos solo lo que NO está en el
     // rol (= override del user).
     const userOnly: PermissionMap = {};
-    for (const [mod, subs] of Object.entries(next)) {
+    for (const [mod, subs] of Object.entries(cleaned)) {
       for (const [sub, actions] of Object.entries(subs ?? {})) {
         const roleActions = defaultPermissions[mod]?.[sub] ?? [];
         const roleSet = new Set(roleActions);
@@ -303,7 +364,7 @@ export function PermissionEditor({
 
   // Restaurar los permisos originales (los que el user tenía al abrir el modal)
   const restoreOriginal = () => {
-    if (originalPermissions) onChange(JSON.parse(JSON.stringify(originalPermissions)));
+    if (originalPermissions) onChange(stripDisabledModules(JSON.parse(JSON.stringify(originalPermissions))));
   };
 
   // Quitar TODO el override (volver a heredar del rol)
@@ -505,7 +566,20 @@ export function PermissionEditor({
         <div className="space-y-2">
           {visibleMods.map((modKey) => {
             const modDef = MODULE_TREE[modKey as keyof typeof MODULE_TREE];
-            const subs   = Object.keys(modDef.submodules);
+            // jul 2026 v6 — Filtramos submódulos por `requires`: si la
+            // empresa no tiene los módulos requeridos (y la prop
+            // `enabledModules` está definida), ocultamos el submódulo
+            // del editor. Así no se asignan permisos a cards que la
+            // empresa no va a poder mostrar (ej. KPIs de mantenimiento
+            // si la empresa no tiene el módulo de mantenimiento).
+            const allSubs = Object.keys(modDef.submodules);
+            const subs    = enabledModules && enabledModules.length > 0
+              ? allSubs.filter((s) => {
+                  const reqs = subRequires(modKey, s);
+                  if (reqs.length === 0) return true; // sin deps, siempre visible
+                  return reqs.every((r) => enabledModules.includes(r));
+                })
+              : allSubs;
             const isOpen = openModule === modKey;
             const all    = isModuleAll(effectivePerms, modKey);
             const { active: activeCount, total: totalCount } = countModuleProgress(effectivePerms, modKey);
@@ -581,7 +655,7 @@ export function PermissionEditor({
                     >
                       <div className="divide-y divide-gray-100 dark:divide-white/[0.04]">
                         {subs.map((subKey) => {
-                          const subLabel  = modDef.submodules[subKey as keyof typeof modDef.submodules];
+                          const subLabel  = renderSubLabel(modKey, subKey);
                           const acts      = effectivePerms[modKey]?.[subKey] ?? [];
                           const subActive = acts.length;
                           // jul 2026 v4-b — Para Caja Chica y similares el set

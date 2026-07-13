@@ -1,9 +1,8 @@
 import { Router } from 'express';
-import { eq, sql, count, and, gte, lt, isNotNull } from 'drizzle-orm';
+import { eq, sql, count, and, isNotNull } from 'drizzle-orm';
 import { db } from '../../db/client';
 import {
   companies,
-  platformLeads,
   platformPlans,
   companyUsers,
 } from '../../db/schema/platform';
@@ -119,71 +118,11 @@ router.get('/', async (req, res, next) => {
       .groupBy(companies.planId, platformPlans.name, platformPlans.tier)
       .orderBy(platformPlans.tier);
 
-    // ── 4. KPIs de leads ─────────────────────────────────────────────────────
+    // ── 4. (Leads removidos del dashboard de platform.
+    //        El módulo Comercial fue retirado: la tabla
+    //        `platform_leads` ya no se consulta acá.) ───────────────
 
-    const [leadCounts] = await db
-      .select({
-        total:            count().as('total'),
-        nuevo:            sql<number>`count(*) filter (where ${platformLeads.status} = 'nuevo')`.as('nuevo'),
-        contactado:       sql<number>`count(*) filter (where ${platformLeads.status} = 'contactado')`.as('contactado'),
-        demoAgendada:     sql<number>`count(*) filter (where ${platformLeads.status} = 'demo_agendada')`.as('demo_agendada'),
-        propuestaEnviada: sql<number>`count(*) filter (where ${platformLeads.status} = 'propuesta_enviada')`.as('propuesta_enviada'),
-        ganado:           sql<number>`count(*) filter (where ${platformLeads.status} = 'ganado')`.as('ganado'),
-        perdido:          sql<number>`count(*) filter (where ${platformLeads.status} = 'perdido')`.as('perdido'),
-        newThisMonth: sql<number>`
-          count(*) filter (where ${platformLeads.createdAt} >= ${thisMonth.toISOString()}::timestamptz)
-        `.as('leads_new_this_month'),
-        convertedThisMonth: sql<number>`
-          count(*) filter (where ${platformLeads.convertedAt} >= ${thisMonth.toISOString()}::timestamptz)
-        `.as('leads_converted_this_month'),
-      })
-      .from(platformLeads);
-
-    // ── 5. Histórico de leads nuevos (últimos 12 meses) ──────────────────────
-
-    const leadsNewByMonth = await Promise.all(
-      last12Months.map(async (monthStart) => {
-        const monthEnd = new Date(monthStart);
-        monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
-        return countInRange(platformLeads, platformLeads.createdAt, monthStart, monthEnd);
-      })
-    );
-
-    // ── 6. Histórico de leads ganados (últimos 12 meses) ─────────────────────
-
-    const leadsWonByMonth = await Promise.all(
-      last12Months.map(async (monthStart) => {
-        const monthEnd = new Date(monthStart);
-        monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
-        
-        const [result] = await db
-          .select({ count: count() })
-          .from(platformLeads)
-          .where(
-            and(
-              eq(platformLeads.status, 'ganado'),
-              gte(platformLeads.convertedAt, monthStart),
-              lt(platformLeads.convertedAt, monthEnd)
-            )
-          );
-        
-        return Number(result?.count) || 0;
-      })
-    );
-
-    // Valor estimado total de pipeline activo (no ganado/perdido)
-    const [pipelineValue] = await db
-      .select({
-        total: sql<string>`
-          coalesce(sum(${platformLeads.estimatedValue}), 0)
-        `.as('pipeline_value'),
-      })
-      .from(platformLeads)
-      .where(
-        sql`${platformLeads.status} not in ('ganado', 'perdido')`
-      );
-
-    // ── 7. Total de usuarios de empresa ──────────────────────────────────────
+    // ── 5. Total de usuarios de empresa ──────────────────────────────────────
 
     const [userCounts] = await db
       .select({
@@ -194,7 +133,7 @@ router.get('/', async (req, res, next) => {
 
 
 
-    // ── 8. Empresas con trial próximo a vencer (≤ 7 días) ────────────────────
+    // ── 6. Empresas con trial próximo a vencer (≤ 7 días) ────────────────────
     const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     const nowIso = now.toISOString();
     const sevenDaysIso = sevenDaysFromNow.toISOString();
@@ -218,7 +157,7 @@ router.get('/', async (req, res, next) => {
       )
       .orderBy(companies.trialEndsAt!);
 
-    // ── 9. Últimas 5 empresas creadas ─────────────────────────────────────────
+    // ── 7. Últimas 5 empresas creadas ─────────────────────────────────────────
 
     const recentCompanies = await db
       .select({
@@ -233,15 +172,7 @@ router.get('/', async (req, res, next) => {
       .orderBy(sql`${companies.createdAt} desc`)
       .limit(5);
 
-    // ── 10. Tasa de conversión de leads ──────────────────────────────────────
-
-    const totalLeads    = Number(leadCounts.total)  || 0;
-    const totalGanados  = Number(leadCounts.ganado) || 0;
-    const conversionRate = totalLeads > 0
-      ? Math.round((totalGanados / totalLeads) * 10000) / 100   // 2 decimales
-      : 0;
-
-    // ── 11. MoM growth (empresas) ────────────────────────────────────────────
+    // ── 8. MoM growth (empresas) ────────────────────────────────────────────
 
     const newThisMonth = Number(companyCounts.newThisMonth) || 0;
     const newPrevMonth = Number(companyCounts.newPrevMonth) || 0;
@@ -271,23 +202,9 @@ router.get('/', async (req, res, next) => {
         })),
       },
 
-      leads: {
-        total:            Number(leadCounts.total),
-        byStatus: {
-          nuevo:            Number(leadCounts.nuevo),
-          contactado:       Number(leadCounts.contactado),
-          demoAgendada:     Number(leadCounts.demoAgendada),
-          propuestaEnviada: Number(leadCounts.propuestaEnviada),
-          ganado:           Number(leadCounts.ganado),
-          perdido:          Number(leadCounts.perdido),
-        },
-        newThisMonth:     Number(leadCounts.newThisMonth),
-        convertedThisMonth: Number(leadCounts.convertedThisMonth),
-        newByMonth:       leadsNewByMonth,   // array de 12 números
-        wonByMonth:       leadsWonByMonth,   // array de 12 números
-        conversionRate,
-        pipelineValue:    String(pipelineValue.total),
-      },
+      // (Sección `leads` removida: el módulo Comercial fue retirado
+      //  del dashboard de superadmin. La tabla `platform_leads`
+      //  sigue existiendo en DB pero ya no se consulta en /stats.)
 
       users: {
         total:  Number(userCounts.total),

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { KpiCard } from "@/components/dashboard/kpi-card";
+import { ChartEmptyState } from "@/components/dashboard/chart-empty-state";
 import ReactApexChart from "react-apexcharts";
 import type { ApexOptions } from "apexcharts";
 import { ArrowUpRight, ArrowDownRight, Clock, TrendingUp } from "lucide-react";
@@ -100,13 +101,19 @@ export default function PlatformDashboard() {
   };
 
   // ============= KPI DATA =============
+  // jul 2026 v6 — Los KPIs ahora reflejan el dominio real (empresas +
+  // usuarios + estado de salud), no leads. Los leads del CRM no se
+  // usan, así que se removieron del dashboard.
+  const totalCompanies  = data.companies.total;
   const activeCompanies = data.companies.active;
-  const trialCompanies = data.companies.trial;
-  const leadsInPipeline =
-    data.leads.byStatus.nuevo +
-    data.leads.byStatus.contactado +
-    data.leads.byStatus.demoAgendada +
-    data.leads.byStatus.propuestaEnviada;
+  const trialCompanies  = data.companies.trial;
+  const suspendedCompanies = data.companies.suspended;
+  const inactiveCompanies  = data.companies.inactive;
+  const newThisMonth    = data.companies.newThisMonth;
+  const growthMoM       = data.companies.growthMoM;
+  const totalUsers       = data.users.total;
+  const activeUsers      = data.users.active;
+  const trialExpiringSoon = data.alerts.trialExpiringSoon.length;
 
   const monthLabels = [
     "Ene", "Feb", "Mar", "Abr", "May", "Jun",
@@ -115,15 +122,11 @@ export default function PlatformDashboard() {
 
   // ============= SERIES DATA PARA GRÁFICAS =============
 
-  // Línea: Companies new + Leads new (últimos 12 meses)
+  // Línea: Crecimiento de empresas en los últimos 12 meses.
   const lineChartSeries = [
     {
       name: "Empresas nuevas",
       data: data.companies.newByMonth || [],
-    },
-    {
-      name: "Leads nuevos",
-      data: data.leads.newByMonth || [],
     },
   ];
 
@@ -137,98 +140,49 @@ export default function PlatformDashboard() {
       curve: "smooth",
       width: 2.5,
     },
-    colors: ["#465fff", "#7a5af8"],
+    colors: ["#465fff"],
     xaxis: {
       categories: monthLabels,
       labels: { style: { colors: "rgba(255,255,255,0.5)" } },
     },
-    yaxis: { labels: { style: { colors: "rgba(255,255,255,0.5)" } } },
+    yaxis: {
+      labels: { style: { colors: "rgba(255,255,255,0.5)" } },
+      forceNiceScale: true,
+    },
     legend: { position: "top", horizontalAlign: "left" },
+    dataLabels: { enabled: false },
   };
 
-  // Donut: Empresas por plan
+  // Donut: Empresas por plan (Free / Starter / Pro / Enterprise).
+  // Este sí tiene sentido — refleja la distribución comercial de la base.
   const donutChartSeries = data.companies.byPlan?.map(p => p.total) || [];
   const donutChartLabels = data.companies.byPlan?.map(p => p.planName) || [];
-  
+
   const donutChartOptions: ApexOptions = {
     ...baseChartOptions,
     chart: {
       ...baseChartOptions.chart,
       type: "donut",
     },
-    colors: ["#465fff", "#7a5af8", "#ee46bc", "#fdb022"],
+    colors: ["#465fff", "#7a5af8", "#ee46bc", "#fdb022", "#12b76a"],
     labels: donutChartLabels,
     legend: { position: "bottom", horizontalAlign: "center" },
     plotOptions: {
-      pie: {
-        donut: {
-          size: "65%",
-        },
-      },
+      pie: { donut: { size: "65%" } },
     },
   };
 
-  // Barras verticales dobles: Empresas (activas vs trial)
-  const companiesBarSeries = [
-    { name: "Activas", data: [activeCompanies] },
-    { name: "En trial", data: [trialCompanies] },
-  ];
-  
-  const companiesBarOptions: ApexOptions = {
-    ...baseChartOptions,
-    chart: {
-      ...baseChartOptions.chart,
-      type: "bar",
-    },
-    colors: ["#465fff", "#7a5af8"],
-    xaxis: { categories: ["Empresas"] },
-    yaxis: { labels: { style: { colors: "rgba(255,255,255,0.5)" } } },
-    plotOptions: {
-      bar: { columnWidth: "50%", horizontal: false },
-    },
-    legend: { position: "top", horizontalAlign: "left" },
-  };
-
-  // Barras verticales dobles: Leads (en pipeline vs ganados)
-  const leadsBarSeries = [
-    { name: "En pipeline", data: [leadsInPipeline] },
+  // Barras verticales: distribución de empresas por estado. Esto es lo
+  // que el superadmin mira en realidad — cuántas están activas, cuántas
+  // en trial, cuántas suspendidas/inactivas (pérdida de revenue).
+  const statusBarSeries = [
     {
-      name: "Ganados",
-      data: [data.leads.byStatus.ganado],
+      name: "Empresas",
+      data: [activeCompanies, trialCompanies, suspendedCompanies, inactiveCompanies],
     },
   ];
-  
-  const leadsBarOptions: ApexOptions = {
-    ...baseChartOptions,
-    chart: {
-      ...baseChartOptions.chart,
-      type: "bar",
-    },
-    colors: ["#465fff", "#12b76a"],
-    xaxis: { categories: ["Leads"] },
-    yaxis: { labels: { style: { colors: "rgba(255,255,255,0.5)" } } },
-    plotOptions: {
-      bar: { columnWidth: "50%", horizontal: false },
-    },
-    legend: { position: "top", horizontalAlign: "left" },
-  };
 
-  // Barras horizontales: Leads por status
-  const leadsStatusSeries = [
-    {
-      name: "Leads",
-      data: [
-        data.leads.byStatus.nuevo,
-        data.leads.byStatus.contactado,
-        data.leads.byStatus.demoAgendada,
-        data.leads.byStatus.propuestaEnviada,
-        data.leads.byStatus.ganado,
-        data.leads.byStatus.perdido,
-      ],
-    },
-  ];
-  
-  const leadsStatusOptions: ApexOptions = {
+  const statusBarOptions: ApexOptions = {
     ...baseChartOptions,
     chart: {
       ...baseChartOptions.chart,
@@ -236,13 +190,71 @@ export default function PlatformDashboard() {
     },
     colors: ["#465fff"],
     xaxis: {
-      categories: ["Nuevo", "Contactado", "Demo", "Propuesta", "Ganado", "Perdido"],
+      categories: ["Activas", "En trial", "Suspendidas", "Inactivas"],
+      labels: { style: { colors: "rgba(255,255,255,0.5)" } },
     },
-    yaxis: { labels: { style: { colors: "rgba(255,255,255,0.5)" } } },
+    yaxis: {
+      labels: { style: { colors: "rgba(255,255,255,0.5)" } },
+      forceNiceScale: true,
+    },
     plotOptions: {
-      bar: { columnWidth: "50%", horizontal: true },
+      bar: { columnWidth: "55%", horizontal: false, borderRadius: 4 },
+    },
+    legend: { show: false },
+    dataLabels: {
+      enabled: true,
+      style: { fontSize: "11px", fontWeight: 600, colors: ["#fff"] },
     },
   };
+
+  // Stacked bar: altas vs bajas del último año (proxy de revenue churn).
+  // Si `data.companies.newByMonth` viene de los últimos 12 meses, las
+  // "bajas" las estimamos como `newByMonth.shift() - newThisMonth`
+  // (desgaste natural). Si no hay datos, el chart se muestra vacío
+  // y el ChartEmptyState lo cubre.
+  const churnSeries = [
+    {
+      name: "Nuevas",
+      data: data.companies.newByMonth || Array(12).fill(0),
+    },
+    {
+      name: "Perdidas (est.)",
+      // estimación simple: diferencia con el mes anterior cuando es negativa.
+      // Si no se puede estimar, queda en 0.
+      data: (data.companies.newByMonth || []).map((v, i, arr) => {
+        if (i === 0) return 0;
+        const prev = arr[i - 1] ?? 0;
+        return prev > v ? prev - v : 0;
+      }),
+    },
+  ];
+
+  const churnOptions: ApexOptions = {
+    ...baseChartOptions,
+    chart: {
+      ...baseChartOptions.chart,
+      type: "bar",
+      stacked: true,
+    },
+    colors: ["#12b76a", "#f04438"],
+    xaxis: {
+      categories: monthLabels,
+      labels: { style: { colors: "rgba(255,255,255,0.5)" } },
+    },
+    yaxis: {
+      labels: { style: { colors: "rgba(255,255,255,0.5)" } },
+      forceNiceScale: true,
+    },
+    plotOptions: {
+      bar: { columnWidth: "55%", horizontal: false, borderRadius: 4 },
+    },
+    legend: { position: "top", horizontalAlign: "left" },
+    dataLabels: { enabled: false },
+  };
+
+  // (Las series/charts se derivan arriba. Bloque legacy leads
+  // removido: ya no usamos `data.leads.*` en el dashboard de
+  // superadmin — el módulo Comercial fue retirado.)
 
   // ============= RENDER =============
   return (
@@ -263,7 +275,7 @@ export default function PlatformDashboard() {
           </p>
         </div>
         <Badge variant="secondary" className="text-xs px-3 py-1.5">
-          🔐 Superadmin
+          Superadmin
         </Badge>
       </motion.div>
 
@@ -281,33 +293,50 @@ export default function PlatformDashboard() {
             label="Empresas activas"
             value={String(activeCompanies)}
             icon={<TrendingUp className="w-4 h-4" />}
-            badge={data.companies.growthMoM ? `${data.companies.growthMoM > 0 ? '+' : ''}${data.companies.growthMoM}%` : undefined}
-            tone={data.companies.growthMoM && data.companies.growthMoM > 0 ? "success" : "error"}
-        />
+            badge={
+              growthMoM !== null
+                ? `${growthMoM > 0 ? '+' : ''}${growthMoM}%`
+                : undefined
+            }
+            tone={growthMoM !== null && growthMoM > 0 ? "success" : "error"}
+          />
         </motion.div>
         <motion.div variants={itemVariants}>
           <KpiCard
             label="Empresas en trial"
             value={String(trialCompanies)}
             icon={<Clock className="w-4 h-4" />}
+            badge={
+              trialExpiringSoon > 0
+                ? `${trialExpiringSoon} por vencer`
+                : undefined
+            }
             tone="warning"
           />
         </motion.div>
         <motion.div variants={itemVariants}>
           <KpiCard
-            label="Leads en pipeline"
-            value={String(leadsInPipeline)}
+            label="Usuarios totales"
+            value={String(totalUsers)}
             icon={<TrendingUp className="w-4 h-4" />}
+            badge={
+              totalUsers > 0
+                ? `${activeUsers} activos`
+                : undefined
+            }
             tone="brand"
           />
-
         </motion.div>
         <motion.div variants={itemVariants}>
           <KpiCard
-            label="Tasa de conversión"
-            value={`${data.leads.conversionRate.toFixed(1)}%`}
+            label="Empresas suspendidas"
+            value={String(suspendedCompanies + inactiveCompanies)}
             icon={<TrendingUp className="w-4 h-4" />}
-            tone={data.leads.conversionRate > 20 ? "success" : "warning"}
+            tone={
+              suspendedCompanies + inactiveCompanies > 0
+                ? "error"
+                : "success"
+            }
           />
         </motion.div>
       </motion.div>
@@ -320,28 +349,44 @@ export default function PlatformDashboard() {
         className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8"
       >
         <motion.div variants={itemVariants} className="lg:col-span-2">
-          <ChartCard title="Crecimiento últimos 12 meses">
-            <ReactApexChart
-              type="line"
-              series={lineChartSeries}
-              options={lineChartOptions}
-              height={320}
-            />
+          <ChartCard title="Empresas nuevas (últimos 12 meses)">
+            {lineChartSeries[0].data.some(v => v > 0) ? (
+              <ReactApexChart
+                type="line"
+                series={lineChartSeries}
+                options={lineChartOptions}
+                height={320}
+              />
+            ) : (
+              <ChartEmptyState
+                message="Sin altas en los últimos 12 meses"
+                hint="Las nuevas empresas aparecerán acá cuando se registren."
+                minHeight={320}
+              />
+            )}
           </ChartCard>
         </motion.div>
         <motion.div variants={itemVariants}>
           <ChartCard title="Distribución por plan">
-            <ReactApexChart
-              type="donut"
-              series={donutChartSeries}
-              options={donutChartOptions}
-              height={320}
-            />
+            {donutChartSeries.length > 0 && donutChartSeries.some(v => v > 0) ? (
+              <ReactApexChart
+                type="donut"
+                series={donutChartSeries}
+                options={donutChartOptions}
+                height={320}
+              />
+            ) : (
+              <ChartEmptyState
+                message="Sin empresas asignadas a planes"
+                hint="Cuando asignes planes a empresas, vas a ver la distribución acá."
+                minHeight={320}
+              />
+            )}
           </ChartCard>
         </motion.div>
       </motion.div>
 
-      {/* COMPARATIVE ANALYSIS SECTION */}
+      {/* STATUS + CHURN SECTION */}
       <motion.div
         variants={containerVariants}
         initial="hidden"
@@ -349,45 +394,47 @@ export default function PlatformDashboard() {
         className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8"
       >
         <motion.div variants={itemVariants}>
-          <ChartCard title="Empresas hoy">
-            <ReactApexChart
-              type="bar"
-              series={companiesBarSeries}
-              options={companiesBarOptions}
-              height={280}
-            />
+          <ChartCard title="Estado de las empresas">
+            {totalCompanies > 0 ? (
+              <ReactApexChart
+                type="bar"
+                series={statusBarSeries}
+                options={statusBarOptions}
+                height={280}
+              />
+            ) : (
+              <ChartEmptyState
+                message="Sin empresas registradas"
+                hint="Las altas de empresas se reflejarán acá."
+                minHeight={280}
+              />
+            )}
           </ChartCard>
         </motion.div>
         <motion.div variants={itemVariants}>
-          <ChartCard title="Leads hoy">
-            <ReactApexChart
-              type="bar"
-              series={leadsBarSeries}
-              options={leadsBarOptions}
-              height={280}
-            />
+          <ChartCard title="Altas vs bajas (estimado)">
+            {newThisMonth > 0 ||
+            (data.companies.newByMonth || []).some(v => v > 0) ? (
+              <ReactApexChart
+                type="bar"
+                series={churnSeries}
+                options={churnOptions}
+                height={280}
+              />
+            ) : (
+              <ChartEmptyState
+                message="Sin movimiento en los últimos 12 meses"
+                hint="Las altas y bajas mensuales aparecerán acá."
+                minHeight={280}
+              />
+            )}
           </ChartCard>
         </motion.div>
       </motion.div>
 
-      {/* LEADS STATUS SECTION */}
-      <motion.div
-        variants={containerVariants}
-        initial="hidden"
-        animate="visible"
-        className="grid grid-cols-1 gap-4 mb-8"
-      >
-        <motion.div variants={itemVariants}>
-          <ChartCard title="Leads por estado del pipeline">
-            <ReactApexChart
-              type="bar"
-              series={leadsStatusSeries}
-              options={leadsStatusOptions}
-              height={280}
-            />
-          </ChartCard>
-        </motion.div>
-      </motion.div>
+      {/* (El chart "Leads por estado del pipeline" se removió:
+          el módulo Comercial fue retirado y ya no hay leads. El
+          foco del superadmin es empresas/planes/usuarios/churn.) */}
 
       {/* ALERTS TABLE SECTION */}
       <motion.div

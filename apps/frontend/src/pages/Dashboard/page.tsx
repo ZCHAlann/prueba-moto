@@ -20,10 +20,11 @@
 import { useMemo, lazy, Suspense, useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "../../context/AuthContext";
-import { usePermissions } from "../../hooks/usePermissions";
+import { usePermissions, useCompanyModuleAccess } from "../../hooks/usePermissions";
 import { KpiCard } from "../../components/dashboard/kpi-card";
 import { AlertsFeed } from "../../components/dashboard/alerts-feed";
 import { MaintenanceTable } from "../../components/dashboard/maintenance-table";
+import { ChartEmptyState } from "../../components/dashboard/chart-empty-state";
 import { useDashboardAnalytics } from "../../hooks/useDashboardAnalytics";
 import { useAlerts } from "../../hooks/useAlerts";
 import type { ApexOptions } from "apexcharts";
@@ -315,6 +316,11 @@ export function DashboardOverview() {
   const { data: an, loading } = useDashboardAnalytics(companyId);
   const { alerts } = useAlerts();
   const vis = useDashboardVisibility();
+  // Gating a nivel EMPRESA: si la empresa no tiene el módulo X activo,
+  // no se muestran las tarjetas/charts que dependan de X. Esto se
+  // aplica ADEMÁS del gating por permisos del user (vis.*).
+  // El superadmin de plataforma bypassa este filtro.
+  const mod = useCompanyModuleAccess();
   const period = usePeriod();
   const navigate = useNavigate();
 
@@ -346,14 +352,14 @@ export function DashboardOverview() {
       { key: "kpis_alertas",       label: "Alertas activas", value: k.openAlerts.toString(),                   badge: k.criticalAlerts > 0 ? `-${k.criticalAlerts} críticas` : undefined, tone: "error" as const, icon: <IconBell />, href: "/alertas?kpi=Alertas" },
       { key: "kpis_combustible",   label: "Combustible (gal)", value: k.totalFuelGallons.toLocaleString("es-EC"), badge: undefined,  tone: "brand" as const,   icon: <IconFuel />,   href: "/combustible?kpi=Combustible"   },
     ].filter((c) => {
-      if (c.key === "kpis_flotas")        return vis.kpis.flotas;
-      if (c.key === "kpis_mantenimiento") return vis.kpis.mantenimiento;
-      if (c.key === "kpis_alertas")       return vis.alerts.feed;
-      if (c.key === "kpis_combustible")   return vis.kpis.combustible;
+      if (c.key === "kpis_flotas")        return vis.kpis.flotas        && mod.hasModule("gestion");
+      if (c.key === "kpis_mantenimiento") return vis.kpis.mantenimiento  && mod.hasModule("mantenimiento");
+      if (c.key === "kpis_alertas")       return vis.alerts.feed         && mod.hasModule("alertas");
+      if (c.key === "kpis_combustible")   return vis.kpis.combustible    && mod.hasModule("combustible");
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [an?.kpis, vis]);
+  }, [an?.kpis, vis, mod.modules]);
 
   // ── Charts base ──
   const c = an?.charts;
@@ -364,7 +370,7 @@ export function DashboardOverview() {
     [c?.assetsByStatus, theme, navigate]
   );
   const hBarOptions = useMemo(
-    () => makeHBarOptions(c?.driversByLicense.map(d => d.name) ?? [], ["#465fff"], theme, 240, () => navigate("/conductores")),
+    () => makeHBarOptions(c?.driversByLicense.map(d => d.name) ?? [], ["#465fff"], theme, 240, () => navigate("/operaciones/conductores")),
     [c?.driversByLicense, theme, navigate]
   );
   const catBarOptions = useMemo(
@@ -449,7 +455,7 @@ export function DashboardOverview() {
       )}
 
       {/* ─── SECCIÓN 2 · COMBUSTIBLE ─────────────────────────────────── */}
-      {(vis.charts.combustibleMes || vis.charts.flotasEstado || vis.charts.flotasCategoria || countVisible(vis.sections.combustible) > 0) && (
+      {((vis.charts.combustibleMes && mod.hasModule("combustible")) || (vis.charts.flotasEstado && mod.hasModule("gestion")) || (vis.charts.flotasCategoria && mod.hasModule("gestion")) || (countVisible(vis.sections.combustible) > 0 && mod.hasModule("combustible"))) && (
         <section className="space-y-3">
           <SectionHeader
             number="02"
@@ -464,7 +470,7 @@ export function DashboardOverview() {
             <div className="space-y-5">
               {/* Fila 1: 2 charts principales */}
               <div className="grid gap-5" style={autoFitStyle(420)}>
-                {vis.charts.combustibleMes && (
+                {vis.charts.combustibleMes && mod.hasModule("combustible") && (
                   <div>
                     {loading || !c
                       ? <ChartSkeleton height="h-[280px]" />
@@ -483,14 +489,21 @@ export function DashboardOverview() {
                           <div className="max-w-full overflow-x-hidden">
                             <div className="min-w-[500px] xl:min-w-full">
                               <Suspense fallback={<Sk className="h-[280px]" />}>
-                                <ReactApexChart
-                                  options={areaOptions}
-                                  series={[
-                                    { name: "Galones",   data: c.fuelOverTime.galones },
-                                    { name: "Costo USD", data: c.fuelOverTime.cost   },
-                                  ]}
-                                  type="area" height={280}
-                                />
+                                {c.fuelOverTime.galones.every(v => v === 0) && c.fuelOverTime.cost.every(v => v === 0)
+                                  ? <ChartEmptyState
+                                      message="Sin cargas de combustible aún"
+                                      hint="Cuando registres la primera carga, vas a ver la tendencia mensual acá."
+                                      minHeight={280}
+                                    />
+                                  : <ReactApexChart
+                                      options={areaOptions}
+                                      series={[
+                                        { name: "Galones",   data: c.fuelOverTime.galones },
+                                        { name: "Costo USD", data: c.fuelOverTime.cost   },
+                                      ]}
+                                      type="area" height={280}
+                                    />
+                                }
                               </Suspense>
                             </div>
                           </div>
@@ -499,7 +512,7 @@ export function DashboardOverview() {
                     }
                   </div>
                 )}
-                {vis.charts.flotasEstado && (
+                {vis.charts.flotasEstado && mod.hasModule("gestion") && (
                   <div>
                     {loading || !c
                       ? <ChartSkeleton height="h-[280px]" />
@@ -516,11 +529,18 @@ export function DashboardOverview() {
                             <a href="/flotas" className="ml-auto text-[10px] font-semibold text-violet-400 hover:text-violet-300">Ver más →</a>
                           </div>
                           <Suspense fallback={<Sk className="h-[280px]" />}>
-                            <ReactApexChart
-                              options={donutOptions}
-                              series={c.assetsByStatus.map(d => d.value).filter(v => v > 0)}
-                              type="donut" height={280}
-                            />
+                            {c.assetsByStatus.every(d => d.value === 0)
+                              ? <ChartEmptyState
+                                  message="No hay vehículos en la flota"
+                                  hint="Creá tu primer vehículo en Flotas para ver el desglose por estado."
+                                  minHeight={280}
+                                />
+                              : <ReactApexChart
+                                  options={donutOptions}
+                                  series={c.assetsByStatus.map(d => d.value).filter(v => v > 0)}
+                                  type="donut" height={280}
+                                />
+                            }
                           </Suspense>
                         </div>
                       )
@@ -530,11 +550,11 @@ export function DashboardOverview() {
               </div>
 
               {/* Fila 2: charts secundarios (mantenimientos + categoría + licencias) */}
-              {(vis.charts.mantenimientosMes || vis.charts.flotasCategoria || vis.charts.conductoresLicencia) && (
+              {((vis.charts.mantenimientosMes && mod.hasModule("mantenimiento")) || (vis.charts.flotasCategoria && mod.hasModule("gestion")) || (vis.charts.conductoresLicencia && mod.hasModule("gestion"))) && (
                 <div className="grid gap-5" style={autoFitStyle(320)}>
-                  {(vis.charts.mantenimientosMes || vis.charts.flotasCategoria) && (
+                  {((vis.charts.mantenimientosMes && mod.hasModule("mantenimiento")) || (vis.charts.flotasCategoria && mod.hasModule("gestion"))) && (
                     <div>
-                      {vis.charts.mantenimientosMes && (
+                      {vis.charts.mantenimientosMes && mod.hasModule("mantenimiento") && (
                         loading || !c
                           ? <ChartSkeleton height="h-[220px]" />
                           : (
@@ -550,23 +570,30 @@ export function DashboardOverview() {
                                 <a href="/mantenimiento" className="ml-auto text-[10px] font-semibold text-violet-400 hover:text-violet-300">Ver más →</a>
                               </div>
                               <Suspense fallback={<Sk className="h-[220px]" />}>
-                                <ReactApexChart
-                                  options={barOptions}
-                                  series={[{ name: "Cantidad", data: c.maintenancesByMonth.count }]}
-                                  type="bar" height={220}
-                                />
+                                {c.maintenancesByMonth.count.every(v => v === 0)
+                                  ? <ChartEmptyState
+                                      message="Sin mantenimientos en el año"
+                                      hint="Cuando agendes el primero, vas a ver el histograma mensual acá."
+                                      minHeight={220}
+                                    />
+                                  : <ReactApexChart
+                                      options={barOptions}
+                                      series={[{ name: "Cantidad", data: c.maintenancesByMonth.count }]}
+                                      type="bar" height={220}
+                                    />
+                                }
                               </Suspense>
                             </div>
                           )
                       )}
                     </div>
                   )}
-                  {vis.charts.conductoresLicencia && (
+                  {vis.charts.conductoresLicencia && mod.hasModule("gestion") && (
                     <div>
                       {loading || !c
                         ? <ChartSkeleton height="h-[220px]" />
                         : (
-                          <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5 cursor-pointer hover:border-amber-300 dark:hover:border-amber-500/30 transition-colors" onClick={() => navigate("/conductores")}>
+                          <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5 cursor-pointer hover:border-amber-300 dark:hover:border-amber-500/30 transition-colors" onClick={() => navigate("/operaciones/conductores")}>
                             <div className="mb-4 flex items-center gap-2.5">
                               <div className="grid h-9 w-9 place-items-center rounded-xl bg-amber-500/10 text-amber-400">
                                 <IconUser />
@@ -577,18 +604,25 @@ export function DashboardOverview() {
                               </div>
                             </div>
                             <Suspense fallback={<Sk className="h-[220px]" />}>
-                              <ReactApexChart
-                                options={hBarOptions}
-                                series={[{ name: "Conductores", data: c.driversByLicense.map(d => d.value) }]}
-                                type="bar" height={220}
-                              />
+                              {c.driversByLicense.every(d => d.value === 0)
+                                ? <ChartEmptyState
+                                    message="Sin conductores registrados"
+                                    hint="Cuando cargues el primer conductor, vas a ver el desglose por tipo de licencia."
+                                    minHeight={220}
+                                  />
+                                : <ReactApexChart
+                                    options={hBarOptions}
+                                    series={[{ name: "Conductores", data: c.driversByLicense.map(d => d.value) }]}
+                                    type="bar" height={220}
+                                  />
+                              }
                             </Suspense>
                           </div>
                         )
                       }
                     </div>
                   )}
-                  {vis.charts.flotasCategoria && (
+                  {vis.charts.flotasCategoria && mod.hasModule("gestion") && (
                     <div>
                       {loading || !c
                         ? <ChartSkeleton height="h-[220px]" />
@@ -604,11 +638,18 @@ export function DashboardOverview() {
                               </div>
                             </div>
                             <Suspense fallback={<Sk className="h-[220px]" />}>
-                              <ReactApexChart
-                                options={catBarOptions}
-                                series={[{ name: "Cantidad", data: c.assetsByCategory.map(d => d.value) }]}
-                                type="bar" height={220}
-                              />
+                              {c.assetsByCategory.every(d => d.value === 0)
+                                ? <ChartEmptyState
+                                    message="Sin vehículos categorizados"
+                                    hint="Cuando registres vehículos con categoría, vas a ver el desglose acá."
+                                    minHeight={220}
+                                  />
+                                : <ReactApexChart
+                                    options={catBarOptions}
+                                    series={[{ name: "Cantidad", data: c.assetsByCategory.map(d => d.value) }]}
+                                    type="bar" height={220}
+                                  />
+                              }
                             </Suspense>
                           </div>
                         )
@@ -631,7 +672,7 @@ export function DashboardOverview() {
       )}
 
       {/* ─── SECCIÓN 3 · FLOTA Y SEDES/GARAJES ─────────────────────────── */}
-      {countVisible(vis.sections.flota) > 0 && (
+      {mod.hasModule("gestion") && countVisible(vis.sections.flota) > 0 && (
         <section className="space-y-3">
           <SectionHeader
             number="03"
@@ -654,7 +695,7 @@ export function DashboardOverview() {
       )}
 
       {/* ─── SECCIÓN 4 · PERSONAS (conductores, asignaciones) ─────────── */}
-      {countVisible(vis.sections.personas) > 0 && (
+      {mod.hasModule("gestion") && countVisible(vis.sections.personas) > 0 && (
         <section className="space-y-3">
           <SectionHeader
             number="04"
@@ -676,7 +717,13 @@ export function DashboardOverview() {
       )}
 
       {/* ─── SECCIÓN 5 · RECURSOS (A/C, checklists, aceite, inventario, seguros) ─ */}
-      {countVisible(vis.sections.recursos) > 0 && (
+      {((vis.sections.recursos.kpisAc && mod.hasModule("ac")) ||
+        (vis.sections.recursos.serviciosAcPendientes && mod.hasModule("ac")) ||
+        (vis.sections.recursos.kpisChecklists && mod.hasModule("checklist")) ||
+        (vis.sections.recursos.checklistsPendientes && mod.hasModule("checklist")) ||
+        (vis.sections.recursos.polizasPorVencer && mod.hasModule("seguros")) ||
+        (vis.sections.recursos.coberturaActivos && mod.hasModule("seguros"))
+      ) && (
         <section className="space-y-3">
           <SectionHeader
             number="05"
@@ -689,19 +736,19 @@ export function DashboardOverview() {
           />
           {!isCollapsed("recursos") && (
             <AutoGrid minWidth={360}>
-              {vis.sections.recursos.kpisAc                && <KpisAcCard />}
-              {vis.sections.recursos.serviciosAcPendientes && <ServiciosAcPendientesCard />}
-              {vis.sections.recursos.kpisChecklists        && <KpisChecklistsCard />}
-              {vis.sections.recursos.checklistsPendientes  && <ChecklistsPendientesCard />}
-              {vis.sections.recursos.polizasPorVencer      && <PolizasPorVencerCard />}
-              {vis.sections.recursos.coberturaActivos      && <CoberturaActivosCard />}
+              {vis.sections.recursos.kpisAc                && mod.hasModule("ac")            && <KpisAcCard />}
+              {vis.sections.recursos.serviciosAcPendientes && mod.hasModule("ac")            && <ServiciosAcPendientesCard />}
+              {vis.sections.recursos.kpisChecklists        && mod.hasModule("checklist")     && <KpisChecklistsCard />}
+              {vis.sections.recursos.checklistsPendientes  && mod.hasModule("checklist")     && <ChecklistsPendientesCard />}
+              {vis.sections.recursos.polizasPorVencer      && mod.hasModule("seguros")       && <PolizasPorVencerCard />}
+              {vis.sections.recursos.coberturaActivos      && mod.hasModule("seguros")       && <CoberturaActivosCard />}
             </AutoGrid>
           )}
         </section>
       )}
 
       {/* ─── SECCIÓN 6 · ATENCIÓN (alertas + actividad) ───────────────── */}
-      {(vis.alerts.feed || vis.activity.timeline) && (
+      {((vis.alerts.feed && mod.hasModule("alertas")) || (vis.activity.timeline && mod.hasModule("alertas"))) && (
         <section className="space-y-3">
           <SectionHeader
             number="06"
@@ -714,7 +761,7 @@ export function DashboardOverview() {
           />
           {!isCollapsed("atencion") && (
             <div className="grid gap-5" style={autoFitStyle(420)}>
-              {vis.alerts.feed && (
+              {vis.alerts.feed && mod.hasModule("alertas") && (
                 <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
                   <div className="mb-4 flex items-center gap-2.5">
                     <div className="grid h-9 w-9 place-items-center rounded-xl bg-rose-500/10 text-rose-400">
@@ -726,10 +773,18 @@ export function DashboardOverview() {
                     </div>
                     <a href="/alertas" className="ml-auto text-[10px] font-semibold text-violet-400 hover:text-violet-300">Ver más →</a>
                   </div>
-                  <AlertsFeed items={alertItems} />
+                  {alertItems.length === 0
+                    ? <ChartEmptyState
+                        message="Sin alertas activas"
+                        hint="Cuando se genere una alerta, va a aparecer acá."
+                        minHeight={180}
+                        icon={Bell}
+                      />
+                    : <AlertsFeed items={alertItems} />
+                  }
                 </div>
               )}
-              {vis.activity.timeline && (
+              {vis.activity.timeline && mod.hasModule("alertas") && (
                 <div className="rounded-2xl border border-gray-100 dark:border-white/[0.04] bg-white dark:bg-[#0F172A] p-5">
                   <div className="mb-4 flex items-center gap-2.5">
                     <div className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-500/10 text-emerald-400">
@@ -779,7 +834,7 @@ export function DashboardOverview() {
       )}
 
       {/* ─── PRÓXIMOS MANTENIMIENTOS ─────────────────────────────────── */}
-      {vis.activity.proximosMtto && (
+      {vis.activity.proximosMtto && mod.hasModule("mantenimiento") && (
         <section className="space-y-3">
           <SectionHeader number="07" title="Próximos mantenimientos" subtitle="Mantenimientos programados" accent="violet" />
           <MaintenanceTable />
@@ -787,7 +842,7 @@ export function DashboardOverview() {
       )}
 
       {/* ─── SECCIÓN 8 · AUDITORÍA (al final, opcional) ──────────────── */}
-      {countVisible(vis.sections.auditoria) > 0 && (
+      {mod.hasModule("alertas") && countVisible(vis.sections.auditoria) > 0 && (
         <section className="space-y-3">
           <SectionHeader
             number="08"

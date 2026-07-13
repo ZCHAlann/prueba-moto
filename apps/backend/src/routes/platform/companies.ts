@@ -24,8 +24,11 @@ import {
   platformPlanModules,
   platformPlans,
   platformModules,
+  platformInvoices,
+  platformTickets,
   companyUserCounts as companyUserCountsRef,
 } from '../../db/schema/platform';
+import { companyAssets, companyAuditEntries } from '../../db/schema/operational';
 import { hashPassword } from '../../services/auth.service';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 
@@ -35,26 +38,26 @@ const router = Router();
 
 const createCompanySchema = z.object({
   name:            z.string().min(2).max(160),
-  slug:            z.string().min(1).regex(/^[a-z0-9-]+$/).optional(),
+  slug:            z.string().min(1).regex(/^[a-z0-9-]+$/).nullish(),
   planId:          z.string().min(1).default('starter'),
   status:          z.enum(['active', 'inactive', 'suspended', 'trial']).default('active'),
-  enabledModules:  z.array(z.string()).optional(),
-  industry:        z.string().max(80).optional(),
-  country:         z.string().max(80).optional(),
-  city:            z.string().max(80).optional(),
-  contactName:     z.string().max(160).optional(),
-  contactEmail:    z.string().email().optional().or(z.literal('')),
-  contactPhone:    z.string().max(40).optional(),
-  website:         z.string().max(255).optional(),
-  notes:           z.string().optional(),
-  trialEndsAt:     z.string().datetime().optional().or(z.string().regex(/^\d{4}-\d{2}-\d{2}/).optional()),
-  contractStartAt: z.string().regex(/^\d{4}-\d{2}-\d{2}/).optional(),
-  contractEndAt:   z.string().regex(/^\d{4}-\d{2}-\d{2}/).optional(),
+  enabledModules:  z.array(z.string()).nullish(),
+  industry:        z.string().max(80).nullish(),
+  country:         z.string().max(80).nullish(),
+  city:            z.string().max(80).nullish(),
+  contactName:     z.string().max(160).nullish(),
+  contactEmail:    z.string().email().nullish().or(z.literal('')),
+  contactPhone:    z.string().max(40).nullish(),
+  website:         z.string().max(255).nullish(),
+  notes:           z.string().nullish(),
+  trialEndsAt:     z.string().datetime().nullish().or(z.string().regex(/^\d{4}-\d{2}-\d{2}/).nullish()),
+  contractStartAt: z.string().regex(/^\d{4}-\d{2}-\d{2}/).nullish(),
+  contractEndAt:   z.string().regex(/^\d{4}-\d{2}-\d{2}/).nullish(),
   masterUser: z.object({
     email:    z.string().email(),
     username: z.string().min(3).max(80),
     password: z.string().min(8).max(128),
-    fullName: z.string().max(160).optional(),
+    fullName: z.string().max(160).nullish(),
   }).optional(),
 });
 
@@ -406,6 +409,16 @@ router.put('/:id', validate(updateCompanySchema), async (req, res, next) => {
       }
     }
 
+    // jul 2026 v6 — Si cambió el `status` de la empresa (a inactive /
+    // suspended / trial vencido), invalidamos el cache de estado
+    // efectivo de TODOS los usuarios de esa empresa. Así el próximo
+    // request del middleware ya los trata como bloqueados, sin esperar
+    // al TTL de 60s.
+    if (body.status !== undefined && body.status !== existing.status) {
+      const { invalidateCompanyStatusCache } = await import('../../lib/userStatus.db');
+      invalidateCompanyStatusCache(companyId);
+    }
+
     await logAudit(db, null, {
       entity:      'companies',
       entityId:    toId('company', companyId),
@@ -435,6 +448,33 @@ router.delete('/:id', requireSuperadmin, async (req, res, next) => {
       .limit(1);
     if (!existing) throw new NotFoundError('Empresa', String(req.params.id));
 
+    // jul 2026 v6 — Limpieza defensiva ANTES del DELETE para evitar el
+    // 500 silencioso. Algunas tablas de la BD en runtime no tienen
+    // ON DELETE CASCADE aplicado (por una migración que no corrió o por
+    // una tabla que se agregó después sin cascade). Si existe una fila
+    // que apunta a esta empresa en una FK sin cascade, el `DELETE
+    // FROM companies` falla con "Failed query" sin SQL state en Drizzle,
+    // y la operación queda silenciosamente rota.
+    //
+    // Estrategia: borrar primero las filas dependientes más comunes y
+    // después la empresa. Las tablas que ya tienen cascade aplicado en
+    // BD no se duplican — si la fila no existe, el DELETE no hace nada.
+    // Lo importante es NO dejar la operación a medias.
+    //
+    // NOTA: NO usamos un DO $$ ... $$ block con un DECLARE porque Drizzle
+    // no puede inferir el tipo del parámetro en ese contexto y tira
+    // "could not determine data type of parameter $1". Cada DELETE se
+    // hace con la API de Drizzle (eq) que bindea tipado.
+    await db.delete(platformInvoices).where(eq(platformInvoices.companyId, companyId)).catch((e) => {
+      console.warn('[DELETE company] cleanup platform_invoices falló (ignorado):', e?.message);
+    });
+    await db.delete(platformTickets).where(eq(platformTickets.companyId, companyId)).catch((e) => {
+      console.warn('[DELETE company] cleanup platform_tickets falló (ignorado):', e?.message);
+    });
+    await db.delete(companyAuditEntries).where(eq(companyAuditEntries.companyId, companyId)).catch((e) => {
+      console.warn('[DELETE company] cleanup company_audit_entries falló (ignorado):', e?.message);
+    });
+
     await db.delete(companies).where(eq(companies.id, companyId));
 
     await logAudit(db, null, {
@@ -448,46 +488,85 @@ router.delete('/:id', requireSuperadmin, async (req, res, next) => {
 
     res.json({ ok: true });
   } catch (err) {
+    // Re-emitimos el error con más contexto para diagnosticar el "Failed
+    // query" opaco de Drizzle. Si el `cause` viene con SQLState (23503 =
+    // FK violation, 23502 = NOT NULL, etc.) lo exponemos en el log.
+    console.error('[DELETE /platform/companies/:id] failed for id =', req.params.id, {
+      message: (err as Error)?.message,
+      code:    (err as any)?.code,
+      detail:  (err as any)?.detail,
+      hint:    (err as any)?.hint,
+      cause:   (err as any)?.cause?.message ?? (err as any)?.cause,
+      stack:   (err as Error)?.stack?.split('\n').slice(0, 5).join('\n'),
+    });
     next(err);
   }
 });
 
 // ─── GET /:id/limits (info de límites del plan + consumo actual) ────────────
+//
+// jul 2026 v6 — Extraído a `getCompanyLimitsHandler` para poder reusarlo
+// desde el router de empresa (`/api/company/:id/limits`). El admin de
+// empresa es quien crea usuarios/activos y NECESITA ver los límites sin
+// tener que ir al panel de plataforma. Se monta acá (para superadmin) y
+// en el router de empresa (para admin/owner).
+
+export async function getCompanyLimitsHandler(
+  companyId: number,
+): Promise<{
+  plan: { id: string; name: string; maxUsers: number | null; maxAdmins: number | null;
+          maxSupervisors: number | null; maxOperators: number | null;
+          maxDrivers: number | null; maxAssets: number | null } | null;
+  counts: { total: number; admins: number; supervisors: number;
+            operators: number; drivers: number };
+  currentAssets: number;
+}> {
+  const [company] = await db
+    .select()
+    .from(companies)
+    .where(eq(companies.id, companyId))
+    .limit(1);
+  if (!company) throw new NotFoundError('Empresa', String(companyId));
+
+  const [plan] = await db
+    .select()
+    .from(platformPlans)
+    .where(eq(platformPlans.id, company.planId))
+    .limit(1);
+
+  const [counts] = await db
+    .select()
+    .from(companyUserCountsRef)
+    .where(eq(companyUserCountsRef.companyId, companyId))
+    .limit(1);
+
+  // jul 2026 — contar activos actuales para gating del botón "Crear activo".
+  // El front usa `currentAssets` + `maxAssets` para decidir si esconde el
+  // botón. El backend además valida en assertWithinPlanAssetLimit al crear.
+  const [assetsRow] = await db
+    .select({ value: sql<number>`cast(count(*) as int)` })
+    .from(companyAssets)
+    .where(eq(companyAssets.companyId, companyId));
+
+  return {
+    plan: plan ? {
+      id: plan.id, name: plan.name,
+      maxUsers: plan.maxUsers, maxAdmins: plan.maxAdmins,
+      maxSupervisors: plan.maxSupervisors, maxOperators: plan.maxOperators,
+      maxDrivers: plan.maxDrivers, maxAssets: plan.maxAssets,
+    } : null,
+    counts: counts ?? {
+      total: 0, admins: 0, supervisors: 0, operators: 0, drivers: 0,
+    },
+    currentAssets: assetsRow?.value ?? 0,
+  };
+}
 
 router.get('/:id/limits', async (req, res, next) => {
   try {
     const companyId = parseId('company', req.params.id);
-
-    const [company] = await db
-      .select()
-      .from(companies)
-      .where(eq(companies.id, companyId))
-      .limit(1);
-    if (!company) throw new NotFoundError('Empresa', req.params.id);
-
-    const [plan] = await db
-      .select()
-      .from(platformPlans)
-      .where(eq(platformPlans.id, company.planId))
-      .limit(1);
-
-    const [counts] = await db
-      .select()
-      .from(companyUserCountsRef)
-      .where(eq(companyUserCountsRef.companyId, companyId))
-      .limit(1);
-
-    res.json({
-      plan: plan ? {
-        id: plan.id, name: plan.name,
-        maxUsers: plan.maxUsers, maxAdmins: plan.maxAdmins,
-        maxSupervisors: plan.maxSupervisors, maxOperators: plan.maxOperators,
-        maxDrivers: plan.maxDrivers, maxAssets: plan.maxAssets,
-      } : null,
-      counts: counts ?? {
-        total: 0, admins: 0, supervisors: 0, operators: 0, drivers: 0,
-      },
-    });
+    const data = await getCompanyLimitsHandler(companyId);
+    res.json(data);
   } catch (err) {
     next(err);
   }

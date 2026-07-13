@@ -1037,6 +1037,17 @@ router.delete(
 
       res.json({ ok: true });
     } catch (err) {
+      // jul 2026 v6 — log extendido para diagnosticar el "Failed query"
+      // opaco de Drizzle. Si vuelve a fallar un DELETE por FK, vamos a
+      // ver el SQL state (23503 = FK violation) y el detail exactos.
+      console.error('[DELETE /company/:id/users/:userId] failed for id =', req.params.userId, {
+        message: (err as Error)?.message,
+        code:    (err as any)?.code,
+        detail:  (err as any)?.detail,
+        hint:    (err as any)?.hint,
+        cause:   (err as any)?.cause?.message ?? (err as any)?.cause,
+        stack:   (err as Error)?.stack?.split('\n').slice(0, 5).join('\n'),
+      });
       next(err);
     }
   }

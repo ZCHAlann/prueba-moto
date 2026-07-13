@@ -24,6 +24,7 @@
  */
 
 export type InactiveReason =
+  | 'company_inactive'   // companies.status !== 'active'   (jul 2026 v6)
   | 'user_inactive'      // companyUsers.status !== 'active'
   | 'driver_inactive'    // companyDrivers.status !== 'Activo'
   | 'site_inactive'      // companySites.status !== 'Activa'
@@ -36,6 +37,8 @@ export const DRIVER_STATUS_ACTIVE = 'Activo';
 export const SITE_STATUS_ACTIVE = 'Activa';
 
 export interface UserEffectivelyActiveInput {
+  /** `companies.status` (inglés). jul 2026 v6. */
+  companyStatus: string | null | undefined;
   /** `company_users.status` (inglés) */
   userStatus: string | null | undefined;
   /** `company_drivers.status` (español con tilde). `null` si el user no es conductor. */
@@ -66,9 +69,17 @@ function norm(v: string | null | undefined): string | null {
 export function isUserEffectivelyActive(
   input: UserEffectivelyActiveInput,
 ): UserEffectivelyActiveResult {
-  const userStatus   = norm(input.userStatus);
-  const driverStatus = norm(input.driverStatus);
-  const siteStatus   = norm(input.siteStatus);
+  const companyStatus = norm(input.companyStatus);
+  const userStatus    = norm(input.userStatus);
+  const driverStatus  = norm(input.driverStatus);
+  const siteStatus    = norm(input.siteStatus);
+
+  // 0) jul 2026 v6 — Empresa activa es la primera condición. Si la
+  // empresa está inactiva / suspendida / en trial vencido, NINGÚN user
+  // de esa empresa puede operar (login, API calls, todo).
+  if (companyStatus !== null && companyStatus !== USER_STATUS_ACTIVE) {
+    return { effectivelyActive: false, inactiveReason: 'company_inactive' };
+  }
 
   // 1) Usuario activo (regla universal — aplica a TODOS)
   if (userStatus !== USER_STATUS_ACTIVE) {
@@ -94,6 +105,8 @@ export function isUserEffectivelyActive(
  */
 export function getInactiveMessage(reason: InactiveReason): string {
   switch (reason) {
+    case 'company_inactive':
+      return 'Tu empresa está inactiva o suspendida. Contacta al administrador de la plataforma.';
     case 'user_inactive':
       return 'Tu cuenta está inactiva. Contacta a tu administrador.';
     case 'driver_inactive':
@@ -112,8 +125,10 @@ export function getInactiveMessage(reason: InactiveReason): string {
  */
 export function getInactiveCode(
   reason: InactiveReason,
-): 'USER_INACTIVE' | 'DRIVER_INACTIVE' | 'SITE_INACTIVE' | null {
+): 'COMPANY_INACTIVE' | 'USER_INACTIVE' | 'DRIVER_INACTIVE' | 'SITE_INACTIVE' | null {
   switch (reason) {
+    case 'company_inactive':
+      return 'COMPANY_INACTIVE';
     case 'user_inactive':
       return 'USER_INACTIVE';
     case 'driver_inactive':

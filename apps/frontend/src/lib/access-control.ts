@@ -140,7 +140,6 @@ export const PUBLIC_PATHS = [
 export const PLATFORM_ROLES: PlatformRole[] = [
   "superadmin",
   "admin_saas",
-  "comercial",
   "soporte",
 ];
 
@@ -160,7 +159,6 @@ type RouteRule = {
 type HomeMap = Record<PlatformRole, string>;
 
 const platformFullAccess: PlatformRole[] = ["superadmin", "admin_saas"];
-const platformCommercialAccess: PlatformRole[] = ["superadmin", "admin_saas", "comercial"];
 const platformSupportAccess: PlatformRole[] = ["superadmin", "admin_saas", "soporte"];
 const companyAdminRoles: PlatformRole[] = ["superadmin", "owner_empresa", "admin_empresa"];
 const operationalManagers: PlatformRole[] = ["superadmin", "owner_empresa", "admin_empresa", "supervisor"];
@@ -205,7 +203,6 @@ const reservedTopLevelSegments = new Set([
 const defaultHomes: HomeMap = {
   superadmin: "/master",
   admin_saas: "/master",
-  comercial: "/master/crm",
   soporte: "/master/empresas",
   owner_empresa: "/dashboard",
   admin_empresa: "/dashboard",
@@ -239,7 +236,7 @@ const rules: RouteRule[] = [
       pathname.startsWith("/master/leads") ||
       pathname.startsWith("/master/clientes") ||
       pathname.startsWith("/master/facturacion"),
-    roles: [...platformCommercialAccess],
+    roles: [...platformFullAccess],
   },
   {
     test: (pathname) => pathname.startsWith("/master/pagos"),
@@ -261,7 +258,6 @@ const rules: RouteRule[] = [
     roles: [
       "superadmin",
       "admin_saas",
-      "comercial",
       "soporte",
       "owner_empresa",
       "admin_empresa",
@@ -545,10 +541,6 @@ export function getAccessMessage(role: PlatformRole, pathname: string) {
 
   if (role === "conductor") {
     return "Tu perfil conductor solo puede trabajar checklist, alertas, ubicacion, reportes asignados y perfil.";
-  }
-
-  if (role === "comercial") {
-    return "Tu perfil comercial puede trabajar CRM, leads, clientes y facturacion, pero no la operacion diaria.";
   }
 
   if (role === "soporte") {

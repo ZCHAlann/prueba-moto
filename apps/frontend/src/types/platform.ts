@@ -1,7 +1,6 @@
 export type PlatformRole =
   | "superadmin"
   | "admin_saas"
-  | "comercial"
   | "soporte"
   | "owner_empresa"
   | "admin_empresa"
@@ -223,23 +222,9 @@ export interface PlatformStats {
       total: number;
     }>;
   };
-  leads: {
-    total: number;
-    byStatus: {
-      nuevo: number;
-      contactado: number;
-      demoAgendada: number;
-      propuestaEnviada: number;
-      ganado: number;
-      perdido: number;
-    };
-    newThisMonth: number;
-    convertedThisMonth: number;
-    newByMonth: number[];               // array de 12 números
-    wonByMonth: number[];               // array de 12 números
-    conversionRate: number;        // porcentaje 0-100
-    pipelineValue: string;
-  };
+  // (Sección `leads` removida: el módulo Comercial fue retirado.
+  //  La tabla `platform_leads` sigue en DB pero ya no se consulta
+  //  en /api/platform/stats.)
   users: {
     total: number;
     active: number;

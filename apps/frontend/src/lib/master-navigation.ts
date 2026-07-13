@@ -21,16 +21,6 @@ export const masterNavigation = [
     ],
   },
   {
-    label: "Comercial",
-    items: [
-      { label: "CRM", href: "/master/crm", icon: "CRM", description: "Embudo y seguimiento" },
-      { label: "Leads", href: "/master/leads", icon: "LD", description: "Solicitudes de demo y oportunidades" },
-      { label: "Clientes", href: "/master/clientes", icon: "CL", description: "Cartera activa" },
-      { label: "Facturacion", href: "/master/facturacion", icon: "FC", description: "Renovaciones y pagos" },
-      { label: "Pagos y pasarelas", href: "/master/pagos", icon: "PG", description: "Checkout, cobros y gateways" },
-    ],
-  },
-  {
     label: "Operacion completa",
     items: [
       { label: "Vista operativa", href: "/master/operacion", icon: "DB", description: "Supervision sin salir del master" },

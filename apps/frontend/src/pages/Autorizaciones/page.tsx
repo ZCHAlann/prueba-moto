@@ -545,7 +545,22 @@ function EntrantesTab({ items, loading, total, totalPages, page, onChangePage, o
             {items.map((a) => (
               <tr key={a.id} className="group cursor-pointer hover:bg-gray-50/60 dark:hover:bg-white/[0.02] transition" onClick={() => onOpen(a)}>
                 <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300 whitespace-nowrap">{fmtDate(a.requestedAt)}</td>
-                <td className="px-5 py-3.5 font-semibold text-gray-800 dark:text-gray-200">{a.assetPlate ?? a.assetLabel ?? "—"}</td>
+                <td className="px-5 py-3.5">
+                  <div className="flex items-center gap-3">
+                    {a.assetPhotoUrl ? (
+                      <img
+                        src={a.assetPhotoUrl}
+                        alt={a.assetPlate ?? a.assetLabel ?? "vehículo"}
+                        className="h-8 w-8 shrink-0 rounded-lg object-cover ring-1 ring-gray-200 dark:ring-white/10 bg-gray-100 dark:bg-white/5"
+                      />
+                    ) : (
+                      <div className="h-8 w-8 shrink-0 rounded-lg bg-gray-100 dark:bg-white/5 ring-1 ring-gray-200 dark:ring-white/10 flex items-center justify-center text-gray-400">
+                        <Truck size={14} />
+                      </div>
+                    )}
+                    <span className="font-semibold text-gray-800 dark:text-gray-200">{a.assetPlate ?? a.assetLabel ?? "—"}</span>
+                  </div>
+                </td>
                 <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300">{a.driverName ?? "—"}</td>
                 <td className="px-5 py-3.5"><StatusPill status={a.status} /></td>
                 <td className=" group-hover:bg-gray-50/60 dark:group-hover:bg-white/[0.02] px-5 py-3.5 text-right text-xs text-emerald-600 dark:text-emerald-400 font-semibold opacity-0 group-hover:opacity-100 transition">Revisar →</td>
@@ -634,7 +649,22 @@ function HistorialTab({ items, filter, onChangeFilter, q, onChangeQ, dateFrom, d
                 {items.map((a) => (
                   <tr key={a.id} className="group cursor-pointer hover:bg-gray-50/60 dark:hover:bg-white/[0.02] transition" onClick={() => onOpen(a)}>
                     <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300 whitespace-nowrap">{fmtDate(a.decidedAt ?? a.requestedAt)}</td>
-                    <td className="px-5 py-3.5 font-semibold text-gray-800 dark:text-gray-200">{a.assetPlate ?? a.assetLabel ?? "—"}</td>
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-3">
+                        {a.assetPhotoUrl ? (
+                          <img
+                            src={a.assetPhotoUrl}
+                            alt={a.assetPlate ?? a.assetLabel ?? "vehículo"}
+                            className="h-8 w-8 shrink-0 rounded-lg object-cover ring-1 ring-gray-200 dark:ring-white/10 bg-gray-100 dark:bg-white/5"
+                          />
+                        ) : (
+                          <div className="h-8 w-8 shrink-0 rounded-lg bg-gray-100 dark:bg-white/5 ring-1 ring-gray-200 dark:ring-white/10 flex items-center justify-center text-gray-400">
+                            <Truck size={14} />
+                          </div>
+                        )}
+                        <span className="font-semibold text-gray-800 dark:text-gray-200">{a.assetPlate ?? a.assetLabel ?? "—"}</span>
+                      </div>
+                    </td>
                     <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300">{a.driverName ?? "—"}</td>
                     <td className="px-5 py-3.5 text-gray-600 dark:text-gray-300">
                       {a.decidedByName ?? (
@@ -1030,7 +1060,14 @@ function ConductorView({ loading, myAsset, driverId, items, onSolicitar, onOpenD
     <div className="space-y-5">
       <div className="rounded-2xl border border-emerald-200/60 dark:border-emerald-500/20 bg-gradient-to-br from-emerald-50/40 to-white dark:from-emerald-500/[0.04] dark:to-gray-900 p-6">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-          <div className="min-w-0">
+          {myAsset?.profilePhotoUrl && (
+            <img
+              src={myAsset.profilePhotoUrl}
+              alt={myAsset.plate || "Vehículo"}
+              className="h-24 w-32 sm:h-28 sm:w-40 shrink-0 rounded-2xl object-cover ring-1 ring-emerald-200/60 dark:ring-white/10 bg-gray-100 dark:bg-white/5"
+            />
+          )}
+          <div className="min-w-0 flex-1">
             <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 dark:bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-emerald-700 dark:text-emerald-300">
               <Truck size={10} /> Vehículo asignado
             </span>
@@ -1069,9 +1106,17 @@ function ConductorView({ loading, myAsset, driverId, items, onSolicitar, onOpenD
           initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
           className="rounded-2xl border-2 border-amber-300 dark:border-amber-500/40 bg-gradient-to-br from-amber-50 to-amber-100/40 dark:from-amber-500/[0.08] dark:to-amber-500/[0.02] p-5 shadow-sm">
           <div className="flex items-start gap-3">
-            <div className="shrink-0 rounded-xl bg-amber-500 text-white p-2.5">
-              <AlertCircle size={20} />
-            </div>
+            {correctionAuth.assetPhotoUrl ? (
+              <img
+                src={correctionAuth.assetPhotoUrl}
+                alt={correctionAuth.assetPlate ?? correctionAuth.assetLabel ?? "vehículo"}
+                className="h-16 w-20 shrink-0 rounded-xl object-cover ring-1 ring-amber-300/60 dark:ring-amber-500/20 bg-gray-100 dark:bg-white/5"
+              />
+            ) : (
+              <div className="shrink-0 rounded-xl bg-amber-500 text-white p-2.5">
+                <AlertCircle size={20} />
+              </div>
+            )}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-400">
@@ -1113,6 +1158,17 @@ function ConductorView({ loading, myAsset, driverId, items, onSolicitar, onOpenD
             <h3 className="text-sm font-semibold text-gray-800 dark:text-white mb-3">Última solicitud registrada</h3>
             <button type="button" onClick={() => onOpenDetail(ultima)} className="w-full text-left">
               <div className="flex items-center gap-3">
+                {ultima.assetPhotoUrl ? (
+                  <img
+                    src={ultima.assetPhotoUrl}
+                    alt={ultima.assetPlate ?? ultima.assetLabel ?? "vehículo"}
+                    className="h-12 w-16 shrink-0 rounded-xl object-cover ring-1 ring-gray-200 dark:ring-white/10 bg-gray-100 dark:bg-white/5"
+                  />
+                ) : (
+                  <div className="h-12 w-16 shrink-0 rounded-xl bg-gray-100 dark:bg-white/5 ring-1 ring-gray-200 dark:ring-white/10 flex items-center justify-center text-gray-400">
+                    <Truck size={18} />
+                  </div>
+                )}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-gray-800 dark:text-white truncate">{ultima.assetPlate ?? ultima.assetLabel}</p>
                   <p className="text-xs text-gray-500 dark:text-gray-400">Solicitada {fmtDate(ultima.requestedAt)}</p>

@@ -6,12 +6,13 @@ import { companyAssets, companyAssignments, companyDrivers } from '../../db/sche
 import { validate } from '../../lib/validate';
 import { requireModule, requireModuleAny } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
-import { NotFoundError } from '../../lib/errors';
+import { AppError, NotFoundError } from '../../lib/errors';
 import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { validators, safeString } from '../../lib/validators';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
 import { notifyEntityCrud } from '../../lib/notify-entity';
+import { companies, platformPlans } from '../../db/schema/platform';
 
 const router = Router({ mergeParams: true });
 
@@ -206,6 +207,12 @@ router.post(
     try {
       const companyId = req.companyId!;
       const body = req.body as z.infer<typeof createAssetSchema>;
+
+      // jul 2026 v6 — gating por plan: si la empresa alcanzó `maxAssets`,
+      // rechazamos el POST. El front ya esconde el botón, pero el backend
+      // es la fuente de verdad. Importante: chequeamos ANTES del insert
+      // para no dejar la fila creada si falla el assert.
+      await assertWithinPlanAssetLimit(companyId);
 
       // Convertir siteId de string prefijado a número
       const siteId = body.siteId ? parseId('site', body.siteId) : null;
@@ -518,6 +525,42 @@ function serializeAssignment(
     createdAt:        asg.createdAt,
     updatedAt:        asg.updatedAt,
   };
+}
+
+/**
+ * jul 2026 v6 — Gating de plan para `maxAssets`. Si el plan de la empresa
+ * tiene `maxAssets` definido y la cantidad actual de activos >= maxAssets,
+ * lanzamos 403 con un mensaje claro. El front ya esconde el botón, pero
+ * este check es la fuente de verdad.
+ *
+ * Si la empresa no tiene plan, o el plan no define `maxAssets` (null),
+ * no aplicamos límite.
+ */
+async function assertWithinPlanAssetLimit(companyId: number): Promise<void> {
+  const [company] = await db
+    .select({ planId: companies.planId })
+    .from(companies)
+    .where(eq(companies.id, companyId))
+    .limit(1);
+  if (!company) throw new NotFoundError('Empresa', String(companyId));
+
+  const [plan] = await db
+    .select()
+    .from(platformPlans)
+    .where(eq(platformPlans.id, company.planId))
+    .limit(1);
+  if (!plan || plan.maxAssets == null) return; // sin límite
+
+  const [countRow] = await db
+    .select({ value: sql<number>`cast(count(*) as int)` })
+    .from(companyAssets)
+    .where(eq(companyAssets.companyId, companyId));
+  const current = countRow?.value ?? 0;
+  if (current >= plan.maxAssets) {
+    throw new AppError(403,
+      `El plan "${plan.name}" permite máximo ${plan.maxAssets} vehículos. Ya hay ${current} activos.`,
+    );
+  }
 }
 
 export default router;

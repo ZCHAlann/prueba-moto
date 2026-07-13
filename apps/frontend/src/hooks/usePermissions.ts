@@ -84,3 +84,41 @@ export function usePermissions() {
 
   return { can, canSeeModule, actionsFor };
 }
+
+/**
+ * Hook de gating a nivel EMPRESA (no user).
+ *
+ * Devuelve helpers para chequear si un módulo está habilitado para la
+ * empresa del user actual (vía `session.companyModules`). El superadmin
+ * de plataforma bypassa este check (ve todo).
+ *
+ * Diferencia con `usePermissions`:
+ *  - `usePermissions` filtra por permisos granulares del user (override
+ *    per-user o heredado del rol). Sirve para "este user puede ver X".
+ *  - `useCompanyModuleAccess` filtra por módulos de la empresa (lo que el
+ *    owner configuró al crear/editar la empresa). Sirve para "esta
+ *    empresa tiene acceso al módulo X, sin importar el user".
+ *
+ * Caso típico de uso: el dashboard. Si la empresa no tiene el módulo
+ * "combustible" habilitado, no se muestran los KPIs/charts de combustible
+ * ni siquiera para el admin.
+ */
+export function useCompanyModuleAccess() {
+  const { session } = useAuth();
+  const modules: string[] = (session?.companyModules ?? []) as string[];
+
+  function hasModule(module: string): boolean {
+    if (!session) return false;
+    if (session.role === "superadmin") return true;
+    return modules.includes(module);
+  }
+
+  /** Helper de batches: `hasAny(["combustible", "alertas"])`. */
+  function hasAny(required: string[]): boolean {
+    if (!session) return false;
+    if (session.role === "superadmin") return true;
+    return required.some(m => modules.includes(m));
+  }
+
+  return { hasModule, hasAny, modules };
+}

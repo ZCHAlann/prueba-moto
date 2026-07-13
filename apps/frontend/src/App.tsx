@@ -49,13 +49,11 @@ import SoportePage from "@/pages/Soporte/page";
 import PlatformDashboard from "./pages/Platform/Dashboard/page";
 import { PlansPage } from "./pages/Platform/Plans/page";
 import { CompaniesPage } from "./pages/Platform/Companies/page";
-import { LeadsPage } from "./pages/Platform/Leads/page";
 import { ModulesPage } from "./pages/Platform/Modules/pages";
 import { PlatformUsersPage } from "./pages/Platform/Users/page";
 import { AuditPage } from "./pages/Platform/Audit/page";
 import { PlatformSettingsPage } from "./pages/Platform/Settings/page";
-import { CRMPage } from "./pages/CRM/page";
-import { BillingPage } from "./pages/Platform/Billing/page";
+import PlatformGeolocationPage from "./pages/Platform/Geolocalizacion/page";
 import { FleetHealthPage } from "./pages/Platform/Flotas/page";
 import PlatformTicketsPage from "./pages/Platform/Tickets/page";
 import CompanyAIPage from "./pages/Platform/Companies/AISettings/page";
@@ -109,6 +107,54 @@ function GuestPlatform({ children }: { children: React.ReactNode }) {
   if (!ready) return null;
   if (session?.scope === "plataforma") return <Navigate to="/platform/dashboard" replace />;
   return <>{children}</>;
+}
+
+// jul 2026 v6 — Mapa de rutas a módulos de empresa. Si el admin de la
+// empresa intenta entrar a una ruta de un módulo que la empresa NO
+// tiene activo, lo redirigimos a /dashboard con un toast. El backend
+// también valida con `requireModule(...)` (devuelve 403), pero esta
+// capa evita mostrar la pantalla vacía y da mejor UX.
+//
+// superadmin de plataforma (scope='plataforma') bypasea este check.
+const ROUTE_TO_COMPANY_MODULE: Record<string, string> = {
+  "/mantenimiento": "mantenimiento",
+  "/mantenimiento/reportes/reautorizaciones": "mantenimiento",
+  "/checklist": "checklist",
+  "/alertas": "alertas",
+  "/reportes": "reportes",
+  "/lienzo": "lienzo",
+  "/combustible": "combustible",
+  "/peajes": "peajes",
+  "/finanzas/facturas": "finanzas",
+  "/finanzas/caja-chica": "finanzas",
+  "/finanzas/transacciones": "finanzas",
+  "/finanzas/estadisticas": "finanzas",
+  "/flotas": "gestion",
+  "/operaciones/conductores": "gestion",
+  "/operaciones/asignaciones": "gestion",
+  "/gestion/garajes": "gestion",
+  "/gestion/sedes": "gestion",
+  "/gestion/seguros": "seguros",
+  "/gestion/talleres": "gestion",
+  "/gestion/proveedores": "gestion",
+  "/autorizaciones": "autorizaciones",
+  "/geolocalizacion": "geolocalizacion",
+  "/aires-acondicionados": "ac",
+  "/aires-acondicionados/mantenimientos": "ac",
+  "/soporte": "soporte",
+};
+
+function RequireCompanyModule({ children, module }: { children: React.ReactNode; module: string }) {
+  const { session, ready } = useAuth();
+  if (!ready) return null;
+  // superadmin de plataforma bypasea.
+  if (session?.scope === "plataforma") return <>{children}</>;
+  // Si no hay companyModules (modo system / sin restricción), dejamos pasar.
+  const companyModules = (session?.companyModules ?? []) as string[];
+  if (companyModules.length === 0) return <>{children}</>;
+  if (companyModules.includes(module)) return <>{children}</>;
+  // Empresa no tiene este módulo → redirigir al dashboard.
+  return <Navigate to="/dashboard" replace />;
 }
 
 /**
@@ -181,36 +227,145 @@ export default function App() {
         {/* ── Operacion ── */}
         <Route element={<RequireOperacion />}>
           <Route path="/dashboard" element={<DashboardOverview />} />
-          <Route path="/mantenimiento" element={<MaintenanceGeneralPage />} />
-          <Route path="/mantenimiento/reportes/reautorizaciones" element={<ReauthReportPage />} />
-          <Route path="/checklist" element={<ChecklistPage />} />
-          <Route path="/alertas" element={<AlertsPage />} />
-          <Route path="/reportes" element={<ReportsPage />} />
-          <Route path="/lienzo" element={<CanvasBoardsListPage />} />
-          <Route path="/lienzo/:boardId" element={<CanvasBoardEditorPage />} />
-          <Route path="/combustible" element={<FuelPage />} />
-          <Route path="/peajes" element={<PeajesPage />} />
-          <Route path="/finanzas/facturas" element={<FacturasPage />} />
-          <Route path="/finanzas/caja-chica" element={<CajaChicaPage />} />
-          <Route path="/finanzas/transacciones" element={<TransaccionesPage />} />
-          <Route path="/finanzas/estadisticas" element={<EstadisticasPage />} />
           <Route path="/perfil" element={<ProfilePage />} />
           <Route path="/configuracion" element={<SettingsPage />} />
-          <Route path="/flotas" element={<FlotasPage />} />
-          <Route path="/operaciones/conductores" element={<DriversPage />} />
-          <Route path="/operaciones/asignaciones" element={<AssignmentsPage />} />
-          <Route path="/gestion/garajes" element={<GaragesPage />} />
-          <Route path="/gestion/sedes" element={<SitesManagementPage />} />
-          <Route path="/gestion/seguros" element={<InsuranceManagementPage />} />
-          <Route path="/gestion/talleres" element={<GestionTalleresPage />} />
-          <Route path="/gestion/proveedores" element={<GestionProveedoresPage />} />
           <Route path="/accesos/usuarios" element={<UsersPage />} />
           <Route path="/accesos/roles" element={<RolesPage />} />
-          <Route path="/autorizaciones" element={<AutorizacionesPage />} />
-          <Route path="/soporte" element={<SoportePage />} />
-          <Route path="/geolocalizacion" element={<GeolocationPage />} />
-          <Route path="/aires-acondicionados" element={<AcPage />} />
-          <Route path="/aires-acondicionados/mantenimientos" element={<AcMaintenancesPage />} />
+
+          {/* jul 2026 v6 — Cada ruta de módulo de empresa se envuelve
+              con RequireCompanyModule. Si la empresa no tiene el módulo
+              activo, redirige a /dashboard. Backend valida con
+              requireModule() como segunda línea de defensa. */}
+          <Route path="/mantenimiento" element={
+            <RequireCompanyModule module="mantenimiento">
+              <MaintenanceGeneralPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/mantenimiento/reportes/reautorizaciones" element={
+            <RequireCompanyModule module="mantenimiento">
+              <ReauthReportPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/checklist" element={
+            <RequireCompanyModule module="checklist">
+              <ChecklistPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/alertas" element={
+            <RequireCompanyModule module="alertas">
+              <AlertsPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/reportes" element={
+            <RequireCompanyModule module="reportes">
+              <ReportsPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/lienzo" element={
+            <RequireCompanyModule module="lienzo">
+              <CanvasBoardsListPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/lienzo/:boardId" element={
+            <RequireCompanyModule module="lienzo">
+              <CanvasBoardEditorPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/combustible" element={
+            <RequireCompanyModule module="combustible">
+              <FuelPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/peajes" element={
+            <RequireCompanyModule module="peajes">
+              <PeajesPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/finanzas/facturas" element={
+            <RequireCompanyModule module="finanzas">
+              <FacturasPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/finanzas/caja-chica" element={
+            <RequireCompanyModule module="finanzas">
+              <CajaChicaPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/finanzas/transacciones" element={
+            <RequireCompanyModule module="finanzas">
+              <TransaccionesPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/finanzas/estadisticas" element={
+            <RequireCompanyModule module="finanzas">
+              <EstadisticasPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/flotas" element={
+            <RequireCompanyModule module="gestion">
+              <FlotasPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/operaciones/conductores" element={
+            <RequireCompanyModule module="gestion">
+              <DriversPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/operaciones/asignaciones" element={
+            <RequireCompanyModule module="gestion">
+              <AssignmentsPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/gestion/garajes" element={
+            <RequireCompanyModule module="gestion">
+              <GaragesPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/gestion/sedes" element={
+            <RequireCompanyModule module="gestion">
+              <SitesManagementPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/gestion/seguros" element={
+            <RequireCompanyModule module="seguros">
+              <InsuranceManagementPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/gestion/talleres" element={
+            <RequireCompanyModule module="gestion">
+              <GestionTalleresPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/gestion/proveedores" element={
+            <RequireCompanyModule module="gestion">
+              <GestionProveedoresPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/autorizaciones" element={
+            <RequireCompanyModule module="autorizaciones">
+              <AutorizacionesPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/soporte" element={
+            <RequireCompanyModule module="soporte">
+              <SoportePage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/geolocalizacion" element={
+            <RequireCompanyModule module="geolocalizacion">
+              <GeolocationPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/aires-acondicionados" element={
+            <RequireCompanyModule module="ac">
+              <AcPage />
+            </RequireCompanyModule>
+          } />
+          <Route path="/aires-acondicionados/mantenimientos" element={
+            <RequireCompanyModule module="ac">
+              <AcMaintenancesPage />
+            </RequireCompanyModule>
+          } />
         </Route>
 
         {/* ── Plataforma ── */}
@@ -219,15 +374,17 @@ export default function App() {
           <Route path="/platform/plans" element={<PlansPage />} />
           <Route path="/platform/companies" element={<CompaniesPage />} />
           <Route path="/platform/companies/:id/ai" element={<CompanyAIPage />} />
-          <Route path="/platform/leads" element={<LeadsPage />} />
           <Route path="/platform/modules" element={<ModulesPage />} />
           <Route path="/platform/users" element={<PlatformUsersPage />} />
           <Route path="/platform/audit" element={<AuditPage />} />
           <Route path="/platform/settings" element={<PlatformSettingsPage />} />
-          <Route path="/platform/crm" element={<CRMPage />} />
-          <Route path="/platform/billing" element={<BillingPage />} />
           <Route path="/platform/fleet" element={<FleetHealthPage />} />
           <Route path="/platform/tickets" element={<PlatformTicketsPage />} />
+          {/* jul 2026 v6 — Placeholder de Geolocalización en panel master.
+              Muestra "Trabajando en el desarrollo del módulo" en vez de
+              quedar en blanco. Cuando el feature esté listo, reemplazar
+              por la página real. */}
+          <Route path="/platform/geolocalizacion" element={<PlatformGeolocationPage />} />
         </Route>
 
         {/* ── Auth (público) ── */}

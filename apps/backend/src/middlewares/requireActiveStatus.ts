@@ -20,6 +20,7 @@ import { parseId } from '../lib/ids';
  *
  * Si el usuario está inactivo, responde 401 con un código estructurado
  * para que el frontend pueda distinguir:
+ *   - COMPANY_INACTIVE: la empresa está inactiva / suspendida (jul 2026 v6)
  *   - USER_INACTIVE: la cuenta de empresa está desactivada
  *   - DRIVER_INACTIVE: el conductor fue desactivado manualmente
  *   - SITE_INACTIVE: la sede del conductor fue desactivada

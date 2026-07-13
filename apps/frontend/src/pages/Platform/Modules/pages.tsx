@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import {
   PlatformModal, ModalActions,
   InputField, TextareaField,
+  IconPicker, AccentPicker,
 } from "../../../components/platform";
 import { usePlatformModules, usePlatformPlans } from "../../../hooks/usePlatformPlans";
 import { useAuth } from "../../../context/AuthContext";
@@ -118,12 +119,21 @@ function ModuleForm({
       <InputField label="Nombre visible" value={form.label} required
         placeholder="Mantenimiento"
         onChange={e => set("label", e.target.value)} />
-      <InputField label="Icono (Lucide)" value={form.icon}
-        placeholder="Wrench"
-        onChange={e => set("icon", e.target.value)} />
-      <InputField label="Acento" value={form.accent}
-        placeholder="emerald | sky | orange | violet | …"
-        onChange={e => set("accent", e.target.value)} />
+      <div className="sm:col-span-2">
+        <IconPicker
+          value={form.icon}
+          onChange={v => set("icon", v)}
+          label="Ícono (Lucide)"
+          accent={form.accent}
+        />
+      </div>
+      <div className="sm:col-span-2">
+        <AccentPicker
+          value={form.accent}
+          onChange={v => set("accent", v)}
+          label="Acento"
+        />
+      </div>
       <InputField label="Orden" type="number"
         value={form.sortOrder}
         onChange={e => set("sortOrder", Number(e.target.value) || 100)} />

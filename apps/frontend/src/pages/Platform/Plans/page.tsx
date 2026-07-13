@@ -18,7 +18,7 @@ import {
 } from "../../../components/platform";
 import { usePlatformPlans, usePlatformModules } from "../../../hooks/usePlatformPlans";
 import type {
-  PlatformPlan, PlatformPlanInput, PlanTier, PlatformModule, PublicPlan,
+  PlatformPlan, PlatformPlanInput, PlanTier, PlatformModule,
 } from "../../../types/platform";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -455,8 +455,7 @@ export function PlansPage() {
     setModalOpen(true);
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSubmit() {
     setSubmitting(true);
     try {
       if (editing) {
@@ -552,18 +551,17 @@ export function PlansPage() {
         footer={
           <ModalActions
             onCancel={() => setModalOpen(false)}
+            onConfirm={handleSubmit}
             submitting={submitting}
             submitLabel={editing ? "Guardar cambios" : "Crear plan"} />
         }
       >
-        <form id="plan-form" onSubmit={handleSubmit}>
-          <PlanForm
-            form={form}
-            onChange={setForm}
-            isEdit={!!editing}
-            availableModules={allModules}
-          />
-        </form>
+        <PlanForm
+          form={form}
+          onChange={setForm}
+          isEdit={!!editing}
+          availableModules={allModules}
+        />
       </PlatformModal>
 
       {/* Modal eliminar */}
@@ -577,19 +575,21 @@ export function PlansPage() {
         iconColor="text-error-600 dark:text-error-400"
         maxWidth="max-w-md"
         footer={
-          <ModalActions onCancel={() => setDeleteOpen(false)}
-            submitting={submitting} submitLabel="Sí, eliminar" danger />
+          <ModalActions
+            onCancel={() => setDeleteOpen(false)}
+            onConfirm={handleDelete}
+            submitting={submitting}
+            submitLabel="Sí, eliminar"
+            danger />
         }
       >
-        <form onSubmit={handleDelete}>
-          <div className="px-6 py-4">
-            <div className="rounded-xl border border-error-100 bg-error-50 px-4 py-3 dark:border-error-500/20 dark:bg-error-500/[0.07]">
-              <p className="text-sm text-error-700 dark:text-error-400">
-                Las empresas asignadas a este plan quedarán sin plan asignado.
-              </p>
-            </div>
+        <div className="px-6 py-4">
+          <div className="rounded-xl border border-error-100 bg-error-50 px-4 py-3 dark:border-error-500/20 dark:bg-error-500/[0.07]">
+            <p className="text-sm text-error-700 dark:text-error-400">
+              Las empresas asignadas a este plan quedarán sin plan asignado.
+            </p>
           </div>
-        </form>
+        </div>
       </PlatformModal>
     </div>
   );
@@ -610,5 +610,3 @@ function KpiTile({ label, value, sub, color }: { label: string; value: string; s
   );
 }
 
-// Helper que ya no se usa pero lo dejamos para evitar imports muertos
-void PublicPlan;

@@ -10,7 +10,7 @@ export interface PlatformUserRow {
   type: "platform";
   email: string;
   username: string;
-  role: "superadmin" | "admin_saas" | "comercial" | "soporte";
+  role: "superadmin" | "admin_saas" | "soporte";
   status: "active" | "inactive";
   createdAt: string;
   updatedAt: string;

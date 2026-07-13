@@ -11,7 +11,6 @@ import { onAuthInvalidated, defaultMessageForCode } from "../lib/authEvents";
 const roleLabelMap: Record<string, string> = {
   superadmin:    "Administrador master",
   admin_saas:    "Administrador de plataforma",
-  comercial:     "Comercial",
   soporte:       "Soporte",
   owner_empresa: "Propietario de empresa",
   admin_empresa: "Administrador de empresa",

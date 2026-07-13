@@ -24,6 +24,7 @@ export interface PlanLimits {
 export interface CompanyLimitsResult {
   plan: PlanLimits | null;
   counts: { total: number; admins: number; supervisors: number; operators: number; drivers: number };
+  currentAssets: number;
   loading: boolean;
   error: string | null;
   refetch: () => void;
@@ -31,6 +32,10 @@ export interface CompanyLimitsResult {
   isLimitExceeded: (roleKey: string) => boolean;
   /** True si todavía hay cupo para el rol dado. */
   canCreateRole: (roleKey: string) => boolean;
+  /** True si la empresa alcanzó `maxAssets` (no se pueden crear más vehículos). */
+  isAssetLimitReached: boolean;
+  /** True si todavía hay cupo para crear un activo. */
+  canCreateAsset: boolean;
 }
 
 function kindFromRole(roleKey: string): RoleKind | null {
@@ -47,6 +52,7 @@ export function useCompanyLimits(): CompanyLimitsResult {
 
   const [plan, setPlan]         = useState<PlanLimits | null>(null);
   const [counts, setCounts]     = useState({ total: 0, admins: 0, supervisors: 0, operators: 0, drivers: 0 });
+  const [currentAssets, setCurrentAssets] = useState(0);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState<string | null>(null);
 
@@ -55,7 +61,11 @@ export function useCompanyLimits(): CompanyLimitsResult {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/platform/companies/${companyId}/limits`, { credentials: "include" });
+      // jul 2026 v6 — Antes pegaba a /api/platform/companies/:id/limits
+      // (que requiere superadmin de plataforma). Ahora usamos
+      // /api/company/:id/limits, accesible para cualquier admin/owner
+      // de la empresa — que es quien realmente crea usuarios y activos.
+      const res = await fetch(`/api/company/${companyId}/limits`, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setPlan(json.plan ? {
@@ -69,6 +79,7 @@ export function useCompanyLimits(): CompanyLimitsResult {
         planId:         json.plan.id,
       } : null);
       setCounts(json.counts);
+      setCurrentAssets(json.currentAssets ?? 0);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error desconocido");
     } finally {
@@ -95,5 +106,14 @@ export function useCompanyLimits(): CompanyLimitsResult {
     return !isLimitExceeded(roleKey);
   }
 
-  return { plan, counts, loading, error, refetch: fetchLimits, isLimitExceeded, canCreateRole };
+  // jul 2026 — gating de creación de activos (vehículos/flotas). null = sin
+  // límite, así que siempre se puede crear.
+  const isAssetLimitReached = plan?.maxAssets != null && currentAssets >= plan.maxAssets;
+  const canCreateAsset      = !isAssetLimitReached;
+
+  return {
+    plan, counts, currentAssets, loading, error,
+    refetch: fetchLimits, isLimitExceeded, canCreateRole,
+    isAssetLimitReached, canCreateAsset,
+  };
 }

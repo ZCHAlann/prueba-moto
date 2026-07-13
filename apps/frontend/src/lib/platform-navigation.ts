@@ -32,16 +32,6 @@ export const platformNavigationSections: NavigationSection[] = [
     ],
   },
   {
-    label: "Comercial",
-    icon: "CRM",
-    description: "Pipeline y clientes",
-    accent: "amber",
-    items: [
-      { label: "CRM",         href: "/platform/crm",     icon: "CRM", description: "Embudo y seguimiento",                accent: "amber" },
-      { label: "Facturación", href: "/platform/billing", icon: "FC",  description: "Renovaciones y pagos",                accent: "amber" },
-    ],
-  },
-  {
     label: "Flota y equipos",
     icon: "FL",
     description: "Activos fisicos",
@@ -59,12 +49,16 @@ export const platformNavigationSections: NavigationSection[] = [
     items: [
       {
         label: "Geolocalizacion",
-        href: "/geolocalizacion",
+        // jul 2026 v6 — antes apuntaba a /geolocalizacion (ruta de
+        // operacion) que dejaba la pagina en blanco para el superadmin
+        // porque no tiene empresa. Ahora apunta al placeholder de
+        // plataforma.
+        href: "/platform/geolocalizacion",
         icon: "GL",
         description: "Vista de unidades y zonas activas",
         accent: "teal",
       },
     ],
   }
-  
+
 ];

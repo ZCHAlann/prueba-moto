@@ -9,7 +9,7 @@
 
 import { db } from '../db/client';
 import { companyDrivers, companySites } from '../db/schema/operational';
-import { companyUsers } from '../db/schema/platform';
+import { companies, companyUsers } from '../db/schema/platform';
 import { and, eq } from 'drizzle-orm';
 import {
   isUserEffectivelyActive,
@@ -19,6 +19,7 @@ import {
 export interface UserEffectivelyActiveFromDb {
   userId:    number;
   companyId: number;
+  companyStatus: string;
   userStatus:   string;
   driverStatus: string | null;
   siteStatus:   string | null;
@@ -32,16 +33,23 @@ export async function getUserEffectivelyActiveFromDb(
 ): Promise<UserEffectivelyActiveFromDb | null> {
   // LEFT JOIN drivers con el WHERE sobre userId+companyId para limitar
   // a un único driver (en la práctica solo hay uno por user, pero por
-  // defensa limit(1)).
+  // defensa limit(1)). Incluimos `companies` para chequear el status
+  // de la empresa (jul 2026 v6): si la empresa está inactiva /
+  // suspendida, NINGÚN user puede operar.
   const rows = await db
     .select({
       userId:      companyUsers.id,
       companyId:   companyUsers.companyId,
+      companyStatus: companies.status,
       userStatus:  companyUsers.status,
       driverStatus: companyDrivers.status,
       siteStatus:   companySites.status,
     })
     .from(companyUsers)
+    .leftJoin(
+      companies,
+      eq(companies.id, companyUsers.companyId),
+    )
     .leftJoin(
       companyDrivers,
       and(
@@ -63,6 +71,7 @@ export async function getUserEffectivelyActiveFromDb(
   const row = rows[0]!;
 
   const result = isUserEffectivelyActive({
+    companyStatus: row.companyStatus,
     userStatus:   row.userStatus,
     driverStatus: row.driverStatus,
     siteStatus:   row.siteStatus,
@@ -71,6 +80,7 @@ export async function getUserEffectivelyActiveFromDb(
   return {
     userId:    row.userId,
     companyId: row.companyId,
+    companyStatus: row.companyStatus,
     userStatus:   row.userStatus,
     driverStatus: row.driverStatus,
     siteStatus:   row.siteStatus,
@@ -144,4 +154,20 @@ export function invalidateSiteStatusCache(_siteId: number): void {
   // request lo regenera. Si el Set crece a >500 entradas en producción,
   // conviene cambiar a un Map<siteId, Set<userKey>> y borrar selectivo.
   _cache.clear();
+}
+
+/**
+ * jul 2026 v6 — Invalidar el cache de TODOS los usuarios de una empresa.
+ * Llamar cuando se cambia el `status` de la empresa (active → inactive /
+ * suspended / trial), para que el middleware empiece a bloquear las
+ * requests de esos usuarios en el próximo request, sin esperar al TTL
+ * de 60s. Recorre el Map y borra todas las entradas con ese companyId.
+ */
+export function invalidateCompanyStatusCache(companyId: number): void {
+  for (const [key, _entry] of _cache) {
+    const [keyCompanyId] = key.split(':');
+    if (keyCompanyId === String(companyId)) {
+      _cache.delete(key);
+    }
+  }
 }

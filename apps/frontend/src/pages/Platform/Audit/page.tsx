@@ -11,7 +11,7 @@ import { usePlatformAudit }      from "../../../hooks/usePlatformAudit";
 import { usePlatformAuditStats } from "../../../hooks/usePlatformAuditStats";
 import { ExportToolbar }         from "../../../components/ui/export-toolbar/ExportToolbar";
 import type { PlatformAuditEntry } from "../../../types/platform";
-import { fmtDateTimeEc } from "@/lib/datetime";
+import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

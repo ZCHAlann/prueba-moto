@@ -143,6 +143,11 @@ function serializeAuthorization(
     assetLabel:    info.assetLabel,
     assetName:     info.assetName,
     assetPlate:    info.assetPlate,
+    // jul 2026 v6 — Foto de perfil del vehículo (la misma que se ve
+    // en Flotas y en el drawer de detalle). Aparece al lado del
+    // nombre/placa en cada autorización pendiente para que el
+    // aprobador identifique el vehículo de un vistazo.
+    assetPhotoUrl: r.assetPhotoUrl ?? r.asset_photo_url ?? null,
     driverName:    info.driverName,
     decidedByName: info.decidedByName ?? (
       ((r.decisionNotes ?? r.decision_notes ?? '') as string).includes('automáticamente')
@@ -152,11 +157,12 @@ function serializeAuthorization(
   };
 }
 
-/** Helper: resuelve assetPlate, assetName, assetLabel y driverName en una sola query. */
+/** Helper: resuelve assetPlate, assetName, assetLabel, assetPhotoUrl y driverName en una sola query. */
 async function fetchEnrichInfo(assetId: number, driverId: number, companyId: number): Promise<{
   assetLabel: string | null;
   assetName:  string | null;
   assetPlate: string | null;
+  assetPhotoUrl: string | null;
   driverName: string | null;
 }> {
   // Asset y driver en queries separadas. Esto evita el problema del
@@ -166,8 +172,9 @@ async function fetchEnrichInfo(assetId: number, driverId: number, companyId: num
     name:  string | null;
     plate: string | null;
     code:  string | null;
+    profile_photo_url: string | null;
   }>(sql`
-    SELECT name, plate, code
+    SELECT name, plate, code, profile_photo_url
     FROM company_assets
     WHERE id = ${assetId}
       AND company_id = ${companyId}
@@ -186,9 +193,10 @@ async function fetchEnrichInfo(assetId: number, driverId: number, companyId: num
   `);
 
   return {
-    assetLabel: assetRow?.code  ?? null,
-    assetName:  assetRow?.name  ?? null,
-    assetPlate: assetRow?.plate ?? null,
+    assetLabel:    assetRow?.code  ?? null,
+    assetName:     assetRow?.name  ?? null,
+    assetPlate:    assetRow?.plate ?? null,
+    assetPhotoUrl: assetRow?.profile_photo_url ?? null,
     driverName: driverRow
       ? `${driverRow.first_name ?? ''} ${driverRow.last_name ?? ''}`.trim() || null
       : null,
@@ -233,12 +241,14 @@ router.get('/conductor-context', requireModule('autorizaciones'), async (req, re
       plate: string | null;
       brand: string | null;
       model: string | null;
+      profile_photo_url: string | null;
     }>(sql`
       SELECT
         ast.id    AS asset_id,
         ast.plate,
         ast.brand,
-        ast.model
+        ast.model,
+        ast.profile_photo_url
       FROM company_assignments a
       JOIN company_assets ast
         ON ast.id = a.asset_id
@@ -252,7 +262,13 @@ router.get('/conductor-context', requireModule('autorizaciones'), async (req, re
       LIMIT 1
     `);
     const asset = ctxRow && ctxRow.asset_id != null
-      ? { id: String(ctxRow.asset_id), plate: ctxRow.plate ?? '', brand: ctxRow.brand ?? '', model: ctxRow.model ?? '' }
+      ? {
+          id: String(ctxRow.asset_id),
+          plate: ctxRow.plate ?? '',
+          brand: ctxRow.brand ?? '',
+          model: ctxRow.model ?? '',
+          profilePhotoUrl: ctxRow.profile_photo_url ?? null,
+        }
       : null;
 
     const auths = await db
@@ -285,9 +301,10 @@ router.get('/conductor-context', requireModule('autorizaciones'), async (req, re
       driverId: driverRow.id,
       asset,
       authorizations: auths.map((a) => serializeAuthorization(a, {
-        assetLabel: asset?.plate ?? null,
-        assetName:  asset ? `${asset.brand} ${asset.model}`.trim() : null,
-        assetPlate: asset?.plate ?? null,
+        assetLabel:    asset?.plate ?? null,
+        assetName:     asset ? `${asset.brand} ${asset.model}`.trim() : null,
+        assetPlate:    asset?.plate ?? null,
+        assetPhotoUrl: asset?.profilePhotoUrl ?? null,
         driverName,
         decidedByName: null,
       })),
@@ -355,6 +372,7 @@ router.get('/', requireModule('autorizaciones'), async (req, res, next) => {
         decision_by_user_id: number | null; decided_at: string | null;
         requested_at: string; created_at: string; updated_at: string;
         asset_name: string | null; asset_plate: string | null; asset_label: string | null;
+        asset_photo_url: string | null;
         driver_name: string | null; decided_by_name: string | null;
         ai_analysis_status: string | null; corrections_sent_at: string | null; corrections_round: number | null;
       }>(sql`
@@ -369,6 +387,7 @@ router.get('/', requireModule('autorizaciones'), async (req, res, next) => {
           ast.name  AS asset_name,
           ast.plate AS asset_plate,
           ast.code  AS asset_label,
+          ast.profile_photo_url AS asset_photo_url,
           TRIM(COALESCE(d.first_name,'') || ' ' || COALESCE(d.last_name,'')) AS driver_name,
           cu.username AS decided_by_name
         FROM company_exit_authorizations a
@@ -402,10 +421,11 @@ router.get('/', requireModule('autorizaciones'), async (req, res, next) => {
     res.json({
       ...buildPageResponse(
         rows.map((r) => serializeAuthorization(r as any, {
-          assetLabel:  r.asset_label,
-          assetName:   r.asset_name,
-          assetPlate:  r.asset_plate,
-          driverName:  r.driver_name,
+          assetLabel:    r.asset_label,
+          assetName:     r.asset_name,
+          assetPlate:    r.asset_plate,
+          assetPhotoUrl: r.asset_photo_url,
+          driverName:    r.driver_name,
           decidedByName: r.decided_by_name,
         })),
         total,
@@ -454,6 +474,7 @@ router.get('/:authId', requireModule('autorizaciones'), async (req, res, next) =
       decision_by_user_id: number | null; decided_at: string | null;
       requested_at: string; created_at: string; updated_at: string;
       asset_name: string | null; asset_plate: string | null; asset_label: string | null;
+      asset_photo_url: string | null;
       driver_name: string | null; driver_user_id: number | null;
       decided_by_name: string | null;
     }>(sql`
@@ -462,6 +483,7 @@ router.get('/:authId', requireModule('autorizaciones'), async (req, res, next) =
         ast.name  AS asset_name,
         ast.plate AS asset_plate,
         ast.code  AS asset_label,
+        ast.profile_photo_url AS asset_photo_url,
         TRIM(COALESCE(d.first_name,'') || ' ' || COALESCE(d.last_name,'')) AS driver_name,
         d.user_id AS driver_user_id,
         cu.username AS decided_by_name
@@ -483,10 +505,11 @@ router.get('/:authId', requireModule('autorizaciones'), async (req, res, next) =
     }
 
     res.json(serializeAuthorization(row as any, {
-      assetLabel:  row.asset_label,
-      assetName:   row.asset_name,
-      assetPlate:  row.asset_plate,
-      driverName:  row.driver_name,
+      assetLabel:    row.asset_label,
+      assetName:     row.asset_name,
+      assetPlate:    row.asset_plate,
+      assetPhotoUrl: row.asset_photo_url,
+      driverName:    row.driver_name,
       decidedByName: row.decided_by_name,
     }));
   } catch (err) {

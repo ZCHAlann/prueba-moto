@@ -46,7 +46,6 @@ function IconSparkles({ className }: { className?: string }) {
       <path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3zM19 14l.95 2.3 2.3.95-2.3.95L19 20.5l-.95-2.3-2.3-.95 2.3-.95L19 14zM5 16l.7 1.7L7.4 18.4l-1.7.7L5 20.8l-.7-1.7-1.7-.7 1.7-.7L5 16z" />
     </svg>
   );
-  );
 }
 function IconLoader({ className }: { className?: string }) {
   return (

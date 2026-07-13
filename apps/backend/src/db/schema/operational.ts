@@ -1844,7 +1844,11 @@ export const companyFinanceRequests = pgTable(
     id:                  serial('id').primaryKey(),
     companyId:           integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
     siteId:              integer('site_id').notNull().references(() => companySites.id, { onDelete: 'cascade' }),
-    requesterUserId:     integer('requester_user_id').notNull().references(() => companyUsers.id, { onDelete: 'restrict' }),
+    // jul 2026 v6 — antes `restrict` (rompía DELETE de usuarios con
+    // solicitudes pendientes). Ahora `cascade`: borrar el user borra sus
+    // solicitudes. Coherente con la semántica "borrar un user borra todo
+    // lo que creó" que ya usa el resto del schema.
+    requesterUserId:     integer('requester_user_id').notNull().references(() => companyUsers.id, { onDelete: 'cascade' }),
     approverUserId:      integer('approver_user_id').references(() => companyUsers.id, { onDelete: 'set null' }),
     amount:              numeric('amount', { precision: 12, scale: 2 }).notNull(),
     reason:              varchar('reason', { length: 280 }).notNull(),
@@ -1876,7 +1880,10 @@ export const companyPettyCashVouchers = pgTable(
     siteId:               integer('site_id').notNull().references(() => companySites.id, { onDelete: 'cascade' }),
     requestId:            integer('request_id').notNull().unique().references(() => companyFinanceRequests.id, { onDelete: 'cascade' }),
     accountId:            integer('account_id').notNull().references(() => companyPettyCashAccounts.id, { onDelete: 'restrict' }),
-    assignedToUserId:     integer('assigned_to_user_id').notNull().references(() => companyUsers.id, { onDelete: 'restrict' }),
+    // jul 2026 v6 — mismo motivo que company_finance_requests.requesterUserId:
+    // antes `restrict` (rompía DELETE de usuarios con vales asignados).
+    // Ahora `cascade` para que se pueda borrar un user sin tirar 500.
+    assignedToUserId:     integer('assigned_to_user_id').notNull().references(() => companyUsers.id, { onDelete: 'cascade' }),
     issuedAmount:         numeric('issued_amount', { precision: 12, scale: 2 }).notNull(),
     status:               pettyCashVoucherStatusEnum('status').notNull().default('open'),
     closedAt:             timestamp('closed_at'),

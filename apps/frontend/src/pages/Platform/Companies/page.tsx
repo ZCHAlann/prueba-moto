@@ -5,7 +5,7 @@
 // búsqueda + filtros, vista board/tabla con drawer de detalle y modal
 // de creación/edición con wizard paso a paso.
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -679,8 +679,8 @@ function CompanyWizard({
                 <button type="button"
                   onClick={() => {
                     set("enabledModules",
-                      form.enabledModules?.length === planModules.length ? [] : [...planModules],
-                    )}
+                      form.enabledModules?.length === planModules.length ? [] : [...planModules]);
+                  }}
                   className="normal-case text-brand-600 dark:text-brand-400 hover:underline">
                   {form.enabledModules?.length === planModules.length ? "Quitar todos" : "Aplicar plan"}
                 </button>
@@ -727,7 +727,7 @@ function CompanyWizard({
                     Usuario owner
                   </p>
                   <p className="mt-1 text-[11px] text-blue-800/80 dark:text-blue-300/80">
-                    Será el primer usuario de la empresa, con acceso total. Le enviaremos un email con sus credenciales.
+                    Será el primer usuario de la empresa, con acceso total.
                   </p>
                 </div>
               </div>
@@ -799,9 +799,18 @@ export function CompaniesPage() {
   const { plans }    = usePlatformPlans();
   const { data: stats } = usePlatformStats();
 
-  const [view,       setView]       = useState<ViewMode>("board");
+  const [view,       setView]       = useState<ViewMode>("table");
   const [search,     setSearch]     = useState("");
   const [filterStatus, setFilterStatus] = useState<CompanyStatus | "all">("all");
+  // Orden interactivo de la tabla. `null` = sin sort, muestra el orden
+  // del backend (que ya viene por createdAt desc).
+  type SortKey = "name" | "plan" | "status" | "users" | "modules" | "created";
+  const [sortKey,    setSortKey]    = useState<SortKey | null>(null);
+  const [sortDir,    setSortDir]    = useState<"asc" | "desc">("asc");
+  // Paginación cliente (la vista de tabla está pensada para几百 empresas;
+  // si crece a miles, conviene mover a server-side).
+  const [page,       setPage]       = useState(1);
+  const [pageSize,   setPageSize]   = useState(20);
   const [filterPlan,   setFilterPlan]   = useState<string>("all");
   const [modalOpen,  setModalOpen]  = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -828,6 +837,70 @@ export function CompaniesPage() {
       ...acc, [s]: filtered.filter(c => c.status === s),
     }), {} as Record<CompanyStatus, PlatformCompany[]>),
   [filtered]);
+
+  // Reseteamos la página cuando cambian los filtros / búsqueda.
+  useEffect(() => { setPage(1); }, [search, filterStatus, filterPlan]);
+
+  // Sort interactivo de la tabla. Aplica solo si sortKey != null.
+  const sorted = useMemo(() => {
+    if (!sortKey) return filtered;
+    const dir = sortDir === "asc" ? 1 : -1;
+    const planName = (id: string) =>
+      plans.find(p => p.id === id)?.name?.toLowerCase() ?? "";
+    return [...filtered].sort((a, b) => {
+      let av: string | number = "";
+      let bv: string | number = "";
+      switch (sortKey) {
+        case "name":    av = a.name.toLowerCase();   bv = b.name.toLowerCase();   break;
+        case "plan":    av = planName(a.planId);     bv = planName(b.planId);     break;
+        case "status":  av = a.status;              bv = b.status;               break;
+        case "users":   av = a.userCounts?.total ?? 0; bv = b.userCounts?.total ?? 0; break;
+        case "modules": av = a.enabledModules.length; bv = b.enabledModules.length; break;
+        case "created": av = new Date(a.createdAt).getTime(); bv = new Date(b.createdAt).getTime(); break;
+      }
+      if (av < bv) return -1 * dir;
+      if (av > bv) return  1 * dir;
+      return 0;
+    });
+  }, [filtered, sortKey, sortDir, plans]);
+
+  // Paginación cliente sobre `sorted`.
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const safePage   = Math.min(page, totalPages);
+  const paged      = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return sorted.slice(start, start + pageSize);
+  }, [sorted, safePage, pageSize]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      if (sortDir === "asc") setSortDir("desc");
+      else { setSortKey(null); setSortDir("asc"); }
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  const SortHeader = ({ k, label, align = "left" }: { k: SortKey; label: string; align?: "left" | "right" | "center" }) => {
+    const active = sortKey === k;
+    return (
+      <th
+        className={`px-5 py-3 text-${align} text-[11px] font-bold uppercase tracking-wider cursor-pointer select-none
+          ${active ? "text-brand-600 dark:text-brand-400" : "text-gray-400 dark:text-gray-500"}
+          hover:text-gray-700 dark:hover:text-gray-200 transition-colors`}
+        onClick={() => toggleSort(k)}
+      >
+        <span className={`inline-flex items-center gap-1 ${align === "right" ? "flex-row-reverse" : ""}`}>
+          {label}
+          <span className={`inline-flex flex-col leading-none text-[8px] ${active ? "opacity-100" : "opacity-30"}`}>
+            <span className={active && sortDir === "asc"  ? "text-brand-500" : ""}>▲</span>
+            <span className={active && sortDir === "desc" ? "text-brand-500" : ""}>▼</span>
+          </span>
+        </span>
+      </th>
+    );
+  };
 
   const donutData = useMemo(() => {
     const byPlan = stats?.companies.byPlan ?? {};
@@ -1022,8 +1095,8 @@ export function CompaniesPage() {
         </span>
       </motion.div>
 
-      <div className="grid gap-6 xl:grid-cols-4">
-        <div className="xl:col-span-3">
+      <div>
+        <div>
           {loading ? (
             <div className="flex items-center justify-center gap-3 py-24 text-gray-400">
               <svg className="animate-spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1058,38 +1131,45 @@ export function CompaniesPage() {
                   initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }}
                   exit={{ opacity:0, y:-8 }} transition={{ duration:0.2 }}
                   className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
-                  {filtered.length === 0 ? (
+                  {sorted.length === 0 ? (
                     <div className="flex flex-col items-center justify-center gap-2 py-16">
                       <Building2 size={20} className="text-gray-300 dark:text-gray-600" />
                       <p className="text-sm font-medium text-gray-400">Sin resultados</p>
                     </div>
                   ) : (
+                    <>
                     <div className="overflow-x-auto">
-                      <table className="w-full min-w-[900px] text-sm">
-                        <thead>
+                      <table className="w-full min-w-[960px] text-sm">
+                        <thead className="sticky top-0 z-10 bg-white/95 backdrop-blur dark:bg-gray-900/90">
                           <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                            {["Empresa","Plan","Estado","Usuarios","Módulos","Contacto","Creada",""].map(h => (
-                              <th key={h} className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">{h}</th>
-                            ))}
+                            <SortHeader k="name"    label="Empresa" />
+                            <SortHeader k="plan"    label="Plan" />
+                            <SortHeader k="status"  label="Estado" />
+                            <SortHeader k="users"   label="Usuarios" align="right" />
+                            <SortHeader k="modules" label="Módulos" align="right" />
+                            <th className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Contacto</th>
+                            <SortHeader k="created" label="Creada" align="right" />
+                            <th className="px-5 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Acciones</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                          <AnimatePresence>
-                            {filtered.map((company, i) => {
+                          <AnimatePresence initial={false}>
+                            {paged.map((company, i) => {
                               const plan = plans.find(p => p.id === company.planId);
                               const counts = company.userCounts;
                               return (
                                 <motion.tr key={company.id}
                                   initial={{ opacity:0, y:6 }} animate={{ opacity:1, y:0 }}
                                   exit={{ opacity:0 }}
-                                  transition={{ duration:0.18, delay: i*0.03 }}
-                                  className="group transition-colors hover:bg-gray-50/80 dark:hover:bg-white/[0.02]">
+                                  transition={{ duration:0.15, delay: i*0.02 }}
+                                  onClick={() => setDrawerCompany(company)}
+                                  className="group cursor-pointer transition-colors hover:bg-brand-50/40 dark:hover:bg-brand-500/[0.04]">
                                   <td className="px-5 py-3.5">
                                     <div className="flex items-center gap-2.5">
                                       <CompanyAvatar name={company.name} size="sm" />
-                                      <div>
-                                        <p className="font-semibold text-gray-800 dark:text-white">{company.name}</p>
-                                        <p className="text-[11px] text-gray-400 font-mono">{company.slug}</p>
+                                      <div className="min-w-0">
+                                        <p className="truncate font-semibold text-gray-800 dark:text-white">{company.name}</p>
+                                        <p className="truncate text-[11px] text-gray-400 font-mono">{company.slug}</p>
                                       </div>
                                     </div>
                                   </td>
@@ -1100,12 +1180,12 @@ export function CompaniesPage() {
                                       </span>
                                     )}
                                   </td>
-                                  <td className="px-5 py-3.5">
+                                  <td className="px-5 py-3.5" onClick={(e) => e.stopPropagation()}>
                                     <StatusSwitcher company={company} onUpdate={handleStatusChange} />
                                   </td>
-                                  <td className="px-5 py-3.5">
+                                  <td className="px-5 py-3.5 text-right">
                                     {counts && (
-                                      <div className="flex flex-col gap-0.5">
+                                      <div className="flex flex-col items-end gap-0.5">
                                         <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 tabular-nums">
                                           {counts.total}
                                           {plan?.maxUsers !== null && plan?.maxUsers !== undefined && (
@@ -1118,33 +1198,36 @@ export function CompaniesPage() {
                                       </div>
                                     )}
                                   </td>
-                                  <td className="px-5 py-3.5">
-                                    <span className="rounded-lg bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:bg-white/[0.06] dark:text-gray-300">
-                                      {company.enabledModules.length} módulos
+                                  <td className="px-5 py-3.5 text-right">
+                                    <span className="rounded-lg bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:bg-white/[0.06] dark:text-gray-300 tabular-nums">
+                                      {company.enabledModules.length}
                                     </span>
                                   </td>
                                   <td className="px-5 py-3.5">
-                                    <p className="text-xs text-gray-700 dark:text-gray-200">{company.contactName || "—"}</p>
-                                    <p className="text-[11px] text-gray-400">{company.contactEmail || ""}</p>
+                                    <p className="truncate text-xs text-gray-700 dark:text-gray-200 max-w-[200px]">{company.contactName || "—"}</p>
+                                    <p className="truncate text-[11px] text-gray-400 max-w-[200px]">{company.contactEmail || ""}</p>
                                   </td>
-                                  <td className="px-5 py-3.5 text-xs text-gray-500 dark:text-gray-400">
+                                  <td className="px-5 py-3.5 text-right text-xs text-gray-500 dark:text-gray-400 tabular-nums">
                                     {fmtDate(company.createdAt)}
                                   </td>
-                                  <td className="px-5 py-3.5 group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02]">
-                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <td className="px-5 py-3.5" onClick={(e) => e.stopPropagation()}>
+                                    <div className="flex items-center justify-end gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
                                       <motion.button type="button" whileTap={{ scale:0.9 }}
                                         onClick={() => setDrawerCompany(company)}
+                                        title="Ver detalle"
                                         className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition hover:text-brand-500 dark:border-white/[0.08]">
                                         <ExternalLink size={12} />
                                       </motion.button>
                                       <motion.button type="button" whileTap={{ scale:0.9 }}
                                         onClick={() => openEdit(company)}
+                                        title="Editar"
                                         className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition hover:text-brand-500 dark:border-white/[0.08]">
                                         <Pencil size={12} />
                                       </motion.button>
                                       {isSuperadmin && (
                                         <motion.button type="button" whileTap={{ scale:0.9 }}
                                           onClick={() => { setDeleting(company); setDeleteOpen(true); }}
+                                          title="Eliminar"
                                           className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition hover:text-rose-500 dark:border-white/[0.08]">
                                           <Trash2 size={12} />
                                         </motion.button>
@@ -1158,45 +1241,64 @@ export function CompaniesPage() {
                         </tbody>
                       </table>
                     </div>
+                    {/* Paginación cliente */}
+                    <div className="flex flex-col items-center justify-between gap-3 border-t border-gray-100 px-5 py-3 dark:border-white/[0.06] sm:flex-row">
+                      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                        <span>Filas por página</span>
+                        <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}
+                          className="h-7 rounded-lg border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none
+                            dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200">
+                          {[10, 20, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                        <span className="ml-2">
+                          {sorted.length === 0 ? "0" : `${(safePage - 1) * pageSize + 1}–${Math.min(safePage * pageSize, sorted.length)}`} de {sorted.length}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <motion.button type="button" whileTap={{ scale:0.95 }} disabled={safePage === 1}
+                          onClick={() => setPage(p => Math.max(1, p - 1))}
+                          className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-500 transition
+                            hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40
+                            dark:border-white/[0.08] dark:text-gray-400">
+                          <ChevronLeft size={12} />
+                        </motion.button>
+                        {Array.from({ length: totalPages }, (_, i) => i + 1)
+                          .filter(p => p === 1 || p === totalPages || Math.abs(p - safePage) <= 1)
+                          .reduce<(number | "...")[]>((acc, p, idx, arr) => {
+                            if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) acc.push("...");
+                            acc.push(p);
+                            return acc;
+                          }, [])
+                          .map((p, i) => p === "..." ? (
+                            <span key={`g${i}`} className="px-1 text-xs text-gray-400">…</span>
+                          ) : (
+                            <motion.button key={p} type="button" whileTap={{ scale:0.95 }}
+                              onClick={() => setPage(p as number)}
+                              className={`flex h-7 min-w-[28px] items-center justify-center rounded-lg border px-2 text-xs font-semibold transition
+                                ${safePage === p
+                                  ? "border-brand-500 bg-brand-500 text-white"
+                                  : "border-gray-200 text-gray-600 hover:border-brand-300 hover:text-brand-600 dark:border-white/[0.08] dark:text-gray-300"
+                                }`}>
+                              {p}
+                            </motion.button>
+                          ))
+                        }
+                        <motion.button type="button" whileTap={{ scale:0.95 }} disabled={safePage === totalPages}
+                          onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                          className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-500 transition
+                            hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40
+                            dark:border-white/[0.08] dark:text-gray-400">
+                          <ChevronRight size={12} />
+                        </motion.button>
+                      </div>
+                    </div>
+                    </>
                   )}
                 </motion.div>
               )}
             </AnimatePresence>
           )}
         </div>
-
-        {/* Donut lateral */}
-        <motion.div
-          initial={{ opacity:0, x:16 }} animate={{ opacity:1, x:0 }}
-          transition={{ duration:0.35, delay:0.25 }}
-          className="rounded-2xl border border-gray-200 bg-white px-5 pb-5 pt-5 dark:border-white/[0.06] dark:bg-white/[0.03]">
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-white">Por plan</h3>
-          <p className="mt-0.5 mb-4 text-xs text-gray-400 dark:text-gray-500">Distribución actual</p>
-          {donutData.some(d => d.value > 0) ? (
-            <ReactApexChart options={donutOptions} series={donutData.map(d => d.value)} type="donut" height={220} />
-          ) : (
-            <div className="flex flex-col items-center justify-center py-10">
-              <p className="text-xs text-gray-400">Sin datos aún</p>
-            </div>
-          )}
-          <div className="mt-4 space-y-2 border-t border-gray-100 pt-4 dark:border-white/[0.06]">
-            {STATUS_ORDER.map(s => {
-              const count = companies.filter(c => c.status === s).length;
-              const meta  = STATUS_META[s];
-              const pct   = companies.length > 0 ? Math.round((count / companies.length) * 100) : 0;
-              return (
-                <div key={s} className="flex items-center gap-2">
-                  <span className={`h-2 w-2 rounded-full ${meta.accent}`} />
-                  <span className="flex-1 text-[11px] text-gray-500 dark:text-gray-400">{meta.label}</span>
-                  <span className="text-[11px] font-semibold text-gray-700 dark:text-gray-200">{count}</span>
-                  <div className="w-16 h-1 rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
-                    <div className={`h-full rounded-full ${meta.accent} transition-all duration-500`} style={{ width:`${pct}%` }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </motion.div>
       </div>
 
       <CompanyDrawer
@@ -1240,21 +1342,20 @@ export function CompaniesPage() {
         footer={
           <ModalActions
             onCancel={() => setDeleteOpen(false)}
+            onConfirm={handleDelete}
             submitting={submitting}
             submitLabel="Sí, eliminar"
             danger
           />
         }
       >
-        <form onSubmit={handleDelete}>
-          <div className="px-6 py-4">
-            <div className="rounded-xl border border-error-100 bg-error-50 px-4 py-3 dark:border-error-500/20 dark:bg-error-500/[0.07]">
-              <p className="text-sm text-error-700 dark:text-error-400">
-                Se borrarán también todos los usuarios, vehículos, mantenimientos y datos asociados. Esta acción es IRREVERSIBLE.
-              </p>
-            </div>
+        <div className="px-6 py-4">
+          <div className="rounded-xl border border-error-100 bg-error-50 px-4 py-3 dark:border-error-500/20 dark:bg-error-500/[0.07]">
+            <p className="text-sm text-error-700 dark:text-error-400">
+              Se borrarán también todos los usuarios, vehículos, mantenimientos y datos asociados. Esta acción es IRREVERSIBLE.
+            </p>
           </div>
-        </form>
+        </div>
       </PlatformModal>
     </div>
   );

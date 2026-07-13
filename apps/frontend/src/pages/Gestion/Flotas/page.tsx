@@ -22,9 +22,11 @@ import {
   ChevronDown, Filter, MoreHorizontal, MapPin, User, Fuel,
   Droplets, Calendar, Hash, AlertTriangle, FileText,
   ChevronLeft, ChevronRight, Eye, Warehouse, Upload, Camera,
+  AlertCircle,
 } from "lucide-react";
 import { useDrivers } from "@/hooks/useDrivers";
 import { useSites } from "@/hooks/useSites";
+import { useCompanyLimits } from "@/hooks/useCompanyLimits";
 import { fmtDateShortEc } from "@/lib/datetime";
 import { RowActionMenu } from "../../../components/ui/table/RowActionMenu";
 
@@ -1022,6 +1024,10 @@ export default function FlotasPage() {
   const { assets, loading, deleteAsset, refresh } = useAssets();
   const { garages } = useGarages();
   const { can } = usePermissions();
+  // jul 2026 v6 — gating por plan: si maxAssets está al máximo, NO mostramos
+  // el botón "Nuevo vehículo" (lo cambiamos por un pill informativo). El
+  // backend igual valida con assertWithinPlanAssetLimit.
+  const limits = useCompanyLimits();
 
   const canCreate      = can("gestion", "flotas", "crear");
   const canEdit        = can("gestion", "flotas", "editar");
@@ -1134,12 +1140,17 @@ export default function FlotasPage() {
         subtitle="Centro operativo de vehículos — detalle completo, historial y acciones sin salir de la tabla."
         accent="sky"
         action={
-          canCreate ? (
+          canCreate && !limits.isAssetLimitReached ? (
             <button onClick={() => setShowCreateModal(true)}
               className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-sky-500/20 hover:bg-sky-600 active:scale-95">
               <Plus size={15} />Nuevo vehículo
             </button>
-          ) : undefined
+          ) : canCreate && limits.isAssetLimitReached && limits.plan ? (
+            <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+              <AlertCircle size={12} />
+              Plan "{limits.plan.planName}" al máximo de vehículos ({limits.currentAssets}/{limits.plan.maxAssets})
+            </span>
+          ) : null
         }
       />
 

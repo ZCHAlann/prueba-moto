@@ -234,7 +234,15 @@ export function FloatingAiAssistant() {
   }
 
   const rol = session?.role;
-  if (!companyId || (rol !== "admin_empresa" && rol !== "owner_empresa")) return null;
+  // También respetamos los módulos habilitados por la empresa: si el
+  // owner desactivó el módulo "jarvis" en la config de la empresa, el
+  // FAB no debe aparecer aunque el user sea admin. (Mismo gating que
+  // el resto de los módulos: se chequea contra `companyModules`.)
+  // IMPORTANTE: este `return null` debe ir DESPUÉS de todos los hooks
+  // (useState/useEffect/useCallback/useRef), sino React tira
+  // "Rendered fewer hooks than expected" cuando el guard cambia entre
+  // renders. Ver https://react.dev/link/rules-of-hooks
+  const companyHasJarvis = (session?.companyModules ?? []).includes("jarvis");
 
   // ── Cerrar al click fuera ──────────────────────────────────────────
   useEffect(() => {
@@ -945,6 +953,11 @@ function speakLastResponse() {
     "¿Qué checklists están pendientes?",
     "Gasto en peajes este mes",
   ];
+
+  // Guard: si no hay empresa, no es admin/owner, o la empresa tiene
+  // el módulo "jarvis" desactivado, no renderizamos el FAB. Va
+  // DESPUÉS de todos los hooks para no romper Rules of Hooks.
+  if (!companyId || (rol !== "admin_empresa" && rol !== "owner_empresa") || !companyHasJarvis) return null;
 
   return (
     <>

@@ -13,6 +13,8 @@ interface PlatformModalProps {
   maxWidth?: string;     // default "max-w-2xl"
   children: ReactNode;
   footer?: ReactNode;    // botones de acción
+  /** Para wizards que renderizan su propio footer interno. */
+  hideFooter?: boolean;
 }
 
 export function PlatformModal({
@@ -26,6 +28,7 @@ export function PlatformModal({
   maxWidth = "max-w-2xl",
   children,
   footer,
+  hideFooter = false,
 }: PlatformModalProps) {
   return (
     <AnimatePresence>
@@ -86,7 +89,7 @@ export function PlatformModal({
             </div>
 
             {/* Footer */}
-            {footer && (
+            {footer && !hideFooter && (
               <div className="flex items-center justify-end gap-3 border-t border-gray-100 px-6 py-4 dark:border-white/[0.06]">
                 {footer}
               </div>

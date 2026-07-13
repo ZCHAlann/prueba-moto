@@ -145,11 +145,13 @@ const itemSchema = z.object({
   name:       safeString({ min: 1, max: 180, fieldLabel: 'Repuesto', allowEmpty: false }),
   quantity:   z.number().positive().max(1_000_000).default(1),
   unitCost:   z.number().nonnegative().max(1_000_000_000).default(0),
-  // jul 2026 v4-b — Migración 0050. Descuento + IVA por item.
-  //   discountPercent : 0..100, default 0
-  //   ivaPercent      : 0..100, default 15 (Ecuador IVA general)
-  discountPercent: z.number().min(0).max(100).default(0),
-  ivaPercent:      z.number().min(0).max(100).default(15),
+  // jul 2026 v4-c — `discountValue` es IMPORTE monetario (no porcentaje).
+  // Antes se llamaba `discountPercent` (0..100) y representaba un
+  // porcentaje. Ver migración 0042 (rename) + lib/maintenance-totals.
+  // El backend clampea al subtotal original (qty*unitCost) para que
+  // nunca quede negativo — no hace falta validación adicional acá.
+  discountValue: z.number().min(0).default(0),
+  ivaPercent:    z.number().min(0).max(100).default(15),
   photoUrl:   z.string().min(1).optional().nullable(),
   // jul 2026 — FK lógica al attachment del array `attachments` del
   // mismo mantenimiento (Opción A). NULL = item sin factura.
@@ -411,7 +413,7 @@ async function recalcMaintenanceTotal(maintenanceId: number, companyId: number):
     .select({
       quantity:         companyMaintenanceCarwashExtras.quantity,
       unitCost:         companyMaintenanceCarwashExtras.unitCost,
-      discountPercent:  companyMaintenanceCarwashExtras.discountPercent,
+      discountValue:    companyMaintenanceCarwashExtras.discountValue,
       ivaPercent:       companyMaintenanceCarwashExtras.ivaPercent,
     })
     .from(companyMaintenanceCarwashExtras)
@@ -429,7 +431,7 @@ async function recalcMaintenanceTotal(maintenanceId: number, companyId: number):
       .select({
         quantity:         companyMaintenanceItems.quantity,
         unitCost:         companyMaintenanceItems.unitCost,
-        discountPercent:  companyMaintenanceItems.discountPercent,
+        discountValue:    companyMaintenanceItems.discountValue,
         ivaPercent:       companyMaintenanceItems.ivaPercent,
       })
       .from(companyMaintenanceItems)
@@ -462,10 +464,10 @@ async function loadItemsMap(maintenanceIds: number[]): Promise<Map<number, any[]
       quantity:       companyMaintenanceItems.quantity,
       unitCost:       companyMaintenanceItems.unitCost,
       subtotal:       companyMaintenanceItems.subtotal,
-      // jul 2026 v4-b — Migración 0050. Descuento + IVA por item.
-      discountPercent: companyMaintenanceItems.discountPercent,
-      ivaPercent:      companyMaintenanceItems.ivaPercent,
-      ivaAmount:       companyMaintenanceItems.ivaAmount,
+      // jul 2026 v4-c — IMPORTE del descuento (no porcentaje). Migración 0042.
+      discountValue:  companyMaintenanceItems.discountValue,
+      ivaPercent:     companyMaintenanceItems.ivaPercent,
+      ivaAmount:      companyMaintenanceItems.ivaAmount,
       total:           companyMaintenanceItems.total,
       photoUrl:       companyMaintenanceItems.photoUrl,
       // jul 2026 — Opción A: vínculo lógico al attachment del array `attachments`.
@@ -525,10 +527,6 @@ async function loadEventsMap(maintenanceIds: number[]): Promise<Map<number, any[
   return map;
 }
 
-// jul 2026 v4-b — Migración 0050. Usa computeItemTotals para que
-// subtotal/iva/total reflejen la misma fórmula en backend y frontend.
-import { computeItemTotals, aggregateTotals } from '../../lib/maintenance-totals';
-
 // jul 2026 v4-b — Migración 0050. Subtotal/iva/total se calculan con
 // el helper de lib/maintenance-totals.ts (mismo fórmula que el frontend).
 import { computeItemTotals, aggregateTotals } from '../../lib/maintenance-totals';
@@ -548,11 +546,11 @@ function buildItemValues(maintenanceId: number, items: z.infer<typeof itemSchema
       quantity:   i.quantity.toFixed(2),
       unitCost:   i.unitCost.toFixed(2),
       subtotal:   t.subtotal.toFixed(2),
-      // jul 2026 v4-b — Migración 0050. Descuento + IVA por item.
-      discountPercent: (i.discountPercent ?? 0).toFixed(2),
-      ivaPercent:      (i.ivaPercent      ?? 15).toFixed(2),
-      ivaAmount:       t.ivaAmount.toFixed(2),
-      total:           t.total.toFixed(2),
+      // jul 2026 v4-c — IMPORTE del descuento (no porcentaje). Migración 0042.
+      discountValue: (i.discountValue ?? 0).toFixed(2),
+      ivaPercent:    (i.ivaPercent    ?? 15).toFixed(2),
+      ivaAmount:     t.ivaAmount.toFixed(2),
+      total:         t.total.toFixed(2),
       photoUrl:   i.photoUrl ?? null,
       // jul 2026 — Opción A: FK lógica al attachment del array `attachments`.
       attachmentKey: i.attachmentKey == null ? null : String(i.attachmentKey),
@@ -1671,7 +1669,7 @@ router.put(
               `INSERT INTO company_maintenance_items
                  (maintenance_id, supplier_id, name, photo_url,
                   quantity, unit_cost, subtotal,
-                  discount_percent, iva_percent, iva_amount, total,
+                  discount_value, iva_percent, iva_amount, total,
                   attachment_key)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
               [
@@ -1682,7 +1680,7 @@ router.put(
                 r.quantity,                   // string numeric
                 r.unitCost,                   // string numeric
                 r.subtotal,                   // string numeric
-                r.discountPercent,            // string numeric
+                r.discountValue,              // string numeric
                 r.ivaPercent,                 // string numeric
                 r.ivaAmount,                  // string numeric
                 r.total,                      // string numeric

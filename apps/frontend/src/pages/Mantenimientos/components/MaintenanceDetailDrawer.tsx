@@ -252,6 +252,8 @@ export function MaintenanceDetailDrawer({
     name: string;
     quantity: string;
     unitCost: string;
+    discountValue: string;          // jul 2026 v4-c — IMPORTE (no %).
+    ivaPercent: string;
     photoUrl: string | null;
     uploading: boolean;
     supplierId: string | null;
@@ -259,13 +261,16 @@ export function MaintenanceDetailDrawer({
     // `attachments[]`. NULL = sin factura asignada (solo evidencia).
     attachmentKey: string | null;
   }>({
-    name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null,
+    name: "", quantity: "1", unitCost: "", discountValue: "", ivaPercent: "15",
+    photoUrl: null, uploading: false, supplierId: null, attachmentKey: null,
   });
   // Batch de repuestos pendientes por agregar
   const [pendingItems, setPendingItems] = useState<{
     name: string;
     quantity: string;
     unitCost: string;
+    discountValue: string;   // jul 2026 v4-c — IMPORTE (no %).
+    ivaPercent: string;
     photoUrl: string | null;
     uploading: boolean;
     supplierId: string | null;
@@ -304,7 +309,7 @@ export function MaintenanceDetailDrawer({
 
   useEffect(() => {
     setNewNote("");
-    setNewItem({ name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
+    setNewItem({ name: "", quantity: "1", unitCost: "", discountValue: "", ivaPercent: "15", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
     setPendingItems([]);
     setIvaPercentDraft(m?.ivaPercent || 15);
     setNewExtra({ name: "", quantity: 1, unitCost: 0, photoUrl: "" });
@@ -516,6 +521,10 @@ export function MaintenanceDetailDrawer({
               name: it.description,
               quantity: Number(it.quantity) || 0,
               unitCost: Number(it.unitPrice) || 0,
+              // jul 2026 v4-c — al subir factura los items no traen
+              // descuento, así que lo dejamos en 0. El IVA por defecto 15.
+              discountValue: 0,
+              ivaPercent:    15,
               photoUrl: it.imageUrl ?? null,
               supplierId: result.supplierId ?? null,
               attachmentKey: newKey,
@@ -1090,6 +1099,9 @@ export function MaintenanceDetailDrawer({
                                           name: it.name,
                                           quantity: Number(it.quantity) || 0,
                                           unitCost: Number(it.unitCost) || 0,
+                                          // jul 2026 v4-c — IMPORTE del descuento (no %).
+                                          discountValue: Number(it.discountValue) || 0,
+                                          ivaPercent:    Number(it.ivaPercent) || 15,
                                           photoUrl: it.photoUrl,
                                           supplierId: it.supplierId,
                                           // jul 2026 — Opcion A: vinculo lógico a
@@ -1099,7 +1111,7 @@ export function MaintenanceDetailDrawer({
                                         })),
                                       });
                                       setPendingItems([]);
-                                      setNewItem({ name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
+                                      setNewItem({ name: "", quantity: "1", unitCost: "", discountValue: "", ivaPercent: "15", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
                                       toast.success(`${pendingItems.length} repuesto${pendingItems.length !== 1 ? "s" : ""} agregado${pendingItems.length !== 1 ? "s" : ""}`);
                                       refetch();
                                     } catch (e) { toast.error((e as Error).message); }
@@ -1259,12 +1271,42 @@ export function MaintenanceDetailDrawer({
                                   />
                                 </div>
 
+                                {/* jul 2026 v4-c — Descuento (importe monetario) */}
+                                <div className="shrink-0">
+                                  <label className="mb-0.5 block text-[9.5px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                    $ Desc.
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    placeholder="0.00"
+                                    value={newItem.discountValue}
+                                    onChange={(e) => setNewItem((p) => ({ ...p, discountValue: e.target.value }))}
+                                    className="w-16 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-1.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                                  />
+                                </div>
+
+                                {/* IVA % */}
+                                <div className="shrink-0">
+                                  <label className="mb-0.5 block text-[9.5px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                    % IVA
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    placeholder="15"
+                                    value={newItem.ivaPercent}
+                                    onChange={(e) => setNewItem((p) => ({ ...p, ivaPercent: e.target.value }))}
+                                    className="w-14 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-1.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                                  />
+                                </div>
+
                                 {/* Agregar a la lista */}
                                 <button
                                   onClick={() => {
                                     if (!newItem.name.trim()) { toast.error("Nombre requerido"); return; }
                                     setPendingItems((prev) => [...prev, { ...newItem }]);
-                                    setNewItem({ name: "", quantity: "1", unitCost: "", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
+                                    setNewItem({ name: "", quantity: "1", unitCost: "", discountValue: "", ivaPercent: "15", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
                                     toast.success("Repuesto agregado a la lista");
                                   }}
                                   className="mb-0 shrink-0 rounded-md border border-sky-200 dark:border-sky-500/40 bg-sky-50 dark:bg-sky-500/10 hover:bg-sky-100 dark:hover:bg-sky-500/20 px-3 py-1.5 text-xs font-semibold text-sky-700 dark:text-sky-300 transition"
@@ -1289,8 +1331,30 @@ export function MaintenanceDetailDrawer({
                                       {it.supplierId && (
                                         <span className="text-[10px] text-gray-400">{suppliers.find(s => s.id === it.supplierId)?.name}</span>
                                       )}
-                                      <span className="text-[10px] text-gray-500">{it.quantity} × {fmtMoney(Number(it.unitCost) || 0)}</span>
-                                      <span className="font-semibold text-gray-700 dark:text-gray-200">{fmtMoney(Number(it.quantity) * Number(it.unitCost) || 0)}</span>
+                                      <span className="text-[10px] text-gray-500">
+                                        {it.quantity} × {fmtMoney(Number(it.unitCost) || 0)}
+                                        {Number(it.discountValue) > 0 && (
+                                          <span className="ml-1 text-rose-600 dark:text-rose-400">- {fmtMoney(Number(it.discountValue))}</span>
+                                        )}
+                                        {Number(it.ivaPercent) > 0 && (
+                                          <span className="ml-1 text-blue-600 dark:text-blue-400">+ {it.ivaPercent}% IVA</span>
+                                        )}
+                                      </span>
+                                      {/* jul 2026 v4-c — Total: subtotal (post descuento)
+                                          + IVA. Subtotal = quantity * unitCost - discountValue. */}
+                                      {(() => {
+                                        const qty   = Number(it.quantity) || 0;
+                                        const cost  = Number(it.unitCost) || 0;
+                                        const disc  = Math.max(0, Math.min(qty * cost, Number(it.discountValue) || 0));
+                                        const sub   = Math.max(0, qty * cost - disc);
+                                        const iva   = (Number(it.ivaPercent) || 0) / 100;
+                                        const total = sub + sub * iva;
+                                        return (
+                                          <span className="font-semibold text-gray-700 dark:text-gray-200 tabular-nums">
+                                            {fmtMoney(total)}
+                                          </span>
+                                        );
+                                      })()}
                                       <button
                                         type="button"
                                         onClick={() => setPendingItems((prev) => prev.filter((_, i) => i !== idx))}

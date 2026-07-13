@@ -1,203 +1,416 @@
 // src/pages/Platform/Plans/page.tsx
+//
+// Gestión visual de planes desde superadmin. Cards con pricing, módulos
+// y límites, en una grilla de 4 columnas. Edit in-place con un modal
+// de tabs (Basico / Limites / Modulos).
+
 import { useState, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, Layers, Users, HardDrive, ToggleLeft, ToggleRight, Pencil, Trash2, ShieldCheck } from "lucide-react";
-import { toast } from "sonner";
-import { useAuth } from "../../../context/AuthContext";
-import { usePlatformPlans } from "../../../hooks/usePlatformPlans";
-import { usePlatformStats } from "../../../hooks/usePlatformStats";
 import {
-  PlatformModal,
-  PlatformKpiCard,
-  PlatformSearchBar,
-  ModalActions,
-  InputField,
-  SelectField,
-  TextareaField,
+  Plus, Layers, Users, HardDrive, Pencil, Trash2, Check,
+  ToggleLeft, ToggleRight, Sparkles, X, Package, Crown,
+  Loader2, AlertCircle,
+} from "lucide-react";
+import { toast } from "sonner";
+import {
+  PlatformModal, ModalActions,
+  InputField, SelectField, TextareaField,
 } from "../../../components/platform";
-import { StatusPill } from "../../../components/common/StatusPill";
-import type { PlatformPlan, PlatformPlanInput, PlanTier } from "../../../types/platform";
-import ReactApexChart from "react-apexcharts";
-import type { ApexOptions } from "apexcharts";
+import { usePlatformPlans, usePlatformModules } from "../../../hooks/usePlatformPlans";
+import type {
+  PlatformPlan, PlatformPlanInput, PlanTier, PlatformModule, PublicPlan,
+} from "../../../types/platform";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const TIER_ORDER: PlanTier[] = ["free", "starter", "pro", "enterprise"];
 
-const TIER_META: Record<PlanTier, { label: string; color: string; accent: string; chartColor: string }> = {
-  free:       { label: "Free",       color: "bg-gray-100 text-gray-600 border-gray-200 dark:bg-white/[0.05] dark:text-gray-400 dark:border-white/[0.08]",         accent: "bg-gray-400",    chartColor: "#9ca3af" },
-  starter:    { label: "Starter",    color: "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20",             accent: "bg-blue-500",    chartColor: "#3b82f6" },
-  pro:        { label: "Pro",        color: "bg-brand-50 text-brand-600 border-brand-200 dark:bg-brand-500/10 dark:text-brand-400 dark:border-brand-500/20",       accent: "bg-brand-500",   chartColor: "#465fff" },
-  enterprise: { label: "Enterprise", color: "bg-violet-50 text-violet-600 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-500/20", accent: "bg-violet-500",  chartColor: "#7c3aed" },
+const TIER_META: Record<PlanTier, { label: string; icon: any; color: string; accent: string; chartColor: string }> = {
+  free:       { label: "Free",       icon: Package,  color: "bg-gray-100 text-gray-600 border-gray-200 dark:bg-white/[0.05] dark:text-gray-400 dark:border-white/[0.08]",         accent: "bg-gray-400",    chartColor: "#9ca3af" },
+  starter:    { label: "Starter",    icon: Layers,   color: "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20",             accent: "bg-blue-500",    chartColor: "#3b82f6" },
+  pro:        { label: "Pro",        icon: Sparkles, color: "bg-brand-50 text-brand-600 border-brand-200 dark:bg-brand-500/10 dark:text-brand-400 dark:border-brand-500/20",       accent: "bg-brand-500",   chartColor: "#465fff" },
+  enterprise: { label: "Enterprise", icon: Crown,    color: "bg-violet-50 text-violet-600 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-500/20", accent: "bg-violet-500",  chartColor: "#7c3aed" },
 };
 
-const AVAILABLE_MODULES = [
-  "dashboard","accesos","gestion","motores","generadores",
-  "aires_acondicionados","mantenimiento","checklist",
-  "alertas","reportes","combustible","geolocalizacion","cuenta",
-];
-
 const EMPTY_FORM: PlatformPlanInput = {
-  id: "",
-  name: "",
-  tier: "starter",
-  monthlyPrice: "0",
-  annualPrice: "0",
-  maxUsers: null,
-  maxAssets: null,
-  allowedModules: [],
-  isActive: true,
+  id: "", name: "", tier: "starter",
+  monthlyPrice: "0", annualPrice: "0",
+  maxUsers: null, maxAssets: null,
+  maxAdmins: null, maxSupervisors: null, maxOperators: null, maxDrivers: null,
+  description: "", features: [],
+  isPopular: false, sortOrder: 100, currency: "USD",
+  allowedModules: [], isActive: true,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function TierBadge({ tier }: { tier: PlanTier }) {
-  const m = TIER_META[tier];
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${m.color}`}>
-      {m.label}
-    </span>
-  );
-}
 
 function fmt(n: string | number) {
   return Number(n).toLocaleString("es-EC", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// ─── Plan Form ────────────────────────────────────────────────────────────────
+function limitLabel(v: number | null | undefined) {
+  if (v === null || v === undefined) return "∞";
+  return String(v);
+}
+
+function limitMeterColor(used: number, max: number | null | undefined): "emerald" | "amber" | "rose" {
+  if (max === null || max === undefined) return "emerald";
+  const pct = (used / max) * 100;
+  if (pct >= 100) return "rose";
+  if (pct >= 80) return "amber";
+  return "emerald";
+}
+
+const METER_COLORS = {
+  emerald: "bg-emerald-500",
+  amber:   "bg-amber-500",
+  rose:    "bg-rose-500",
+} as const;
+
+// ─── Plan Card ────────────────────────────────────────────────────────────────
+
+function PlanCard({
+  plan, onEdit, onDelete,
+}: {
+  plan: PlatformPlan;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const tier = (plan as any).tier || "pro";
+  const meta = TIER_META[tier as PlanTier] ?? TIER_META.starter;
+  const TierIcon = meta.icon;
+  const price = Number(plan.monthlyPrice);
+  const total = (plan.maxUsers ?? 0) > 0 ? plan.maxUsers : 0;
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className={`group relative flex flex-col overflow-hidden rounded-2xl border bg-white
+        ${plan.isPopular
+          ? "border-brand-300 shadow-xl shadow-brand-500/10 dark:border-brand-500/40"
+          : "border-gray-200 dark:border-white/[0.06]"
+        }
+        dark:bg-white/[0.03]`}
+    >
+      {plan.isPopular && (
+        <div className="absolute -top-px left-1/2 -translate-x-1/2 translate-y-px whitespace-nowrap rounded-b-md bg-brand-500 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+          Más popular
+        </div>
+      )}
+      {!plan.isActive && (
+        <div className="absolute right-3 top-3 rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:bg-white/[0.06] dark:text-gray-400">
+          Inactivo
+        </div>
+      )}
+
+      <div className={`px-5 pb-5 pt-7 ${plan.isPopular ? "pt-9" : ""}`}>
+        <div className="flex items-center gap-2">
+          <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${meta.color}`}>
+            <TierIcon size={16} />
+          </div>
+          <h3 className="text-lg font-bold text-gray-800 dark:text-white">{plan.name}</h3>
+        </div>
+
+        {plan.description && (
+          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400 line-clamp-2">{plan.description}</p>
+        )}
+
+        <div className="mt-4 flex items-baseline gap-1">
+          {price > 0 && <span className="text-sm text-gray-400">$</span>}
+          <span className="text-3xl font-bold text-gray-800 dark:text-white">
+            {price > 0 ? fmt(plan.monthlyPrice) : "Gratis"}
+          </span>
+          {price > 0 && <span className="text-xs text-gray-400">/mes</span>}
+        </div>
+
+        {/* Features */}
+        {plan.features.length > 0 && (
+          <ul className="mt-4 space-y-1.5">
+            {plan.features.slice(0, 6).map((f, i) => (
+              <li key={i} className="flex items-start gap-2 text-xs text-gray-600 dark:text-gray-300">
+                <Check size={12} className="mt-0.5 flex-shrink-0 text-emerald-500" />
+                <span>{f}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {/* Stats */}
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <Stat icon={<Users size={11}/>} label="Usuarios" value={limitLabel(plan.maxUsers)} />
+          <Stat icon={<HardDrive size={11}/>} label="Activos" value={limitLabel(plan.maxAssets)} />
+        </div>
+
+        {/* Módulos */}
+        <div className="mt-4 rounded-lg bg-gray-50 px-3 py-2 dark:bg-white/[0.03]">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+            {plan.allowedModules.length} módulos habilitados
+          </p>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {plan.allowedModules.slice(0, 5).map(m => (
+              <span key={m} className="rounded bg-white px-1.5 py-0.5 text-[9px] font-medium text-gray-500 dark:bg-white/[0.05] dark:text-gray-400">
+                {m}
+              </span>
+            ))}
+            {plan.allowedModules.length > 5 && (
+              <span className="rounded bg-white px-1.5 py-0.5 text-[9px] font-medium text-gray-500 dark:bg-white/[0.05] dark:text-gray-400">
+                +{plan.allowedModules.length - 5}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-auto flex gap-2 border-t border-gray-100 bg-gray-50/50 px-5 py-3 dark:border-white/[0.04] dark:bg-white/[0.02]">
+        <button type="button" onClick={onEdit}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white py-1.5 text-xs font-semibold text-gray-600 transition hover:border-brand-400 hover:text-brand-600 dark:border-white/[0.08] dark:bg-white/[0.03]">
+          <Pencil size={11}/> Editar
+        </button>
+        <button type="button" onClick={onDelete}
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 transition hover:border-rose-300 hover:text-rose-500 dark:border-white/[0.08] dark:bg-white/[0.03]">
+          <Trash2 size={11}/>
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-gray-50 px-2 py-1.5 dark:bg-white/[0.03]">
+      <div className="flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500">
+        {icon} {label}
+      </div>
+      <div className="text-sm font-bold text-gray-800 dark:text-white">{value}</div>
+    </div>
+  );
+}
+
+// ─── Plan Form (tabs: básico / límites / módulos) ─────────────────────────────
 
 function PlanForm({
-  form,
-  onChange,
-  isEdit,
+  form, onChange, isEdit, availableModules,
 }: {
   form: PlatformPlanInput;
   onChange: (f: PlatformPlanInput) => void;
   isEdit: boolean;
+  availableModules: PlatformModule[];
 }) {
-  function set<K extends keyof PlatformPlanInput>(key: K, val: PlatformPlanInput[K]) {
-    onChange({ ...form, [key]: val });
+  const [tab, setTab] = useState<"basic" | "limits" | "modules" | "marketing">("basic");
+
+  function set<K extends keyof PlatformPlanInput>(k: K, v: PlatformPlanInput[K]) {
+    onChange({ ...form, [k]: v });
+  }
+  function toggleModule(mid: string) {
+    const has = form.allowedModules.includes(mid);
+    set("allowedModules", has ? form.allowedModules.filter(m => m !== mid) : [...form.allowedModules, mid]);
+  }
+  function addFeature() {
+    set("features", [...form.features, ""]);
+  }
+  function updateFeature(i: number, v: string) {
+    set("features", form.features.map((f, j) => j === i ? v : f));
+  }
+  function removeFeature(i: number) {
+    set("features", form.features.filter((_, j) => j !== i));
   }
 
-  function toggleModule(mod: string) {
-    const has = form.allowedModules.includes(mod);
-    set("allowedModules", has
-      ? form.allowedModules.filter((m) => m !== mod)
-      : [...form.allowedModules, mod]
-    );
-  }
+  const tabs: Array<{ id: typeof tab; label: string }> = [
+    { id: "basic",    label: "Básico" },
+    { id: "limits",   label: "Límites" },
+    { id: "modules",  label: "Módulos" },
+    { id: "marketing",label: "Marketing" },
+  ];
 
   return (
-    <div className="grid gap-4 p-6 sm:grid-cols-2">
-      {/* ID (solo en creación) */}
-      {!isEdit && (
-        <InputField
-          label="ID del plan (slug)"
-          placeholder="ej. pro_annual"
-          value={form.id}
-          onChange={(e) => set("id", e.target.value)}
-          required
-        />
-      )}
-
-      {/* Nombre */}
-      <InputField
-        label="Nombre"
-        placeholder="ej. Pro Mensual"
-        value={form.name}
-        onChange={(e) => set("name", e.target.value)}
-        colSpan={isEdit ? undefined : undefined}
-        required
-      />
-
-      {/* Tier */}
-      <SelectField
-        label="Tier"
-        value={form.tier}
-        onChange={(e) => set("tier", e.target.value as PlanTier)}
-      >
-        {TIER_ORDER.map((t) => (
-          <option key={t} value={t}>{TIER_META[t].label}</option>
+    <div>
+      <div className="flex gap-1 border-b border-gray-100 px-6 dark:border-white/[0.06]">
+        {tabs.map(t => (
+          <button key={t.id} type="button" onClick={() => setTab(t.id)}
+            className={`relative px-3 py-2 text-xs font-semibold transition
+              ${tab === t.id
+                ? "text-brand-600 dark:text-brand-400"
+                : "text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"}`}>
+            {t.label}
+            {tab === t.id && (
+              <motion.span layoutId="planFormTab"
+                className="absolute inset-x-0 bottom-0 h-0.5 bg-brand-500" />
+            )}
+          </button>
         ))}
-      </SelectField>
-
-      {/* Precios */}
-      <InputField
-        label="Precio mensual (USD)"
-        type="number"
-        min={0}
-        step={0.01}
-        value={form.monthlyPrice}
-        onChange={(e) => set("monthlyPrice", e.target.value)}
-      />
-      <InputField
-        label="Precio anual (USD)"
-        type="number"
-        min={0}
-        step={0.01}
-        value={form.annualPrice}
-        onChange={(e) => set("annualPrice", e.target.value)}
-      />
-
-      {/* Límites */}
-      <InputField
-        label="Máx. usuarios (vacío = ilimitado)"
-        type="number"
-        min={1}
-        value={form.maxUsers ?? ""}
-        onChange={(e) => set("maxUsers", e.target.value === "" ? null : Number(e.target.value))}
-        placeholder="Ilimitado"
-      />
-      <InputField
-        label="Máx. activos (vacío = ilimitado)"
-        type="number"
-        min={1}
-        value={form.maxAssets ?? ""}
-        onChange={(e) => set("maxAssets", e.target.value === "" ? null : Number(e.target.value))}
-        placeholder="Ilimitado"
-      />
-
-      {/* Módulos */}
-      <div className="sm:col-span-2">
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-          Módulos permitidos ({form.allowedModules.length}/{AVAILABLE_MODULES.length})
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {AVAILABLE_MODULES.map((mod) => {
-            const active = form.allowedModules.includes(mod);
-            return (
-              <motion.button
-                key={mod}
-                type="button"
-                whileTap={{ scale: 0.93 }}
-                onClick={() => toggleModule(mod)}
-                className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-all ${
-                  active
-                    ? "border-brand-400 bg-brand-50 text-brand-600 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-400"
-                    : "border-gray-200 text-gray-500 hover:border-gray-300 dark:border-white/[0.08] dark:text-gray-500 dark:hover:border-white/[0.15]"
-                }`}
-              >
-                {mod}
-              </motion.button>
-            );
-          })}
-        </div>
       </div>
 
-      {/* Activo */}
-      <div className="sm:col-span-2 flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => set("isActive", !form.isActive)}
-          className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300"
-        >
-          {form.isActive
-            ? <ToggleRight size={22} className="text-brand-500" />
-            : <ToggleLeft  size={22} className="text-gray-400" />
-          }
-          {form.isActive ? "Plan activo" : "Plan inactivo"}
-        </button>
+      <div className="px-6 py-5">
+        {tab === "basic" && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            {!isEdit && (
+              <InputField label="ID del plan (slug)" required value={form.id}
+                placeholder="ej. pro_monthly"
+                onChange={e => set("id", e.target.value)} />
+            )}
+            <InputField label="Nombre" required value={form.name}
+              placeholder="Pro Mensual"
+              onChange={e => set("name", e.target.value)} />
+            <SelectField label="Tier" value={form.tier}
+              onChange={e => set("tier", e.target.value as PlanTier)}>
+              {TIER_ORDER.map(t => (
+                <option key={t} value={t}>{TIER_META[t].label}</option>
+              ))}
+            </SelectField>
+            <InputField label="Orden" type="number" value={form.sortOrder}
+              onChange={e => set("sortOrder", Number(e.target.value) || 100)} />
+
+            <InputField label="Precio mensual (USD)" type="number" min={0} step={0.01}
+              value={form.monthlyPrice}
+              onChange={e => set("monthlyPrice", e.target.value)} />
+            <InputField label="Precio anual (USD)" type="number" min={0} step={0.01}
+              value={form.annualPrice}
+              onChange={e => set("annualPrice", e.target.value)} />
+            <InputField label="Moneda" value={form.currency}
+              onChange={e => set("currency", e.target.value.toUpperCase())} />
+
+            <div className="sm:col-span-2 flex items-center gap-3">
+              <button type="button" onClick={() => set("isPopular", !form.isPopular)}
+                className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                {form.isPopular
+                  ? <ToggleRight size={20} className="text-brand-500" />
+                  : <ToggleLeft size={20} className="text-gray-400" />
+                }
+                Popular (mostrarlo destacado)
+              </button>
+              <button type="button" onClick={() => set("isActive", !form.isActive)}
+                className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                {form.isActive
+                  ? <ToggleRight size={20} className="text-emerald-500" />
+                  : <ToggleLeft size={20} className="text-gray-400" />
+                }
+                Plan activo
+              </button>
+            </div>
+          </div>
+        )}
+
+        {tab === "limits" && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <LimitInput label="Máx. usuarios (total)" value={form.maxUsers}
+              onChange={v => set("maxUsers", v)} />
+            <LimitInput label="Máx. activos (vehículos+generadores+AC)" value={form.maxAssets}
+              onChange={v => set("maxAssets", v)} />
+            <LimitInput label="Máx. admins" value={form.maxAdmins}
+              onChange={v => set("maxAdmins", v)} hint="admin_empresa + owner_empresa" />
+            <LimitInput label="Máx. supervisores" value={form.maxSupervisors}
+              onChange={v => set("maxSupervisors", v)} />
+            <LimitInput label="Máx. operadores" value={form.maxOperators}
+              onChange={v => set("maxOperators", v)} />
+            <LimitInput label="Máx. conductores" value={form.maxDrivers}
+              onChange={v => set("maxDrivers", v)} />
+
+            <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/20 dark:bg-amber-500/10">
+              <div className="flex items-start gap-2">
+                <AlertCircle size={14} className="mt-0.5 text-amber-600 dark:text-amber-400" />
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  Los límites por rol NO PUEDEN EXCEDER el máximo total. El backend los valida en cada POST/PUT de usuarios.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "modules" && (
+          <div>
+            <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+              Elegí qué módulos tendrá disponible este plan. ({form.allowedModules.length} seleccionados de {availableModules.length})
+            </p>
+            <div className="grid max-h-96 gap-2 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
+              {availableModules.map(m => {
+                const active = form.allowedModules.includes(m.id);
+                return (
+                  <button key={m.id} type="button"
+                    onClick={() => toggleModule(m.id)}
+                    disabled={m.isCore}
+                    className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left transition
+                      ${m.isCore
+                        ? "border-violet-300 bg-violet-50/50 dark:border-violet-500/20 dark:bg-violet-500/10 cursor-not-allowed"
+                        : active
+                          ? "border-brand-400 bg-brand-50 dark:border-brand-500/40 dark:bg-brand-500/10"
+                          : "border-gray-200 hover:border-gray-300 dark:border-white/[0.08] dark:hover:border-white/[0.15]"
+                      }`}>
+                    <div className="min-w-0">
+                      <p className={`text-xs font-semibold ${active ? "text-brand-700 dark:text-brand-300" : "text-gray-700 dark:text-gray-200"}`}>
+                        {m.label}
+                      </p>
+                      <p className="font-mono text-[9px] text-gray-400">{m.id}</p>
+                    </div>
+                    {m.isCore ? (
+                      <span className="rounded bg-violet-200 px-1 text-[9px] font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">CORE</span>
+                    ) : active ? <Check size={12} className="text-brand-500" /> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {tab === "marketing" && (
+          <div className="space-y-4">
+            <TextareaField label="Descripción corta" rows={2} colSpan="full"
+              value={form.description ?? ""}
+              placeholder="Para empresas con varias sedes y mantenimiento programado…"
+              onChange={e => set("description", e.target.value)} />
+
+            <div>
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                  Features del plan (bullets)
+                </p>
+                <button type="button" onClick={addFeature}
+                  className="inline-flex items-center gap-1 rounded-lg bg-brand-500/10 px-2 py-1 text-[11px] font-semibold text-brand-700 hover:bg-brand-500/20 dark:bg-brand-500/15 dark:text-brand-400">
+                  <Plus size={11}/> Agregar
+                </button>
+              </div>
+              <div className="mt-2 space-y-1.5">
+                {form.features.length === 0 && (
+                  <p className="text-[11px] text-gray-400">Sin features. Agregá bullets con el botón de arriba.</p>
+                )}
+                {form.features.map((f, i) => (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <span className="flex h-7 w-7 items-center justify-center text-brand-500">
+                      <Check size={11} />
+                    </span>
+                    <input value={f}
+                      onChange={e => updateFeature(i, e.target.value)}
+                      placeholder={`Feature #${i+1}`}
+                      className="h-7 flex-1 rounded-md border border-gray-200 bg-white px-2 text-xs outline-none focus:border-brand-500 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200" />
+                    <button type="button" onClick={() => removeFeature(i)}
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-500/10">
+                      <X size={11}/>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+function LimitInput({
+  label, value, onChange, hint,
+}: { label: string; value: number | null; onChange: (v: number | null) => void; hint?: string }) {
+  return (
+    <div>
+      <label className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{label}</label>
+      <input type="number" min={0}
+        placeholder="Ilimitado"
+        value={value ?? ""}
+        onChange={e => onChange(e.target.value === "" ? null : Number(e.target.value))}
+        className="mt-1 h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-brand-500 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200" />
+      {hint && <p className="mt-1 text-[10px] text-gray-400">{hint}</p>}
     </div>
   );
 }
@@ -205,13 +418,9 @@ function PlanForm({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function PlansPage() {
-  const { session } = useAuth();
-  const isSuperadmin = session?.role === "superadmin";
-
   const { plans, loading, createPlan, updatePlan, deletePlan } = usePlatformPlans();
-  const { data: stats } = usePlatformStats();
+  const { modules: allModules } = usePlatformModules();
 
-  const [search,     setSearch]     = useState("");
   const [modalOpen,  setModalOpen]  = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editing,    setEditing]    = useState<PlatformPlan | null>(null);
@@ -219,92 +428,31 @@ export function PlansPage() {
   const [form,       setForm]       = useState<PlatformPlanInput>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
 
-  // ── Derived ───────────────────────────────────────────────────────────────
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return plans.filter((p) =>
-      !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q)
-    );
-  }, [plans, search]);
-
-  const activePlans = plans.filter((p) => p.isActive).length;
-
-  // empresas por plan desde stats
-  const companiesByPlan: Record<string, number> = stats?.companies.byPlan ?? {};
-
-  // ── Chart: barras verticales por tier ─────────────────────────────────────
-
-  const chartSeries = useMemo(() => {
-    const counts = TIER_ORDER.map((tier) => {
-      return plans
-        .filter((p) => p.tier === tier)
-        .reduce((acc, p) => acc + (companiesByPlan[p.id] ?? 0), 0);
-    });
-    return [{ name: "Empresas", data: counts }];
-  }, [plans, companiesByPlan]);
-
-  const chartOptions: ApexOptions = {
-    chart: {
-      type: "bar",
-      background: "transparent",
-      fontFamily: "Outfit, sans-serif",
-      toolbar: { show: false },
-    },
-    colors: TIER_ORDER.map((t) => TIER_META[t].chartColor),
-    plotOptions: {
-      bar: {
-        distributed: true,
-        borderRadius: 6,
-        columnWidth: "45%",
-        borderRadiusApplication: "end",
-      },
-    },
-    dataLabels: { enabled: false },
-    legend: { show: false },
-    xaxis: {
-      categories: TIER_ORDER.map((t) => TIER_META[t].label),
-      axisBorder: { show: false },
-      axisTicks: { show: false },
-      labels: { style: { fontSize: "12px", colors: "#9ca3af" } },
-    },
-    yaxis: {
-      labels: { style: { colors: ["#6B7280"], fontSize: "12px" } },
-    },
-    grid: {
-      yaxis: { lines: { show: true } },
-      borderColor: "rgba(156,163,175,0.12)",
-    },
-    tooltip: { theme: "dark" },
-  };
-
-  // ── Handlers ──────────────────────────────────────────────────────────────
+  // Ordenar por sortOrder
+  const sortedPlans = useMemo(() =>
+    [...plans].sort((a, b) => a.sortOrder - b.sortOrder),
+  [plans]);
 
   function openCreate() {
     setEditing(null);
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM, allowedModules: [] });
     setModalOpen(true);
   }
 
   function openEdit(plan: PlatformPlan) {
     setEditing(plan);
     setForm({
-      id:             plan.id,
-      name:           plan.name,
-      tier:           plan.tier,
-      monthlyPrice:   plan.monthlyPrice,
-      annualPrice:    plan.annualPrice,
-      maxUsers:       plan.maxUsers,
-      maxAssets:      plan.maxAssets,
-      allowedModules: plan.allowedModules,
-      isActive:       plan.isActive,
+      id: plan.id, name: plan.name, tier: plan.tier,
+      monthlyPrice: plan.monthlyPrice, annualPrice: plan.annualPrice,
+      maxUsers: plan.maxUsers, maxAssets: plan.maxAssets,
+      maxAdmins: plan.maxAdmins, maxSupervisors: plan.maxSupervisors,
+      maxOperators: plan.maxOperators, maxDrivers: plan.maxDrivers,
+      description: plan.description ?? "", features: plan.features ?? [],
+      isPopular: plan.isPopular, sortOrder: plan.sortOrder,
+      currency: plan.currency, allowedModules: plan.allowedModules,
+      isActive: plan.isActive,
     });
     setModalOpen(true);
-  }
-
-  function openDelete(plan: PlatformPlan) {
-    setDeleting(plan);
-    setDeleteOpen(true);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -312,7 +460,8 @@ export function PlansPage() {
     setSubmitting(true);
     try {
       if (editing) {
-        await updatePlan(editing.id, form);
+        const { id, ...rest } = form;
+        await updatePlan(editing.id, rest);
         toast.success("Plan actualizado");
       } else {
         await createPlan(form);
@@ -341,18 +490,10 @@ export function PlansPage() {
     }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
   return (
     <div className="space-y-6">
-
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-        className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"
-      >
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}
+        className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-violet-200 dark:border-violet-500/20 bg-violet-50 dark:bg-violet-500/10 px-2.5 py-1">
             <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />
@@ -360,278 +501,72 @@ export function PlansPage() {
           </div>
           <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Planes de suscripción</h1>
           <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">
-            Define los tiers, precios y módulos disponibles para cada plan.
+            Define los tiers, precios, límites por rol y módulos incluidos en cada plan.
           </p>
         </div>
-
-        {isSuperadmin && (
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.95 }}
-            onClick={openCreate}
-            className="inline-flex shrink-0 items-center gap-2 self-start rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600"
-          >
-            <Plus size={15} />
-            Nuevo plan
-          </motion.button>
-        )}
+        <motion.button type="button" whileTap={{ scale: 0.95 }} onClick={openCreate}
+          className="inline-flex shrink-0 items-center gap-2 self-start rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600">
+          <Plus size={15} /> Nuevo plan
+        </motion.button>
       </motion.div>
 
-      {/* ── KPIs ───────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          {
-            icon: <Layers size={16} />,
-            label: "Planes activos",
-            value: activePlans.toString(),
-            sub: `${plans.length} planes en total`,
-            accent: "bg-brand-500",
-          },
-          {
-            icon: <ShieldCheck size={16} />,
-            label: "Tier Enterprise",
-            value: (companiesByPlan["enterprise"] ?? 0).toString(),
-            sub: "Empresas en enterprise",
-            accent: "bg-violet-500",
-          },
-          {
-            icon: <Users size={16} />,
-            label: "Empresas en Pro",
-            value: (companiesByPlan["pro"] ?? 0).toString(),
-            sub: "Empresas en plan pro",
-            accent: "bg-blue-500",
-          },
-          {
-            icon: <HardDrive size={16} />,
-            label: "Total empresas",
-            value: (stats?.companies.total ?? 0).toString(),
-            sub: "Distribuidas en todos los planes",
-            accent: "bg-success-500",
-          },
-        ].map((kpi, i) => (
-          <motion.div
-            key={kpi.label}
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.35, delay: i * 0.07 }}
-          >
-            <PlatformKpiCard {...kpi} />
-          </motion.div>
-        ))}
+      {/* KPIs */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiTile label="Planes" value={plans.length.toString()} sub="totales" color="bg-brand-500" />
+        <KpiTile label="Popular" value={plans.filter(p => p.isPopular).length.toString()} sub="destacado" color="bg-amber-500" />
+        <KpiTile label="Activos" value={plans.filter(p => p.isActive).length.toString()} sub="visibles al público" color="bg-emerald-500" />
+        <KpiTile label="Empresas" value={plans.reduce((acc, p) => acc + (p.maxUsers ?? 0), 0).toString()} sub="usuarios máx. totales" color="bg-violet-500" />
       </div>
 
-      {/* ── Fila: Gráfica + Tabla ──────────────────────────────────────────── */}
-      <div className="grid gap-6 xl:grid-cols-3">
+      {/* Cards grid */}
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-16 text-gray-400">
+          <Loader2 size={16} className="animate-spin" /> Cargando…
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {sortedPlans.map((plan, i) => (
+            <motion.div key={plan.id}
+              initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: i * 0.06 }}>
+              <PlanCard
+                plan={plan}
+                onEdit={() => openEdit(plan)}
+                onDelete={() => { setDeleting(plan); setDeleteOpen(true); }}
+              />
+            </motion.div>
+          ))}
+        </div>
+      )}
 
-        {/* Chart */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, delay: 0.28 }}
-          className="rounded-2xl border border-gray-200 bg-white px-5 pb-5 pt-5 dark:border-white/[0.06] dark:bg-white/[0.03]"
-        >
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-white">Empresas por tier</h3>
-          <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500 mb-4">
-            Distribución de clientes por nivel de plan
-          </p>
-          <ReactApexChart
-            options={chartOptions}
-            series={chartSeries}
-            type="bar"
-            height={200}
-          />
-
-          {/* Tier legend chips */}
-          <div className="mt-3 flex flex-wrap gap-2">
-            {TIER_ORDER.map((tier) => {
-              const count = plans
-                .filter((p) => p.tier === tier)
-                .reduce((acc, p) => acc + (companiesByPlan[p.id] ?? 0), 0);
-              return (
-                <div key={tier} className="flex items-center gap-1.5">
-                  <span
-                    className="h-2 w-2 rounded-full"
-                    style={{ background: TIER_META[tier].chartColor }}
-                  />
-                  <span className="text-[11px] text-gray-500 dark:text-gray-400">
-                    {TIER_META[tier].label} ({count})
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </motion.div>
-
-        {/* Tabla de planes */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, delay: 0.35 }}
-          className="xl:col-span-2 overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]"
-        >
-          {/* Card header */}
-          <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-white/[0.06]">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-800 dark:text-white">Todos los planes</h3>
-              <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{filtered.length} planes</p>
-            </div>
-            <PlatformSearchBar
-              value={search}
-              onChange={setSearch}
-              placeholder="Buscar plan…"
-            />
-          </div>
-
-          {/* Table */}
-          {loading ? (
-            <div className="flex items-center justify-center gap-3 py-16 text-gray-400">
-              <svg className="animate-spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-              </svg>
-              <span className="text-sm">Cargando planes…</span>
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-16">
-              <Layers size={20} className="text-gray-300 dark:text-gray-600" />
-              <p className="text-sm font-medium text-gray-400 dark:text-gray-500">Sin planes</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[700px] text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                    {["Plan", "Tier", "Precio mensual", "Precio anual", "Límites", "Módulos", "Estado", ""].map((h, i, arr) => (
-                      <th
-                        key={h}
-                        className={`px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 ${i === arr.length - 1 ? "" : ""}`}
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                  <AnimatePresence>
-                    {filtered.map((plan, i) => (
-                      <motion.tr
-                        key={plan.id}
-                        initial={{ opacity: 0, y: 6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.18, delay: i * 0.04 }}
-                        className="group transition-colors hover:bg-gray-50/80 dark:hover:bg-white/[0.02]"
-                      >
-                        {/* Plan */}
-                        <td className="px-5 py-3.5">
-                          <div className="flex items-center gap-2">
-                            <div className={`h-2 w-2 rounded-full ${TIER_META[plan.tier].accent}`} />
-                            <div>
-                              <p className="font-semibold text-gray-800 dark:text-white">{plan.name}</p>
-                              <p className="text-xs text-gray-400 dark:text-gray-500 font-mono">{plan.id}</p>
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* Tier */}
-                        <td className="px-5 py-3.5">
-                          <TierBadge tier={plan.tier} />
-                        </td>
-
-                        {/* Precio mensual */}
-                        <td className="px-5 py-3.5 tabular-nums text-gray-700 dark:text-gray-200 font-medium">
-                          ${fmt(plan.monthlyPrice)}
-                        </td>
-
-                        {/* Precio anual */}
-                        <td className="px-5 py-3.5 tabular-nums text-gray-700 dark:text-gray-200 font-medium">
-                          ${fmt(plan.annualPrice)}
-                        </td>
-
-                        {/* Límites */}
-                        <td className="px-5 py-3.5">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
-                              <Users size={10} />
-                              {plan.maxUsers ?? "∞"} usuarios
-                            </span>
-                            <span className="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
-                              <HardDrive size={10} />
-                              {plan.maxAssets ?? "∞"} activos
-                            </span>
-                          </div>
-                        </td>
-
-                        {/* Módulos */}
-                        <td className="px-5 py-3.5">
-                          <span className="rounded-lg bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:bg-white/[0.06] dark:text-gray-300">
-                            {plan.allowedModules.length} módulos
-                          </span>
-                        </td>
-
-                        {/* Estado */}
-                        <td className="px-5 py-3.5">
-                          <StatusPill
-                            label={plan.isActive ? "Activo" : "Inactivo"}
-                            tone={plan.isActive ? "success" : "neutral"}
-                          />
-                        </td>
-
-                        {/* Acciones */}
-                        <td className=" group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
-                          {isSuperadmin && (
-                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <motion.button
-                                type="button"
-                                whileTap={{ scale: 0.9 }}
-                                onClick={() => openEdit(plan)}
-                                className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition hover:border-brand-300 hover:text-brand-500 dark:border-white/[0.08] dark:hover:border-brand-500/40"
-                              >
-                                <Pencil size={13} />
-                              </motion.button>
-                              <motion.button
-                                type="button"
-                                whileTap={{ scale: 0.9 }}
-                                onClick={() => openDelete(plan)}
-                                className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition hover:border-error-300 hover:text-error-500 dark:border-white/[0.08] dark:hover:border-error-500/40"
-                              >
-                                <Trash2 size={13} />
-                              </motion.button>
-                            </div>
-                          )}
-                        </td>
-                      </motion.tr>
-                    ))}
-                  </AnimatePresence>
-                </tbody>
-              </table>
-            </div>
-          )}
-        </motion.div>
-      </div>
-
-      {/* ── Modal crear/editar ─────────────────────────────────────────────── */}
+      {/* Modal crear/editar */}
       <PlatformModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        title={editing ? `Editar plan — ${editing.name}` : "Nuevo plan"}
-        subtitle={editing ? "Modifica los datos del plan." : "Define id, precio y módulos del nuevo tier."}
+        title={editing ? `Editar plan: ${editing.name}` : "Nuevo plan"}
+        subtitle={editing ? "Modificá los datos del plan." : "Define precios, límites y módulos del nuevo tier."}
         icon={<Layers size={15} />}
         iconBg="bg-brand-50 dark:bg-brand-500/[0.12]"
         iconColor="text-brand-600 dark:text-brand-400"
+        maxWidth="max-w-3xl"
         footer={
           <ModalActions
             onCancel={() => setModalOpen(false)}
             submitting={submitting}
-            submitLabel={editing ? "Guardar cambios" : "Crear plan"}
-          />
+            submitLabel={editing ? "Guardar cambios" : "Crear plan"} />
         }
       >
         <form id="plan-form" onSubmit={handleSubmit}>
-          <PlanForm form={form} onChange={setForm} isEdit={!!editing} />
+          <PlanForm
+            form={form}
+            onChange={setForm}
+            isEdit={!!editing}
+            availableModules={allModules}
+          />
         </form>
       </PlatformModal>
 
-      {/* ── Modal confirmar eliminación ────────────────────────────────────── */}
+      {/* Modal eliminar */}
       <PlatformModal
         open={deleteOpen}
         onClose={() => setDeleteOpen(false)}
@@ -642,12 +577,8 @@ export function PlansPage() {
         iconColor="text-error-600 dark:text-error-400"
         maxWidth="max-w-md"
         footer={
-          <ModalActions
-            onCancel={() => setDeleteOpen(false)}
-            submitting={submitting}
-            submitLabel="Sí, eliminar"
-            danger
-          />
+          <ModalActions onCancel={() => setDeleteOpen(false)}
+            submitting={submitting} submitLabel="Sí, eliminar" danger />
         }
       >
         <form onSubmit={handleDelete}>
@@ -660,7 +591,24 @@ export function PlansPage() {
           </div>
         </form>
       </PlatformModal>
-
     </div>
   );
 }
+
+function KpiTile({ label, value, sub, color }: { label: string; value: string; sub: string; color: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.06] dark:bg-white/[0.03]">
+      <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${color} text-white shadow-sm`}>
+        <Layers size={16} />
+      </div>
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">{label}</p>
+        <p className="text-base font-bold text-gray-800 dark:text-white">{value}</p>
+        <p className="text-[10px] text-gray-400 dark:text-gray-500">{sub}</p>
+      </div>
+    </div>
+  );
+}
+
+// Helper que ya no se usa pero lo dejamos para evitar imports muertos
+void PublicPlan;

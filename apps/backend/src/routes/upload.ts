@@ -6,6 +6,7 @@ import { AppError } from '../lib/errors';
 import ffmpeg from 'fluent-ffmpeg';
 import { promises as fs } from 'fs';
 import { authenticate } from '../middlewares/authenticate';
+import { rateLimitUpload } from '../middlewares/rateLimit';
 import {
   validateImageFile,
   validatePdfFile,
@@ -17,7 +18,9 @@ const router = Router();
 
 // Todas las rutas de upload requieren autenticación. Sin esto, cualquier
 // persona con la URL podría subir archivos al bucket de cualquier empresa.
-router.use(authenticate);
+// Sumamos rate-limit: upload es la operación más cara del backend
+// (ffmpeg, sharp, I/O). 20 cada 5 min por (user + IP).
+router.use(authenticate, rateLimitUpload);
 
 const UPLOAD_BASE = process.env.UPLOAD_DIR ?? join(process.cwd(), '..', '..', 'uploads');
 const MAX_FILE_SIZE = 8 * 1024 * 1024;        // 8 MB  (fotos)

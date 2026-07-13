@@ -17,6 +17,8 @@ import {
   Pencil,
   User,
   ChevronDown,
+  Sparkles,
+  Globe,
 } from "lucide-react";
 import { usePlatformSettings } from "../../../hooks/usePlatformSettings";
 import { usePlatformUsers }    from "../../../hooks/usePlatformUsers";
@@ -27,7 +29,7 @@ import { fmtDateShortEc } from "@/lib/datetime";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type TabId = "general" | "security" | "smtp" | "notifications" | "defaults" | "users";
+type TabId = "general" | "security" | "smtp" | "notifications" | "defaults" | "ai" | "users";
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 
@@ -126,6 +128,7 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: "smtp",          label: "SMTP / Email",          icon: <Mail size={13} /> },
   { id: "notifications", label: "Notificaciones",        icon: <Bell size={13} /> },
   { id: "defaults",      label: "Defaults empresas",     icon: <Building2 size={13} /> },
+  { id: "ai",            label: "IA global",             icon: <Sparkles size={13} /> },
   { id: "users",         label: "Usuarios plataforma",   icon: <User size={13} /> },
 ];
 
@@ -644,13 +647,62 @@ export function PlatformSettingsPage() {
                       <p className="text-[11px] text-gray-400">{label}</p>
                     </div>
                   ))}
-                </div>
-              </div>
-            </SectionCard>
-          </motion.div>
-        )}
+</div>
+               </div>
+             </SectionCard>
+           </motion.div>
+         )}
 
-        {/* ─────────────── USERS ───────────────────────────────────────── */}
+         {/* ─────────────── IA GLOBAL ───────────────────────────────────── */}
+         {activeTab === "ai" && (
+           <motion.div key="ai" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}>
+             <SectionCard title="IA global" subtitle="Configuración por defecto de los providers de IA. Las empresas pueden sobrescribirla desde su propia pantalla de Configuración → IA." icon={<Sparkles size={14} />}>
+               <div className="space-y-4">
+                 <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-500/30 dark:bg-sky-500/10">
+                   <div className="flex items-start gap-2">
+                     <Globe className="mt-0.5 h-4 w-4 text-sky-600 dark:text-sky-400" />
+                     <div>
+                       <p className="text-sm font-semibold text-sky-800 dark:text-sky-200">Estado actual</p>
+                       <p className="mt-1 text-xs text-sky-700 dark:text-sky-300">
+                         Las API keys globales se leen de las variables de entorno (<code className="rounded bg-sky-100 px-1 py-0.5 text-[10px] dark:bg-sky-900/40">GROQ_API_KEY</code>, <code className="rounded bg-sky-100 px-1 py-0.5 text-[10px] dark:bg-sky-900/40">GEMINI_API_KEY</code>, etc.).
+                         Para cambiarlas, editá el archivo <code className="rounded bg-sky-100 px-1 py-0.5 text-[10px] dark:bg-sky-900/40">.env</code> del backend y reiniciá.
+                       </p>
+                       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                         <div className="rounded-lg bg-white px-3 py-2 dark:bg-white/[0.04]">
+                           <p className="text-[10px] uppercase tracking-wider text-gray-400">Groq (Jarvis)</p>
+                           <p className="mt-0.5 text-xs font-semibold text-gray-700 dark:text-gray-200">
+                             {process?.env?.GROQ_API_KEY ? "Configurada" : "No seteada"}
+                           </p>
+                         </div>
+                         <div className="rounded-lg bg-white px-3 py-2 dark:bg-white/[0.04]">
+                           <p className="text-[10px] uppercase tracking-wider text-gray-400">Gemini (imágenes)</p>
+                           <p className="mt-0.5 text-xs font-semibold text-gray-700 dark:text-gray-200">
+                             {process?.env?.GEMINI_API_KEY ? "Configurada" : "No seteada"}
+                           </p>
+                         </div>
+                         <div className="rounded-lg bg-white px-3 py-2 dark:bg-white/[0.04]">
+                           <p className="text-[10px] uppercase tracking-wider text-gray-400">ElevenLabs (TTS)</p>
+                           <p className="mt-0.5 text-xs font-semibold text-gray-700 dark:text-gray-200">
+                             {process?.env?.ELEVENLABS_API_KEY ? "Configurada" : "No seteada"}
+                           </p>
+                         </div>
+                       </div>
+                     </div>
+                   </div>
+                 </div>
+
+                 <div>
+                   <p className="text-xs text-gray-500 dark:text-gray-400">
+                     Para editar las keys globales, modificá <code className="rounded bg-gray-100 px-1 py-0.5 text-[10px] dark:bg-white/[0.05]">.env</code> en el backend y reiniciá el servicio.
+                     El último cambio queda registrado en <code className="rounded bg-gray-100 px-1 py-0.5 text-[10px] dark:bg-white/[0.05]">/platform/audit</code>.
+                   </p>
+                 </div>
+               </div>
+             </SectionCard>
+           </motion.div>
+         )}
+
+         {/* ─────────────── USERS ───────────────────────────────────────── */}
         {activeTab === "users" && (
           <motion.div key="users" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}>
             <div className="rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-[#0F172A]">

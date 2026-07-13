@@ -1,13 +1,12 @@
 // lib/maintenance-totals.ts
-// jul 2026 v4-b — Mirror del helper del backend
-// (apps/backend/src/lib/maintenance-totals.ts). Usado en el modal de
-// edición de mantenimiento para previsualizar en vivo los totales de
-// cada item y el resumen del bloque de repuestos.
+// jul 2026 v4-b — Mirror del backend (apps/backend/src/lib/maintenance-totals.ts).
+// jul 2026 v4-c — Cambio de semántica: `discountValue` es IMPORTE monetario.
 //
-// Reglas (Ecuador, jul 2026):
-//   subtotal     = quantity * unitCost * (1 - discountPercent/100)
-//   ivaAmount    = subtotal * (ivaPercent/100)
-//   total        = subtotal + ivaAmount
+// Reglas:
+//   subtotalPre = quantity * unitCost
+//   subtotal    = max(0, subtotalPre - discountValue)
+//   ivaAmount   = subtotal * (ivaPercent/100)
+//   total       = subtotal + ivaAmount
 
 export type ItemTotals = {
   subtotal: number;
@@ -28,24 +27,26 @@ function round2(n: number): number {
 export function computeItemTotals(input: {
   quantity?: unknown;
   unitCost?: unknown;
-  discountPercent?: unknown;
+  /** IMPORTE del descuento (no porcentaje). Se clampea al subtotal original. */
+  discountValue?: unknown;
   ivaPercent?: unknown;
 }): ItemTotals {
   const quantity         = Math.max(0, toNum(input.quantity, 1));
   const unitCost         = Math.max(0, toNum(input.unitCost, 0));
-  const discountPercent  = Math.max(0, Math.min(100, toNum(input.discountPercent, 0)));
+  const discountValue    = Math.max(0, Math.min(quantity * unitCost, toNum(input.discountValue, 0)));
   const ivaPercent       = Math.max(0, Math.min(100, toNum(input.ivaPercent, 15)));
 
-  const subtotal  = round2(quantity * unitCost * (1 - discountPercent / 100));
-  const ivaAmount = round2(subtotal * (ivaPercent / 100));
-  const total     = round2(subtotal + ivaAmount);
+  const subtotalPre = round2(quantity * unitCost);
+  const subtotal    = round2(Math.max(0, subtotalPre - discountValue));
+  const ivaAmount   = round2(subtotal * (ivaPercent / 100));
+  const total       = round2(subtotal + ivaAmount);
   return { subtotal, ivaAmount, total };
 }
 
 export function aggregateTotals(items: Array<{
   quantity?: unknown;
   unitCost?: unknown;
-  discountPercent?: unknown;
+  discountValue?: unknown;
   ivaPercent?: unknown;
 }>): {
   grandSubtotal: number;
@@ -64,11 +65,8 @@ export function aggregateTotals(items: Array<{
     const t = computeItemTotals(it);
     const quantity         = Math.max(0, toNum(it.quantity, 1));
     const unitCost         = Math.max(0, toNum(it.unitCost, 0));
-    const discountPercent  = Math.max(0, Math.min(100, toNum(it.discountPercent, 0)));
+    const discountValue    = Math.max(0, Math.min(quantity * unitCost, toNum(it.discountValue, 0)));
     const ivaPercent       = Math.max(0, Math.min(100, toNum(it.ivaPercent, 15)));
-
-    const originalSubtotal = round2(quantity * unitCost);
-    const discountValue    = round2(originalSubtotal - t.subtotal);
 
     grandSubtotal += t.subtotal;
     grandIva      += t.ivaAmount;

@@ -292,7 +292,7 @@ export function MaintenanceFormModal({
         name: "",
         quantity: 1,
         unitCost: 0,
-        discountPercent: 0,
+        discountValue: 0,  // jul 2026 v4-c — IMPORTE del descuento.
         ivaPercent: 15,
         photoUrl: null,
         uploading: false,
@@ -394,9 +394,9 @@ export function MaintenanceFormModal({
       // Lavada: no items / no workshop / no cadencia
       items: isLavada ? [] : (items.length ? items.map((i) => ({
         name: i.name, quantity: i.quantity, unitCost: i.unitCost,
-        // jul 2026 v4-b — Migración 0050. Descuento + IVA por item.
-        discountPercent: i.discountPercent ?? 0,
-        ivaPercent:      i.ivaPercent ?? 15,
+        // jul 2026 v4-c — IMPORTE del descuento (no porcentaje). Migración 0042.
+        discountValue: i.discountValue ?? 0,
+        ivaPercent:    i.ivaPercent ?? 15,
         photoUrl: i.photoUrl, supplierId: i.supplierId ?? null,
       })) : undefined),
       carwashLocation: isLavada ? (carwashLocation.trim() || null) : null,
@@ -755,10 +755,12 @@ export function MaintenanceFormModal({
               está oculta — se desbloquea cuando el operador lo inicia y
               empieza a cargar repuestos.
 
-              jul 2026 v4-b — Layout nuevo: por cada item editable hay
-              Cantidad | Precio unitario | % Descuento | % IVA | Subtotal
-              | Total. En el footer del bloque se acumulan los totales
-              globales con desglose por % de IVA (0% exento / 12% / 15%). */}
+              jul 2026 v4-c — Layout: por cada item editable hay
+              Cantidad | Precio unitario | $ Desc. | % IVA | Subtotal
+              | Total. El descuento es IMPORTE monetario (no porcentaje):
+              "lo que le descontaron en $". Ver migración 0042.
+              En el footer del bloque se acumulan los totales globales
+              con desglose por % de IVA (0% exento / 12% / 15%). */}
           {!isLavada && (status === "En proceso" || status === "Completado" || items.length > 0) && (
             <div className="rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -842,12 +844,12 @@ export function MaintenanceFormModal({
                           title="Precio unitario"
                         />
                         <input
-                          type="number" min={0} max={100} step="0.01" placeholder="0"
-                          value={it.discountPercent ?? 0}
+                          type="number" min={0} step="0.01" placeholder="0.00"
+                          value={it.discountValue ?? 0}
                           disabled={isReadOnly}
-                          onChange={(e) => updateItem(idx, { discountPercent: e.target.value === "" ? 0 : Number(e.target.value) })}
+                          onChange={(e) => updateItem(idx, { discountValue: e.target.value === "" ? 0 : Number(e.target.value) })}
                           className={`${inputCls} col-span-2 md:col-span-2 py-1.5 text-right tabular-nums`}
-                          title="% Descuento"
+                          title="Descuento (importe monetario)"
                         />
                         <input
                           type="number" min={0} max={100} step="0.01" placeholder="15"

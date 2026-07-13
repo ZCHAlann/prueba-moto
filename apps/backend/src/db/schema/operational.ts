@@ -693,7 +693,10 @@ export const companyMaintenanceItems = pgTable('company_maintenance_items', {
   quantity:       numeric('quantity', { precision: 10, scale: 2 }).notNull().default('1'),
   unitCost:       numeric('unit_cost', { precision: 12, scale: 2 }).notNull().default('0'),
   subtotal:       numeric('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
-  discountPercent: numeric('discount_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+  // jul 2026 v4-b — Migración 0050 + 0042 (rename). IMPORTE monetario del
+  // descuento (no porcentaje). El backend clampea al subtotal original
+  // para que no quede negativo.
+  discountValue:  numeric('discount_value', { precision: 12, scale: 2 }).notNull().default('0'),
   ivaPercent:      numeric('iva_percent',      { precision: 5, scale: 2 }).notNull().default('15'),
   ivaAmount:       numeric('iva_amount',       { precision: 12, scale: 2 }).notNull().default('0'),
   total:           numeric('total',            { precision: 12, scale: 2 }).notNull().default('0'),
@@ -715,9 +718,8 @@ export const companyMaintenanceCarwashExtras = pgTable('company_maintenance_carw
   quantity:       numeric('quantity', { precision: 10, scale: 2 }).notNull().default('1'),
   unitCost:       numeric('unit_cost', { precision: 12, scale: 2 }).notNull().default('0'),
   subtotal:       numeric('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
-  // jul 2026 v4-b — Migración 0050. Mismo cálculo que company_maintenance_items
-  // (descuento + IVA por item, ver migración).
-  discountPercent: numeric('discount_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+  // jul 2026 — IMPORTE del descuento (no porcentaje). Ver migración 0042.
+  discountValue:  numeric('discount_value', { precision: 12, scale: 2 }).notNull().default('0'),
   ivaPercent:      numeric('iva_percent',      { precision: 5, scale: 2 }).notNull().default('15'),
   ivaAmount:       numeric('iva_amount',       { precision: 12, scale: 2 }).notNull().default('0'),
   total:           numeric('total',            { precision: 12, scale: 2 }).notNull().default('0'),

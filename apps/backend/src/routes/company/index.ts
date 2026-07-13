@@ -2,6 +2,12 @@ import { Router } from 'express';
 import { authenticate } from '../../middlewares/authenticate';
 import { requireCompany } from '../../middlewares/requireCompany';
 import { requireActiveStatus } from '../../middlewares/requireActiveStatus';
+import {
+  rateLimitRead,
+  rateLimitWrite,
+  writeOnly,
+  readOnly,
+} from '../../middlewares/rateLimit';
 import settingsRouter from './settings';
 import sitesRouter from './sites';
 import assetsRouter from './assets';
@@ -37,13 +43,22 @@ import financeInvoicesRouter from './finance-invoices';
 import financeInvoiceTypesRouter from './finance-invoice-types';
 import financePettyCashRouter from './finance-petty-cash';
 import financeInvoiceReviewsRouter from './finance-invoice-reviews';
+import companyAiSettingsRouter from './ai-settings';
 
 const router = Router({ mergeParams: true });
 
 // Toda la sección company requiere auth + pertenecer a esa empresa + estar activo.
 // requireActiveStatus invalida la sesión en caliente si el usuario/conductor/sede
 // quedó inactivo mientras la sesión estaba abierta.
+//
+// Rate-limit (jul 2026): montado DESPUÉS de authenticate para tener
+// req.user.sub. Split read/write:
+//   - writeOnly(rateLimitWrite)  → solo cuenta POST/PUT/PATCH/DELETE
+//   - readOnly(rateLimitRead)    → solo cuenta GET/HEAD
+// El orden importa: ambos middlewares se ejecutan en cadena, el que
+// filtra el método simplemente llama next() cuando el método no aplica.
 router.use(authenticate, requireCompany, requireActiveStatus);
+router.use(writeOnly(rateLimitWrite), readOnly(rateLimitRead));
 
 router.use('/settings', settingsRouter);
 router.use('/sites', sitesRouter);
@@ -121,6 +136,16 @@ router.use('/finance', financePettyCashRouter);
 //   - POST   /finance/invoice-reviews/:id/reupload     → nueva foto
 //   - GET    /finance/invoice-reviews/:id/timeline     → eventos
 router.use('/finance', financeInvoiceReviewsRouter);
+
+// ── IA multi-tenant (jul 2026 v6) ────────────────────────────────────────────
+// Cada empresa puede configurar su propio provider/model/API key.
+//   - GET    /ai-settings       → config actual (sin la key)
+//   - PUT    /ai-settings       → crea/actualiza (admin)
+//   - DELETE /ai-settings       → reset a platform_default (admin)
+//   - POST   /ai-settings/test  → prueba conexión contra el provider (admin)
+//   - GET    /ai-usage?from&to  → métricas de uso
+//   - GET    /ai-providers      → catálogo de providers/models
+router.use(companyAiSettingsRouter);
 
 
 export default router;

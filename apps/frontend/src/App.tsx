@@ -58,6 +58,7 @@ import { CRMPage } from "./pages/CRM/page";
 import { BillingPage } from "./pages/Platform/Billing/page";
 import { FleetHealthPage } from "./pages/Platform/Flotas/page";
 import PlatformTicketsPage from "./pages/Platform/Tickets/page";
+import CompanyAIPage from "./pages/Platform/Companies/AISettings/page";
 import { GeolocationPage } from "./pages/Geolocalizacion/GeolocationPage";
 
 //Landing
@@ -217,6 +218,7 @@ export default function App() {
           <Route path="/platform/dashboard" element={<PlatformDashboard />} />
           <Route path="/platform/plans" element={<PlansPage />} />
           <Route path="/platform/companies" element={<CompaniesPage />} />
+          <Route path="/platform/companies/:id/ai" element={<CompanyAIPage />} />
           <Route path="/platform/leads" element={<LeadsPage />} />
           <Route path="/platform/modules" element={<ModulesPage />} />
           <Route path="/platform/users" element={<PlatformUsersPage />} />

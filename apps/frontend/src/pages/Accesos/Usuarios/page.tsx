@@ -8,6 +8,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useUsersFormOptions } from "@/hooks/useFormOptions";
 import { useCompanyUsers, uploadUserPhoto, type CompanyUser, type CreateCompanyUserInput, type UpdateCompanyUserInput } from "@/hooks/useCompanyUsers";
 import { useCompanyRoles } from "@/hooks/useCompanyRoles";
+import { useCompanyLimits } from "@/hooks/useCompanyLimits";
 import type { PlatformRole } from "@/types/platform";
 import { MODULE_TREE, countModulesWithAccess, type ActionKey, type PermissionMap } from "@/lib/module-tree";
 import { isBypassRole, hasAnyPermission } from "@/lib/permissions";
@@ -18,6 +19,75 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 8;
+
+// ─── Banner de límites del plan ───────────────────────────────────────────────
+
+function PlanLimitBanner({
+  planName, planId: _planId, counts, max, breakdown,
+}: {
+  planName: string;
+  planId: string;
+  counts: { total: number; admins: number; supervisors: number; operators: number; drivers: number };
+  max: number | null;
+  breakdown: Array<{ label: string; used: number; max: number | null }>;
+}) {
+  const total = counts.total;
+  const pct = max !== null && max > 0 ? Math.min(100, (total / max) * 100) : 0;
+  const isOver = max !== null && total > max;
+  const isNear = max !== null && total >= max * 0.8 && total < max;
+
+  return (
+    <div className={`flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between
+      ${isOver
+        ? "border-rose-200 bg-rose-50 dark:border-rose-500/20 dark:bg-rose-500/10"
+        : isNear
+          ? "border-amber-200 bg-amber-50 dark:border-amber-500/20 dark:bg-amber-500/10"
+          : "border-blue-200 bg-blue-50 dark:border-blue-500/20 dark:bg-blue-500/10"
+      }`}>
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white dark:bg-white/[0.05]">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+            className={isOver ? "text-rose-600" : isNear ? "text-amber-600" : "text-blue-600"}>
+            <path d="M12 2L2 22h20L12 2z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <circle cx="12" cy="17" r="0.5" fill="currentColor"/>
+          </svg>
+        </div>
+        <div>
+          <p className={`text-sm font-semibold ${
+            isOver ? "text-rose-900 dark:text-rose-300" :
+            isNear ? "text-amber-900 dark:text-amber-300" :
+            "text-blue-900 dark:text-blue-300"
+          }`}>
+            Plan {planName}
+            {isOver && " — excedido"}
+            {isNear && !isOver && " — cerca del límite"}
+          </p>
+          <p className={`text-xs ${
+            isOver ? "text-rose-700 dark:text-rose-400" :
+            isNear ? "text-amber-700 dark:text-amber-400" :
+            "text-blue-700 dark:text-blue-400"
+          }`}>
+            {total} de {max ?? "∞"} usuarios usados
+            {isOver && " — contactá al superadmin para cambiar de plan"}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        {breakdown.map(b => (
+          <div key={b.label} className="rounded-lg bg-white/80 px-2.5 py-1 dark:bg-white/[0.05]">
+            <p className="text-[9px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{b.label}</p>
+            <p className="text-xs font-bold text-gray-800 dark:text-white tabular-nums">
+              {b.used} / {b.max ?? "∞"}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
 
 const ROLE_LABELS: Record<string, string> = {
   owner_empresa:  "Dueño / Propietario",
@@ -1129,6 +1199,7 @@ export function UsersPage() {
   const { data: formOptions } = useUsersFormOptions();
   const allSites = formOptions?.sites ?? [];
   const { users, loading, createUser, updateUser, deleteUser } = useCompanyUsers();
+  const limits = useCompanyLimits();
   // `users` ya viene paginado del backend con pageSize=100 (suficiente para
   // la lista típica de usuarios de una empresa). Los filtros display-only
   // (rol, status, búsqueda por texto) siguen siendo locales.
@@ -1336,7 +1407,11 @@ export function UsersPage() {
           </div>
           {canCreate && (
             <button onClick={openCreate}
-              className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition">
+              disabled={limits.plan !== null && limits.counts.total >= (limits.plan.maxUsers ?? Infinity)}
+              title={limits.plan && limits.counts.total >= (limits.plan.maxUsers ?? Infinity)
+                ? `Tu plan "${limits.plan.planName}" alcanzó el máximo de usuarios.`
+                : undefined}
+              className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                 <path d="M7 1v12M1 7h12" />
               </svg>
@@ -1344,6 +1419,22 @@ export function UsersPage() {
             </button>
           )}
         </div>
+
+        {/* Banner límites del plan */}
+        {limits.plan && (
+          <PlanLimitBanner
+            planName={limits.plan.planName}
+            planId={limits.plan.planId}
+            counts={limits.counts}
+            max={limits.plan.maxUsers}
+            breakdown={[
+              { label: "Admins",      used: limits.counts.admins,      max: limits.plan.maxAdmins },
+              { label: "Supervisores", used: limits.counts.supervisors, max: limits.plan.maxSupervisors },
+              { label: "Operadores",   used: limits.counts.operators,   max: limits.plan.maxOperators },
+              { label: "Conductores",  used: limits.counts.drivers,     max: limits.plan.maxDrivers },
+            ]}
+          />
+        )}
 
         {/* KPI row */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

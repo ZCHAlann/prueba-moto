@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useSettings } from "@/hooks/useSettings";
 import { useSettingsFormOptions } from "../../hooks/useFormOptions";
 import type { CompanySettings } from "@/types/fleet";
+import { AISettingsPanel } from "./AISettingsPanel";
 
 // ─── Iconos inline ────────────────────────────────────────────────────────────
 
@@ -37,6 +38,14 @@ function IconBell({ className }: { className?: string }) {
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
       <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />
     </svg>
+  );
+}
+function IconSparkles({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+      <path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3zM19 14l.95 2.3 2.3.95-2.3.95L19 20.5l-.95-2.3-2.3-.95 2.3-.95L19 14zM5 16l.7 1.7L7.4 18.4l-1.7.7L5 20.8l-.7-1.7-1.7-.7 1.7-.7L5 16z" />
+    </svg>
+  );
   );
 }
 function IconLoader({ className }: { className?: string }) {
@@ -478,6 +487,16 @@ export function SettingsPage() {
             <p className="text-sm text-gray-400 dark:text-gray-500">Sin módulos configurados.</p>
           )}
         </div>
+      </SectionCard>
+
+      {/* ── Asistente IA (jul 2026 v6) ───────────────────────────────────── */}
+      <SectionCard
+        icon={<IconSparkles className="w-4 h-4 text-brand-600 dark:text-brand-400" />}
+        title="Asistente IA"
+        description="Configurá tu propio provider, modelo y API key de IA. Si no tocás nada, usamos la configuración global de la plataforma."
+        delay={0.25}
+      >
+        <AISettingsPanel />
       </SectionCard>
 
     </div>

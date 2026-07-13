@@ -25,11 +25,18 @@ import { startStatsAnomaliesCron } from './lib/cron/stats-anomalies';
 import { startStatsCleanupCron } from './lib/cron/cleanup';
 import { startScheduledJobs as startJarvisWeeklySummary } from './scheduled/weekly-summary';
 import { startPettyCashPeriodResetCron, startPettyCashLimitCheckCron } from './lib/cron/petty-cash';
+import { seedPlatformCatalog } from './lib/platform-seed';
 
 const PORT = process.env.PORT || 5000;
 
 const server = createServer(app);
 attachWebSocket(server);
+
+// Seed del catálogo de módulos + 4 planes (Starter/Pro/Business/Enterprise).
+// Idempotente: corre las veces que sea. No bloquea el arranque si falla.
+void seedPlatformCatalog()
+  .then(() => console.log('✓ Catalog seed ready'))
+  .catch((err) => console.warn('[boot] seed platform catalog failed:', err?.message ?? err));
 
 // Cron jobs (opcional, se apaga con MAINTENANCE_CRON_ENABLED != true)
 startMaintenanceCron();

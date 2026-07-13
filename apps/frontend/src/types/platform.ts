@@ -43,20 +43,84 @@ export type PlanTier = "free" | "starter" | "pro" | "enterprise";
 // ─────────────────────────────────────────────
 
 export interface PlatformPlan {
-  id: string;                  // slug: 'free' | 'starter' | 'pro' | 'enterprise'
+  id: string;                  // slug: 'free' | 'starter' | 'pro' | 'business' | 'enterprise'
   name: string;
   tier: PlanTier;
   monthlyPrice: string;        // numeric viene como string desde Drizzle
   annualPrice: string;
-  maxUsers: number | null;     // null = ilimitado
-  maxAssets: number | null;
+  maxUsers:    number | null;
+  maxAssets:   number | null;
+  maxAdmins:      number | null;   // ← jul 2026
+  maxSupervisors: number | null;
+  maxOperators:   number | null;
+  maxDrivers:     number | null;
+  description: string | null;
+  features:    string[];
+  isPopular:   boolean;
+  sortOrder:   number;
+  currency:    string;
   allowedModules: string[];
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
+  isActive:    boolean;
+  createdAt:   string;
+  updatedAt:   string;
 }
 
 export type PlatformPlanInput = Omit<PlatformPlan, "createdAt" | "updatedAt">;
+
+/**
+ * Plan como se expone al público (landing page).
+ * Es un subset amigable de `PlatformPlan` con los campos que la landing
+ * realmente usa (ya redondeados para mostrar al usuario).
+ */
+export interface PublicPlan {
+  id:           string;
+  slug:         string;
+  name:         string;
+  tier:         string;
+  description:  string;
+  monthlyPrice: string;
+  annualPrice:  string;
+  currency:     string;
+  features:     string[];
+  isPopular:    boolean;
+  sortOrder:    number;
+  maxUsers:     number | null;
+  maxAdmins:    number | null;
+  maxSupervisors: number | null;
+  maxOperators: number | null;
+  maxDrivers:   number | null;
+  maxAssets:    number | null;
+  modules: Array<{
+    id:     string;
+    label:  string;
+    icon:   string | null;
+    accent: string | null;
+  }>;
+}
+
+// ─────────────────────────────────────────────
+// Catálogo de módulos (jul 2026) — viene de BD
+// ─────────────────────────────────────────────
+
+export interface PlatformSubmodule {
+  id:         string;
+  moduleId:   string;
+  label:      string;
+  sortOrder:  number;
+  isActive:   boolean;
+}
+
+export interface PlatformModule {
+  id:          string;
+  label:       string;
+  description: string;
+  icon:        string | null;
+  accent:      string | null;
+  sortOrder:   number;
+  isCore:      boolean;
+  isActive:    boolean;
+  submodules:  PlatformSubmodule[];
+}
 
 // ─────────────────────────────────────────────
 // Empresas
@@ -69,6 +133,8 @@ export interface PlatformCompany {
   planId: string;
   status: CompanyStatus;
   enabledModules: string[];
+  /** Igual que enabledModules pero cargado desde la tabla puente (jul 2026). */
+  enabledModulesDetailed?: string[];
   industry: string | null;
   country: string | null;
   city: string | null;
@@ -82,6 +148,14 @@ export interface PlatformCompany {
   contractEndAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Conteos de usuarios por categoría (jul 2026). Para aplicar límites del plan. */
+  userCounts?: {
+    total:       number;
+    admins:      number;
+    supervisors: number;
+    operators:   number;
+    drivers:     number;
+  };
 }
 
 export type PlatformCompanyInput = Omit<PlatformCompany, "id" | "createdAt" | "updatedAt">;

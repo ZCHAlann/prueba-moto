@@ -90,11 +90,11 @@ export interface MaintenanceItem {
   quantity:     number;
   unitCost:     number;
   subtotal:     number;
-  // jul 2026 v4-b — Migración 0050. Descuento + IVA por item.
-  discountPercent: number;
-  ivaPercent:      number;
-  ivaAmount:       number;
-  total:           number;
+  // jul 2026 v4-c — IMPORTE del descuento (no porcentaje). Migración 0042.
+  discountValue:  number;
+  ivaPercent:     number;
+  ivaAmount:      number;
+  total:          number;
   photoUrl:     string | null;
   // jul 2026 — Opcion A: FK logica al attachment (factura) al que pertenece.
   attachmentKey?: string | null;
@@ -110,6 +110,23 @@ export interface MaintenanceItem {
 // jul 2026 v5 — Se agrega `categoryId` para distinguir categorías built-in
 // de custom (FK a company_maintenance_categories). `category` es la key
 // (string) que se guarda en BD; `categoryId` es null para built-in.
+/** jul 2026 v4-c — INPUT para crear/editar items.
+ *  `discountValue` es un IMPORTE monetario (no porcentaje) que el usuario
+ *  ingresa como "lo que le descontaron". Migración 0042. */
+export interface MaintenanceItemInput {
+  id?:             string;
+  supplierId?:     string | null;
+  name:            string;
+  quantity:        number;
+  unitCost:        number;
+  discountValue:   number;
+  ivaPercent:      number;
+  photoUrl?:       string | null;
+  attachmentKey?:  string | null;
+  /** jul 2026 v4 — clasificación contable del item. */
+  financeClassification?: string | null;
+}
+
 export interface Maintenance {
   id:               string;
   companyId:        string;

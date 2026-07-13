@@ -3,20 +3,17 @@
 // mantenimiento y los extras de lavada. Centralizado acá para que el
 // backend, frontend y PDF (cuando se agregue) usen la misma fórmula.
 //
-// Reglas de negocio (Ecuador, jul 2026):
-//   - subtotal     = quantity * unitCost * (1 - discountPercent/100)
-//   - ivaAmount    = subtotal * (ivaPercent/100)
-//   - total        = subtotal + ivaAmount
-//   - IVA 0%       = item exento (combustibles, medicamentos, etc.)
-//   - IVA 12% / 15% = IVA general
-//   - discountPercent es por fila (0..100), default 0
-//   - ivaPercent es por fila (0..100), default 15
+// jul 2026 v4-c — Cambio de semántica: `discountValue` es un IMPORTE
+// monetario que el usuario ingresa (ej: "le descontaron $50"), NO un
+// porcentaje. Fórmula:
 //
-// El backend SIEMPRE recalcula antes de persistir; el frontend puede
-// previsualizar en vivo (es la misma fórmula).
+//   subtotalPre  = quantity * unitCost           (sin descuento)
+//   subtotal     = max(0, subtotalPre - discountValue)
+//   ivaAmount    = subtotal * (ivaPercent/100)
+//   total        = subtotal + ivaAmount
 //
-// Las funciones aceptan `unknown` para no atarse al tipo Drizzle;
-// las conversiones internas toleran string/null.
+// El campo en BD se llama `discount_value` (migración 0042). Antes se
+// llamaba `discount_percent` y representaba un 0..100.
 
 export type ItemTotals = {
   subtotal: number;
@@ -38,33 +35,39 @@ function round2(n: number): number {
 export function computeItemTotals(input: {
   quantity?: unknown;
   unitCost?: unknown;
-  discountPercent?: unknown;
+  /** IMPORTE del descuento (no porcentaje). Se clampea al subtotal original. */
+  discountValue?: unknown;
   ivaPercent?: unknown;
 }): ItemTotals {
   const quantity         = Math.max(0, toNum(input.quantity, 1));
   const unitCost         = Math.max(0, toNum(input.unitCost, 0));
-  const discountPercent  = Math.max(0, Math.min(100, toNum(input.discountPercent, 0)));
+  // El descuento no puede ser negativo ni superar el subtotal original.
+  const discountValue    = Math.max(0, Math.min(quantity * unitCost, toNum(input.discountValue, 0)));
   const ivaPercent       = Math.max(0, Math.min(100, toNum(input.ivaPercent, 15)));
 
-  const subtotal  = round2(quantity * unitCost * (1 - discountPercent / 100));
-  const ivaAmount = round2(subtotal * (ivaPercent / 100));
-  const total     = round2(subtotal + ivaAmount);
+  const subtotalPre = round2(quantity * unitCost);
+  const subtotal    = round2(Math.max(0, subtotalPre - discountValue));
+  const ivaAmount   = round2(subtotal * (ivaPercent / 100));
+  const total       = round2(subtotal + ivaAmount);
   return { subtotal, ivaAmount, total };
 }
 
-/** Suma de varios items (subtotal/iva/total general + por % de IVA). */
+/**
+ * Suma de varios items (subtotal/iva/total general + por % de IVA).
+ *
+ * Devuelve también `totalDiscount` (la suma de los descuentos aplicados
+ * en cada item — útil para el resumen del modal y el PDF).
+ */
 export function aggregateTotals(items: Array<{
   quantity?: unknown;
   unitCost?: unknown;
-  discountPercent?: unknown;
+  discountValue?: unknown;
   ivaPercent?: unknown;
 }>): {
   grandSubtotal: number;
   grandIva:      number;
   grandTotal:    number;
-  // Desglose por % de IVA. Útil para el PDF y el resumen del modal.
   byIvaPercent: Record<number, { subtotal: number; iva: number; total: number }>;
-  // Total de descuentos aplicados (precio original - subtotal).
   totalDiscount: number;
 } {
   const byIvaPercent: Record<number, { subtotal: number; iva: number; total: number }> = {};
@@ -77,23 +80,27 @@ export function aggregateTotals(items: Array<{
     const t = computeItemTotals(it);
     const quantity         = Math.max(0, toNum(it.quantity, 1));
     const unitCost         = Math.max(0, toNum(it.unitCost, 0));
-    const discountPercent  = Math.max(0, Math.min(100, toNum(it.discountPercent, 0)));
+    const discountValue    = Math.max(0, Math.min(quantity * unitCost, toNum(it.discountValue, 0)));
     const ivaPercent       = Math.max(0, Math.min(100, toNum(it.ivaPercent, 15)));
 
     const originalSubtotal = round2(quantity * unitCost);
-    const discountValue    = round2(originalSubtotal - t.subtotal);
 
     grandSubtotal += t.subtotal;
     grandIva      += t.ivaAmount;
     grandTotal    += t.total;
     totalDiscount += discountValue;
 
-    // Acumular por bucket de % de IVA (sin decimales, es 0/12/15 típicamente).
+    // Acumular por bucket de % de IVA.
     const bucket = Math.round(ivaPercent);
     if (!byIvaPercent[bucket]) byIvaPercent[bucket] = { subtotal: 0, iva: 0, total: 0 };
     byIvaPercent[bucket].subtotal = round2(byIvaPercent[bucket].subtotal + t.subtotal);
     byIvaPercent[bucket].iva      = round2(byIvaPercent[bucket].iva      + t.ivaAmount);
     byIvaPercent[bucket].total    = round2(byIvaPercent[bucket].total    + t.total);
+    // Nota: originalSubtotal acá solo se usa por coherencia con la regla
+    // "subtotal_pre - subtotal_post = discount" — pero como clampeamos
+    // discountValue al subtotal original, en la práctica coincide con
+    // `discountValue`. Mantener para auditoría visual.
+    void originalSubtotal;
   }
 
   return {

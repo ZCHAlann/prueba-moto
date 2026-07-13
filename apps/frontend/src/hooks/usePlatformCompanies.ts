@@ -1,13 +1,24 @@
 import { useState, useEffect, useCallback } from "react";
 import type { PlatformCompany, PlatformCompanyInput } from "../types/platform";
 
+interface MasterUser {
+  email: string;
+  username: string;
+  fullName: string;
+  password: string;
+}
+
+interface PlatformCompanyCreateInput extends PlatformCompanyInput {
+  masterUser?: MasterUser;
+}
+
 interface UsePlatformCompaniesResult {
   companies: PlatformCompany[];
   total: number;
   loading: boolean;
   error: string | null;
   refetch: () => void;
-  createCompany: (input: PlatformCompanyInput) => Promise<PlatformCompany>;
+  createCompany: (input: PlatformCompanyCreateInput) => Promise<PlatformCompany>;
   updateCompany: (id: number, input: Partial<PlatformCompanyInput>) => Promise<PlatformCompany>;
   deleteCompany: (id: number) => Promise<void>;
 }
@@ -36,7 +47,7 @@ export function usePlatformCompanies(): UsePlatformCompaniesResult {
 
   useEffect(() => { void fetchCompanies(); }, [fetchCompanies]);
 
-  const createCompany = useCallback(async (input: PlatformCompanyInput): Promise<PlatformCompany> => {
+  const createCompany = useCallback(async (input: PlatformCompanyCreateInput): Promise<PlatformCompany> => {
     const res = await fetch("/api/platform/companies", {
       method: "POST",
       credentials: "include",

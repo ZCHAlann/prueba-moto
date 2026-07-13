@@ -1,19 +1,27 @@
 // src/pages/Platform/Companies/page.tsx
+//
+// Página principal del superadmin para gestionar tenants.
+// Diseñada para ser densa pero accionable: hero con KPIs, barra de
+// búsqueda + filtros, vista board/tabla con drawer de detalle y modal
+// de creación/edición con wizard paso a paso.
+
 import { useState, useMemo, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Plus, Building2, Users, ShieldAlert, Clock,
   Pencil, Trash2, X, LayoutGrid, Table2,
-  Globe, Mail, Phone, ChevronRight, Power,
-  Search, Filter, ExternalLink,
+  Globe, Mail, Phone, ChevronRight, ChevronLeft,
+  Search, Filter, ExternalLink, Sparkles, KeyRound,
+  Check, Layers, AlertCircle, Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import ReactApexChart from "react-apexcharts";
 import type { ApexOptions } from "apexcharts";
 import { useAuth } from "../../../context/AuthContext";
 import { usePlatformCompanies } from "../../../hooks/usePlatformCompanies";
-import { usePlatformPlans }     from "../../../hooks/usePlatformPlans";
-import { usePlatformStats }     from "../../../hooks/usePlatformStats";
+import { usePlatformPlans } from "../../../hooks/usePlatformPlans";
+import { usePlatformStats } from "../../../hooks/usePlatformStats";
 import { fmtDateShortEc } from "@/lib/datetime";
 import {
   PlatformKpiCard, PlatformModal, ModalActions,
@@ -44,14 +52,8 @@ const INDUSTRIES = [
   "Manufactura","Distribución","Servicios","Energía","Otro",
 ];
 
-const AVAILABLE_MODULES = [
-  "dashboard","accesos","gestion","motores","generadores",
-  "aires_acondicionados","mantenimiento","checklist",
-  "alertas","reportes","combustible","geolocalizacion","cuenta",
-];
-
 const EMPTY_FORM: PlatformCompanyInput = {
-  name:"", slug:"", planId:"free", status:"active",
+  name:"", slug:"", planId:"starter", status:"active",
   enabledModules:[], industry:null, country:null, city:null,
   contactName:null, contactEmail:null, contactPhone:null,
   website:null, notes:null, trialEndsAt:null,
@@ -64,9 +66,7 @@ function getInitials(name: string) {
   return name.split(" ").slice(0,2).map(w => w[0]).join("").toUpperCase();
 }
 
-function fmtDate(d: string | null) {
-  return fmtDateShortEc(d);
-}
+function fmtDate(d: string | null) { return fmtDateShortEc(d); }
 
 function slugify(name: string) {
   return name.toLowerCase()
@@ -74,7 +74,6 @@ function slugify(name: string) {
     .replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
 }
 
-// Avatar con colores generados por nombre
 const AVATAR_COLORS = [
   ["bg-brand-100 dark:bg-brand-500/20","text-brand-700 dark:text-brand-300"],
   ["bg-violet-100 dark:bg-violet-500/20","text-violet-700 dark:text-violet-300"],
@@ -111,15 +110,10 @@ function StatusSwitcher({
 
   return (
     <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1"
-      >
+      <button type="button" onClick={() => setOpen(v => !v)} className="flex items-center gap-1">
         <StatusPill label={meta.label} tone={meta.tone} />
         <ChevronRight size={10} className={`text-gray-400 transition-transform ${open ? "rotate-90" : ""}`} />
       </button>
-
       <AnimatePresence>
         {open && (
           <>
@@ -135,9 +129,7 @@ function StatusSwitcher({
                 const m = STATUS_META[status];
                 const isActive = company.status === status;
                 return (
-                  <button
-                    key={status}
-                    type="button"
+                  <button key={status} type="button"
                     onClick={() => { onUpdate(company.id, status); setOpen(false); }}
                     className={`flex w-full items-center gap-2 px-3 py-2 text-xs font-medium transition-colors
                       ${isActive
@@ -173,6 +165,7 @@ function CompanyCard({
 }) {
   const meta = STATUS_META[company.status];
   const [bg, text] = avatarColor(company.name);
+  const counts = company.userCounts;
 
   return (
     <motion.div
@@ -185,42 +178,23 @@ function CompanyCard({
         transition-all hover:border-brand-300/60 hover:shadow-sm
         dark:border-white/[0.06] dark:bg-white/[0.03] dark:hover:border-brand-500/30"
     >
-      {/* Accent top bar */}
       <div className={`absolute inset-x-0 top-0 h-0.5 ${meta.accent} opacity-70`} />
-
-      {/* Quick actions — aparecen en hover */}
       <div className="absolute right-3 top-3 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-        <motion.button
-          type="button" whileTap={{ scale: 0.88 }}
-          onClick={onDetail}
-          className="flex h-6 w-6 items-center justify-center rounded-lg border border-gray-200
-            bg-white text-gray-400 transition hover:text-brand-500
-            dark:border-white/[0.08] dark:bg-gray-900 dark:hover:text-brand-400"
-        >
+        <motion.button type="button" whileTap={{ scale: 0.88 }} onClick={onDetail}
+          className="flex h-6 w-6 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 transition hover:text-brand-500 dark:border-white/[0.08] dark:bg-gray-900 dark:hover:text-brand-400">
           <ExternalLink size={11} />
         </motion.button>
-        <motion.button
-          type="button" whileTap={{ scale: 0.88 }}
-          onClick={onEdit}
-          className="flex h-6 w-6 items-center justify-center rounded-lg border border-gray-200
-            bg-white text-gray-400 transition hover:text-brand-500
-            dark:border-white/[0.08] dark:bg-gray-900 dark:hover:text-brand-400"
-        >
+        <motion.button type="button" whileTap={{ scale: 0.88 }} onClick={onEdit}
+          className="flex h-6 w-6 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 transition hover:text-brand-500 dark:border-white/[0.08] dark:bg-gray-900 dark:hover:text-brand-400">
           <Pencil size={11} />
         </motion.button>
-        <motion.button
-          type="button" whileTap={{ scale: 0.88 }}
-          onClick={onDelete}
-          className="flex h-6 w-6 items-center justify-center rounded-lg border border-gray-200
-            bg-white text-gray-400 transition hover:text-rose-500
-            dark:border-white/[0.08] dark:bg-gray-900 dark:hover:text-rose-400"
-        >
+        <motion.button type="button" whileTap={{ scale: 0.88 }} onClick={onDelete}
+          className="flex h-6 w-6 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 transition hover:text-rose-500 dark:border-white/[0.08] dark:bg-gray-900 dark:hover:text-rose-400">
           <Trash2 size={11} />
         </motion.button>
       </div>
 
       <div className="p-4">
-        {/* Header */}
         <div className="flex items-start gap-3">
           <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${bg} ${text}`}>
             {getInitials(company.name)}
@@ -231,7 +205,6 @@ function CompanyCard({
           </div>
         </div>
 
-        {/* Plan + industry */}
         <div className="mt-3 flex items-center gap-2 flex-wrap">
           {plan && (
             <span className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-600 dark:border-brand-500/20 dark:bg-brand-500/10 dark:text-brand-400">
@@ -243,31 +216,40 @@ function CompanyCard({
           )}
         </div>
 
-        {/* Módulos chips */}
+        {/* Indicador de uso del plan */}
+        {counts && (
+          <div className="mt-3 flex items-center gap-1.5">
+            <Users size={11} className="text-gray-400" />
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">
+              {counts.total}
+              {plan?.maxUsers !== null && plan?.maxUsers !== undefined && (
+                <span className="text-gray-400 dark:text-gray-500"> / {plan.maxUsers}</span>
+              )}
+              {" "}usuarios
+            </span>
+          </div>
+        )}
+
         {company.enabledModules.length > 0 && (
           <div className="mt-2.5 flex flex-wrap gap-1">
-            {company.enabledModules.slice(0,4).map(m => (
+            {company.enabledModules.slice(0,3).map(m => (
               <span key={m} className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500 dark:bg-white/[0.06] dark:text-gray-400">
                 {m}
               </span>
             ))}
-            {company.enabledModules.length > 4 && (
+            {company.enabledModules.length > 3 && (
               <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500 dark:bg-white/[0.06] dark:text-gray-400">
-                +{company.enabledModules.length - 4}
+                +{company.enabledModules.length - 3}
               </span>
             )}
           </div>
         )}
 
-        {/* Footer */}
         <div className="mt-3 flex items-center justify-between border-t border-gray-100 pt-3 dark:border-white/[0.04]">
-          {/* Status switcher */}
           <StatusSwitcher company={company} onUpdate={(_, s) => onStatusChange(s)} />
-          {/* Contacto */}
           {company.contactEmail && (
             <a href={`mailto:${company.contactEmail}`}
-              className="text-[11px] text-gray-400 hover:text-brand-500 dark:text-gray-500 dark:hover:text-brand-400 truncate max-w-[120px]"
-            >
+              className="text-[11px] text-gray-400 hover:text-brand-500 dark:text-gray-500 dark:hover:text-brand-400 truncate max-w-[120px]">
               {company.contactEmail}
             </a>
           )}
@@ -291,10 +273,8 @@ function BoardColumn({
   onDetail: (c: PlatformCompany) => void;
 }) {
   const meta = STATUS_META[status];
-
   return (
     <div className="flex flex-col gap-3">
-      {/* Column header */}
       <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${meta.bg} ${meta.border}`}>
         <span className={`h-2 w-2 rounded-full ${meta.accent}`} />
         <span className="text-xs font-semibold text-gray-700 dark:text-gray-200">{meta.label}</span>
@@ -302,15 +282,11 @@ function BoardColumn({
           {companies.length}
         </span>
       </div>
-
-      {/* Cards */}
       <AnimatePresence>
         {companies.length === 0 ? (
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 py-8 dark:border-white/[0.06]"
-          >
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 py-8 dark:border-white/[0.06]">
             <Building2 size={18} className="text-gray-300 dark:text-gray-600 mb-1" />
             <p className="text-xs text-gray-400 dark:text-gray-500">Sin empresas</p>
           </motion.div>
@@ -344,31 +320,22 @@ function CompanyDrawer({
 }) {
   if (!company) return null;
   const meta = STATUS_META[company.status];
-
+  const counts = company.userCounts;
   return (
     <AnimatePresence>
       {company && (
         <>
-          <motion.div
-            key="drawer-backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+          <motion.div key="drawer-backdrop"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
             className="fixed inset-0 z-40 bg-gray-950/40 backdrop-blur-sm"
-            onClick={onClose}
-          />
-          <motion.div
-            key="drawer"
-            initial={{ x: "100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "100%" }}
+            onClick={onClose} />
+          <motion.div key="drawer"
+            initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
             transition={{ type: "spring", stiffness: 350, damping: 35 }}
             className="fixed right-0 top-0 z-50 h-full w-full max-w-sm overflow-y-auto
               border-l border-gray-200 bg-white shadow-2xl
-              dark:border-white/[0.06] dark:bg-gray-900"
-          >
-            {/* Header */}
+              dark:border-white/[0.06] dark:bg-gray-900">
             <div className={`relative overflow-hidden border-b border-gray-100 px-5 py-5 dark:border-white/[0.06]`}>
               <div className={`absolute inset-x-0 top-0 h-0.5 ${meta.accent}`} />
               <div className="flex items-start justify-between">
@@ -381,12 +348,10 @@ function CompanyDrawer({
                 </div>
                 <button type="button" onClick={onClose}
                   className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200
-                    text-gray-400 hover:bg-gray-50 dark:border-white/[0.08] dark:hover:bg-white/[0.04]"
-                >
+                    text-gray-400 hover:bg-gray-50 dark:border-white/[0.08] dark:hover:bg-white/[0.04]">
                   <X size={14} />
                 </button>
               </div>
-
               <div className="mt-3 flex items-center gap-2 flex-wrap">
                 <StatusPill label={meta.label} tone={meta.tone} />
                 {plan && (
@@ -397,10 +362,18 @@ function CompanyDrawer({
               </div>
             </div>
 
-            {/* Body */}
             <div className="space-y-5 px-5 py-5">
+              {/* Uso del plan */}
+              {plan && counts && (
+                <Section title="Uso del plan">
+                  <PlanUsageRow label="Usuarios"      used={counts.total}      max={plan.maxUsers} />
+                  <PlanUsageRow label="Admins"        used={counts.admins}     max={plan.maxAdmins} />
+                  <PlanUsageRow label="Supervisores"  used={counts.supervisors} max={plan.maxSupervisors} />
+                  <PlanUsageRow label="Operadores"    used={counts.operators}   max={plan.maxOperators} />
+                  <PlanUsageRow label="Conductores"   used={counts.drivers}     max={plan.maxDrivers} />
+                </Section>
+              )}
 
-              {/* Info comercial */}
               <Section title="Información comercial">
                 <InfoRow label="Industria"   value={company.industry} />
                 <InfoRow label="País"        value={company.country} />
@@ -409,23 +382,20 @@ function CompanyDrawer({
                   <div className="flex items-center justify-between py-2">
                     <span className="text-xs text-gray-400">Sitio web</span>
                     <a href={company.website} target="_blank" rel="noopener noreferrer"
-                      className="flex items-center gap-1 text-xs font-medium text-brand-600 hover:opacity-80 dark:text-brand-400"
-                    >
+                      className="flex items-center gap-1 text-xs font-medium text-brand-600 hover:opacity-80 dark:text-brand-400">
                       <Globe size={11} /> Ver sitio
                     </a>
                   </div>
                 )}
               </Section>
 
-              {/* Contacto */}
               <Section title="Contacto">
-                <InfoRow label="Nombre"    value={company.contactName} />
+                <InfoRow label="Nombre" value={company.contactName} />
                 {company.contactEmail && (
                   <div className="flex items-center justify-between py-2">
                     <span className="text-xs text-gray-400">Email</span>
                     <a href={`mailto:${company.contactEmail}`}
-                      className="flex items-center gap-1 text-xs font-medium text-brand-600 hover:opacity-80 dark:text-brand-400"
-                    >
+                      className="flex items-center gap-1 text-xs font-medium text-brand-600 hover:opacity-80 dark:text-brand-400">
                       <Mail size={11} /> {company.contactEmail}
                     </a>
                   </div>
@@ -434,23 +404,20 @@ function CompanyDrawer({
                   <div className="flex items-center justify-between py-2">
                     <span className="text-xs text-gray-400">Teléfono</span>
                     <a href={`tel:${company.contactPhone}`}
-                      className="flex items-center gap-1 text-xs font-medium text-gray-700 dark:text-gray-200"
-                    >
+                      className="flex items-center gap-1 text-xs font-medium text-gray-700 dark:text-gray-200">
                       <Phone size={11} /> {company.contactPhone}
                     </a>
                   </div>
                 )}
               </Section>
 
-              {/* Fechas */}
               <Section title="Fechas clave">
-                <InfoRow label="Trial hasta"       value={fmtDate(company.trialEndsAt)} />
-                <InfoRow label="Inicio contrato"   value={fmtDate(company.contractStartAt)} />
-                <InfoRow label="Fin contrato"      value={fmtDate(company.contractEndAt)} />
-                <InfoRow label="Cliente desde"     value={fmtDate(company.createdAt)} />
+                <InfoRow label="Trial hasta"     value={fmtDate(company.trialEndsAt)} />
+                <InfoRow label="Inicio contrato" value={fmtDate(company.contractStartAt)} />
+                <InfoRow label="Fin contrato"    value={fmtDate(company.contractEndAt)} />
+                <InfoRow label="Cliente desde"   value={fmtDate(company.createdAt)} />
               </Section>
 
-              {/* Módulos */}
               {company.enabledModules.length > 0 && (
                 <Section title={`Módulos habilitados (${company.enabledModules.length})`}>
                   <div className="flex flex-wrap gap-1.5 pt-1">
@@ -463,7 +430,6 @@ function CompanyDrawer({
                 </Section>
               )}
 
-              {/* Notas */}
               {company.notes && (
                 <Section title="Notas">
                   <p className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-3 text-sm text-gray-600 dark:border-white/[0.04] dark:bg-white/[0.02] dark:text-gray-300">
@@ -472,11 +438,22 @@ function CompanyDrawer({
                 </Section>
               )}
 
-              {/* Acción */}
+              {/* jul 2026 v6 — link a la config de IA por empresa */}
+              <Section title="Asistente IA">
+                <Link
+                  to={`/platform/companies/${company.id}/ai`}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+                >
+                  <Sparkles size={12} /> Ver config IA →
+                </Link>
+                <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
+                  Provider, API key, kill-switch y uso de tokens.
+                </p>
+              </Section>
+
               <button type="button" onClick={onEdit}
                 className="w-full rounded-xl bg-brand-500 py-2.5 text-sm font-semibold text-white
-                  shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95"
-              >
+                  shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 active:scale-95">
                 Editar empresa
               </button>
             </div>
@@ -484,6 +461,27 @@ function CompanyDrawer({
         </>
       )}
     </AnimatePresence>
+  );
+}
+
+function PlanUsageRow({ label, used, max }: { label: string; used: number; max: number | null | undefined }) {
+  const isUnlimited = max === null || max === undefined;
+  const pct = !isUnlimited && max ? Math.min(100, Math.round((used / max) * 100)) : 0;
+  const over = !isUnlimited && used > (max ?? 0);
+  return (
+    <div className="px-3 py-2">
+      <div className="mb-1 flex items-center justify-between text-[11px]">
+        <span className="text-gray-500 dark:text-gray-400">{label}</span>
+        <span className={`font-bold ${over ? "text-rose-600" : "text-gray-700 dark:text-gray-200"}`}>
+          {used} / {isUnlimited ? "∞" : max}
+        </span>
+      </div>
+      {!isUnlimited && (
+        <div className="h-1.5 w-full rounded-full bg-gray-100 dark:bg-white/[0.06] overflow-hidden">
+          <div className={`h-full rounded-full transition-all ${over ? "bg-rose-500" : pct > 80 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -509,135 +507,282 @@ function InfoRow({ label, value }: { label: string; value: string | null | undef
   );
 }
 
-// ─── Company Form ─────────────────────────────────────────────────────────────
+// ─── Wizard de creación/edición (3 pasos) ─────────────────────────────────────
 
-function CompanyForm({
-  form, onChange, plans, isEdit,
+interface CompanyFormExtended extends PlatformCompanyInput {
+  masterUser?: {
+    email: string;
+    username: string;
+    fullName: string;
+    password: string;
+  };
+}
+
+function CompanyWizard({
+  initialForm, onSubmit, onCancel, plans, isEdit,
 }: {
-  form: PlatformCompanyInput;
-  onChange: (f: PlatformCompanyInput) => void;
+  initialForm: PlatformCompanyInput;
+  onSubmit: (f: CompanyFormExtended) => Promise<void>;
+  onCancel: () => void;
   plans: PlatformPlan[];
   isEdit: boolean;
 }) {
-  function set<K extends keyof PlatformCompanyInput>(k: K, v: PlatformCompanyInput[K]) {
-    onChange({ ...form, [k]: v });
+  const [step, setStep] = useState(0);
+  const [form, setForm] = useState<CompanyFormExtended>({
+    ...initialForm,
+    enabledModules: initialForm.enabledModules ?? [],
+    masterUser: isEdit ? undefined : { email: "", username: "", fullName: "", password: "" },
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  function set<K extends keyof CompanyFormExtended>(k: K, v: CompanyFormExtended[K]) {
+    setForm((prev) => ({ ...prev, [k]: v }));
   }
 
-  function toggleModule(mod: string) {
-    const has = form.enabledModules.includes(mod);
-    set("enabledModules", has
-      ? form.enabledModules.filter(m => m !== mod)
-      : [...form.enabledModules, mod]
-    );
+  const selectedPlan = plans.find(p => p.id === form.planId);
+  const planModules = selectedPlan?.allowedModules ?? [];
+
+  const steps = [
+    { label: "Datos básicos", icon: Building2 },
+    { label: "Plan + módulos", icon: Layers },
+    { label: "Usuario owner", icon: KeyRound },
+  ];
+
+  const canNext = (() => {
+    if (step === 0) return form.name.trim().length >= 2;
+    if (step === 1) return !!form.planId;
+    if (step === 2) {
+      if (isEdit) return true;
+      return !!form.masterUser?.email &&
+             !!form.masterUser.username &&
+             (form.masterUser?.password?.length ?? 0) >= 8;
+    }
+    return true;
+  })();
+
+  async function handleSubmit() {
+    setSubmitting(true);
+    try {
+      await onSubmit(form);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
-    <div className="grid gap-4 p-6 sm:grid-cols-2">
-
-      {/* Básico */}
-      <InputField label="Nombre de empresa" value={form.name} required
-        onChange={e => {
-          const name = e.target.value;
-          set("name", name);
-          if (!isEdit) set("slug", slugify(name));
-        }}
-      />
-      <InputField label="Slug (URL)" value={form.slug} required
-        placeholder="mi-empresa"
-        onChange={e => set("slug", e.target.value)}
-      />
-
-      <SelectField label="Plan" value={form.planId}
-        onChange={e => set("planId", e.target.value)}
-      >
-        {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-      </SelectField>
-
-      <SelectField label="Estado" value={form.status}
-        onChange={e => set("status", e.target.value as CompanyStatus)}
-      >
-        {STATUS_ORDER.map(s => (
-          <option key={s} value={s}>{STATUS_META[s].label}</option>
-        ))}
-      </SelectField>
-
-      {/* Comercial */}
-      <SelectField label="Industria" value={form.industry ?? ""}
-        onChange={e => set("industry", e.target.value || null)}
-      >
-        <option value="">Sin especificar</option>
-        {INDUSTRIES.map(i => <option key={i} value={i}>{i}</option>)}
-      </SelectField>
-
-      <InputField label="País" value={form.country ?? ""}
-        placeholder="Ecuador"
-        onChange={e => set("country", e.target.value || null)}
-      />
-      <InputField label="Ciudad" value={form.city ?? ""}
-        placeholder="Guayaquil"
-        onChange={e => set("city", e.target.value || null)}
-      />
-      <InputField label="Sitio web" value={form.website ?? ""}
-        placeholder="https://empresa.com"
-        onChange={e => set("website", e.target.value || null)}
-      />
-
-      {/* Contacto */}
-      <InputField label="Nombre de contacto" value={form.contactName ?? ""}
-        onChange={e => set("contactName", e.target.value || null)}
-        colSpan="full"
-      />
-      <InputField label="Email de contacto" type="email" value={form.contactEmail ?? ""}
-        onChange={e => set("contactEmail", e.target.value || null)}
-      />
-      <InputField label="Teléfono" value={form.contactPhone ?? ""}
-        onChange={e => set("contactPhone", e.target.value || null)}
-      />
-
-      {/* Fechas */}
-      <InputField label="Trial hasta" type="date"
-        value={form.trialEndsAt?.slice(0,10) ?? ""}
-        onChange={e => set("trialEndsAt", e.target.value || null)}
-      />
-      <InputField label="Inicio contrato" type="date"
-        value={form.contractStartAt ?? ""}
-        onChange={e => set("contractStartAt", e.target.value || null)}
-      />
-      <InputField label="Fin contrato" type="date"
-        value={form.contractEndAt ?? ""}
-        onChange={e => set("contractEndAt", e.target.value || null)}
-      />
-
-      {/* Módulos */}
-      <div className="sm:col-span-2">
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-          Módulos habilitados ({form.enabledModules.length})
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {AVAILABLE_MODULES.map(mod => {
-            const active = form.enabledModules.includes(mod);
-            return (
-              <motion.button key={mod} type="button" whileTap={{ scale: 0.93 }}
-                onClick={() => toggleModule(mod)}
-                className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-all ${
-                  active
-                    ? "border-brand-400 bg-brand-50 text-brand-600 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-400"
-                    : "border-gray-200 text-gray-500 hover:border-gray-300 dark:border-white/[0.08] dark:text-gray-500"
-                }`}
-              >
-                {mod}
-              </motion.button>
-            );
-          })}
-        </div>
+    <div>
+      {/* Stepper */}
+      <div className="flex items-center gap-2 border-b border-gray-100 px-6 py-4 dark:border-white/[0.06]">
+        {steps.map((s, i) => {
+          const active = i === step;
+          const done = i < step;
+          return (
+            <div key={s.label} className="flex flex-1 items-center gap-2">
+              <div className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition
+                ${done ? "bg-brand-500 text-white" : active ? "bg-brand-500 text-white" : "bg-gray-100 text-gray-400 dark:bg-white/[0.06] dark:text-gray-500"}`}>
+                {done ? <Check size={12}/> : i + 1}
+              </div>
+              <p className={`text-xs ${active || done ? "font-semibold text-gray-800 dark:text-white" : "text-gray-400"}`}>{s.label}</p>
+              {i < steps.length - 1 && (
+                <div className={`ml-2 h-px flex-1 ${done ? "bg-brand-400" : "bg-gray-200 dark:bg-white/[0.08]"}`} />
+              )}
+            </div>
+          );
+        })}
       </div>
 
-      {/* Notas */}
-      <TextareaField label="Notas internas" rows={3} colSpan="full"
-        value={form.notes ?? ""}
-        placeholder="Observaciones, condiciones especiales…"
-        onChange={e => set("notes", e.target.value || null)}
-      />
+      {/* Body */}
+      <div className="px-6 py-6">
+        {step === 0 && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <InputField label="Nombre de empresa" value={form.name} required
+              onChange={e => {
+                const name = e.target.value;
+                set("name", name);
+                if (!isEdit && !form.slug) set("slug", slugify(name));
+              }} />
+            <InputField label="Slug (URL)" value={form.slug} required
+              placeholder="mi-empresa"
+              onChange={e => set("slug", e.target.value)} />
+            <SelectField label="Industria" value={form.industry ?? ""}
+              onChange={e => set("industry", e.target.value || null)}>
+              <option value="">Sin especificar</option>
+              {INDUSTRIES.map(i => <option key={i} value={i}>{i}</option>)}
+            </SelectField>
+            <SelectField label="Estado" value={form.status}
+              onChange={e => set("status", e.target.value as CompanyStatus)}>
+              {STATUS_ORDER.map(s => (
+                <option key={s} value={s}>{STATUS_META[s].label}</option>
+              ))}
+            </SelectField>
+            <InputField label="País" value={form.country ?? ""}
+              placeholder="Ecuador"
+              onChange={e => set("country", e.target.value || null)} />
+            <InputField label="Ciudad" value={form.city ?? ""}
+              placeholder="Guayaquil"
+              onChange={e => set("city", e.target.value || null)} />
+            <div className="sm:col-span-2">
+              <TextareaField label="Notas internas" rows={3} colSpan="full"
+                value={form.notes ?? ""}
+                placeholder="Observaciones, condiciones especiales…"
+                onChange={e => set("notes", e.target.value || null)} />
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="grid gap-5">
+            <div>
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                Plan ({plans.length} disponibles)
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {plans.map(p => {
+                  const active = form.planId === p.id;
+                  return (
+                    <button key={p.id} type="button"
+                      onClick={() => {
+                        set("planId", p.id);
+                        // Si cambia plan, sincronizamos módulos permitidos
+                        if (p.allowedModules.length > 0) {
+                          set("enabledModules", [...p.allowedModules]);
+                        }
+                      }}
+                      className={`relative rounded-xl border p-3 text-left transition
+                        ${active
+                          ? "border-brand-500 bg-brand-50 dark:bg-brand-500/10"
+                          : "border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.15]"
+                        }`}>
+                      <div className="flex items-center justify-between">
+                        <p className="font-semibold text-gray-800 dark:text-white">{p.name}</p>
+                        {p.isPopular && (
+                          <span className="rounded-full bg-amber-100 dark:bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                            Popular
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                        ${Number(p.monthlyPrice) > 0 ? `${p.monthlyPrice}/mes` : "Gratis"} · {p.allowedModules.length} módulos
+                      </p>
+                      {active && (
+                        <Check size={14} className="absolute right-2 top-2 text-brand-500" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                <span>Módulos habilitados ({form.enabledModules?.length ?? 0})</span>
+                <button type="button"
+                  onClick={() => {
+                    set("enabledModules",
+                      form.enabledModules?.length === planModules.length ? [] : [...planModules],
+                    )}
+                  className="normal-case text-brand-600 dark:text-brand-400 hover:underline">
+                  {form.enabledModules?.length === planModules.length ? "Quitar todos" : "Aplicar plan"}
+                </button>
+              </p>
+              <div className="grid max-h-72 gap-2 overflow-y-auto sm:grid-cols-2">
+                {planModules.map((m: string) => {
+                  const active = form.enabledModules?.includes(m);
+                  return (
+                    <button key={m} type="button"
+                      onClick={() => {
+                        const current = form.enabledModules ?? [];
+                        set("enabledModules",
+                          active ? current.filter(x => x !== m) : [...current, m]);
+                      }}
+                      className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left transition
+                        ${active
+                          ? "border-brand-400 bg-brand-50 dark:bg-brand-500/10"
+                          : "border-gray-200 dark:border-white/[0.08] hover:border-gray-300"
+                        }`}>
+                      <span className="text-xs font-medium text-gray-700 dark:text-gray-200">{m}</span>
+                      {active && <Check size={12} className="text-brand-500" />}
+                    </button>
+                  );
+                })}
+              </div>
+              {form.enabledModules && form.enabledModules.length > 0 &&
+                form.enabledModules.length < planModules.length && (
+                <p className="mt-2 flex items-start gap-1 text-[11px] text-amber-700 dark:text-amber-400">
+                  <AlertCircle size={11} className="mt-0.5 shrink-0" />
+                  {form.enabledModules.length} de {planModules.length} módulos activados.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {step === 2 && !isEdit && (
+          <div className="grid gap-4">
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 dark:border-blue-500/20 dark:bg-blue-500/10">
+              <div className="flex items-start gap-2">
+                <Sparkles size={14} className="mt-0.5 text-blue-600 dark:text-blue-400" />
+                <div>
+                  <p className="text-xs font-semibold text-blue-900 dark:text-blue-300">
+                    Usuario owner
+                  </p>
+                  <p className="mt-1 text-[11px] text-blue-800/80 dark:text-blue-300/80">
+                    Será el primer usuario de la empresa, con acceso total. Le enviaremos un email con sus credenciales.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <InputField label="Nombre completo" value={form.masterUser?.fullName ?? ""}
+              placeholder="Juan Pérez"
+              onChange={e => set("masterUser", { ...(form.masterUser ?? { email: "", username: "", fullName: "", password: "" }), fullName: e.target.value })} />
+            <InputField label="Email" type="email" value={form.masterUser?.email ?? ""} required
+              placeholder="admin@empresa.com"
+              onChange={e => set("masterUser", { ...(form.masterUser ?? { email: "", username: "", fullName: "", password: "" }), email: e.target.value })} />
+            <InputField label="Username" value={form.masterUser?.username ?? ""} required
+              placeholder="admin"
+              onChange={e => set("masterUser", { ...(form.masterUser ?? { email: "", username: "", fullName: "", password: "" }), username: e.target.value })} />
+            <InputField label="Contraseña" type="password" value={form.masterUser?.password ?? ""} required
+              placeholder="Mínimo 8 caracteres"
+              onChange={e => set("masterUser", { ...(form.masterUser ?? { email: "", username: "", fullName: "", password: "" }), password: e.target.value })} />
+          </div>
+        )}
+
+        {step === 2 && isEdit && (
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Estás editando la empresa. Los cambios de plan/módulos afectarán a los usuarios existentes; revisa las validaciones.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50/50 px-6 py-4 dark:border-white/[0.06] dark:bg-white/[0.02]">
+        <button type="button" onClick={step === 0 ? onCancel : () => setStep(step - 1)}
+          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-gray-500 transition hover:bg-white hover:text-gray-700 dark:hover:bg-white/[0.05] dark:hover:text-gray-300">
+          {step === 0 ? <X size={13} /> : <ChevronLeft size={13} />}
+          {step === 0 ? "Cancelar" : "Atrás"}
+        </button>
+        {step < steps.length - 1 ? (
+          <button type="button" disabled={!canNext}
+            onClick={() => setStep(step + 1)}
+            className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-semibold transition
+              ${canNext ? "bg-brand-500 text-white hover:bg-brand-600" : "cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06]"}`}>
+            Siguiente <ChevronRight size={13} />
+          </button>
+        ) : (
+          <button type="button" disabled={!canNext || submitting}
+            onClick={handleSubmit}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition
+              ${canNext && !submitting
+                ? "bg-brand-500 text-white hover:bg-brand-600"
+                : "cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06]"}`}>
+            {submitting && <Loader2 size={12} className="animate-spin" />}
+            {isEdit ? "Guardar cambios" : "Crear empresa"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -666,8 +811,6 @@ export function CompaniesPage() {
   const [form,       setForm]       = useState<PlatformCompanyInput>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
 
-  // ── Derived ───────────────────────────────────────────────────────────────
-
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return companies.filter(c => {
@@ -686,8 +829,6 @@ export function CompaniesPage() {
     }), {} as Record<CompanyStatus, PlatformCompany[]>),
   [filtered]);
 
-  // ── Donut chart ───────────────────────────────────────────────────────────
-
   const donutData = useMemo(() => {
     const byPlan = stats?.companies.byPlan ?? {};
     return plans.map(p => ({ label: p.name, value: byPlan[p.id] ?? 0 }));
@@ -695,7 +836,7 @@ export function CompaniesPage() {
 
   const donutOptions: ApexOptions = {
     chart: { type: "donut", background: "transparent", fontFamily: "Outfit, sans-serif" },
-    colors: ["#9ca3af","#3b82f6","#465fff","#7c3aed"],
+    colors: ["#9ca3af","#3b82f6","#465fff","#7c3aed","#10b981"],
     labels: donutData.map(d => d.label),
     legend: { position: "bottom", fontSize: "11px", labels: { colors: "#9ca3af" } },
     dataLabels: { enabled: false },
@@ -706,11 +847,9 @@ export function CompaniesPage() {
     tooltip: { theme: "dark" },
   };
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
-
   function openCreate() {
     setEditing(null);
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM, enabledModules: [] });
     setModalOpen(true);
   }
 
@@ -719,7 +858,7 @@ export function CompaniesPage() {
     setForm({
       name: company.name, slug: company.slug,
       planId: company.planId, status: company.status,
-      enabledModules: company.enabledModules,
+      enabledModules: company.enabledModulesDetailed ?? company.enabledModules,
       industry: company.industry, country: company.country,
       city: company.city, contactName: company.contactName,
       contactEmail: company.contactEmail, contactPhone: company.contactPhone,
@@ -739,16 +878,16 @@ export function CompaniesPage() {
     }
   }, [updateCompany]);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSubmit(submitted: CompanyFormExtended) {
     setSubmitting(true);
     try {
       if (editing) {
-        await updateCompany(editing.id, form);
+        const { masterUser: _, ...rest } = submitted;
+        await updateCompany(editing.id, rest);
         toast.success("Empresa actualizada");
       } else {
-        await createCompany(form);
-        toast.success("Empresa creada");
+        await createCompany(submitted);
+        toast.success("Empresa creada con su usuario owner");
       }
       setModalOpen(false);
     } catch (err) {
@@ -773,12 +912,9 @@ export function CompaniesPage() {
     }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
   return (
     <div className="space-y-6">
-
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
@@ -791,12 +927,11 @@ export function CompaniesPage() {
           </div>
           <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Empresas clientes</h1>
           <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">
-            Gestiona tenants, planes y módulos de cada empresa en la plataforma.
+            Crea empresas, asignales un plan y controla qué módulos pueden usar.
           </p>
         </div>
 
         <div className="flex items-center gap-2 self-start">
-          {/* View toggle */}
           <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
             {(["board","table"] as ViewMode[]).map(v => (
               <button key={v} type="button" onClick={() => setView(v)}
@@ -804,8 +939,7 @@ export function CompaniesPage() {
                   ${view === v
                     ? "bg-white text-gray-800 shadow-sm dark:bg-white/[0.08] dark:text-white"
                     : "text-gray-500 hover:text-gray-700 dark:text-gray-400"
-                  }`}
-              >
+                  }`}>
                 {v === "board" ? <><LayoutGrid size={12} />Board</> : <><Table2 size={12} />Tabla</>}
               </button>
             ))}
@@ -814,14 +948,13 @@ export function CompaniesPage() {
           <motion.button type="button" whileTap={{ scale: 0.95 }} onClick={openCreate}
             className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5
               text-sm font-semibold text-white shadow-sm shadow-brand-500/20
-              transition hover:bg-brand-600"
-          >
+              transition hover:bg-brand-600">
             <Plus size={15} /> Nueva empresa
           </motion.button>
         </div>
       </motion.div>
 
-      {/* ── KPIs ───────────────────────────────────────────────────────────── */}
+      {/* KPIs */}
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
         {[
           { icon:<Building2 size={16}/>, label:"Total empresas",  value:(stats?.companies.total ?? 0).toString(),     sub:"Todos los tenants",          accent:"bg-brand-500"   },
@@ -831,34 +964,29 @@ export function CompaniesPage() {
         ].map((kpi,i) => (
           <motion.div key={kpi.label}
             initial={{ opacity:0, y:16 }} animate={{ opacity:1, y:0 }}
-            transition={{ duration:0.35, delay: i*0.07 }}
-          >
+            transition={{ duration:0.35, delay: i*0.07 }}>
             <PlatformKpiCard {...kpi} />
           </motion.div>
         ))}
       </div>
 
-      {/* ── Filtros ─────────────────────────────────────────────────────────── */}
+      {/* Filtros */}
       <motion.div
         initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }}
         transition={{ duration:0.3, delay:0.2 }}
         className="flex flex-wrap items-center gap-2"
       >
-        {/* Search */}
         <div className="relative">
           <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            type="text" value={search}
+          <input type="text" value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Buscar empresa…"
             className="h-9 rounded-xl border border-gray-200 bg-white pl-9 pr-4 text-sm
               text-gray-700 placeholder:text-gray-400 outline-none transition
               focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10
-              dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300"
-          />
+              dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300" />
         </div>
 
-        {/* Status filter chips */}
         <div className="flex items-center gap-1">
           <Filter size={12} className="text-gray-400 mr-1" />
           {(["all",...STATUS_ORDER] as const).map(s => {
@@ -874,22 +1002,17 @@ export function CompaniesPage() {
                       ? "border-brand-400 bg-brand-50 text-brand-600 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-400"
                       : `${meta!.bg} ${meta!.border} text-gray-700 dark:text-gray-200`
                     : "border-gray-200 text-gray-500 hover:border-gray-300 dark:border-white/[0.08] dark:text-gray-500"
-                }`}
-              >
+                }`}>
                 {isAll ? "Todas" : meta!.label}
               </motion.button>
             );
           })}
         </div>
 
-        {/* Plan filter */}
-        <select
-          value={filterPlan}
-          onChange={e => setFilterPlan(e.target.value)}
+        <select value={filterPlan} onChange={e => setFilterPlan(e.target.value)}
           className="h-9 rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-600
             outline-none transition focus:border-brand-500
-            dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300"
-        >
+            dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300">
           <option value="all">Todos los planes</option>
           {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
@@ -899,10 +1022,7 @@ export function CompaniesPage() {
         </span>
       </motion.div>
 
-      {/* ── Contenido principal + Donut ───────────────────────────────────── */}
       <div className="grid gap-6 xl:grid-cols-4">
-
-        {/* Vista principal (3/4) */}
         <div className="xl:col-span-3">
           {loading ? (
             <div className="flex items-center justify-center gap-3 py-24 text-gray-400">
@@ -913,14 +1033,11 @@ export function CompaniesPage() {
             </div>
           ) : (
             <AnimatePresence mode="wait">
-
-              {/* ── BOARD ── */}
               {view === "board" && (
                 <motion.div key="board"
                   initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }}
                   exit={{ opacity:0, y:-8 }} transition={{ duration:0.2 }}
-                  className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-                >
+                  className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   {STATUS_ORDER.map(status => (
                     <BoardColumn
                       key={status}
@@ -936,13 +1053,11 @@ export function CompaniesPage() {
                 </motion.div>
               )}
 
-              {/* ── TABLE ── */}
               {view === "table" && (
                 <motion.div key="table"
                   initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }}
                   exit={{ opacity:0, y:-8 }} transition={{ duration:0.2 }}
-                  className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]"
-                >
+                  className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
                   {filtered.length === 0 ? (
                     <div className="flex flex-col items-center justify-center gap-2 py-16">
                       <Building2 size={20} className="text-gray-300 dark:text-gray-600" />
@@ -950,16 +1065,11 @@ export function CompaniesPage() {
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table className="w-full min-w-[860px] text-sm">
+                      <table className="w-full min-w-[900px] text-sm">
                         <thead>
                           <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                            {["Empresa","Plan","Estado","Módulos","Contacto","Creada",""].map((h, i, arr) => (
-                              <th
-                                key={h}
-                                className={`px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 ${i === arr.length - 1 ? "" : ""}`}
-                              >
-                                {h}
-                              </th>
+                            {["Empresa","Plan","Estado","Usuarios","Módulos","Contacto","Creada",""].map(h => (
+                              <th key={h} className="px-5 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -967,14 +1077,13 @@ export function CompaniesPage() {
                           <AnimatePresence>
                             {filtered.map((company, i) => {
                               const plan = plans.find(p => p.id === company.planId);
+                              const counts = company.userCounts;
                               return (
                                 <motion.tr key={company.id}
                                   initial={{ opacity:0, y:6 }} animate={{ opacity:1, y:0 }}
                                   exit={{ opacity:0 }}
                                   transition={{ duration:0.18, delay: i*0.03 }}
-                                  className="group transition-colors hover:bg-gray-50/80 dark:hover:bg-white/[0.02]"
-                                >
-                                  {/* Empresa */}
+                                  className="group transition-colors hover:bg-gray-50/80 dark:hover:bg-white/[0.02]">
                                   <td className="px-5 py-3.5">
                                     <div className="flex items-center gap-2.5">
                                       <CompanyAvatar name={company.name} size="sm" />
@@ -984,8 +1093,6 @@ export function CompaniesPage() {
                                       </div>
                                     </div>
                                   </td>
-
-                                  {/* Plan */}
                                   <td className="px-5 py-3.5">
                                     {plan && (
                                       <span className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-600 dark:border-brand-500/20 dark:bg-brand-500/10 dark:text-brand-400">
@@ -993,53 +1100,52 @@ export function CompaniesPage() {
                                       </span>
                                     )}
                                   </td>
-
-                                  {/* Status con switcher inline */}
                                   <td className="px-5 py-3.5">
-                                    <StatusSwitcher
-                                      company={company}
-                                      onUpdate={handleStatusChange}
-                                    />
+                                    <StatusSwitcher company={company} onUpdate={handleStatusChange} />
                                   </td>
-
-                                  {/* Módulos */}
+                                  <td className="px-5 py-3.5">
+                                    {counts && (
+                                      <div className="flex flex-col gap-0.5">
+                                        <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 tabular-nums">
+                                          {counts.total}
+                                          {plan?.maxUsers !== null && plan?.maxUsers !== undefined && (
+                                            <span className="ml-1 text-gray-400 dark:text-gray-500">/ {plan.maxUsers}</span>
+                                          )}
+                                        </span>
+                                        <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                                          {counts.admins}A · {counts.supervisors}S · {counts.operators}O · {counts.drivers}C
+                                        </span>
+                                      </div>
+                                    )}
+                                  </td>
                                   <td className="px-5 py-3.5">
                                     <span className="rounded-lg bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:bg-white/[0.06] dark:text-gray-300">
                                       {company.enabledModules.length} módulos
                                     </span>
                                   </td>
-
-                                  {/* Contacto */}
                                   <td className="px-5 py-3.5">
                                     <p className="text-xs text-gray-700 dark:text-gray-200">{company.contactName || "—"}</p>
                                     <p className="text-[11px] text-gray-400">{company.contactEmail || ""}</p>
                                   </td>
-
-                                  {/* Creada */}
                                   <td className="px-5 py-3.5 text-xs text-gray-500 dark:text-gray-400">
                                     {fmtDate(company.createdAt)}
                                   </td>
-
-                                  {/* Acciones */}
-                                  <td className=" group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
+                                  <td className="px-5 py-3.5 group-hover:bg-gray-50/80 dark:group-hover:bg-white/[0.02]">
                                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                       <motion.button type="button" whileTap={{ scale:0.9 }}
                                         onClick={() => setDrawerCompany(company)}
-                                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition hover:text-brand-500 dark:border-white/[0.08]"
-                                      >
+                                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition hover:text-brand-500 dark:border-white/[0.08]">
                                         <ExternalLink size={12} />
                                       </motion.button>
                                       <motion.button type="button" whileTap={{ scale:0.9 }}
                                         onClick={() => openEdit(company)}
-                                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition hover:text-brand-500 dark:border-white/[0.08]"
-                                      >
+                                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition hover:text-brand-500 dark:border-white/[0.08]">
                                         <Pencil size={12} />
                                       </motion.button>
                                       {isSuperadmin && (
                                         <motion.button type="button" whileTap={{ scale:0.9 }}
                                           onClick={() => { setDeleting(company); setDeleteOpen(true); }}
-                                          className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition hover:text-rose-500 dark:border-white/[0.08]"
-                                        >
+                                          className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 transition hover:text-rose-500 dark:border-white/[0.08]">
                                           <Trash2 size={12} />
                                         </motion.button>
                                       )}
@@ -1059,28 +1165,20 @@ export function CompaniesPage() {
           )}
         </div>
 
-        {/* Donut lateral (1/4) */}
+        {/* Donut lateral */}
         <motion.div
           initial={{ opacity:0, x:16 }} animate={{ opacity:1, x:0 }}
           transition={{ duration:0.35, delay:0.25 }}
-          className="rounded-2xl border border-gray-200 bg-white px-5 pb-5 pt-5 dark:border-white/[0.06] dark:bg-white/[0.03]"
-        >
+          className="rounded-2xl border border-gray-200 bg-white px-5 pb-5 pt-5 dark:border-white/[0.06] dark:bg-white/[0.03]">
           <h3 className="text-sm font-semibold text-gray-800 dark:text-white">Por plan</h3>
           <p className="mt-0.5 mb-4 text-xs text-gray-400 dark:text-gray-500">Distribución actual</p>
           {donutData.some(d => d.value > 0) ? (
-            <ReactApexChart
-              options={donutOptions}
-              series={donutData.map(d => d.value)}
-              type="donut"
-              height={220}
-            />
+            <ReactApexChart options={donutOptions} series={donutData.map(d => d.value)} type="donut" height={220} />
           ) : (
             <div className="flex flex-col items-center justify-center py-10">
               <p className="text-xs text-gray-400">Sin datos aún</p>
             </div>
           )}
-
-          {/* Resumen por status */}
           <div className="mt-4 space-y-2 border-t border-gray-100 pt-4 dark:border-white/[0.06]">
             {STATUS_ORDER.map(s => {
               const count = companies.filter(c => c.status === s).length;
@@ -1101,7 +1199,6 @@ export function CompaniesPage() {
         </motion.div>
       </div>
 
-      {/* ── Drawer detalle ─────────────────────────────────────────────────── */}
       <CompanyDrawer
         company={drawerCompany}
         plan={plans.find(p => p.id === drawerCompany?.planId)}
@@ -1109,35 +1206,33 @@ export function CompaniesPage() {
         onEdit={() => { if (drawerCompany) { openEdit(drawerCompany); setDrawerCompany(null); }}}
       />
 
-      {/* ── Modal crear/editar ─────────────────────────────────────────────── */}
+      {/* Modal wizard */}
       <PlatformModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        title={editing ? `Editar — ${editing.name}` : "Nueva empresa"}
-        subtitle={editing ? "Modifica los datos de la empresa." : "Registra un nuevo tenant en la plataforma."}
+        title={editing ? `Editar ${editing.name}` : "Nueva empresa"}
+        subtitle={editing ? "Modifica los datos de la empresa." : "Crea una empresa nueva con su plan y usuario owner."}
         icon={<Building2 size={15} />}
-        iconBg="bg-emerald-50 dark:bg-emerald-500/[0.12]"
-        iconColor="text-emerald-600 dark:text-emerald-400"
+        iconBg="bg-brand-50 dark:bg-brand-500/[0.12]"
+        iconColor="text-brand-600 dark:text-brand-400"
         maxWidth="max-w-3xl"
-        footer={
-          <ModalActions
-            onCancel={() => setModalOpen(false)}
-            submitting={submitting}
-            submitLabel={editing ? "Guardar cambios" : "Crear empresa"}
-          />
-        }
+        hideFooter
       >
-        <form onSubmit={handleSubmit}>
-          <CompanyForm form={form} onChange={setForm} plans={plans} isEdit={!!editing} />
-        </form>
+        <CompanyWizard
+          initialForm={editing ?? EMPTY_FORM}
+          onSubmit={handleSubmit}
+          onCancel={() => setModalOpen(false)}
+          plans={plans}
+          isEdit={!!editing}
+        />
       </PlatformModal>
 
-      {/* ── Modal eliminar ─────────────────────────────────────────────────── */}
+      {/* Modal confirmar eliminación */}
       <PlatformModal
         open={deleteOpen}
         onClose={() => setDeleteOpen(false)}
         title="Eliminar empresa"
-        subtitle={`¿Seguro que deseas eliminar "${deleting?.name}"? Se eliminarán todos sus datos.`}
+        subtitle={`¿Seguro que deseas eliminar "${deleting?.name}"? Esta acción no se puede deshacer.`}
         icon={<Trash2 size={15} />}
         iconBg="bg-error-50 dark:bg-error-500/[0.12]"
         iconColor="text-error-600 dark:text-error-400"
@@ -1155,13 +1250,12 @@ export function CompaniesPage() {
           <div className="px-6 py-4">
             <div className="rounded-xl border border-error-100 bg-error-50 px-4 py-3 dark:border-error-500/20 dark:bg-error-500/[0.07]">
               <p className="text-sm text-error-700 dark:text-error-400">
-                Esta acción eliminará permanentemente la empresa y todos sus usuarios, datos y configuraciones. No se puede deshacer.
+                Se borrarán también todos los usuarios, vehículos, mantenimientos y datos asociados. Esta acción es IRREVERSIBLE.
               </p>
             </div>
           </div>
         </form>
       </PlatformModal>
-
     </div>
   );
 }

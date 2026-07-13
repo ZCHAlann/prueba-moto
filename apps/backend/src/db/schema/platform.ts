@@ -2,6 +2,7 @@ import {
   pgTable,
   pgEnum,
   serial,
+  bigserial,
   varchar,
   text,
   timestamp,
@@ -11,6 +12,7 @@ import {
   date,
   numeric,
   boolean,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
 
 // ─────────────────────────────────────────────
@@ -41,17 +43,107 @@ export const planTierEnum = pgEnum('plan_tier_enum', [
 ]);
 
 // ─────────────────────────────────────────────
+// Catálogo de módulos (jul 2026)
+// ─────────────────────────────────────────────
+//
+// La fuente de verdad de qué módulos y submódulos existen en el sistema
+// pasa a ser la BD. El seed inicial se hace desde MODULE_TREE del
+// frontend (lib/module-tree.ts) al arrancar el backend.
+//
+// `is_core = true` marca módulos que no se pueden deshabilitar
+// (ej. dashboard) — la UI del superadmin los muestra como "incluidos"
+// y el backend los auto-incluye al asignar módulos a una empresa.
+
+export const platformModules = pgTable('platform_modules', {
+  id:          varchar('id', { length: 60 }).primaryKey(),             // 'dashboard', 'gestion' ...
+  label:       varchar('label', { length: 120 }).notNull(),
+  description: text('description').notNull().default(''),
+  icon:        varchar('icon', { length: 60 }),
+  accent:      varchar('accent', { length: 30 }),
+  sortOrder:   integer('sort_order').notNull().default(100),
+  isCore:      boolean('is_core').notNull().default(false),
+  isActive:    boolean('is_active').notNull().default(true),
+  metadata:    jsonb('metadata').notNull().default({}),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
+  updatedAt:   timestamp('updated_at').notNull().defaultNow(),
+});
+
+export const platformModuleSubmodules = pgTable('platform_module_submodules', {
+  id:         varchar('id', { length: 80 }).primaryKey(),               // 'dashboard.kpis_flotas'
+  moduleId:   varchar('module_id', { length: 60 }).notNull().references(() => platformModules.id, { onDelete: 'cascade' }),
+  label:      varchar('label', { length: 160 }).notNull(),
+  sortOrder:  integer('sort_order').notNull().default(100),
+  isActive:   boolean('is_active').notNull().default(true),
+  createdAt:  timestamp('created_at').notNull().defaultNow(),
+});
+
+export const platformPlanModules = pgTable('platform_plan_modules', {
+  planId:    varchar('plan_id', { length: 40 }).notNull().references(() => platformPlans.id, { onDelete: 'cascade' }),
+  moduleId:  varchar('module_id', { length: 60 }).notNull().references(() => platformModules.id, { onDelete: 'cascade' }),
+  enabledAt: timestamp('enabled_at').notNull().defaultNow(),
+}, (table) => [
+  unique('platform_plan_modules_pk').on(table.planId, table.moduleId),
+]);
+
+export const companyEnabledModules = pgTable('company_enabled_modules', {
+  companyId:   integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  moduleId:    varchar('module_id', { length: 60 }).notNull().references(() => platformModules.id, { onDelete: 'cascade' }),
+  enabledAt:   timestamp('enabled_at').notNull().defaultNow(),
+});
+
+export const companyUserCounts = pgTable('company_user_counts', {
+  companyId:   integer('company_id').primaryKey().references(() => companies.id, { onDelete: 'cascade' }),
+  total:       integer('total').notNull().default(0),
+  admins:      integer('admins').notNull().default(0),
+  supervisors: integer('supervisors').notNull().default(0),
+  operators:   integer('operators').notNull().default(0),
+  drivers:     integer('drivers').notNull().default(0),
+  updatedAt:   timestamp('updated_at').notNull().defaultNow(),
+});
+
+// Módulos habilitados por empresa con detalle de submódulos activos. La
+// fuente de verdad de QUÉ módulos están habilitados es la tabla
+// `company_enabled_modules` (sin detalle). Esta tabla es opcional y
+// la llena la UI de Accesos → Empresa cuando el admin granular permisos
+// por submódulo. Ausencia == todos los submódulos del módulo están activos.
+export const companyEnabledSubmodules = pgTable('company_enabled_submodules', {
+  companyId:    integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  submoduleId:  varchar('submodule_id', { length: 80 }).notNull().references(() => platformModuleSubmodules.id, { onDelete: 'cascade' }),
+  isActive:     boolean('is_active').notNull().default(true),
+}, (table) => [
+  unique('company_enabled_subs_pk').on(table.companyId, table.submoduleId),
+]);
+
+// ─────────────────────────────────────────────
 // Planes
 // ─────────────────────────────────────────────
 
 export const platformPlans = pgTable('platform_plans', {
-  id: varchar('id', { length: 40 }).primaryKey(),         // 'free' | 'starter' | 'pro' | 'enterprise'
+  id: varchar('id', { length: 40 }).primaryKey(),         // 'free' | 'starter' | 'pro' | 'business' | 'enterprise'
   name: varchar('name', { length: 80 }).notNull(),
   tier: planTierEnum('tier').notNull(),
   monthlyPrice: numeric('monthly_price', { precision: 10, scale: 2 }).default('0'),
   annualPrice: numeric('annual_price', { precision: 10, scale: 2 }).default('0'),
-  maxUsers: integer('max_users'),                          // null = ilimitado
+  // Límite global (compat). null = ilimitado.
+  maxUsers: integer('max_users'),
   maxAssets: integer('max_assets'),
+  // Límites por rol (jul 2026). null = ilimitado.
+  // admins      = admin_empresa + owner_empresa
+  // supervisors = role = 'supervisor'
+  // operators   = role = 'operador'
+  // drivers     = role = 'conductor'
+  maxAdmins:       integer('max_admins'),
+  maxSupervisors:  integer('max_supervisors'),
+  maxOperators:    integer('max_operators'),
+  maxDrivers:      integer('max_drivers'),
+  // Visible al usuario: descripción corta + bullets (JSON array de strings).
+  description: text('description'),
+  features:    jsonb('features').notNull().default([]),
+  isPopular:   boolean('is_popular').notNull().default(false),
+  sortOrder:   integer('sort_order').notNull().default(100),
+  currency:    varchar('currency', { length: 10 }).notNull().default('USD'),
+  // Columna legacy (migración 0041 la mantiene por compat). La fuente
+  // de verdad pasó a ser `platform_plan_modules` (tabla puente).
   allowedModules: text('allowed_modules').array().notNull().default([]),
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -351,5 +443,92 @@ export const platformTicketMessages = pgTable('platform_ticket_messages', {
   authorName:  varchar('author_name', { length: 160 }),
   authorRole:  varchar('author_role', { length: 40 }),  // 'platform' | 'company'
   body:        text('body').notNull(),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// IA Multi-tenant (jul 2026 v6) — Migración 0043.
+//
+// `company_ai_settings`: configuración de IA por empresa. Si está vacía,
+// la empresa usa la config global (process.env.GROQ_API_KEY, etc.).
+//
+// `company_ai_api_keys`: historial de fingerprints (sha256 de la key cruda)
+// para rotación y revocación. NO guardamos la key cruda, solo el fingerprint.
+// La key viva vive cifrada en company_ai_settings.api_key_encrypted.
+//
+// `company_ai_usage`: log diario por empresa/feature/model para billing
+// y dashboards. Permite calcular MRR projected, costos USD, etc.
+// ─────────────────────────────────────────────────────────────────────
+
+export const companyAiSettings = pgTable('company_ai_settings', {
+  companyId:        integer('company_id').primaryKey()
+                      .references(() => companies.id, { onDelete: 'cascade' }),
+
+  // 'platform_default' = usa config global; 'groq'|'gemini'|'openai'|'anthropic'|'custom'
+  provider:         varchar('provider', { length: 30 }).notNull().default('platform_default'),
+  isEnabled:        boolean('is_enabled').notNull().default(true),
+
+  // API key cifrada AES-256-GCM en app (lib/crypto.ts). null = usa la global.
+  apiKeyEncrypted:  text('api_key_encrypted'),
+  apiKeyLast4:      varchar('api_key_last4', { length: 8 }),
+  apiKeySetAt:      timestamp('api_key_set_at'),
+
+  // Modelos por provider (nullable = default del provider)
+  modelPrimary:     varchar('model_primary',  { length: 120 }),
+  modelFallback:    varchar('model_fallback', { length: 120 }),
+  modelTtsVoice:    varchar('model_tts_voice', { length: 60 }),
+
+  // Rate limits custom por empresa (null = sin override)
+  rpmLimit:         integer('rpm_limit'),
+  tpmLimit:         integer('tpm_limit'),
+  monthlyBudgetUsd: numeric('monthly_budget_usd', { precision: 10, scale: 2 }),
+
+  // Toggles por feature
+  useJarvis:        boolean('use_jarvis').notNull().default(true),
+  useExitAnalysis:  boolean('use_exit_analysis').notNull().default(true),
+  useAiInsights:    boolean('use_ai_insights').notNull().default(true),
+  useTts:           boolean('use_tts').notNull().default(false),
+
+  // Si el superadmin kill-switchó la empresa, queda en false aunque
+  // la empresa quiera seguir. Se setea desde /platform/companies/:id/ai-disable.
+  killedByPlatform: boolean('killed_by_platform').notNull().default(false),
+
+  createdAt:        timestamp('created_at').notNull().defaultNow(),
+  updatedAt:        timestamp('updated_at').notNull().defaultNow(),
+  updatedBy:        integer('updated_by')
+                      .references(() => companyUsers.id, { onDelete: 'set null' }),
+});
+
+export const companyAiApiKeys = pgTable('company_ai_api_keys', {
+  id:          serial('id').primaryKey(),
+  companyId:   integer('company_id').notNull()
+                  .references(() => companies.id, { onDelete: 'cascade' }),
+  provider:    varchar('provider', { length: 30 }).notNull(),
+  // sha256 de la key cruda (64 hex chars). Sirve para detectar reuso
+  // y para revocar sin guardar la key.
+  fingerprint: varchar('fingerprint', { length: 64 }).notNull(),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
+  revokedAt:   timestamp('revoked_at'),
+  revokedBy:   integer('revoked_by')
+                  .references(() => companyUsers.id, { onDelete: 'set null' }),
+}, (t) => ({
+  uniqCompanyProviderFp: unique('company_ai_api_keys_company_provider_fp_uniq')
+    .on(t.companyId, t.provider, t.fingerprint),
+}));
+
+export const companyAiUsage = pgTable('company_ai_usage', {
+  id:          bigserial('id', { mode: 'number' }).primaryKey(),
+  companyId:   integer('company_id').notNull()
+                  .references(() => companies.id, { onDelete: 'cascade' }),
+  provider:    varchar('provider', { length: 30 }).notNull(),
+  model:       varchar('model',    { length: 120 }),
+  // 'jarvis' | 'exit_analysis' | 'ai_insights' | 'tts' | 'other'
+  feature:     varchar('feature',  { length: 40 }).notNull(),
+  tokensIn:    integer('tokens_in').notNull().default(0),
+  tokensOut:   integer('tokens_out').notNull().default(0),
+  requests:    integer('requests').notNull().default(1),
+  // Costo en USD con 6 decimales (suficiente para $0.000001/token).
+  costUsd:     numeric('cost_usd', { precision: 10, scale: 6 }).default('0'),
+  periodDay:   date('period_day').notNull().defaultNow(),
   createdAt:   timestamp('created_at').notNull().defaultNow(),
 });

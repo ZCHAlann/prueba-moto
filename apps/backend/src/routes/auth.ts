@@ -8,6 +8,7 @@ import { hashPassword, verifyPassword, signToken } from '../services/auth.servic
 import { UnauthorizedError, AppError } from '../lib/errors';
 import { toId } from '../lib/ids';
 import { authenticate, COOKIE_NAME, PermissionMap, ModulePermissionMap } from '../middlewares/authenticate';
+import { rateLimitLogin, rateLimitAuthGlobal } from '../middlewares/rateLimit';
 import { getFinalPermissionsForUser } from './company/roles';
 import { getUserEffectivelyActiveFromDb } from '../lib/userStatus.db';
 import { getInactiveMessage, getInactiveCode } from '../lib/userStatus';
@@ -96,9 +97,17 @@ async function clearFailedLogin(
     .where(eq(table.id, userId));
 }
 
+// ─── Rate limiting ───────────────────────────────────────────────────────────
+// /login es el endpoint más sensible a brute-force. Limitamos por
+// (IP + login intentado): 5 cada 5 min. Complementa el lockout por
+// usuario que vive en `platform_users`/`company_users.failedLoginAttempts`.
+// El resto de /auth/* (refresh, session, logout) usa un límite más
+// permisivo por IP porque son baratos pero enumerables.
+router.use(rateLimitAuthGlobal);
+
 // ─── POST /auth/login ─────────────────────────────────────────────────────────
 
-router.post("/login", validate(loginSchema), async (req, res, next) => {
+router.post("/login", rateLimitLogin, validate(loginSchema), async (req, res, next) => {
   try {
     const { login, password, scope } = req.body;
     const { maxLoginAttempts, lockoutMinutes } = await getLoginSettings();

@@ -2,7 +2,13 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { db } from '../../db/client';
-import { companyUsers, companyRoles } from '../../db/schema/platform';
+import {
+  companyUsers,
+  companyRoles,
+  companyUserCounts,
+  companies,
+  platformPlans,
+} from '../../db/schema/platform';
 import { validate } from '../../lib/validate';
 import { requirePermissionAny } from '../../middlewares/requirePermission';
 import { NotFoundError, AppError, ForbiddenError } from '../../lib/errors';
@@ -28,6 +34,102 @@ function userShortLabel(u: { profileData?: unknown; username: string; email: str
   const fullName = typeof pd.fullName === 'string' ? pd.fullName.trim() : '';
   const label = fullName || u.username || u.email;
   return position ? `${label} — ${position}` : label;
+}
+
+// Mapea roleKey de la empresa a la "categoría de plan" que cuenta
+// contra el límite:
+//   owner_empresa | admin_empresa | superadmin_empresa → admins
+//   supervisor                                                → supervisors
+//   operador                                                   → operators
+//   conductor                                                  → drivers
+// Roles custom (no platform) caen en su key en minúscula.
+type RoleKind = 'admins' | 'supervisors' | 'operators' | 'drivers';
+
+function kindFromRole(roleKey: string): RoleKind {
+  if (['owner_empresa', 'admin_empresa'].includes(roleKey)) return 'admins';
+  if (roleKey === 'supervisor') return 'supervisors';
+  if (roleKey === 'operador')   return 'operators';
+  if (roleKey === 'conductor')  return 'drivers';
+  // Custom roles cuentan como "operators" por defecto (lo más común).
+  return 'operators';
+}
+
+/**
+ * jul 2026 — Valida que la creación/edición de un usuario no supere
+ * los límites del plan de la empresa. Lanza AppError(403) con un
+ * mensaje claro si se excede.
+ *
+ * Por diseño: si el admin intenta crear el usuario de todos modos,
+ * falla ANTES de tocar la BD, así no queda en estado inconsistente
+ * con los triggers.
+ *
+ * Los superadmin (rol plataforma) y los platformUsers NO se validan
+ * acá — es solo para usuarios de empresa.
+ */
+async function assertWithinPlanLimits(
+  companyId: number,
+  roleKey: string,
+  currentCount: number,
+  opts?: { ignoreUserId?: number },
+): Promise<void> {
+  const [company] = await db
+    .select({ planId: companies.planId })
+    .from(companies)
+    .where(eq(companies.id, companyId))
+    .limit(1);
+  if (!company) throw new NotFoundError('Empresa', String(companyId));
+
+  const [plan] = await db
+    .select()
+    .from(platformPlans)
+    .where(eq(platformPlans.id, company.planId))
+    .limit(1);
+  if (!plan) return; // si no hay plan, no aplicar límite
+
+  const [counts] = await db
+    .select()
+    .from(companyUserCounts)
+    .where(eq(companyUserCounts.companyId, companyId))
+    .limit(1);
+  const c = counts ?? { total: 0, admins: 0, supervisors: 0, operators: 0, drivers: 0, companyId, updatedAt: new Date() };
+
+  // Si ignoreUserId viene (caso PUT), restamos 1 al kind correspondiente
+  // para no contar dos veces al usuario que se está editando.
+  const kind = kindFromRole(roleKey);
+  const kindCount = (() => {
+    let n = c[kind];
+    return n;
+  })();
+
+  // Límite total
+  if (plan.maxUsers !== null && c.total + currentCount > plan.maxUsers) {
+    throw new AppError(403,
+      `El plan "${plan.name}" permite máximo ${plan.maxUsers} usuarios en total. Ya hay ${c.total} activos.`,
+    );
+  }
+
+  // Límite por rol
+  const limitByKind: Record<RoleKind, number | null> = {
+    admins:      plan.maxAdmins,
+    supervisors: plan.maxSupervisors,
+    operators:   plan.maxOperators,
+    drivers:     plan.maxDrivers,
+  };
+  const limit = limitByKind[kind];
+  if (limit !== null && kindCount + currentCount > limit) {
+    throw new AppError(403,
+      `El plan "${plan.name}" permite máximo ${limit} ${labelFor(kind)}. Ya hay ${kindCount} activos.`,
+    );
+  }
+}
+
+function labelFor(kind: RoleKind): string {
+  switch (kind) {
+    case 'admins':      return 'administradores';
+    case 'supervisors': return 'supervisores';
+    case 'operators':   return 'operadores';
+    case 'drivers':     return 'conductores';
+  }
 }
 
 const router = Router({ mergeParams: true });
@@ -445,6 +547,11 @@ router.post(
       const companyId = req.companyId!;
       await assertRoleValid(companyId, body.role);
 
+      // jul 2026 — Validar límites del plan ANTES de crear el usuario.
+      // El trigger sync_company_user_counts recalcula al insertar, así
+      // que la verificación acá solo agrega +1 al conteo actual.
+      await assertWithinPlanLimits(companyId, body.role, 1);
+
       const passwordHash = await hashPassword(body.password);
 
       const { modulePermissions, profileData, photoUrl, ...rest } = body;
@@ -595,6 +702,11 @@ router.put(
 
     if (body.role !== undefined) {
       await assertRoleValid(companyId, body.role);
+
+      // jul 2026 — Si cambia el rol, validar que el nuevo rol no exceda
+      // los límites del plan. Si NO cambia el rol, no validamos (el conteo
+      // se mantiene estable).
+      await assertWithinPlanLimits(companyId, body.role, 0);
     }
 
     // Regla: solo admin_empresa/owner_empresa pueden cambiar la foto de

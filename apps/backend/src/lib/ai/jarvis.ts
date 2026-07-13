@@ -20,7 +20,11 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import Groq from 'groq-sdk';
-import { createChatCompletion as groqCreate, getClient, GroqRateLimitError } from './groq-client';
+import {
+  createChatCompletion as groqCreate,
+  getClient as getPlatformGroqClient,
+  GroqRateLimitError,
+} from './groq-client';
 import { db } from '../../db/client';
 import { aiConversations, aiMessages, aiToolCalls } from '../../db/schema/jarvis';
 import { eq, and, desc } from 'drizzle-orm';
@@ -34,6 +38,13 @@ import {
 } from './tools/registry';
 import { incCounter, observeHistogram, incLabeledCounter } from './metrics';
 import { flattenArgs } from './schema-helpers';
+import {
+  resolveAiConfig,
+  getGroqClientForCompany,
+  type ResolvedAiConfig,
+} from './client-factory';
+import { companyAiUsage } from '../../db/schema/platform';
+import { sql } from 'drizzle-orm';
 
 const MODEL = 'llama-3.3-70b-versatile';
 const MAX_ITERATIONS = 6;
@@ -50,6 +61,9 @@ function getClient(): Groq | null {
 }
 
 export function isJarvisEnabled(): boolean {
+  // jul 2026 v6 — multi-tenant. Si hay al menos 1 empresa con config propia
+  // o key global, está habilitado. Para el caso típico (sin override),
+  // sigue dependiendo de GROQ_API_KEY del env.
   return !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.length > 10;
 }
 
@@ -151,7 +165,20 @@ export interface JarvisChatOutput {
 
 export async function jarvisChat(input: JarvisChatInput): Promise<JarvisChatOutput> {
   const start = Date.now();
-  const client = getClient();
+
+  // jul 2026 v6 — Resolver config IA de la empresa (multi-tenant).
+  // Si la empresa tiene killed / feature deshabilitada / sin key → error.
+  const aiCfg = await resolveAiConfig(input.empresaId);
+  if (aiCfg.killed) {
+    throw new Error('La IA está deshabilitada para tu empresa por el administrador de plataforma.');
+  }
+  if (!aiCfg.useJarvis) {
+    throw new Error('Jarvis no está habilitado para tu empresa. Pedile al admin que lo active en Configuración → IA.');
+  }
+
+  const client = aiCfg.keySource === 'company'
+    ? await getGroqClientForCompany(input.empresaId)
+    : getPlatformGroqClient();
   const toolCtx: ToolContext = {
     empresaId: input.empresaId,
     userId:    input.userId,
@@ -240,13 +267,28 @@ export async function jarvisChat(input: JarvisChatInput): Promise<JarvisChatOutp
   for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
     let completion;
     try {
-      completion = await groqCreate(messages, {
-        temperature: 0.2,
-        max_tokens: 1024,
-        top_p: 0.9,
-        tools: groqTools,
-        tool_choice: 'auto',
-      });
+      // jul 2026 v6 — Si la empresa tiene API key propia, hacemos un call
+      // directo (sin cascade global) con su modelo configurado. Si usa la
+      // plataforma, mantenemos el cascade de keys/models global.
+      if (aiCfg.keySource === 'company' && client) {
+        completion = await client.chat.completions.create({
+          model:       aiCfg.modelPrimary,
+          messages,
+          temperature: 0.2,
+          max_tokens:  1024,
+          top_p:       0.9,
+          tools:       groqTools,
+          tool_choice: 'auto',
+        });
+      } else {
+        completion = await groqCreate(messages, {
+          temperature: 0.2,
+          max_tokens: 1024,
+          top_p: 0.9,
+          tools: groqTools,
+          tool_choice: 'auto',
+        });
+      }
     } catch (err) {
       incCounter('jarvis_chat_errors_total');
       if (err instanceof GroqRateLimitError) {
@@ -373,6 +415,27 @@ export async function jarvisChat(input: JarvisChatInput): Promise<JarvisChatOutp
       .update(aiConversations)
       .set({ updatedAt: new Date() })
       .where(eq(aiConversations.id, conversationIdNum!));
+  }
+
+  // jul 2026 v6 — log de uso para billing futuro. Fire-and-forget (no
+  // afecta el response al usuario si falla). Solo logueamos si hubo
+  // al menos 1 token consumido.
+  if (totalTokensIn + totalTokensOut > 0) {
+    try {
+      await db.insert(companyAiUsage).values({
+        companyId: input.empresaId,
+        provider:  aiCfg.provider,
+        model:     aiCfg.modelPrimary,
+        feature:   'jarvis',
+        tokensIn:  totalTokensIn,
+        tokensOut: totalTokensOut,
+        requests:  1,
+        costUsd:   '0',  // jul 2026 — pricing por modelo se setea después.
+      });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[jarvis] no se pudo loguear usage:', e);
+    }
   }
 
   return {

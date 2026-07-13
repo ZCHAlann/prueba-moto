@@ -8,12 +8,24 @@ import platformRouter from './routes/platform/index';
 import companyRouter from './routes/company/index';
 import uploadRouter from './routes/upload';
 import oilCheckRouter from './routes/oil-check';
+import publicRouter from './routes/public';
 import { errorHandler } from './middlewares/errorHandler';
 import { sanitizeRequest } from './middlewares/sanitize';
+import { rateLimitDefault } from './middlewares/rateLimit';
 import cookieParser from "cookie-parser";
 import { join } from 'path';
 
 const app = express();
+
+// ─── Trust proxy ──────────────────────────────────────────────────────────────
+// En producción el backend corre detrás de un proxy (nginx / fly.io / load
+// balancer). Esto hace que req.ip refleje la IP real del cliente en vez de
+// la del proxy. SIN esto, express-rate-limit agruparía a TODOS los
+// usuarios detrás del proxy en una sola key (todos se bloquearían al
+// primer match). Importante: usar '1' (confiar en 1 hop) o configurar
+// explícitamente las IPs de proxies conocidos para no aceptar X-Forwarded-For
+// arbitrarios (riesgo de spoofing).
+app.set('trust proxy', 1);
 
 // ─── Middlewares globales ─────────────────────────────────────────────────────
 app.use(helmet());
@@ -51,6 +63,8 @@ app.use('/uploads', express.static(
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/auth', authRouter);
+// /public es público (sin auth) — sirve datos a la landing page
+app.use('/public', publicRouter);
 app.use('/platform', platformRouter);
 app.use('/company/:id', companyRouter);
 app.use('/upload', uploadRouter);
@@ -75,6 +89,14 @@ app.get('/ws-stats', (_req, res) => {
   const { wsStats } = require('./services/websocket') as typeof import('./services/websocket');
   res.json(wsStats());
 });
+
+// Rate-limit "default" para endpoints sueltos (oil-check, /health, /metrics,
+// /ws-stats). 120/min por (user+IP). NOTA: va DESPUÉS de las routes para
+// no aplicar dos veces a las routes que ya tienen su propio limitador
+// (auth/upload/public/company/platform). /health y /metrics quedan
+// excluidos implícitamente porque ya respondieron antes de llegar acá.
+// oil-check SÍ pasa por acá y queda cubierto.
+app.use(rateLimitDefault);
 
 
 // ─── Error handler (siempre al final) ─────────────────────────────────────────

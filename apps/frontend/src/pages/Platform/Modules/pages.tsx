@@ -1,316 +1,224 @@
+// src/pages/Platform/Modules/pages.tsx
+//
+// CRUD del catálogo de módulos de la plataforma. El superadmin ve el
+// árbol completo de módulos con sus submódulos, y puede:
+//   - Activar / desactivar un módulo.
+//   - Crear módulos nuevos con sus submódulos.
+//   - Editar label y descripción.
+//   - NO eliminar (no es reversible por FK constraints).
+
 import { useState, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  LayoutGrid, ShieldCheck, ShieldOff, Search,
-  CheckCircle, ChevronDown, Save, RotateCcw,
+  Plus, Package, Pencil, Trash2, ChevronDown, ChevronRight,
+  ToggleLeft, ToggleRight, Search, Loader2, Layers,
 } from "lucide-react";
 import { toast } from "sonner";
-import { usePlatformCompanies } from "../../../hooks/usePlatformCompanies";
-import { usePlatformPlans }     from "../../../hooks/usePlatformPlans";
-import { PlatformKpiCard }      from "../../../components/platform";
-import { MODULE_TREE, type ModuleKey } from "../../../lib/module-tree";
-import type { PlatformCompany } from "../../../types/platform";
+import {
+  PlatformModal, ModalActions,
+  InputField, TextareaField,
+} from "../../../components/platform";
+import { usePlatformModules, usePlatformPlans } from "../../../hooks/usePlatformPlans";
+import { useAuth } from "../../../context/AuthContext";
+import type { PlatformModule, PlatformSubmodule } from "../../../types/platform";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Editor de submódulos (reutilizable) ──────────────────────────────────────
 
-const MODULE_KEYS = Object.keys(MODULE_TREE) as ModuleKey[];
+function SubmodulesEditor({
+  submodules, onChange,
+}: { submodules: PlatformSubmodule[]; onChange: (s: PlatformSubmodule[]) => void }) {
+  function add() {
+    onChange([
+      ...submodules,
+      {
+        id: `nuevo.${Date.now()}`,
+        moduleId: "",
+        label: "",
+        sortOrder: (submodules.length + 1) * 10,
+        isActive: true,
+      },
+    ]);
+  }
 
-const MODULE_ICONS: Record<ModuleKey, string> = {
-  dashboard:       "📊",
-  gestion:         "🚗",
-  motores:         "⚙️",
-  ac:              "❄️",
-  mantenimiento:   "🔧",
-  checklist:       "✅",
-  alertas:         "🔔",
-  reportes:        "📈",
-  combustible:     "⛽",
-  geolocalizacion: "📍",
-  accesos:         "🔐",
-};
+  function update(idx: number, patch: Partial<PlatformSubmodule>) {
+    onChange(submodules.map((s, i) => i === idx ? { ...s, ...patch } : s));
+  }
 
-const MODULE_DESCRIPTIONS: Record<ModuleKey, string> = {
-  dashboard:       "Vista general de métricas y estado de la flota",
-  gestion:         "Flotas, conductores, sedes, garajes, asignaciones y seguros",
-  motores:         "Gestión de motores, mantenimientos e historial",
-  ac:              "Inventario de aires acondicionados y sus servicios",
-  mantenimiento:   "Órdenes de mantenimiento, inventario y aceites",
-  checklist:       "Listas de verificación y auditorías de vehículos",
-  alertas:         "Sistema de alertas y notificaciones operativas",
-  reportes:        "Generación y exportación de reportes",
-  combustible:     "Control y registro de consumo de combustible",
-  geolocalizacion: "Rastreo y geolocalización de activos",
-  accesos:         "Gestión de usuarios, roles y permisos",
-};
+  function remove(idx: number) {
+    onChange(submodules.filter((_, i) => i !== idx));
+  }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function getInitials(name: string) {
-  return name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase();
-}
-
-const AVATAR_COLORS = [
-  ["bg-brand-100 dark:bg-brand-500/20",    "text-brand-700 dark:text-brand-300"],
-  ["bg-violet-100 dark:bg-violet-500/20",  "text-violet-700 dark:text-violet-300"],
-  ["bg-emerald-100 dark:bg-emerald-500/20","text-emerald-700 dark:text-emerald-300"],
-  ["bg-amber-100 dark:bg-amber-500/20",    "text-amber-700 dark:text-amber-300"],
-  ["bg-rose-100 dark:bg-rose-500/20",      "text-rose-700 dark:text-rose-300"],
-  ["bg-cyan-100 dark:bg-cyan-500/20",      "text-cyan-700 dark:text-cyan-300"],
-];
-
-function avatarColor(name: string) {
-  return AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length];
-}
-
-// ─── Company Selector ─────────────────────────────────────────────────────────
-
-function CompanySelector({
-  companies, selected, onSelect, search, onSearch,
-}: {
-  companies: PlatformCompany[];
-  selected: PlatformCompany | null;
-  onSelect: (c: PlatformCompany) => void;
-  search: string;
-  onSearch: (v: string) => void;
-}) {
   return (
-    <div className="flex flex-col gap-2">
-      {/* Search */}
-      <div className="relative">
-        <Search size={12} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input
-          type="text" value={search} onChange={e => onSearch(e.target.value)}
-          placeholder="Buscar empresa…"
-          className="h-9 w-full rounded-xl border border-gray-200 bg-white pl-8 pr-3 text-xs
-            text-gray-700 placeholder:text-gray-400 outline-none transition
-            focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10
-            dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300"
-        />
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+          Submódulos ({submodules.length})
+        </p>
+        <button type="button" onClick={add}
+          className="inline-flex items-center gap-1 rounded-lg bg-brand-500/10 px-2 py-1 text-[11px] font-semibold text-brand-700 hover:bg-brand-500/20 dark:bg-brand-500/15 dark:text-brand-400">
+          <Plus size={11} /> Agregar
+        </button>
       </div>
-
-      {/* List */}
-      <div className="flex flex-col gap-1 max-h-[420px] overflow-y-auto pr-0.5">
-        {companies.length === 0 ? (
-          <p className="py-6 text-center text-xs text-gray-400">Sin resultados</p>
-        ) : (
-          companies.map(c => {
-            const [bg, text] = avatarColor(c.name);
-            const isSelected = selected?.id === c.id;
-            return (
-              <motion.button key={c.id} type="button" whileTap={{ scale: 0.98 }}
-                onClick={() => onSelect(c)}
-                className={`flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-all
-                  ${isSelected
-                    ? "border-brand-300 bg-brand-50 dark:border-brand-500/30 dark:bg-brand-500/10"
-                    : "border-gray-100 bg-white hover:border-gray-200 hover:bg-gray-50 dark:border-white/[0.05] dark:bg-white/[0.02] dark:hover:bg-white/[0.04]"
-                  }`}
-              >
-                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold ${bg} ${text}`}>
-                  {getInitials(c.name)}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className={`truncate text-xs font-semibold ${isSelected ? "text-brand-700 dark:text-brand-300" : "text-gray-700 dark:text-gray-200"}`}>
-                    {c.name}
-                  </p>
-                  <p className="truncate text-[10px] text-gray-400">{c.enabledModules.length} módulos activos</p>
-                </div>
-                {isSelected && (
-                  <CheckCircle size={14} className="shrink-0 text-brand-500" />
-                )}
-              </motion.button>
-            );
-          })
+      <div className="max-h-60 space-y-1.5 overflow-y-auto rounded-xl border border-gray-200 bg-gray-50/50 p-2 dark:border-white/[0.06] dark:bg-white/[0.02]">
+        {submodules.length === 0 && (
+          <p className="px-2 py-3 text-center text-[11px] text-gray-400">
+            Sin submódulos. Agregá uno con el botón de arriba.
+          </p>
         )}
+        {submodules.map((s, i) => (
+          <div key={i} className="flex items-center gap-1.5 rounded-lg bg-white px-2 py-1.5 dark:bg-white/[0.03]">
+            <input value={s.id} onChange={e => update(i, { id: e.target.value })}
+              placeholder="id.submodulo"
+              className="h-7 flex-1 rounded-md border border-gray-200 bg-white px-2 text-xs font-mono outline-none focus:border-brand-500 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200" />
+            <input value={s.label} onChange={e => update(i, { label: e.target.value })}
+              placeholder="Label"
+              className="h-7 flex-[2] rounded-md border border-gray-200 bg-white px-2 text-xs outline-none focus:border-brand-500 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200" />
+            <button type="button" onClick={() => remove(i)}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-500/10">
+              <Trash2 size={11} />
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-// ─── Module Card ──────────────────────────────────────────────────────────────
+// ─── Modal de edición/creación ───────────────────────────────────────────────
 
-function ModuleCard({
-  moduleKey, enabled, suggestedByPlan, onToggle,
-}: {
-  moduleKey: ModuleKey;
-  enabled: boolean;
-  suggestedByPlan: boolean;
-  onToggle: () => void;
-}) {
-  const mod = MODULE_TREE[moduleKey];
-  const subCount = Object.keys(mod.submodules).length;
-  const [expanded, setExpanded] = useState(false);
+interface ModuleEditForm {
+  id: string;
+  label: string;
+  description: string;
+  icon: string;
+  accent: string;
+  isCore: boolean;
+  isActive: boolean;
+  sortOrder: number;
+  submodules: PlatformSubmodule[];
+}
 
+const EMPTY: ModuleEditForm = {
+  id: "", label: "", description: "", icon: "Package", accent: "emerald",
+  isCore: false, isActive: true, sortOrder: 100, submodules: [],
+};
+
+function ModuleForm({
+  form, onChange, isEdit,
+}: { form: ModuleEditForm; onChange: (f: ModuleEditForm) => void; isEdit: boolean }) {
+  function set<K extends keyof ModuleEditForm>(k: K, v: ModuleEditForm[K]) {
+    onChange({ ...form, [k]: v });
+  }
   return (
-    <motion.div
-      layout
-      whileTap={{ scale: 0.99 }}
-      className={`relative overflow-hidden rounded-2xl border transition-all cursor-pointer
-        ${enabled
-          ? "border-brand-300/70 bg-brand-50/60 dark:border-brand-500/30 dark:bg-brand-500/[0.07]"
-          : "border-gray-200 bg-white hover:border-gray-300 dark:border-white/[0.06] dark:bg-white/[0.03] dark:hover:border-white/[0.1]"
-        }`}
-      onClick={onToggle}
-    >
-      {/* Top accent */}
-      {enabled && (
-        <div className="absolute inset-x-0 top-0 h-0.5 bg-brand-500 opacity-70" />
-      )}
-
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
-            {/* Icon */}
-            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-lg
-              ${enabled
-                ? "bg-brand-100 dark:bg-brand-500/20"
-                : "bg-gray-100 dark:bg-white/[0.06]"
-              }`}
-            >
-              {MODULE_ICONS[moduleKey]}
-            </div>
-
-            <div>
-              <p className={`text-sm font-semibold ${enabled ? "text-brand-700 dark:text-brand-300" : "text-gray-800 dark:text-white"}`}>
-                {mod.label}
-              </p>
-              <p className="mt-0.5 text-[11px] text-gray-400 dark:text-gray-500 leading-snug">
-                {MODULE_DESCRIPTIONS[moduleKey]}
-              </p>
-            </div>
-          </div>
-
-          {/* Toggle pill */}
-          <div className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold transition-all
-            ${enabled
-              ? "bg-brand-500 text-white"
-              : "bg-gray-100 text-gray-500 dark:bg-white/[0.08] dark:text-gray-400"
-            }`}
-          >
-            {enabled ? "Activo" : "Bloqueado"}
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="mt-3 flex items-center gap-2 flex-wrap">
-          <span className="rounded-lg bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-white/[0.06] dark:text-gray-400">
-            {subCount} submódulo{subCount !== 1 ? "s" : ""}
-          </span>
-
-          {suggestedByPlan && (
-            <span className="rounded-lg bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-              Incluido en plan
-            </span>
-          )}
-
-          {/* Expand submódulos */}
-          <button
-            type="button"
-            onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
-            className="ml-auto flex items-center gap-0.5 text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-          >
-            Ver submódulos
-            <ChevronDown size={10} className={`transition-transform ${expanded ? "rotate-180" : ""}`} />
-          </button>
-        </div>
-
-        {/* Submódulos expandibles */}
-        <AnimatePresence>
-          {expanded && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="overflow-hidden"
-            >
-              <div className="mt-3 flex flex-wrap gap-1.5 border-t border-gray-100 pt-3 dark:border-white/[0.06]">
-                {Object.entries(mod.submodules).map(([key, label]) => (
-                  <span key={key}
-                    className={`rounded-lg px-2 py-0.5 text-[10px] font-medium
-                      ${enabled
-                        ? "bg-brand-100 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400"
-                        : "bg-gray-100 text-gray-500 dark:bg-white/[0.06] dark:text-gray-400"
-                      }`}
-                  >
-                    {label as string}
-                  </span>
-                ))}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+    <div className="grid gap-4 p-6 sm:grid-cols-2">
+      <InputField label="ID del módulo (slug)" value={form.id} required
+        disabled={isEdit}
+        placeholder="ej. mantenimiento"
+        onChange={e => set("id", e.target.value)} />
+      <InputField label="Nombre visible" value={form.label} required
+        placeholder="Mantenimiento"
+        onChange={e => set("label", e.target.value)} />
+      <InputField label="Icono (Lucide)" value={form.icon}
+        placeholder="Wrench"
+        onChange={e => set("icon", e.target.value)} />
+      <InputField label="Acento" value={form.accent}
+        placeholder="emerald | sky | orange | violet | …"
+        onChange={e => set("accent", e.target.value)} />
+      <InputField label="Orden" type="number"
+        value={form.sortOrder}
+        onChange={e => set("sortOrder", Number(e.target.value) || 100)} />
+      <div className="flex items-center gap-3 pt-1">
+        <button type="button" onClick={() => set("isCore", !form.isCore)}
+          className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          {form.isCore ? <ToggleRight size={20} className="text-brand-500" /> : <ToggleLeft size={20} className="text-gray-400" />}
+          Core (no se puede quitar)
+        </button>
+        <button type="button" onClick={() => set("isActive", !form.isActive)}
+          className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          {form.isActive ? <ToggleRight size={20} className="text-emerald-500" /> : <ToggleLeft size={20} className="text-gray-400" />}
+          Activo
+        </button>
       </div>
-    </motion.div>
+      <div className="sm:col-span-2">
+        <TextareaField label="Descripción" rows={2} colSpan="full"
+          value={form.description}
+          onChange={e => set("description", e.target.value)} />
+      </div>
+      <div className="sm:col-span-2">
+        <SubmodulesEditor
+          submodules={form.submodules}
+          onChange={s => set("submodules", s)}
+        />
+      </div>
+    </div>
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Página principal ─────────────────────────────────────────────────────────
 
 export function ModulesPage() {
-  const { companies, updateCompany } = usePlatformCompanies();
-  const { plans }                    = usePlatformPlans();
+  const { session }  = useAuth();
+  void session;
+  const { modules, loading, refetch } = usePlatformModules();
+  const { plans: _plans, toggleModule: _tm } = usePlatformPlans();
+  void _plans;
+  void _tm;
 
-  const [companySearch, setCompanySearch] = useState("");
-  const [selectedId,    setSelectedId]    = useState<number | null>(companies[0]?.id ?? null);
-  const [draft,         setDraft]         = useState<ModuleKey[]>([]);
-  const [dirty,         setDirty]         = useState(false);
-  const [submitting,    setSubmitting]    = useState(false);
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing]   = useState<PlatformModule | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [form, setForm]         = useState<ModuleEditForm>(EMPTY);
+  const [submitting, setSubmitting] = useState(false);
 
-  // ── Derived ───────────────────────────────────────────────────────────────
-
-  const filteredCompanies = useMemo(() => {
-    const q = companySearch.trim().toLowerCase();
-    return q ? companies.filter(c => c.name.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q)) : companies;
-  }, [companies, companySearch]);
-
-  const selected = useMemo(() =>
-    companies.find(c => c.id === selectedId) ?? null,
-  [companies, selectedId]);
-
-  const planModules = useMemo(() => {
-    if (!selected) return [] as ModuleKey[];
-    const plan = plans.find(p => p.id === selected.planId);
-    // allowedModules del plan son strings — casteamos a ModuleKey
-    return (plan?.allowedModules ?? []) as ModuleKey[];
-  }, [selected, plans]);
-
-  const enabledCount  = draft.length;
-  const blockedCount  = MODULE_KEYS.length - enabledCount;
-  const planCount     = planModules.length;
-
-  // ── Handlers ──────────────────────────────────────────────────────────────
-
-  function selectCompany(c: PlatformCompany) {
-    setSelectedId(c.id);
-    setDraft((c.enabledModules ?? []) as ModuleKey[]);
-    setDirty(false);
-  }
-
-  function toggleModule(key: ModuleKey) {
-    setDraft(prev =>
-      prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return modules.filter(m =>
+      !q ||
+      m.label.toLowerCase().includes(q) ||
+      m.id.toLowerCase().includes(q) ||
+      m.description.toLowerCase().includes(q),
     );
-    setDirty(true);
+  }, [modules, search]);
+
+  function openCreate() {
+    setEditing(null);
+    setCreating(true);
+    setForm(EMPTY);
+    setModalOpen(true);
   }
 
-  function resetDraft() {
-    if (!selected) return;
-    setDraft((selected.enabledModules ?? []) as ModuleKey[]);
-    setDirty(false);
+  function openEdit(m: PlatformModule) {
+    setEditing(m);
+    setCreating(false);
+    setForm({
+      id: m.id, label: m.label, description: m.description ?? "",
+      icon: m.icon ?? "Package", accent: m.accent ?? "emerald",
+      isCore: m.isCore, isActive: m.isActive, sortOrder: m.sortOrder,
+      submodules: m.submodules,
+    });
+    setModalOpen(true);
   }
 
-  function applyPlan() {
-    setDraft(planModules);
-    setDirty(true);
-  }
-
-  async function handleSave() {
-    if (!selected) return;
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
     setSubmitting(true);
     try {
-      await updateCompany(selected.id, { enabledModules: draft });
-      toast.success(`Módulos de "${selected.name}" actualizados`);
-      setDirty(false);
+      const url = editing ? `/api/platform/modules/${editing.id}` : "/api/platform/modules";
+      const res = await fetch(url, {
+        method: editing ? "PUT" : "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message ?? `HTTP ${res.status}`);
+      }
+      toast.success(editing ? "Módulo actualizado" : "Módulo creado");
+      setModalOpen(false);
+      refetch();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error al guardar");
     } finally {
@@ -318,190 +226,174 @@ export function ModulesPage() {
     }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  async function handleDeactivate(m: PlatformModule) {
+    if (!confirm(`¿Desactivar el módulo "${m.label}"? Las empresas con este módulo lo perderán.`)) return;
+    try {
+      const res = await fetch(`/api/platform/modules/${m.id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message ?? `HTTP ${res.status}`);
+      }
+      toast.success("Módulo desactivado");
+      refetch();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al desactivar");
+    }
+  }
+
+  function toggleExpand(id: string) {
+    setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
+  }
 
   return (
     <div className="space-y-6">
-
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-        className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"
-      >
+      {/* Header */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}
+        className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-cyan-200 dark:border-cyan-500/20 bg-cyan-50 dark:bg-cyan-500/10 px-2.5 py-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" />
-            <span className="text-xs font-medium text-cyan-700 dark:text-cyan-400">Panel master</span>
+          <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-violet-200 dark:border-violet-500/20 bg-violet-50 dark:bg-violet-500/10 px-2.5 py-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />
+            <span className="text-xs font-medium text-violet-700 dark:text-violet-400">Plataforma</span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Módulos por empresa</h1>
+          <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Catálogo de módulos</h1>
           <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">
-            Controla qué módulos tiene habilitados cada empresa en la plataforma.
+            Gestiona los módulos disponibles en la plataforma. Cada plan activa un subconjunto.
           </p>
         </div>
-
-        {/* Save bar */}
-        <AnimatePresence>
-          {dirty && selected && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: -8 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: -8 }}
-              transition={{ duration: 0.2 }}
-              className="flex items-center gap-2 self-start rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 dark:border-amber-500/20 dark:bg-amber-500/10"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-              <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Cambios sin guardar</span>
-              <button type="button" onClick={resetDraft}
-                className="ml-2 flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300"
-              >
-                <RotateCcw size={11} /> Descartar
-              </button>
-              <motion.button type="button" whileTap={{ scale: 0.95 }} onClick={handleSave}
-                disabled={submitting}
-                className="flex items-center gap-1.5 rounded-xl bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 disabled:opacity-60"
-              >
-                {submitting ? (
-                  <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                  </svg>
-                ) : (
-                  <Save size={11} />
-                )}
-                Guardar
-              </motion.button>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <motion.button type="button" whileTap={{ scale: 0.95 }} onClick={openCreate}
+          className="inline-flex items-center gap-2 self-start rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600">
+          <Plus size={15} /> Nuevo módulo
+        </motion.button>
       </motion.div>
 
-      {/* ── KPIs ───────────────────────────────────────────────────────────── */}
-      {selected && (
-        <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-          {[
-            { icon: <LayoutGrid size={16} />, label: "Empresa",    value: selected.name,          sub: selected.industry ?? "Sin industria", accent: "bg-brand-500"   },
-            { icon: <ShieldCheck size={16} />,label: "Habilitados",value: enabledCount.toString(), sub: "Módulos activos",                    accent: "bg-emerald-500" },
-            { icon: <ShieldOff size={16} />,  label: "Bloqueados", value: blockedCount.toString(), sub: "Sin acceso",                         accent: "bg-rose-500"    },
-            { icon: <LayoutGrid size={16} />, label: "Plan",       value: planCount.toString(),    sub: `Incluidos en plan ${selected.planId}`,accent: "bg-amber-500"  },
-          ].map((kpi, i) => (
-            <motion.div key={kpi.label}
-              initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.35, delay: i * 0.07 }}
-            >
-              <PlatformKpiCard {...kpi} />
-            </motion.div>
-          ))}
+      {/* Búsqueda */}
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1 sm:max-w-xs">
+          <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar módulo…" className="h-9 w-full rounded-xl border border-gray-200 bg-white pl-9 pr-4 text-sm outline-none focus:border-brand-500 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300" />
         </div>
+        <span className="text-xs text-gray-400 dark:text-gray-500">{filtered.length} módulos</span>
+      </div>
+
+      {/* Lista / Tabla */}
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-16 text-gray-400">
+          <Loader2 size={16} className="animate-spin" /> Cargando…
+        </div>
+      ) : (
+        <motion.div
+          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.15 }}
+          className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
+          {filtered.map((m, i) => {
+            const isOpen = !!expanded[m.id];
+            return (
+              <motion.div key={m.id}
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                transition={{ duration: 0.2, delay: i * 0.02 }}
+                className={`border-b border-gray-100 dark:border-white/[0.04] last:border-b-0`}>
+                <div className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50/80 dark:hover:bg-white/[0.02]">
+                  <button type="button" onClick={() => toggleExpand(m.id)}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.05]">
+                    {isOpen ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
+                  </button>
+                  <div className={`flex h-8 w-8 items-center justify-center rounded-lg
+                    ${m.isActive
+                      ? "bg-brand-50 dark:bg-brand-500/10"
+                      : "bg-gray-100 dark:bg-white/[0.05]"}`}>
+                    <Package size={14} className={m.isActive ? "text-brand-500" : "text-gray-400"} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-gray-800 dark:text-white">{m.label}</p>
+                      {m.isCore && (
+                        <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-violet-700 dark:bg-violet-500/20 dark:text-violet-400">
+                          Core
+                        </span>
+                      )}
+                      {!m.isActive && (
+                        <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-gray-500 dark:bg-white/[0.06] dark:text-gray-400">
+                          Inactivo
+                        </span>
+                      )}
+                      <p className="font-mono text-[10px] text-gray-400">{m.id}</p>
+                    </div>
+                    {m.description && (
+                      <p className="mt-0.5 text-[11px] text-gray-400 dark:text-gray-500 line-clamp-1">{m.description}</p>
+                    )}
+                  </div>
+                  <span className="text-xs text-gray-400">{m.submodules.length} submódulos</span>
+                  <div className="flex items-center gap-1">
+                    <button type="button" onClick={() => openEdit(m)}
+                      className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-brand-500 dark:border-white/[0.08]">
+                      <Pencil size={12} />
+                    </button>
+                    {!m.isCore && m.isActive && (
+                      <button type="button" onClick={() => handleDeactivate(m)}
+                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-rose-500 dark:border-white/[0.08]">
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <AnimatePresence>
+                  {isOpen && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.18 }}
+                      className="overflow-hidden border-t border-gray-100 bg-gray-50/50 px-12 py-2 dark:border-white/[0.04] dark:bg-white/[0.02]">
+                      {m.submodules.length === 0 ? (
+                        <p className="py-3 text-center text-[11px] text-gray-400">Sin submódulos definidos</p>
+                      ) : (
+                        m.submodules.map(s => (
+                          <div key={s.id} className="flex items-center gap-2 border-b border-gray-100/80 py-2 last:border-b-0 dark:border-white/[0.02]">
+                            <Layers size={11} className="text-gray-300 dark:text-gray-600" />
+                            <p className="text-xs font-medium text-gray-700 dark:text-gray-200">{s.label}</p>
+                            <p className="ml-auto font-mono text-[10px] text-gray-400">{s.id}</p>
+                            {!s.isActive && (
+                              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] text-gray-500 dark:bg-white/[0.06]">
+                                Inactivo
+                              </span>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            );
+          })}
+        </motion.div>
       )}
 
-      {/* ── Layout principal ───────────────────────────────────────────────── */}
-      <div className="grid gap-6 xl:grid-cols-4">
-
-        {/* Sidebar empresas (1/4) */}
-        <motion.div
-          initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.35, delay: 0.15 }}
-          className="rounded-2xl border border-gray-200 bg-white px-4 pb-4 pt-4 dark:border-white/[0.06] dark:bg-white/[0.03]"
-        >
-          <h3 className="mb-1 text-sm font-semibold text-gray-800 dark:text-white">Empresas</h3>
-          <p className="mb-3 text-xs text-gray-400 dark:text-gray-500">Selecciona para editar módulos</p>
-          <CompanySelector
-            companies={filteredCompanies}
-            selected={selected}
-            onSelect={selectCompany}
-            search={companySearch}
-            onSearch={setCompanySearch}
-          />
-        </motion.div>
-
-        {/* Módulos grid (3/4) */}
-        <div className="xl:col-span-3">
-          {!selected ? (
-            <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-gray-200 py-24 dark:border-white/[0.06]">
-              <LayoutGrid size={24} className="text-gray-300 dark:text-gray-600" />
-              <p className="text-sm font-medium text-gray-400">Selecciona una empresa para gestionar sus módulos</p>
-            </div>
-          ) : (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.25 }}
-            >
-              {/* Toolbar */}
-              <div className="mb-4 flex items-center justify-between">
-                <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                  {selected.name}
-                  <span className="ml-2 text-xs font-normal text-gray-400">
-                    — {enabledCount} de {MODULE_KEYS.length} módulos activos
-                  </span>
-                </p>
-                <div className="flex items-center gap-2">
-                  <button type="button" onClick={applyPlan}
-                    className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-                  >
-                    Aplicar plan
-                  </button>
-                  <button type="button"
-                    onClick={() => { setDraft(MODULE_KEYS); setDirty(true); }}
-                    className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300"
-                  >
-                    Habilitar todos
-                  </button>
-                  <button type="button"
-                    onClick={() => { setDraft([]); setDirty(true); }}
-                    className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300"
-                  >
-                    Bloquear todos
-                  </button>
-                </div>
-              </div>
-
-              {/* Grid */}
-              <div className="grid gap-3 sm:grid-cols-2">
-                {MODULE_KEYS.map((key, i) => (
-                  <motion.div key={key}
-                    initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.25, delay: i * 0.04 }}
-                  >
-                    <ModuleCard
-                      moduleKey={key}
-                      enabled={draft.includes(key)}
-                      suggestedByPlan={planModules.includes(key)}
-                      onToggle={() => toggleModule(key)}
-                    />
-                  </motion.div>
-                ))}
-              </div>
-
-              {/* Bottom save */}
-              {dirty && (
-                <motion.div
-                  initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-                  className="mt-5 flex justify-end gap-2"
-                >
-                  <button type="button" onClick={resetDraft}
-                    className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300"
-                  >
-                    <RotateCcw size={13} /> Descartar cambios
-                  </button>
-                  <motion.button type="button" whileTap={{ scale: 0.95 }} onClick={handleSave}
-                    disabled={submitting}
-                    className="flex items-center gap-2 rounded-xl bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-500/20 transition hover:bg-brand-600 disabled:opacity-60"
-                  >
-                    {submitting ? (
-                      <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                      </svg>
-                    ) : (
-                      <Save size={13} />
-                    )}
-                    Guardar módulos
-                  </motion.button>
-                </motion.div>
-              )}
-            </motion.div>
-          )}
-        </div>
-      </div>
+      {/* Modal create/edit */}
+      <PlatformModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title={editing ? `Editar módulo: ${editing.label}` : "Nuevo módulo"}
+        subtitle={editing ? "Modificá sus submódulos, label y propiedades." : "Definí un nuevo módulo con sus submódulos."}
+        icon={<Package size={15} />}
+        iconBg="bg-violet-50 dark:bg-violet-500/[0.12]"
+        iconColor="text-violet-600 dark:text-violet-400"
+        maxWidth="max-w-2xl"
+        footer={
+          <ModalActions
+            onCancel={() => setModalOpen(false)}
+            submitting={submitting}
+            submitLabel={editing ? "Guardar cambios" : "Crear módulo"} />
+        }
+      >
+        <form onSubmit={handleSubmit}>
+          <ModuleForm form={form} onChange={setForm} isEdit={!!editing} />
+        </form>
+      </PlatformModal>
     </div>
   );
 }

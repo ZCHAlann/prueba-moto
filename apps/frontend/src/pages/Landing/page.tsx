@@ -10,6 +10,8 @@ import LaptopMockup from "../../components/landing/LaptopMockup";
 import CountUp from "../../components/landing/CountUp";
 import { useScrollReveal } from "../../hooks/useScrollReveal";
 import { faqs, flyers, marketingContent, testimonials } from "../../data/public-content";
+import { usePublicPlans } from "../../hooks/usePlatformPlans";
+import type { PublicPlan } from "../../types/platform";
 
 /* -------------------------------------------------------------------------- */
 /*                              Reveal primitive                              */
@@ -637,49 +639,91 @@ function TestimonialsSection() {
 /*                              Pricing                                       */
 /* -------------------------------------------------------------------------- */
 
-const plans = [
+interface PlanCardData {
+  id: string;
+  name: string;
+  description: string;
+  price: string;
+  features: string[];
+  popular?: boolean;
+}
+
+// Fallback mientras no llegan los planes de la API (offline / 1ra carga)
+const FALLBACK_PLANS: PlanCardData[] = [
   {
-    name: "Esencial",
-    description: "Para equipos que recién empiezan a ordenar su operación.",
+    id: "starter", name: "Starter", price: "29",
+    description: "Para equipos pequeños que recién ordenan su operación.",
     features: [
-      "Hasta 30 vehículos",
-      "1 sede",
-      "Mantenimiento y alertas",
-      "Reportes básicos",
-      "Soporte por correo",
+      "Hasta 10 usuarios y 30 vehículos",
+      "Gestión de flotas y conductores",
+      "Combustible y alertas básicas",
+      "Reportes operativos estándar",
     ],
   },
   {
-    name: "Profesional",
-    description: "El más elegido. Pensado para empresas con varias sedes.",
+    id: "pro", name: "Pro", price: "89", popular: true,
+    description: "El más elegido. Para empresas con varias sedes.",
     features: [
-      "Hasta 200 vehículos",
-      "Hasta 5 sedes",
-      "Motores y generadores",
-      "Reportes avanzados",
-      "Soporte prioritario",
-      "API y webhooks",
+      "Hasta 30 usuarios y 200 vehículos",
+      "Mantenimiento y checklist",
+      "Autorizaciones de salida con IA",
+      "Motores, generadores y aires acondicionados",
     ],
-    popular: true,
   },
   {
-    name: "Empresarial",
-    description: "Para operaciones grandes con necesidades a la medida.",
+    id: "business", name: "Business", price: "199",
+    description: "Operaciones grandes con caja chica, finanzas y roles a medida.",
     features: [
-      "Vehículos ilimitados",
-      "Sedes ilimitadas",
-      "Onboarding dedicado",
+      "Hasta 100 usuarios y 1000 vehículos",
+      "Finanzas: facturas, caja chica y transacciones",
+      "Roles personalizados por empresa",
+      "Asistente IA Jarvis",
+    ],
+  },
+  {
+    id: "enterprise", name: "Enterprise", price: "499",
+    description: "Todo habilitado + soporte dedicado.",
+    features: [
+      "Usuarios y activos ilimitados",
+      "Onboarding dedicado y gerente de cuenta",
       "SLA personalizado",
-      "Integraciones a medida",
-      "Gerente de cuenta",
+      "White-label opcional",
     ],
   },
 ];
 
+function fmtMoney(n: string | number | undefined | null): string {
+  if (n === null || n === undefined) return "0";
+  const num = typeof n === "string" ? Number(n) : n;
+  if (!Number.isFinite(num)) return "0";
+  if (num === 0) return "0";
+  // si no es entero, mostrar 2 decimales
+  return num.toLocaleString("es-EC", { minimumFractionDigits: num % 1 === 0 ? 0 : 2, maximumFractionDigits: 2 });
+}
+
+function publicPlanToCardData(plan: PublicPlan): PlanCardData {
+  return {
+    id: plan.id,
+    name: plan.name,
+    description: plan.description,
+    price: fmtMoney(plan.monthlyPrice),
+    features: plan.features ?? [],
+    popular: plan.isPopular,
+  };
+}
+
 function PricingSection() {
+  const { plans: livePlans, loading: plansLoading } = usePublicPlans();
+
+  // Si por alguna razón la API no responde, mantenemos fallback mínimo
+  const cards: PlanCardData[] =
+    livePlans.length > 0
+      ? livePlans.map(publicPlanToCardData)
+      : FALLBACK_PLANS;
+
   return (
     <section id="planes" className="border-y border-white/5 bg-gray-900/30 py-20 md:py-28">
-      <div className="mx-auto w-full max-w-6xl px-4 lg:px-6">
+      <div className="mx-auto w-full max-w-7xl px-4 lg:px-6">
         <Reveal>
           <div className="mx-auto max-w-3xl text-center">
             <h2 className="text-3xl font-bold text-white sm:text-4xl md:text-5xl">
@@ -691,26 +735,37 @@ function PricingSection() {
           </div>
         </Reveal>
 
-        <div className="mt-14 grid gap-6 lg:grid-cols-3">
-          {plans.map((p, i) => (
-            <Reveal key={p.name} delay={i * 120}>
+        <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          {cards.map((p, i) => (
+            <Reveal key={p.id} delay={i * 100}>
               <TiltCard
                 strength={5}
-                className={`group relative h-full rounded-2xl border p-8 backdrop-blur-sm transition-all duration-500 ${
+                className={`group relative h-full rounded-2xl border p-7 backdrop-blur-sm transition-all duration-500 ${
                   p.popular
                     ? "border-emerald-500/60 bg-gray-900/80 shadow-2xl shadow-emerald-500/10"
                     : "border-white/10 bg-gray-900/40 hover:border-emerald-500/40"
                 }`}
               >
                 {p.popular && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold text-gray-950 shadow-lg shadow-emerald-500/30">
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold text-gray-950 shadow-lg shadow-emerald-500/30">
                     Más popular
                   </span>
                 )}
                 <h3 className="text-2xl font-bold text-white">{p.name}</h3>
                 <p className="mt-2 text-sm text-gray-400">{p.description}</p>
-                <p className="mt-6 text-3xl font-bold text-emerald-400">Consultar</p>
-                <ul className="mt-6 space-y-3">
+
+                {/* Precio */}
+                <div className="mt-6 flex items-baseline gap-1">
+                  {Number(p.price) > 0 && <span className="text-base text-gray-400">$</span>}
+                  <span className="text-3xl font-bold text-emerald-400">
+                    {Number(p.price) > 0 ? p.price : "Gratis"}
+                  </span>
+                  {Number(p.price) > 0 && (
+                    <span className="text-sm text-gray-400">/mes</span>
+                  )}
+                </div>
+
+                <ul className="mt-6 space-y-2.5">
                   {p.features.map((f) => (
                     <li key={f} className="flex items-start gap-2 text-sm text-gray-300">
                       <svg viewBox="0 0 24 24" className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-400" fill="none" stroke="currentColor" strokeWidth="3">
@@ -720,6 +775,7 @@ function PricingSection() {
                     </li>
                   ))}
                 </ul>
+
                 <Link
                   to="/solicitar-demo"
                   className={`mt-8 block rounded-xl px-4 py-3 text-center text-sm font-semibold transition ${
@@ -734,6 +790,10 @@ function PricingSection() {
             </Reveal>
           ))}
         </div>
+
+        {plansLoading && cards.length === 0 && (
+          <p className="mt-6 text-center text-xs text-gray-500">Cargando planes…</p>
+        )}
       </div>
     </section>
   );

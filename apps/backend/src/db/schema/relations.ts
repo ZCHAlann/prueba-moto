@@ -2,8 +2,14 @@ import { relations } from 'drizzle-orm';
 import {
   companies,
   companyUsers,
+  companyUserCounts,
+  companyEnabledModules,
+  companyEnabledSubmodules,
   platformUsers,
   platformPlans,
+  platformModules,
+  platformModuleSubmodules,
+  platformPlanModules,
   platformLeads,
   platformAuditEntries,
   platformInvoices,
@@ -51,6 +57,23 @@ import {
 
 export const platformPlansRelations = relations(platformPlans, ({ many }) => ({
   companies: many(companies),
+  planModules: many(platformPlanModules),
+}));
+
+export const platformModulesRelations = relations(platformModules, ({ many }) => ({
+  submodules: many(platformModuleSubmodules),
+  planModules: many(platformPlanModules),
+  companies:   many(companyEnabledModules),
+}));
+
+export const platformModuleSubmodulesRelations = relations(platformModuleSubmodules, ({ one, many }) => ({
+  module:    one(platformModules, { fields: [platformModuleSubmodules.moduleId], references: [platformModules.id] }),
+  companies: many(companyEnabledSubmodules),
+}));
+
+export const platformPlanModulesRelations = relations(platformPlanModules, ({ one }) => ({
+  plan:   one(platformPlans,   { fields: [platformPlanModules.planId],   references: [platformPlans.id] }),
+  module: one(platformModules, { fields: [platformPlanModules.moduleId], references: [platformModules.id] }),
 }));
 
 export const platformUsersRelations = relations(platformUsers, ({ many }) => ({
@@ -98,7 +121,26 @@ export const companiesRelations = relations(companies, ({ many, one }) => ({
   }),
   invoices: many(platformInvoices),
   tickets: many(platformTickets),
+  enabledModules: many(companyEnabledModules),
+  userCounts: one(companyUserCounts, {
+    fields: [companies.id],
+    references: [companyUserCounts.companyId],
+  }),
 
+}));
+
+export const companyUserCountsRelations = relations(companyUserCounts, ({ one }) => ({
+  company: one(companies, { fields: [companyUserCounts.companyId], references: [companies.id] }),
+}));
+
+export const companyEnabledModulesRelations = relations(companyEnabledModules, ({ one }) => ({
+  company: one(companies,        { fields: [companyEnabledModules.companyId], references: [companies.id] }),
+  module:  one(platformModules,  { fields: [companyEnabledModules.moduleId],  references: [platformModules.id] }),
+}));
+
+export const companyEnabledSubmodulesRelations = relations(companyEnabledSubmodules, ({ one }) => ({
+  company:    one(companies,                 { fields: [companyEnabledSubmodules.companyId],   references: [companies.id] }),
+  submodule:  one(platformModuleSubmodules,  { fields: [companyEnabledSubmodules.submoduleId], references: [platformModuleSubmodules.id] }),
 }));
 
 

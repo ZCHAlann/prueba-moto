@@ -514,7 +514,6 @@ export function PlansPage() {
         <KpiTile label="Planes" value={plans.length.toString()} sub="totales" color="bg-brand-500" />
         <KpiTile label="Popular" value={plans.filter(p => p.isPopular).length.toString()} sub="destacado" color="bg-amber-500" />
         <KpiTile label="Activos" value={plans.filter(p => p.isActive).length.toString()} sub="visibles al público" color="bg-emerald-500" />
-        <KpiTile label="Empresas" value={plans.reduce((acc, p) => acc + (p.maxUsers ?? 0), 0).toString()} sub="usuarios máx. totales" color="bg-violet-500" />
       </div>
 
       {/* Cards grid */}

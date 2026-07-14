@@ -497,10 +497,12 @@ router.post(
 
       // 3) Insights del cache (sin generar nuevos para el PDF)
       const { generateInsights } = await import("../../lib/ai-insights");
-      const { isAiEnabled }      = await import("../../lib/ai-client");
+      const { getGroqKeyForCompany } = await import("../../lib/ai/client-factory");
       let insights: any    = null;
       let insightsMeta: any = null;
-      if (isAiEnabled()) {
+      // jul 2026 v7 — chequeo per-empresa.
+      const aiAvailable = !!(await getGroqKeyForCompany(companyId, 'ai_insights'));
+      if (aiAvailable) {
         try {
           const ins = await generateInsights({
             companyId,
@@ -632,11 +634,13 @@ router.post(
 
       // 2) Generar / recuperar insights (con cache automático)
       const { generateInsights } = await import("../../lib/ai-insights");
-      const { isAiEnabled }      = await import("../../lib/ai-client");
+      const { getGroqKeyForCompany } = await import("../../lib/ai/client-factory");
 
-      if (!isAiEnabled()) {
+      // jul 2026 v7 — chequeo per-empresa. La empresa puede tener su
+      // propia key; si no, usamos la cascada global.
+      if (!(await getGroqKeyForCompany(companyId, 'ai_insights'))) {
         return res.status(503).json({
-          error: "Análisis IA no disponible: GROQ_API_KEY no configurada en el backend.",
+          error: "Análisis IA no disponible: cargá tu API key de Groq o pedile al superadmin que configure la cascada global.",
           code:  "AI_DISABLED",
         });
       }

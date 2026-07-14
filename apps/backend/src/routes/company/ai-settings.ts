@@ -1,23 +1,32 @@
 // routes/company/ai-settings.ts
 // ─────────────────────────────────────────────────────────────────────
-// Endpoints para que cada empresa configure su propia IA (jul 2026 v6).
+// Endpoints para que cada empresa configure sus API keys de IA
+// (jul 2026 v7 — multi-key por provider).
+//
+// jul 2026 v7 — CAMBIO DE MODELO:
+//   - La empresa SOLO puede cargar su API key de cada provider
+//     (Groq para texto/chat/análisis, Gemini para imágenes).
+//   - El MODELO lo define ApliSmart, no la empresa. La empresa
+//     no puede cambiar ni provider ni modelo.
+//   - Si la empresa NO carga su key, se usa la cascada global
+//     (env vars / GROQ_API_KEY1..N).
 //
 // Rutas (todas bajo /company/:id):
 //   GET    /ai-settings       → devuelve la config (SIN api_key, solo last4)
-//   PUT    /ai-settings       → crea/actualiza config (puede incluir api_key)
-//   DELETE /ai-settings       → vuelve a platform_default
+//   PUT    /ai-settings       → crea/actualiza config (groq/gemini keys por separado)
+//   DELETE /ai-settings       → borra todas las keys (vuelve a platform_default)
 //   POST   /ai-settings/test  → prueba la conexión contra el provider
 //   GET    /ai-usage?from&to  → métricas de uso (tokens, requests, cost)
-//   GET    /ai-providers      → lista de providers + modelos disponibles
+//   GET    /ai-providers      → info de los providers (sin catálogo de modelos)
 //
 // Permisos: admin_empresa / owner_empresa / superadmin.
 // ─────────────────────────────────────────────────────────────────────
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { eq, and, gte, lte, sql, desc } from 'drizzle-orm';
 import Groq from 'groq-sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { eq, and, gte, sql, desc } from 'drizzle-orm';
 import { db } from '../../db/client';
 import {
   companyAiSettings,
@@ -37,10 +46,22 @@ import {
 import {
   clearAiConfigCache,
   resolveAiConfig,
+  getGroqKeyForCompany,
+  getGeminiKeyForCompany,
 } from '../../lib/ai/client-factory';
 import { toId } from '../../lib/ids';
+import { requireModule } from '../../middlewares/requireModule';
 
 const router = Router({ mergeParams: true });
+
+// jul 2026 — El módulo `jarvis` (Asistente IA) sólo está disponible en
+// planes Business y Enterprise (ver platform-seed.ts). Aplicamos el gating
+// a TODO el router: si la empresa no tiene `jarvis` habilitado, ningún
+// endpoint (GET/PUT/DELETE/POST test, ai-usage, ai-providers) responde.
+// `requireModule` ya exime a superadmin y a admins de empresa, así que
+// el superadmin puede seguir gestionando desde el panel master aunque la
+// empresa no tenga el módulo en su plan.
+router.use(requireModule('jarvis', 'asistente'));
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -64,29 +85,26 @@ function requireAdminOnCompany(req: Request) {
 
 // ─── Schemas ───────────────────────────────────────────────────────────────
 
-const providerEnum = z.enum([
-  'platform_default',
-  'groq',
-  'gemini',
-  'openai',
-  'anthropic',
-  'custom',
-]);
+// jul 2026 v7 — schema minimalista. La empresa SOLO puede:
+//   - Cargar/borrar su key de Groq
+//   - Cargar/borrar su key de Gemini
+//   - Prender/apagar `isEnabled`, `useJarvis`, `useExitAnalysis`, `useAiInsights`, `useTts`
+//   - Configurar rate limits y budget mensual
+// NO hay provider, NO hay modelo — eso lo maneja ApliSmart.
 
 const putSchema = z.object({
-  provider:          providerEnum,
-  isEnabled:         z.boolean().default(true),
-  // Si viene vacío/null → no tocar la key existente.
-  // Si viene string → reemplaza (cifra y guarda fingerprint).
-  // Si viene '' explícito → borra la key (cae a platform_default si provider='platform_default').
-  apiKey:            z.string().max(500).optional().nullable(),
-  apiKeyClear:       z.boolean().optional(),   // true = borrar la key guardada
-  modelPrimary:      z.string().max(120).optional().nullable(),
-  modelFallback:     z.string().max(120).optional().nullable(),
-  modelTtsVoice:     z.string().max(60).optional().nullable(),
+  isEnabled:         z.boolean().optional(),
+  // Groq
+  groqApiKey:        z.string().max(500).optional().nullable(),
+  groqApiKeyClear:   z.boolean().optional(),
+  // Gemini
+  geminiApiKey:      z.string().max(500).optional().nullable(),
+  geminiApiKeyClear: z.boolean().optional(),
+  // Rate limits
   rpmLimit:          z.number().int().positive().max(1_000_000).optional().nullable(),
   tpmLimit:          z.number().int().positive().max(1_000_000_000).optional().nullable(),
   monthlyBudgetUsd:  z.number().nonnegative().max(1_000_000).optional().nullable(),
+  // Toggles por feature
   useJarvis:         z.boolean().optional(),
   useExitAnalysis:   z.boolean().optional(),
   useAiInsights:     z.boolean().optional(),
@@ -105,52 +123,66 @@ router.get('/ai-settings', async (req: Request, res: Response, next: NextFunctio
       .limit(1);
 
     if (!row) {
-      // Sin fila → defaults "platform_default".
       return res.json({
         companyId: toId('company', String(companyId)),
-        provider: 'platform_default',
-        isEnabled: true,
-        hasApiKey: false,
-        apiKeyLast4: null,
-        apiKeySetAt: null,
-        modelPrimary: null,
-        modelFallback: null,
-        modelTtsVoice: null,
-        rpmLimit: null,
-        tpmLimit: null,
+        // Sin fila → defaults "platform_default".
+        isEnabled:        true,
+        hasGroqApiKey:    false,
+        groqApiKeyLast4:  null,
+        groqApiKeySetAt:  null,
+        hasGeminiApiKey:  false,
+        geminiApiKeyLast4:null,
+        geminiApiKeySetAt:null,
+        rpmLimit:         null,
+        tpmLimit:         null,
         monthlyBudgetUsd: null,
-        useJarvis: true,
-        useExitAnalysis: true,
-        useAiInsights: true,
-        useTts: false,
+        useJarvis:        true,
+        useExitAnalysis:  true,
+        useAiInsights:    true,
+        useTts:           false,
         killedByPlatform: false,
-        createdAt: null,
-        updatedAt: null,
+        createdAt:        null,
+        updatedAt:        null,
+        // Para compat con el frontend viejo:
         keySource: 'platform',
+        provider:  'platform_default',
+        // EL modelo lo define ApliSmart, no la empresa. Informativo.
+        modelPrimary:   null,
+        modelFallback:  null,
+        hasApiKey:      false,
+        apiKeyLast4:    null,
+        apiKeySetAt:    null,
       });
     }
 
     return res.json({
-      companyId: toId('company', String(companyId)),
-      provider: row.provider,
-      isEnabled: row.isEnabled,
-      hasApiKey: !!row.apiKeyEncrypted,
-      apiKeyLast4: row.apiKeyLast4,
-      apiKeySetAt: row.apiKeySetAt,
-      modelPrimary: row.modelPrimary,
-      modelFallback: row.modelFallback,
-      modelTtsVoice: row.modelTtsVoice,
-      rpmLimit: row.rpmLimit,
-      tpmLimit: row.tpmLimit,
+      companyId:        toId('company', String(companyId)),
+      isEnabled:        row.isEnabled,
+      hasGroqApiKey:    !!row.groqApiKeyEncrypted,
+      groqApiKeyLast4:  row.groqApiKeyLast4,
+      groqApiKeySetAt:  row.groqApiKeySetAt,
+      hasGeminiApiKey:  !!row.geminiApiKeyEncrypted,
+      geminiApiKeyLast4:row.geminiApiKeyLast4,
+      geminiApiKeySetAt:row.geminiApiKeySetAt,
+      rpmLimit:         row.rpmLimit,
+      tpmLimit:         row.tpmLimit,
       monthlyBudgetUsd: row.monthlyBudgetUsd ? Number(row.monthlyBudgetUsd) : null,
-      useJarvis: row.useJarvis,
-      useExitAnalysis: row.useExitAnalysis,
-      useAiInsights: row.useAiInsights,
-      useTts: row.useTts,
+      useJarvis:        row.useJarvis,
+      useExitAnalysis:  row.useExitAnalysis,
+      useAiInsights:    row.useAiInsights,
+      useTts:           row.useTts,
       killedByPlatform: row.killedByPlatform,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      keySource: row.apiKeyEncrypted ? 'company' : 'platform',
+      createdAt:        row.createdAt,
+      updatedAt:        row.updatedAt,
+      keySource: (row.groqApiKeyEncrypted || row.geminiApiKeyEncrypted) ? 'company' : 'platform',
+      provider:  row.providerOverride ?? 'platform_default',
+      // EL modelo lo define ApliSmart. Devolvemos null para que el
+      // frontend NO muestre un selector de modelo.
+      modelPrimary:   null,
+      modelFallback:  null,
+      hasApiKey:      !!(row.groqApiKeyEncrypted || row.geminiApiKeyEncrypted),
+      apiKeyLast4:    row.groqApiKeyLast4 ?? row.geminiApiKeyLast4 ?? null,
+      apiKeySetAt:    row.groqApiKeySetAt ?? row.geminiApiKeySetAt ?? null,
     });
   } catch (err) { next(err); }
 });
@@ -163,79 +195,84 @@ router.put('/ai-settings', validate(putSchema), async (req: Request, res: Respon
     const companyId = getCompanyIdFromReq(req);
     const body = req.body as z.infer<typeof putSchema>;
 
-    // Si quiere provider custom pero NO manda key y NO hay key previa → 400.
     const [existing] = await db
       .select()
       .from(companyAiSettings)
       .where(eq(companyAiSettings.companyId, companyId))
       .limit(1);
 
-    const wantsCustomProvider = body.provider !== 'platform_default';
-    const hasExistingKey     = !!existing?.apiKeyEncrypted;
-    const hasNewKey          = !!body.apiKey && body.apiKey.trim().length > 0;
-    const clearsKey          = !!body.apiKeyClear;
+    // ─── Groq key ────────────────────────────────────────────────────
+    let groqEnc:  string | null | undefined = undefined;  // undefined = no tocar
+    let groqLast4:string | null | undefined = undefined;
+    let groqAt:   Date   | null | undefined = undefined;
+    let groqFp:   string | null = null;
 
-    if (wantsCustomProvider && !hasNewKey && !hasExistingKey) {
-      throw new AppError(400, `Para usar provider="${body.provider}" necesitás cargar una API key.`);
-    }
-    if (clearsKey && wantsCustomProvider) {
-      throw new AppError(400, `No podés borrar la API key mientras el provider sea custom. Volvé a "platform_default" primero.`);
-    }
-
-    // Cifrar la nueva key si vino.
-    let apiKeyEncrypted: string | null | undefined = undefined; // undefined = no tocar
-    let apiKeyLast4:     string | null | undefined = undefined;
-    let apiKeySetAt:     Date   | null | undefined = undefined;
-    let fp:              string | null = null;
-
-    if (hasNewKey) {
-      const plain = body.apiKey!.trim();
-      fp = fingerprintOf(plain);
-      apiKeyEncrypted = encryptSecret(plain);
-      apiKeyLast4     = secretLast4(plain);
-      apiKeySetAt     = new Date();
-    } else if (clearsKey) {
-      apiKeyEncrypted = null;
-      apiKeyLast4     = null;
-      apiKeySetAt     = null;
+    if (body.groqApiKey && body.groqApiKey.trim().length > 0) {
+      const plain = body.groqApiKey.trim();
+      groqFp   = fingerprintOf(plain);
+      groqEnc  = encryptSecret(plain);
+      groqLast4= secretLast4(plain);
+      groqAt   = new Date();
+    } else if (body.groqApiKeyClear) {
+      groqEnc  = null;
+      groqLast4= null;
+      groqAt   = null;
     }
 
-    // Si cambia provider+key, registramos en el historial de fingerprints.
-    // Si la misma key se reutiliza (mismo fp) NO duplicamos — usamos UNIQUE.
-    if (hasNewKey && fp) {
+    // ─── Gemini key ──────────────────────────────────────────────────
+    let gemEnc:  string | null | undefined = undefined;
+    let gemLast4:string | null | undefined = undefined;
+    let gemAt:   Date   | null | undefined = undefined;
+    let gemFp:   string | null = null;
+
+    if (body.geminiApiKey && body.geminiApiKey.trim().length > 0) {
+      const plain = body.geminiApiKey.trim();
+      gemFp   = fingerprintOf(plain);
+      gemEnc  = encryptSecret(plain);
+      gemLast4= secretLast4(plain);
+      gemAt   = new Date();
+    } else if (body.geminiApiKeyClear) {
+      gemEnc  = null;
+      gemLast4= null;
+      gemAt   = null;
+    }
+
+    // Registrar fingerprints en historial (si se subió alguna key nueva).
+    const fingerprints: Array<{ provider: string; fp: string }> = [];
+    if (groqEnc && groqFp) fingerprints.push({ provider: 'groq', fp: groqFp });
+    if (gemEnc && gemFp) fingerprints.push({ provider: 'gemini', fp: gemFp });
+    for (const { provider, fp } of fingerprints) {
       try {
-        await db.insert(companyAiApiKeys).values({
-          companyId,
-          provider:    body.provider,
-          fingerprint: fp,
-        });
+        await db.insert(companyAiApiKeys).values({ companyId, provider, fingerprint: fp });
       } catch (e: any) {
-        // UNIQUE violation → la key ya existe para esa empresa. OK.
-        if (!String(e?.message ?? '').includes('uniq')) {
-          throw e;
-        }
+        // UNIQUE violation → la key ya existe. OK.
+        if (!String(e?.message ?? '').includes('uniq')) throw e;
       }
     }
 
+    // Determinar el provider_override para mantener compat con el campo
+    // viejo. NO se usa para decidir nada — es solo informacional.
+    const newOverride = (groqEnc || gemEnc) ? 'platform_default' : 'platform_default';
+
     const patch: any = {
-      provider:        body.provider,
-      isEnabled:       body.isEnabled,
-      updatedAt:       new Date(),
-      updatedBy:       Number(req.user?.sub?.replace('company-user-', '') || 0) || null,
+      updatedAt: new Date(),
+      updatedBy: Number(req.user?.sub?.replace('company-user-', '') || 0) || null,
     };
-    if (body.modelPrimary     !== undefined) patch.modelPrimary    = body.modelPrimary;
-    if (body.modelFallback    !== undefined) patch.modelFallback   = body.modelFallback;
-    if (body.modelTtsVoice    !== undefined) patch.modelTtsVoice   = body.modelTtsVoice;
-    if (body.rpmLimit         !== undefined) patch.rpmLimit        = body.rpmLimit;
-    if (body.tpmLimit         !== undefined) patch.tpmLimit        = body.tpmLimit;
+    if (body.isEnabled        !== undefined) patch.isEnabled        = body.isEnabled;
+    if (groqEnc               !== undefined) patch.groqApiKeyEncrypted = groqEnc;
+    if (groqLast4             !== undefined) patch.groqApiKeyLast4     = groqLast4;
+    if (groqAt                !== undefined) patch.groqApiKeySetAt     = groqAt;
+    if (gemEnc                !== undefined) patch.geminiApiKeyEncrypted = gemEnc;
+    if (gemLast4              !== undefined) patch.geminiApiKeyLast4     = gemLast4;
+    if (gemAt                 !== undefined) patch.geminiApiKeySetAt     = gemAt;
+    if (body.rpmLimit         !== undefined) patch.rpmLimit          = body.rpmLimit;
+    if (body.tpmLimit         !== undefined) patch.tpmLimit          = body.tpmLimit;
     if (body.monthlyBudgetUsd !== undefined) patch.monthlyBudgetUsd = body.monthlyBudgetUsd != null ? String(body.monthlyBudgetUsd) : null;
-    if (body.useJarvis        !== undefined) patch.useJarvis       = body.useJarvis;
-    if (body.useExitAnalysis  !== undefined) patch.useExitAnalysis = body.useExitAnalysis;
-    if (body.useAiInsights    !== undefined) patch.useAiInsights   = body.useAiInsights;
-    if (body.useTts           !== undefined) patch.useTts          = body.useTts;
-    if (apiKeyEncrypted       !== undefined) patch.apiKeyEncrypted = apiKeyEncrypted;
-    if (apiKeyLast4           !== undefined) patch.apiKeyLast4     = apiKeyLast4;
-    if (apiKeySetAt           !== undefined) patch.apiKeySetAt     = apiKeySetAt;
+    if (body.useJarvis        !== undefined) patch.useJarvis         = body.useJarvis;
+    if (body.useExitAnalysis  !== undefined) patch.useExitAnalysis   = body.useExitAnalysis;
+    if (body.useAiInsights    !== undefined) patch.useAiInsights     = body.useAiInsights;
+    if (body.useTts           !== undefined) patch.useTts            = body.useTts;
+    patch.providerOverride    = newOverride;
 
     if (existing) {
       await db.update(companyAiSettings).set(patch).where(eq(companyAiSettings.companyId, companyId));
@@ -247,23 +284,19 @@ router.put('/ai-settings', validate(putSchema), async (req: Request, res: Respon
       });
     }
 
-    // Invalidar cache del factory para que el próximo request lea la nueva key.
     clearAiConfigCache(companyId);
 
-    // Audit log — NO logueamos la key cruda, solo fingerprint y last4.
     await logAudit(db, companyId, {
       entity: 'company_ai_settings',
       entityId: String(companyId),
       action: 'update',
       actorId: req.user?.sub,
       actorName: req.user?.name,
-      description: `Configuración de IA actualizada: provider=${body.provider}`,
+      description: 'Configuración de IA actualizada (multi-key v7).',
       metadata: {
-        provider: body.provider,
-        isEnabled: body.isEnabled,
-        keyChanged: hasNewKey || clearsKey,
-        keyLast4: apiKeyLast4 ?? existing?.apiKeyLast4 ?? null,
-        keyFingerprint: fp,
+        keyChanged: (groqEnc !== undefined) || (gemEnc !== undefined),
+        groqKeyLast4: groqLast4 ?? existing?.groqApiKeyLast4 ?? null,
+        geminiKeyLast4: gemLast4 ?? existing?.geminiApiKeyLast4 ?? null,
         useJarvis: body.useJarvis,
         useExitAnalysis: body.useExitAnalysis,
         useAiInsights: body.useAiInsights,
@@ -275,7 +308,7 @@ router.put('/ai-settings', validate(putSchema), async (req: Request, res: Respon
   } catch (err) { next(err); }
 });
 
-// ─── DELETE /ai-settings (reset a platform_default) ─────────────────────────
+// ─── DELETE /ai-settings (reset total a platform_default) ───────────────────
 
 router.delete('/ai-settings', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -284,12 +317,15 @@ router.delete('/ai-settings', async (req: Request, res: Response, next: NextFunc
 
     await db.update(companyAiSettings)
       .set({
-        provider:        'platform_default',
-        apiKeyEncrypted: null,
-        apiKeyLast4:     null,
-        apiKeySetAt:     null,
-        updatedAt:       new Date(),
-        updatedBy:       Number(req.user?.sub?.replace('company-user-', '') || 0) || null,
+        groqApiKeyEncrypted:  null,
+        groqApiKeyLast4:       null,
+        groqApiKeySetAt:       null,
+        geminiApiKeyEncrypted: null,
+        geminiApiKeyLast4:     null,
+        geminiApiKeySetAt:     null,
+        providerOverride:      'platform_default',
+        updatedAt:             new Date(),
+        updatedBy:             Number(req.user?.sub?.replace('company-user-', '') || 0) || null,
       })
       .where(eq(companyAiSettings.companyId, companyId));
 
@@ -301,7 +337,7 @@ router.delete('/ai-settings', async (req: Request, res: Response, next: NextFunc
       action: 'update',
       actorId: req.user?.sub,
       actorName: req.user?.name,
-      description: 'Configuración de IA reseteada a platform_default',
+      description: 'Keys de IA reseteadas a platform_default',
       metadata: { reset: true },
     });
 
@@ -315,28 +351,19 @@ router.post('/ai-settings/test', async (req: Request, res: Response, next: NextF
   try {
     requireAdminOnCompany(req);
     const companyId = getCompanyIdFromReq(req);
-    const cfg = await resolveAiConfig(companyId, { force: true });
 
-    if (cfg.killed) {
-      throw new AppError(403, 'La IA está deshabilitada para esta empresa.');
-    }
-    if (!cfg.apiKey) {
-      throw new AppError(503, 'No hay API key para testear. Carga una o activá la global.');
-    }
+    // jul 2026 v7 — el body puede especificar qué provider testear.
+    // Si no, testeamos ambos.
+    const provider = (req.body?.provider as 'groq' | 'gemini' | undefined) ?? 'groq';
 
     const start = Date.now();
-    let provider: 'groq' | 'gemini' | 'other' = cfg.provider === 'groq' ? 'groq'
-                                              : cfg.provider === 'gemini' ? 'gemini'
-                                              : 'other';
-    if (cfg.provider === 'platform_default') {
-      if (cfg.apiKey === process.env.GROQ_API_KEY)   provider = 'groq';
-      else if (cfg.apiKey === process.env.GEMINI_API_KEY) provider = 'gemini';
-    }
 
     if (provider === 'groq') {
-      const client = new Groq({ apiKey: cfg.apiKey });
+      const key = await getGroqKeyForCompany(companyId, 'jarvis');
+      if (!key) throw new AppError(503, 'No hay API key de Groq para testear.');
+      const client = new Groq({ apiKey: key.apiKey });
       const r = await client.chat.completions.create({
-        model: cfg.modelPrimary,
+        model: key.model,
         messages: [{ role: 'user', content: 'ping' }],
         max_tokens: 1,
         temperature: 0,
@@ -345,13 +372,16 @@ router.post('/ai-settings/test', async (req: Request, res: Response, next: NextF
         ok: true,
         provider,
         model: r.model,
+        keySource: key.keySource,
         latencyMs: Date.now() - start,
       });
     }
 
     if (provider === 'gemini') {
-      const client = new GoogleGenerativeAI(cfg.apiKey);
-      const model = client.getGenerativeModel({ model: cfg.modelPrimary });
+      const key = await getGeminiKeyForCompany(companyId, 'exit_analysis');
+      if (!key) throw new AppError(503, 'No hay API key de Gemini para testear.');
+      const client = new GoogleGenerativeAI(key.apiKey);
+      const model = client.getGenerativeModel({ model: key.model });
       const r = await model.generateContent({
         contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
         generationConfig: { maxOutputTokens: 1, temperature: 0 },
@@ -359,13 +389,14 @@ router.post('/ai-settings/test', async (req: Request, res: Response, next: NextF
       return res.json({
         ok: true,
         provider,
-        model: cfg.modelPrimary,
+        model: key.model,
+        keySource: key.keySource,
         latencyMs: Date.now() - start,
         responseChars: r.response?.text()?.length ?? 0,
       });
     }
 
-    throw new AppError(400, `Provider "${provider}" no soportado para test todavía.`);
+    throw new AppError(400, `Provider "${provider}" no soportado.`);
   } catch (err) { next(err); }
 });
 
@@ -376,7 +407,6 @@ router.get('/ai-usage', async (req: Request, res: Response, next: NextFunction) 
     const companyId = getCompanyIdFromReq(req);
     const fromDate = req.query.from ? new Date(String(req.query.from)) : new Date(Date.now() - 30 * 86400_000);
     const toDate   = req.query.to   ? new Date(String(req.query.to))   : new Date();
-    // gte/lte sobre una columna `date` esperan strings 'YYYY-MM-DD'.
     const fromStr = fromDate.toISOString().slice(0, 10);
     const toStr   = toDate.toISOString().slice(0, 10);
 
@@ -403,58 +433,39 @@ router.get('/ai-usage', async (req: Request, res: Response, next: NextFunction) 
   } catch (err) { next(err); }
 });
 
-// ─── GET /ai-providers (catálogo) ───────────────────────────────────────────
-
+// ─── GET /ai-providers (catálogo minimalista) ──────────────────────────────
+//
+// jul 2026 v7 — la empresa NO elige modelo. Devolvemos solo info
+// de los providers que acepta el sistema, con nota explícita de
+// que el modelo lo define ApliSmart.
 router.get('/ai-providers', async (_req: Request, res: Response) => {
   return res.json({
     providers: [
       {
-        id: 'platform_default',
-        label: 'Usar configuración global de la plataforma',
-        description: 'Todas las empresas usan la key configurada en el backend (env vars).',
-        models: [],
-      },
-      {
         id: 'groq',
-        label: 'Groq',
-        description: 'Modelos open-source rápidos (Llama, Mixtral). Recomendado para Jarvis.',
-        models: [
-          'llama-3.3-70b-versatile',
-          'llama-3.1-8b-instant',
-          'llama-3.1-70b-versatile',
-          'mixtral-8x7b-32768',
-        ],
+        label: 'Groq (texto, chat, análisis)',
+        description:
+          'API key de Groq. Usada para el chat Jarvis, análisis de ' +
+          'estadísticas, resúmenes semanales, etc. El modelo lo define ' +
+          'ApliSmart — vos solo cargás tu key.',
+        managedBy: 'aplismart',
+        model: 'llama-3.3-70b-versatile',
       },
       {
         id: 'gemini',
-        label: 'Google Gemini',
-        description: 'Modelos multimodales de Google. Recomendado para análisis de imágenes.',
-        models: [
-          'gemini-2.5-flash',
-          'gemini-2.5-pro',
-          'gemini-2.0-flash',
-          'gemini-1.5-pro',
-        ],
-      },
-      {
-        id: 'openai',
-        label: 'OpenAI',
-        description: 'GPT-4o, GPT-4o-mini, etc. (próximamente).',
-        models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo'],
-      },
-      {
-        id: 'anthropic',
-        label: 'Anthropic Claude',
-        description: 'Claude 3.5 Sonnet, Haiku (próximamente).',
-        models: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest'],
-      },
-      {
-        id: 'custom',
-        label: 'Custom (OpenAI-compatible)',
-        description: 'Cualquier endpoint compatible con la API de OpenAI (próximamente).',
-        models: [],
+        label: 'Gemini (imágenes de autorizaciones)',
+        description:
+          'API key de Google Gemini. Usada para análisis multimodal ' +
+          '(fotos de evidencia en autorizaciones de salida). El modelo ' +
+          'lo define ApliSmart — vos solo cargás tu key.',
+        managedBy: 'aplismart',
+        model: 'gemini-2.5-flash',
       },
     ],
+    note:
+      'El modelo NO lo elegís vos. ApliSmart define el modelo que se ' +
+      'usa con tu key. Si querés cambiar el modelo, contactá al equipo ' +
+      'de plataforma.',
   });
 });
 

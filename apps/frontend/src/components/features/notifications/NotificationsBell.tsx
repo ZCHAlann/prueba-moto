@@ -230,6 +230,19 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
                 description: msg.data?.body,
                 duration: 5000,
               });
+
+              // jul 2026 v8 — Disparar un evento global para que otras
+              // páginas (ej. Alertas) refresquen su feed en tiempo real
+              // SIN recargar. Solo lo emitimos si la notificación es de
+              // tipo alerta (created/closed/reminder).
+              const k = msg.data?.kind;
+              if (k === 'alert_created' || k === 'alert_closed' || k === 'alert_reminder') {
+                try {
+                  window.dispatchEvent(new CustomEvent('aplismart:alert-changed', {
+                    detail: { kind: k, alertId: msg.data?.payload?.alertId, ts: Date.now() },
+                  }));
+                } catch { /* noop */ }
+              }
             }
           } catch {}
         };

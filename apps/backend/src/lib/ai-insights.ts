@@ -21,7 +21,8 @@ import { createHash } from "crypto";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { companyStatsInsightsCache } from "../db/schema/operational";
-import { chatCompletion, isAiEnabled } from "./ai-client";
+import { chatCompletionForCompany } from "./ai-client";
+import { getGroqKeyForCompany } from "./ai/client-factory";
 import { buildCrossModuleSignals, type CrossModuleSignals } from "./cross-module-signals";
 import type { Periodo } from "./stats-math";
 
@@ -182,9 +183,12 @@ export async function generateInsights(opts: GenerateOpts): Promise<GenerateResu
     }
   }
 
-  if (!isAiEnabled()) {
+  // jul 2026 v7 — multi-tenant. Resolvemos key+model para esta empresa
+  // (key propia o cascada global). Si no hay nada, AI_DISABLED.
+  const aiKey = await getGroqKeyForCompany(opts.companyId, 'ai_insights');
+  if (!aiKey) {
     throw Object.assign(
-      new Error("IA no configurada: GROQ_API_KEY no está en el entorno."),
+      new Error("Análisis IA no disponible: la empresa no tiene API key de Groq ni la cascada global tiene keys."),
       { code: "AI_DISABLED" },
     );
   }
@@ -208,7 +212,7 @@ export async function generateInsights(opts: GenerateOpts): Promise<GenerateResu
   // 3) Llamar a Groq
   const userPrompt = buildUserPrompt(opts, crossSignals);
   const t0 = Date.now();
-  const result = await chatCompletion({
+  const result = await chatCompletionForCompany({
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user",   content: userPrompt },
@@ -217,7 +221,7 @@ export async function generateInsights(opts: GenerateOpts): Promise<GenerateResu
     maxTokens:   1800,
     jsonMode:    true,
     timeoutMs:   35_000,
-  });
+  }, opts.companyId);
 
   // 4) Parsear respuesta
   let parsed: AIInsights;

@@ -1,8 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, isNull, inArray } from 'drizzle-orm';
 import { db } from '../../db/client';
-import { companyAlerts, companyAssets } from '../../db/schema/operational';
+import {
+  companyAlerts,
+  companyAssets,
+  companyDrivers,
+  companyAssignments,
+} from '../../db/schema/operational';
+import { companyUsers } from '../../db/schema/platform';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireAdmin } from '../../middlewares/requireAdmin';
@@ -13,7 +19,155 @@ import { toId, parseId } from '../../lib/ids';
 import { logAudit } from '../../lib/audit';
 import { safeString, validators } from '../../lib/validators';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
-import { notifyAdmins, notifyAdminsExceptActor } from '../../lib/notification-service';
+import { notifyMany } from '../../lib/notification-service';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * jul 2026 v8 — Calcula el intervalo de re-envío (minutos) según
+ * la severidad de la alerta. 0 = sin recordatorio.
+ *   Alta  →  30 min
+ *   Media → 120 min
+ *   Baja  → 480 min
+ */
+function reminderIntervalMinutesFor(severity: string | null | undefined): number {
+  switch (severity) {
+    case 'Alta':  return 30;
+    case 'Media': return 120;
+    case 'Baja':  return 480;
+    default:      return 120;   // default razonable para severidades custom
+  }
+}
+
+/**
+ * jul 2026 v8 — Resuelve el `assetId` final para una alerta que crea un
+ * usuario. Si el actor es CONDUCTOR (rol='conductor' o 'operador'
+ * con perfil de driver) y tiene una asignación ACTIVA (sin endDate y
+ * status='Activa'), forzamos `assetId` al vehículo asignado — el
+ * conductor NO puede elegir otro.
+ *
+ * Devuelve { assetId, driverId, siteId, forced }.
+ */
+async function resolveAssetForAlert(actor: {
+  userId: number;
+  role: string;
+  companyId: number;
+}): Promise<{ assetId: number | null; driverId: number | null; siteId: number | null; forced: boolean }> {
+  // 1) ¿El actor tiene un company_drivers.userId match?
+  const [driver] = await db
+    .select({
+      id:        companyDrivers.id,
+      siteId:    companyDrivers.siteId,
+    })
+    .from(companyDrivers)
+    .where(and(
+      eq(companyDrivers.companyId, actor.companyId),
+      eq(companyDrivers.userId,    actor.userId),
+    ))
+    .limit(1);
+
+  if (!driver) {
+    // No es conductor (o no está dado de alta en company_drivers).
+    return { assetId: null, driverId: null, siteId: null, forced: false };
+  }
+
+  // 2) Buscar su asignación ACTIVA (sin endDate o endDate >= hoy).
+  const today = new Date().toISOString().slice(0, 10);
+  const [assignment] = await db
+    .select({
+      assetId: companyAssignments.assetId,
+    })
+    .from(companyAssignments)
+    .where(and(
+      eq(companyAssignments.companyId, actor.companyId),
+      eq(companyAssignments.driverId,  driver.id),
+      eq(companyAssignments.status,    'Activa'),
+      sql`(${companyAssignments.endDate} IS NULL OR ${companyAssignments.endDate} >= ${today}::date)`,
+    ))
+    .orderBy(desc(companyAssignments.startDate))
+    .limit(1);
+
+  return {
+    assetId: assignment?.assetId ?? null,
+    driverId: driver.id,
+    siteId:   driver.siteId ?? null,
+    forced:   true,
+  };
+}
+
+/**
+ * jul 2026 v8 — Resuelve la lista de userIds destinatarios de una
+ * alerta recién creada.
+ *
+ * Reglas:
+ *   1. TODOS los admin_empresa / owner_empresa de la empresa.
+ *   2. Los supervisores de la MISMA SEDE que el activo (si assetId
+ *      tiene siteId y el schema lo permite). Si no hay siteId,
+ *      supervisores de TODA la empresa.
+ *   3. EXCLUYE al actor (no se notifica a sí mismo).
+ *   4. EXCLUYE admins duplicados en la lista de supervisores.
+ */
+async function resolveAlertRecipients(args: {
+  companyId: number;
+  actorUserId: number;
+  assetId: number | null;
+  driverSiteId: number | null;  // siteId del conductor (si fue quien creó)
+}): Promise<{ adminUserIds: number[]; supervisorUserIds: number[]; allRecipientUserIds: number[] }> {
+  // 1) Admins
+  const admins = await db
+    .select({ id: companyUsers.id })
+    .from(companyUsers)
+    .where(and(
+      eq(companyUsers.companyId, args.companyId),
+      inArray(companyUsers.role, ['admin_empresa', 'owner_empresa']),
+      eq(companyUsers.status, 'active'),
+    ));
+  const adminUserIds = admins.map((a) => a.id).filter((id) => id !== args.actorUserId);
+
+  // 2) Site del activo (si assetId). Prioridad: siteId del activo > siteId del driver.
+  let siteId: number | null = null;
+  if (args.assetId) {
+    const [a] = await db
+      .select({ siteId: companyAssets.siteId })
+      .from(companyAssets)
+      .where(and(eq(companyAssets.id, args.assetId), eq(companyAssets.companyId, args.companyId)))
+      .limit(1);
+    siteId = a?.siteId ?? null;
+  }
+  if (!siteId) siteId = args.driverSiteId;
+
+  // 3) Supervisores.
+  //
+  // jul 2026 v8 — TODO futuro: filtrar por `company_sites.managerId`
+  // cuando se agregue esa columna. Por ahora `company_sites` no tiene
+  // managerId en el schema, así que notificamos a TODOS los
+  // supervisores activos de la empresa. El filtro por sede se puede
+  // agregar en una migración futura (agregando `siteId` a
+  // `company_users` o un join table `user_sites`).
+  const supConditions = [
+    eq(companyUsers.companyId, args.companyId),
+    eq(companyUsers.role, 'supervisor'),
+    eq(companyUsers.status, 'active'),
+  ];
+  const supervisors = await db
+    .select({ id: companyUsers.id })
+    .from(companyUsers)
+    .where(and(...supConditions));
+
+  // Si tenemos siteId, podemos filtrar via una tabla puente cuando
+  // exista. Por ahora: logueamos el siteId para debug.
+  if (siteId) {
+    // (futuro) Filtrar por `users_sites.user_id` cuando se cree esa tabla.
+    // const userIdsAtSite = await db.select(...).from(usersSites).where(eq(usersSites.siteId, siteId));
+  }
+
+  const supervisorUserIds = supervisors
+    .map((s) => s.id)
+    .filter((id) => id !== args.actorUserId && !adminUserIds.includes(id));
+
+  const allRecipientUserIds = Array.from(new Set([...adminUserIds, ...supervisorUserIds]));
+  return { adminUserIds, supervisorUserIds, allRecipientUserIds };
+}
 
 const router = Router({ mergeParams: true });
 
@@ -130,10 +284,10 @@ router.get('/:alertId', requireModule('alertas'), async (req, res, next) => {
     if (!rows.length) throw new NotFoundError('Alerta', req.params.alertId);
 
     // ── Enrichment ────────────────────────────────────────────────────────────
-    let assetInfo: { name: string | null; plate: string | null } | null = null;
+    let assetInfo: { name: string | null; plate: string | null; siteId: number | null } | null = null;
     if (rows[0].assetId) {
       const [asset] = await db
-        .select({ name: companyAssets.name, plate: companyAssets.plate })
+        .select({ name: companyAssets.name, plate: companyAssets.plate, siteId: companyAssets.siteId })
         .from(companyAssets)
         .where(and(eq(companyAssets.id, rows[0].assetId), eq(companyAssets.companyId, companyId)))
         .limit(1);
@@ -153,7 +307,7 @@ router.post(
   requireModule('alertas'),
   // Operadores / conductores también pueden crear alertas (regla de
   // negocio: "Cualquier usuario de la empresa puede reportar incidentes").
-  // Los admins las reciben por WS via notifyAdmins(companyId, ...).
+  // Los admins las reciben por WS via notifyMany(companyId, ...).
   requireSupervisorOrOperator,
   validate(createAlertSchema),
   async (req, res, next) => {
@@ -161,11 +315,52 @@ router.post(
       const companyId = req.companyId!;
       const body = req.body as z.infer<typeof createAlertSchema>;
 
-      const assetId = body.assetId ? parseId('asset', body.assetId) : null;
+      // ── 1) Resolver el actor ─────────────────────────────────────────────
+      const actorUserId = parseId('company-user', req.user!.sub) ?? 0;
+      const actorRole   = req.user!.role;
+      const isConductor = actorRole === 'conductor';
 
+      // ── 2) Resolver assetId ──────────────────────────────────────────────
+      //
+      // jul 2026 v8 — REGLA NUEVA:
+      //   - Si el actor es CONDUCTOR: forzar `assetId` al vehículo de su
+      //     asignación ACTIVA. Si no tiene asignación, la alerta se crea
+      //     sin vehículo (assetId = null).
+      //   - Si NO es conductor: aceptar el `assetId` del body (o null).
+      let resolvedAssetId: number | null = null;
+      let driverSiteId:   number | null = null;
+      let actorIsDriver   = false;
+      if (isConductor) {
+        const r = await resolveAssetForAlert({
+          userId:    actorUserId,
+          role:      actorRole,
+          companyId,
+        });
+        resolvedAssetId = r.assetId;
+        driverSiteId   = r.siteId;
+        actorIsDriver  = true;
+        // El body.assetId es IGNORADO para conductores — la regla es dura.
+      } else {
+        resolvedAssetId = body.assetId ? parseId('asset', body.assetId) : null;
+      }
+
+      // ── 3) Calcular periodicidad de recordatorio ─────────────────────────
+      const reminderInterval = reminderIntervalMinutesFor(body.severity ?? 'Media');
+      const nextReminderAt   = reminderInterval > 0
+        ? new Date(Date.now() + reminderInterval * 60_000)
+        : null;
+
+      // ── 4) Insertar la alerta ─────────────────────────────────────────────
       const [created] = await db
         .insert(companyAlerts)
-        .values({ ...body, companyId, assetId: assetId ?? undefined })
+        .values({
+          ...body,
+          companyId,
+          assetId:                  resolvedAssetId ?? undefined,
+          reminderIntervalMinutes:  reminderInterval,
+          lastRemindedAt:           null,
+          nextReminderAt:           nextReminderAt,
+        })
         .returning();
 
       await logAudit(db, companyId, {
@@ -174,61 +369,48 @@ router.post(
         action: 'create',
         actorId: req.user!.sub,
         actorName: req.user!.name,
-        description: `Alerta "${created.title}" creada (${created.severity}).`,
+        description: `Alerta "${created.title}" creada (${created.severity}).` +
+          (actorIsDriver ? ' [forzada por conductor, assetId=' + (resolvedAssetId ?? 'null') + ']' : ''),
       });
 
-      // ── Enrichment ────────────────────────────────────────────────────────────
-      let assetInfo: { name: string | null; plate: string | null } | null = null;
+      // ── Enrichment ─────────────────────────────────────────────────────────
+      let assetInfo: { name: string | null; plate: string | null; siteId: number | null } | null = null;
       if (created.assetId) {
         const [asset] = await db
-          .select({ name: companyAssets.name, plate: companyAssets.plate })
+          .select({ name: companyAssets.name, plate: companyAssets.plate, siteId: companyAssets.siteId })
           .from(companyAssets)
           .where(and(eq(companyAssets.id, created.assetId), eq(companyAssets.companyId, companyId)))
           .limit(1);
         assetInfo = asset ?? null;
       }
 
-      // ── Notificación: alerta creada ──────────────────────────────────────────
-      // Regla: si el creador es un conductor/operador (NO admin), se notifica a
-      // TODOS los admin_empresa/owner_empresa de la empresa. Si el creador ya
-      // es admin, se notifica al resto de admins (excepto actor).
+      // ── 5) Notificación a admins + supervisores de la sede ──────────────
       try {
-        const actorRole = req.user!.role;
-        const actorId = parseId('company-user', req.user!.sub);
-        const isAdmin = actorRole === 'admin_empresa' || actorRole === 'owner_empresa';
+        const recipients = await resolveAlertRecipients({
+          companyId,
+          actorUserId,
+          assetId:      created.assetId ?? null,
+          driverSiteId,
+        });
 
         const title = `Nueva alerta (${created.severity}): ${created.title}`;
         const body  = assetInfo
           ? `Vehículo: ${assetInfo.name}${assetInfo.plate ? ` (${assetInfo.plate})` : ''}`
           : (created.notes ?? '');
 
-        if (isAdmin) {
-          await notifyAdminsExceptActor(companyId, actorId, {
+        if (recipients.allRecipientUserIds.length > 0) {
+          await notifyMany(companyId, recipients.allRecipientUserIds, {
             kind:    'alert_created',
             title,
             body,
             payload: {
-              alertId:  created.id,
-              severity: created.severity,
-              type:     created.type ?? 'Manual',
-              assetId:  created.assetId,
-              actor:    req.user!.name,
-            },
-          });
-        } else {
-          // Conductor/operador: avisar a TODOS los admins (incluyendo si el
-          // actor es admin, cosa que no debería pasar por el middleware, pero
-          // por seguridad lo manejamos así).
-          await notifyAdmins(companyId, {
-            kind:    'alert_created',
-            title,
-            body,
-            payload: {
-              alertId:  created.id,
-              severity: created.severity,
-              type:     created.type ?? 'Manual',
-              assetId:  created.assetId,
-              actor:    req.user!.name,
+              alertId:                created.id,
+              severity:               created.severity,
+              type:                   created.type ?? 'Manual',
+              assetId:                created.assetId,
+              reminderIntervalMinutes: reminderInterval,
+              nextReminderAt:         nextReminderAt?.toISOString() ?? null,
+              actor:                  req.user!.name,
             },
           });
         }
@@ -399,7 +581,7 @@ router.delete(
 
 function serializeAlert(
   a: typeof companyAlerts.$inferSelect,
-  assetInfo?: { name: string | null; plate: string | null } | null
+  assetInfo?: { name: string | null; plate: string | null; siteId?: number | null } | null
 ) {
   return {
     id: toId('alert', a.id),
@@ -412,8 +594,13 @@ function serializeAlert(
     dueDate: a.dueDate,
     notes: a.notes,
     // ── Enrichment: datos del activo para display sin hooks externos ─────────
-    assetName: assetInfo?.name ?? null,
+    assetName:  assetInfo?.name ?? null,
     assetPlate: assetInfo?.plate ?? null,
+    assetSiteId: assetInfo?.siteId ?? null,
+    // ── jul 2026 v8 — recordatorio periódico ─────────────────────────────
+    reminderIntervalMinutes: a.reminderIntervalMinutes ?? 0,
+    lastRemindedAt:          a.lastRemindedAt?.toISOString() ?? null,
+    nextReminderAt:          a.nextReminderAt?.toISOString() ?? null,
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
   };

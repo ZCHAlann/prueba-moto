@@ -8,6 +8,7 @@ import { companyAssets } from '../db/schema/operational';
 import { companyUsers } from '../db/schema/platform';
 import { parseId } from '../lib/ids';
 import { AppError } from '../lib/errors';
+import { getGroqKeyForCompany } from '../lib/ai/client-factory';
 
 export type OilLevel = 'ok' | 'bajo' | 'critico' | 'no_visible';
 export type OilColor = 'miel' | 'oscuro' | 'negro' | 'no_visible';
@@ -73,13 +74,23 @@ Responde SOLO con este JSON, sin texto adicional ni markdown:
 
 // ─── Analyze ──────────────────────────────────────────────────────────────────
 
-async function analyzeWithGroq(file: Express.Multer.File): Promise<OilAnalysisResult> {
+async function analyzeWithGroq(file: Express.Multer.File, companyId: number): Promise<OilAnalysisResult> {
+  // jul 2026 v7 — multi-tenant. Resolvemos la key de Groq de la empresa
+  // (key propia o cascada global). El modelo es el default de ApliSmart
+  // (la empresa NO puede elegirlo).
+  const aiKey = await getGroqKeyForCompany(companyId, 'ai_insights');
+  if (!aiKey) {
+    throw new AppError(503,
+      'Análisis IA no disponible: cargá tu API key de Groq o pedile al superadmin que configure la cascada global.',
+    );
+  }
+
   const base64 = file.buffer.toString('base64');
 
   const response = await axios.post(
     'https://api.groq.com/openai/v1/chat/completions',
     {
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      model: aiKey.model,
       messages: [
         {
           role: 'user',
@@ -95,7 +106,7 @@ async function analyzeWithGroq(file: Express.Multer.File): Promise<OilAnalysisRe
     },
     {
       headers: {
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        Authorization: `Bearer ${aiKey.apiKey}`,
         'Content-Type': 'application/json',
       },
     },
@@ -154,7 +165,7 @@ export async function analyzeOilCheck(params: {
 
   let analysis: OilAnalysisResult;
   try {
-    analysis = await analyzeWithGroq(file);
+    analysis = await analyzeWithGroq(file, companyNumericId);
   } catch (err) {
     if (err instanceof AppError) throw err;
     throw new AppError(500, 'Error al conectar con el servicio de análisis. Intenta de nuevo.');

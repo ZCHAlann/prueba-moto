@@ -26,6 +26,7 @@ import { aiConversations, aiMessages } from '../../db/schema/jarvis';
 import {
   jarvisChat,
   isJarvisEnabled,
+  isJarvisEnabledForCompany,
   listMyConversations,
   getConversationMessages,
   listAvailableTools,
@@ -35,6 +36,7 @@ import { getCacheStats, invalidateCache } from '../../lib/ai/tools/registry';
 import { getModelConfig } from '../../lib/ai/model-config';
 import {
   synthesizeSpeech,
+  synthesizeSpeechForCompany,
   TTS_VOICES,
   isValidVoice,
   DEFAULT_VOICE,
@@ -43,11 +45,22 @@ import {
 } from '../../lib/ai/tts';
 import { getClient as getGroqClient, maybeRecoverPrimary as maybeRecoverGroqKey } from '../../lib/ai/groq-client';
 import { getCurrentApiKey } from '../../lib/ai/keys';
+import { getGroqClientForCompany } from '../../lib/ai/client-factory';
 import { toFile as groqToFile } from 'groq-sdk';
 import { triggerWeeklySummaryNow } from '../../scheduled/weekly-summary';
 import { getRateLimitStats } from '../../lib/ai/rate-limit';
+import { requireModule } from '../../middlewares/requireModule';
 
 const router = Router({ mergeParams: true });
+
+// jul 2026 — El módulo `jarvis` (Asistente IA) sólo está disponible en
+// planes Business y Enterprise (ver platform-seed.ts). Aplicamos el gating
+// a TODO el router para que chat, voice, conversaciones, transcripción
+// TTS, etc. devuelvan 403 si la empresa no tiene `jarvis` en su plan.
+// `requireModule` exime a superadmin y a admins de empresa, así que el
+// superadmin puede seguir probando desde el panel master aunque la
+// empresa esté en un plan que no incluye IA.
+router.use(requireModule('jarvis', 'asistente'));
 
 const chatSchema = z.object({
   message:         z.string().min(1, 'Mensaje requerido').max(2000),
@@ -78,7 +91,9 @@ router.post(
       const voice: VoiceId =
         reqVoice && isValidVoice(reqVoice) ? reqVoice : DEFAULT_VOICE;
 
-      const result = await synthesizeSpeech(text, voice);
+      // jul 2026 v7 — per-empresa. Chequea kill-switch y useTts.
+      const empresaId = req.companyId!;
+      const result = await synthesizeSpeechForCompany(text, voice, empresaId);
       res.setHeader('Content-Type', 'audio/mpeg');
       res.setHeader('Content-Length', String(result.bytes));
       res.setHeader('X-TTS-Cached', result.cached ? '1' : '0');
@@ -133,12 +148,12 @@ router.post(
 
       const body = req.body as z.infer<typeof chatSchema>;
 
-      // Si GROQ_API_KEY no está configurada, devolvemos 503 con mensaje
-      // amable para que el frontend lo muestre en el chat.
-      if (!isJarvisEnabled()) {
+      // jul 2026 v6 — chequeo per-empresa: respeta override propio Y
+      // cascada global. Si no hay key en ningún lado, 503 amable.
+      if (!(await isJarvisEnabledForCompany(empresaId))) {
         res.status(503).json({
           conversationId: null,
-          answer: 'El asistente IA no está disponible en este momento. Pídele al administrador del servidor que configure GROQ_API_KEY.',
+          answer: 'El asistente IA no está disponible en este momento. Pedile a tu admin de empresa o al superadmin que configuren una API key de IA.',
           latencyMs: 0,
           noData: true,
         });
@@ -350,8 +365,11 @@ router.get(
     const tools = (rol === 'admin_empresa' || rol === 'owner_empresa')
       ? listAvailableTools(rol)
       : [];
+    const empresaId = req.companyId!;
     res.json({
-      enabled: isJarvisEnabled(),
+      // jul 2026 v6 — chequeo per-empresa para que el frontend muestre
+      // el estado correcto del asistente de ESTA empresa.
+      enabled: await isJarvisEnabledForCompany(empresaId),
       tools,
     });
   },
@@ -568,9 +586,9 @@ router.post(
         throw new ForbiddenError('Solo administradores de empresa pueden usar el asistente.');
       }
 
-      if (!isJarvisEnabled()) {
+      if (!(await isJarvisEnabledForCompany(empresaId))) {
         res.status(503).json({
-          message: 'Asistente IA no configurado.',
+          message: 'Asistente IA no configurado para esta empresa. Pedile a tu admin de empresa o al superadmin que configuren una API key.',
         });
         return;
       }
@@ -725,10 +743,10 @@ router.post(
       const userId    = Number(String(req.user!.sub).replace(/\D/g, ''));
       if (!userId) throw new ForbiddenError('Sesión sin company-user id.');
 
-      if (!isJarvisEnabled()) {
+      if (!(await isJarvisEnabledForCompany(empresaId))) {
         res.status(503).json({
           transcript: '',
-          answer: 'El asistente IA no está disponible en este momento.',
+          answer: 'El asistente IA no está disponible para esta empresa.',
           noData: true,
         });
         return;
@@ -740,8 +758,9 @@ router.post(
       }
 
       // 1) STT: Whisper large-v3. Idioma fijo 'es' (decisión producto).
-      const groq = getGroqClient();
-      if (!groq) throw new AppError(503, 'GROQ_API_KEY no configurada.');
+      // jul 2026 v7 — multi-tenant: usa la key de Groq de la empresa.
+      const groq = await getGroqClientForCompany(empresaId);
+      if (!groq) throw new AppError(503, 'No hay API key de Groq para esta empresa.');
 
       // Whisper a veces rechaza webm/opus si el contenedor quedó truncado
       // (header EBML presente pero cluster de samples vacío — típico
@@ -822,7 +841,7 @@ router.post(
       try {
         const voiceId: VoiceId =
           voiceRaw && isValidVoice(voiceRaw) ? voiceRaw : DEFAULT_VOICE;
-        const tts = await synthesizeSpeech(answerText, voiceId);
+        const tts = await synthesizeSpeechForCompany(answerText, voiceId, empresaId);
         audioBase64 = tts.buffer.toString('base64');
         audioMime   = 'audio/mpeg';
       } catch (ttsErr) {

@@ -41,6 +41,15 @@ function getLast12MonthStarts(): Date[] {
   return months;
 }
 
+/** Etiquetas de mes en español alineadas con getLast12MonthStarts() */
+const MONTH_LABELS_ES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+
+/** Devuelve las 12 etiquetas (Ene..Dic) correspondientes a los 12
+ *  meses que devuelve getLast12MonthStarts() — orden cronológico. */
+function getLast12MonthLabels(): string[] {
+  return getLast12MonthStarts().map((d) => MONTH_LABELS_ES[d.getUTCMonth()]);
+}
+
 /** Cuenta registros entre dos fechas */
 async function countInRange(
   table: any,
@@ -74,6 +83,7 @@ router.get('/', async (req, res, next) => {
     const thisMonth = startOfCurrentMonth();
     const prevMonth = startOfPreviousMonth();
     const last12Months = getLast12MonthStarts();
+    const monthLabels = getLast12MonthLabels();
 
     // ── 1. Totales de empresas ────────────────────────────────────────────────
 
@@ -185,6 +195,11 @@ router.get('/', async (req, res, next) => {
     // ─────────────────────────────────────────────────────────────────────────
 
     res.json({
+      // Etiquetas de los 12 meses que cubren `newByMonth` y `churnSeries`.
+      // Importante: el array refleja "hace 11 meses → mes actual", NO
+      // enero→diciembre del año corriente. El frontend DEBE usar esto
+      // y NO un array hardcodeado para que la gráfica no se desfase.
+      monthLabels,
       companies: {
         total:       Number(companyCounts.total),
         active:      Number(companyCounts.active),

@@ -55,18 +55,24 @@ function avatarColor(name: string) {
   return AVATAR_PALETTE[name.charCodeAt(0) % AVATAR_PALETTE.length];
 }
 
-// ─── Mock historical data (shape matches future real data) ────────────────────
-// Sigue el esquema: companyId + array de { month, totalAssets }
-// Cuando el backend tenga el histórico, reemplazar con datos reales del hook
+// ─── Real historical data ────────────────────────────────────────────────────
+// Usa `totalByMonth` (12 meses, acumulado) que viene del backend
+// (GET /platform/fleet-health). El último elemento coincide con
+// `totalAssets` para que la línea cierre con el valor real. Los meses
+// anteriores a la creación de la empresa quedan en 0.
+//
+// Las labels de los 12 meses vienen DEL BACKEND (ventana móvil: hace
+// 11 meses → mes actual). Si el backend no las manda, caemos a
+// Ene..Dic del año corriente — pero el backend SIEMPRE las manda.
 
-function buildHistoricalData(data: FleetHealthItem[]) {
-  const months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-  return months.map((month, i) => {
+function buildHistoricalData(data: FleetHealthItem[], monthLabels: string[]) {
+  return monthLabels.map((month, i) => {
     const point: Record<string, any> = { month };
     data.forEach(c => {
-      // Curva exponencial simulada que termina en el valor real actual
-      const growth = Math.pow(i / 11, 1.8);
-      point[c.name] = Math.round(c.totalAssets * growth + 1);
+      const series = c.totalByMonth;
+      point[c.name] = Array.isArray(series) && series.length === 12
+        ? series[i]
+        : (i === monthLabels.length - 1 ? c.totalAssets : 0);
     });
     return point;
   });
@@ -121,10 +127,13 @@ function ChartCard({ title, subtitle, children, className = "" }: {
 
 // ─── 1. Line Chart — crecimiento de assets con zoom (Brush) ──────────────────
 
-function AssetGrowthChart({ data, selected, onSelect }: {
-  data: FleetHealthItem[]; selected: number | null; onSelect: (id: number | null) => void;
+function AssetGrowthChart({ data, selected, onSelect, monthLabels }: {
+  data: FleetHealthItem[];
+  selected: number | null;
+  onSelect: (id: number | null) => void;
+  monthLabels: string[];
 }) {
-  const historical = useMemo(() => buildHistoricalData(data), [data]);
+  const historical = useMemo(() => buildHistoricalData(data, monthLabels), [data, monthLabels]);
 
   const LINE_PALETTE = [
     "#3b82f6", "#7c3aed", "#1d9e75", "#ef9f27",
@@ -136,7 +145,7 @@ function AssetGrowthChart({ data, selected, onSelect }: {
   return (
     <ChartCard
       title="Crecimiento de assets"
-      subtitle="Acerca con la rueda del mouse para hacer zoom en el período"
+      subtitle="Acumulado de los últimos 12 meses por empresa. Antes de su creación, el valor es 0."
     >
       <div style={{ height: 280 }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -452,12 +461,15 @@ function PlanTreemap({ data, selected, onSelect }: {
 
 // ─── Charts Tab ───────────────────────────────────────────────────────────────
 
-function ChartsTab({ data, selected, onSelect }: {
-  data: FleetHealthItem[]; selected: number | null; onSelect: (id: number | null) => void;
+function ChartsTab({ data, selected, onSelect, monthLabels }: {
+  data: FleetHealthItem[];
+  selected: number | null;
+  onSelect: (id: number | null) => void;
+  monthLabels: string[];
 }) {
   return (
     <div className="grid gap-4 xl:grid-cols-2">
-      <AssetGrowthChart    data={data} selected={selected} onSelect={onSelect} />
+      <AssetGrowthChart    data={data} selected={selected} onSelect={onSelect} monthLabels={monthLabels} />
       <AssetsVsLimitChart  data={data} selected={selected} onSelect={onSelect} />
       <SaturationChart     data={data} selected={selected} onSelect={onSelect} />
       <PlanTreemap         data={data} selected={selected} onSelect={onSelect} />
@@ -640,7 +652,7 @@ function TableTab({ data, selected, onSelect }: {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function FleetHealthPage() {
-  const { data, loading, error, refetch, generatedAt } = useFleetHealth();
+  const { data, loading, error, refetch, generatedAt, monthLabels } = useFleetHealth();
   const [activeTab, setActiveTab] = useState<"charts" | "table">("charts");
   const [selected,  setSelected]  = useState<number | null>(null);
 
@@ -761,7 +773,7 @@ export function FleetHealthPage() {
             initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }}
           >
-            <ChartsTab data={data} selected={selected} onSelect={setSelected} />
+            <ChartsTab data={data} selected={selected} onSelect={setSelected} monthLabels={monthLabels} />
           </motion.div>
         )}
         {activeTab === "table" && (

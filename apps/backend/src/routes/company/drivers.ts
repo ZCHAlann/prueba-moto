@@ -57,11 +57,16 @@ async function resolveDriverActa(
   driver: typeof companyDrivers.$inferSelect,
   driverInfo?: { firstName: string | null; lastName: string | null; phone: string | null },
 ) {
+  // jul 2026 — agregamos brand/model del asset al payload raíz además del
+  // vehicleSnapshot, para que el frontend (Alertas, etc.) pueda mostrar la
+  // info del vehículo asignado sin tener que ir a buscar el asset aparte.
   const [activeAsg] = await db
     .select({
       assignment: companyAssignments,
       assetName:  companyAssets.name,
       assetPlate: companyAssets.plate,
+      assetBrand: companyAssets.brand,
+      assetModel: companyAssets.model,
     })
     .from(companyAssignments)
     .leftJoin(companyAssets, eq(companyAssets.id, companyAssignments.assetId))
@@ -80,6 +85,8 @@ async function resolveDriverActa(
         assignment: companyAssignments,
         assetName:  companyAssets.name,
         assetPlate: companyAssets.plate,
+        assetBrand: companyAssets.brand,
+        assetModel: companyAssets.model,
       })
       .from(companyAssignments)
       .leftJoin(companyAssets, eq(companyAssets.id, companyAssignments.assetId))
@@ -94,11 +101,23 @@ async function resolveDriverActa(
 
   if (!target) return null;
 
-  return serializeAssignment(target.assignment, driverInfo ?? null, {
+  const vehicle = {
     id:    target.assetName ? toId('asset', target.assignment.assetId) : null,
     name:  target.assetName  ?? null,
     plate: target.assetPlate ?? null,
-  });
+  };
+
+  // Pasamos también brand/model al root del acta para que el frontend pueda
+  // mostrarlos sin tener que mergear con un GET /assets/:id extra.
+  const acta = serializeAssignment(target.assignment, driverInfo ?? null, vehicle);
+  return {
+    ...acta,
+    assetId:    vehicle.id,
+    plate:      vehicle.plate,
+    assetName:  vehicle.name,
+    assetBrand: target.assetBrand ?? null,
+    assetModel: target.assetModel ?? null,
+  };
 }
 
 // ─── GET /company/:id/drivers ─────────────────────────────────────────────────

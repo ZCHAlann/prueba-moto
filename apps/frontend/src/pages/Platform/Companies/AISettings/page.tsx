@@ -56,7 +56,7 @@ export default function CompanyAIPage() {
             IA · {companyName} <span className="text-sm font-mono text-gray-400">({companySlug})</span>
           </h1>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Configuración de provider, modelo y uso del asistente IA.
+            API keys y uso del asistente IA. El modelo lo define ApliSmart.
           </p>
         </div>
 
@@ -106,25 +106,31 @@ export default function CompanyAIPage() {
       )}
 
       {/* ── Resumen ── */}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <Card icon={<Sparkles size={14} />} title="Provider">
-          <p className="text-sm font-semibold text-gray-900 dark:text-white">{c.provider}</p>
-          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-            {c.keySource === "company" ? "Usa API key propia" : "Usa config global"}
-          </p>
-        </Card>
-        <Card icon={<KeyRound size={14} />} title="API key">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <Card icon={<KeyRound size={14} />} title="Groq (texto, chat)">
           <p className="text-sm font-semibold text-gray-900 dark:text-white">
-            {c.hasApiKey ? <span className="font-mono">••••{c.apiKeyLast4 ?? "????"}</span> : <span className="text-rose-600 dark:text-rose-400">Sin key</span>}
+            {c.hasGroqApiKey
+              ? <span className="font-mono">••••{c.groqApiKeyLast4 ?? "????"}</span>
+              : <span className="text-rose-600 dark:text-rose-400">Sin key (usa global)</span>}
           </p>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-            {c.apiKeySetAt ? `Cargada el ${fmtDate(c.apiKeySetAt)}` : "—"}
+            {c.groqApiKeySetAt ? `Cargada el ${fmtDate(c.groqApiKeySetAt)}` : "—"}
+          </p>
+          <p className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+            Modelo: <code className="font-mono">llama-3.3-70b-versatile</code> (ApliSmart)
           </p>
         </Card>
-        <Card icon={<Cpu size={14} />} title="Modelo">
-          <p className="text-sm font-semibold text-gray-900 dark:text-white">{c.modelPrimary ?? "(default)"}</p>
+        <Card icon={<KeyRound size={14} />} title="Gemini (imágenes)">
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">
+            {c.hasGeminiApiKey
+              ? <span className="font-mono">••••{c.geminiApiKeyLast4 ?? "????"}</span>
+              : <span className="text-rose-600 dark:text-rose-400">Sin key (usa global)</span>}
+          </p>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-            {c.modelFallback ? `Fallback: ${c.modelFallback}` : "Sin fallback"}
+            {c.geminiApiKeySetAt ? `Cargada el ${fmtDate(c.geminiApiKeySetAt)}` : "—"}
+          </p>
+          <p className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+            Modelo: <code className="font-mono">gemini-2.5-flash</code> (ApliSmart)
           </p>
         </Card>
       </div>

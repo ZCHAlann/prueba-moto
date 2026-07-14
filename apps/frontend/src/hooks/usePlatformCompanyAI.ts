@@ -18,11 +18,20 @@ export interface PlatformCompanyAiSettings {
     slug: string;
   };
   config: {
-    provider: string;
+    provider: string;                  // compat: 'platform_default' en v7
     isEnabled: boolean;
+    // jul 2026 v7 — keys por provider separadas.
+    hasGroqApiKey: boolean;
+    groqApiKeyLast4: string | null;
+    groqApiKeySetAt: string | null;
+    hasGeminiApiKey: boolean;
+    geminiApiKeyLast4: string | null;
+    geminiApiKeySetAt: string | null;
+    // Compat con código viejo:
     hasApiKey: boolean;
     apiKeyLast4: string | null;
     apiKeySetAt: string | null;
+    // El modelo lo define ApliSmart — siempre null.
     modelPrimary: string | null;
     modelFallback: string | null;
     modelTtsVoice: string | null;

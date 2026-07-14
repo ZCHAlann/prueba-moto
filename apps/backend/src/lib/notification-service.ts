@@ -72,6 +72,7 @@ export type NotificationKind =
   | 'alert_created'
   | 'alert_updated'
   | 'alert_closed'
+  | 'alert_reminder'   // jul 2026 v8 — re-envío periódico de alerta abierta.
   // ── Anomalías IA ─────────────────────────────────────────────────────────
   | 'anomaly_detected'
   // ── Sistema ──────────────────────────────────────────────────────────────

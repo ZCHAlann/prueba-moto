@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
+import { motion } from "framer-motion";
+import { Eye, EyeOff, AlertTriangle, ArrowLeft } from "lucide-react";
 import { useAuth } from "../../../context/AuthContext";
 
 export function PlatformSignInForm() {
@@ -8,7 +10,7 @@ export function PlatformSignInForm() {
 
   const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
-  const [remember, setRemember] = useState(false);
+  const [remember, setRemember] = useState(true);
   const [showPass, setShowPass] = useState(false);
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState<{ title: string; description: string } | null>(null);
@@ -27,33 +29,41 @@ export function PlatformSignInForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
       {error && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-500/20 dark:bg-rose-500/10">
-          <p className="text-sm font-semibold text-rose-700 dark:text-rose-400">{error.title}</p>
-          <p className="text-xs text-rose-600 dark:text-rose-300">{error.description}</p>
-        </div>
+        <motion.div
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-start gap-3 rounded-xl border border-rose-200/80 bg-rose-50/95 px-4 py-3 backdrop-blur"
+        >
+          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-rose-500" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-rose-700">{error.title}</p>
+            <p className="mt-0.5 text-xs text-rose-600/90">{error.description}</p>
+          </div>
+        </motion.div>
       )}
 
       {/* Email */}
       <div className="flex flex-col gap-1.5">
-        <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-          Correo electrónico
+        <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-700">
+          Email
         </label>
         <input
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="tu@correo.com"
+          placeholder="admin@aplismart.com"
           required
           autoComplete="email"
-          className="h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-white dark:placeholder:text-gray-500"
+          autoFocus
+          className="h-11 w-full rounded-xl border border-slate-200 bg-white/85 px-4 text-sm text-slate-800 placeholder:text-slate-400 outline-none backdrop-blur transition focus:border-blue-700 focus:bg-white focus:ring-2 focus:ring-blue-700/25"
         />
       </div>
 
       {/* Password */}
       <div className="flex flex-col gap-1.5">
-        <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+        <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-700">
           Contraseña
         </label>
         <div className="relative">
@@ -64,44 +74,65 @@ export function PlatformSignInForm() {
             placeholder="••••••••"
             required
             autoComplete="current-password"
-            className="h-11 w-full rounded-xl border border-gray-200 bg-white px-4 pr-11 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/10 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-white dark:placeholder:text-gray-500"
+            className="h-11 w-full rounded-xl border border-slate-200 bg-white/85 px-4 pr-11 text-sm text-slate-800 placeholder:text-slate-400 outline-none backdrop-blur transition focus:border-blue-700 focus:bg-white focus:ring-2 focus:ring-blue-700/25"
           />
           <button
             type="button"
             onClick={() => setShowPass((v) => !v)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            aria-label={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
           >
-            {showPass ? (
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-            ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-            )}
+            {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
           </button>
         </div>
       </div>
 
-      {/* Remember */}
-      <div className="flex items-center gap-2">
-        <input
-          id="remember-platform"
-          type="checkbox"
-          checked={remember}
-          onChange={(e) => setRemember(e.target.checked)}
-          className="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-500"
-        />
-        <label htmlFor="remember-platform" className="text-sm text-gray-600 dark:text-gray-400">
+      {/* Remember + forgot */}
+      <div className="flex items-center justify-between pt-1 text-sm">
+        <label className="flex cursor-pointer items-center gap-2 text-slate-600">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-700/30 focus:ring-offset-0"
+          />
           Recordarme
         </label>
+        <button
+          type="button"
+          className="text-slate-500 transition hover:text-blue-800"
+        >
+          ¿Olvidaste tu contraseña?
+        </button>
       </div>
 
-      {/* Submit */}
+      {/* Submit — azul oscuro con peso */}
       <button
         type="submit"
         disabled={loading}
-        className="flex h-11 w-full items-center justify-center rounded-xl bg-violet-600 text-sm font-semibold text-white transition hover:bg-violet-700 active:scale-95 disabled:opacity-60"
+        className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-800 text-sm font-semibold text-white shadow-sm shadow-blue-900/30 transition hover:bg-blue-900 active:scale-[0.99] disabled:opacity-60"
       >
-        {loading ? "Ingresando..." : "Ingresar al panel"}
+        {loading ? (
+          <>
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+            <span>Verificando...</span>
+          </>
+        ) : (
+          <span>Acceder al panel</span>
+        )}
       </button>
+
+      {/* Operator link */}
+      <div className="mt-1 flex items-center justify-center">
+        <button
+          type="button"
+          onClick={() => navigate("/signin")}
+          className="flex items-center gap-1.5 text-xs text-slate-500 transition hover:text-blue-800"
+        >
+          <ArrowLeft size={12} />
+          ¿Eres operador? Inicia sesión acá
+        </button>
+      </div>
     </form>
   );
 }

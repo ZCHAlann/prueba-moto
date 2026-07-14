@@ -28,17 +28,19 @@ import {
   type ToolContext,
   type JarvisRole,
 } from './tools/registry';
+import { getGroqKeyForCompany, getGroqClientForCompany } from './client-factory';
 
-const MODEL = 'llama-3.3-70b-versatile';
 const MAX_ITERATIONS = 6;
 
-let _client: Groq | null = null;
-function getClient(): Groq | null {
-  if (_client) return _client;
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey || apiKey.trim().length < 10) return null;
-  _client = new Groq({ apiKey });
-  return _client;
+// jul 2026 v8 — antes había un singleton con `process.env.GROQ_API_KEY`.
+// Como tu `.env` usa la cascada `GROQ_API_KEY1..N` (no la legacy), ese
+// singleton devolvía `null` aunque hubiera keys disponibles. Ahora el
+// cliente se construye PER-REQUEST a partir del helper multi-tenant
+// `getGroqClientForCompany(empresaId)`, que respeta la cascada
+// (legacy + GROQ_API_KEY1..N). Sin cache porque la key de la empresa
+// puede cambiar en runtime.
+function getClient(empresaId: number): Promise<Groq | null> {
+  return getGroqClientForCompany(empresaId);
 }
 
 // ─── System Prompt ─────────────────────────────────────────────────────
@@ -189,11 +191,11 @@ export async function jarvisChatStream(
   },
   sink: SSESink,
 ): Promise<string> {
-  const client = getClient();
+  const client = await getClient(input.empresaId);
   const start = Date.now();
 
   if (!client) {
-    sink.send('error', { message: 'Asistente no configurado.' });
+    sink.send('error', { message: 'Asistente IA no configurado para esta empresa. Pedile a tu admin de empresa o al superadmin que configuren una API key.' });
     sink.send('done', { ok: false });
     return input.conversationId ?? '';
   }

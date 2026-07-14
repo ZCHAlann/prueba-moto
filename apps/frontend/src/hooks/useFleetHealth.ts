@@ -20,10 +20,14 @@ export interface FleetHealthItem {
   nearLimit:      boolean;
   criticalAlerts: number;
   warningAlerts:  number;
+  createdAt:      string;          // ISO — mes de creación de la empresa
+  assetsByMonth:  number[];        // 12 meses: # de assets NUEVOS por mes
+  totalByMonth:   number[];        // 12 meses: acumulado de assets hasta fin de mes
 }
 
 export interface FleetHealthResponse {
   data:        FleetHealthItem[];
+  monthLabels: string[];     // 12 labels dinámicos alineados con totalByMonth
   generatedAt: string;
 }
 
@@ -31,6 +35,10 @@ export interface FleetHealthResponse {
 
 export function useFleetHealth() {
   const [data,        setData]        = useState<FleetHealthItem[]>([]);
+  const [monthLabels, setMonthLabels] = useState<string[]>([
+    "Ene", "Feb", "Mar", "Abr", "May", "Jun",
+    "Jul", "Ago", "Sep", "Oct", "Nov", "Dic",
+  ]);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState<string | null>(null);
@@ -45,6 +53,9 @@ export function useFleetHealth() {
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const json: FleetHealthResponse = await res.json();
       setData(json.data);
+      if (Array.isArray(json.monthLabels) && json.monthLabels.length === 12) {
+        setMonthLabels(json.monthLabels);
+      }
       setGeneratedAt(json.generatedAt);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido');
@@ -55,5 +66,5 @@ export function useFleetHealth() {
 
   useEffect(() => { fetch_(); }, [fetch_]);
 
-  return { data, generatedAt, loading, error, refetch: fetch_ };
+  return { data, monthLabels, generatedAt, loading, error, refetch: fetch_ };
 }

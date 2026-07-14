@@ -16,6 +16,14 @@ export interface ActaCardData {
   handoverUrl?: string | null;
   signatureLogUrl?: string | null;
   signatureRespUrl?: string | null;
+  // jul 2026 — datos del vehículo expuesto en el root del acta (no sólo
+  // dentro de vehicleSnapshot) para que pantallas como Alertas puedan
+  // mostrarlos sin tener que mergear con un GET /assets/:id extra.
+  assetId?:    string | null;
+  plate?:      string | null;
+  assetName?:  string | null;
+  assetBrand?: string | null;
+  assetModel?: string | null;
   vehicleSnapshot?: {
     id?: string | null;
     name?: string | null;

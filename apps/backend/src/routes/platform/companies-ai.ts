@@ -56,14 +56,21 @@ router.get('/:id/ai-settings', async (req: Request, res: Response, next: NextFun
         slug: company.slug,
       },
       config: row ? {
-        provider:         row.provider,
+        provider:         row.providerOverride ?? 'platform_default',
         isEnabled:        row.isEnabled,
-        hasApiKey:        !!row.apiKeyEncrypted,
-        apiKeyLast4:      row.apiKeyLast4,
-        apiKeySetAt:      row.apiKeySetAt,
-        modelPrimary:     row.modelPrimary,
-        modelFallback:    row.modelFallback,
-        modelTtsVoice:    row.modelTtsVoice,
+        hasGroqApiKey:    !!row.groqApiKeyEncrypted,
+        groqApiKeyLast4:  row.groqApiKeyLast4,
+        groqApiKeySetAt:  row.groqApiKeySetAt,
+        hasGeminiApiKey:  !!row.geminiApiKeyEncrypted,
+        geminiApiKeyLast4:row.geminiApiKeyLast4,
+        geminiApiKeySetAt:row.geminiApiKeySetAt,
+        // Compat con frontend viejo:
+        hasApiKey:        !!(row.groqApiKeyEncrypted || row.geminiApiKeyEncrypted),
+        apiKeyLast4:      row.groqApiKeyLast4 ?? row.geminiApiKeyLast4 ?? null,
+        apiKeySetAt:      row.groqApiKeySetAt ?? row.geminiApiKeySetAt ?? null,
+        // El modelo lo define ApliSmart.
+        modelPrimary:     null,
+        modelFallback:    null,
         rpmLimit:         row.rpmLimit,
         tpmLimit:         row.tpmLimit,
         monthlyBudgetUsd: row.monthlyBudgetUsd ? Number(row.monthlyBudgetUsd) : null,
@@ -72,7 +79,7 @@ router.get('/:id/ai-settings', async (req: Request, res: Response, next: NextFun
         useAiInsights:    row.useAiInsights,
         useTts:           row.useTts,
         killedByPlatform: row.killedByPlatform,
-        keySource:        row.apiKeyEncrypted ? 'company' : 'platform',
+        keySource:        (row.groqApiKeyEncrypted || row.geminiApiKeyEncrypted) ? 'company' : 'platform',
       } : {
         provider: 'platform_default',
         isEnabled: true,
@@ -143,7 +150,7 @@ router.post('/:id/ai-disable', async (req: Request, res: Response, next: NextFun
     } else {
       await db.insert(companyAiSettings).values({
         companyId,
-        provider: 'platform_default',
+        providerOverride: 'platform_default',
         killedByPlatform: true,
         isEnabled: true,
       });

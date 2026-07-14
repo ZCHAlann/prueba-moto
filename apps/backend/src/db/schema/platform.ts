@@ -464,19 +464,21 @@ export const companyAiSettings = pgTable('company_ai_settings', {
   companyId:        integer('company_id').primaryKey()
                       .references(() => companies.id, { onDelete: 'cascade' }),
 
-  // 'platform_default' = usa config global; 'groq'|'gemini'|'openai'|'anthropic'|'custom'
-  provider:         varchar('provider', { length: 30 }).notNull().default('platform_default'),
+  // jul 2026 v7 — multi-key por provider. La empresa SOLO puede cargar
+  // su API key de cada provider. El modelo lo define ApliSmart, no la
+  // empresa. Si una key es NULL, se usa la cascada global (env vars).
+  groqApiKeyEncrypted:  text('groq_api_key_encrypted'),
+  groqApiKeyLast4:      varchar('groq_api_key_last4', { length: 8 }),
+  groqApiKeySetAt:      timestamp('groq_api_key_set_at'),
+  geminiApiKeyEncrypted: text('gemini_api_key_encrypted'),
+  geminiApiKeyLast4:     varchar('gemini_api_key_last4', { length: 8 }),
+  geminiApiKeySetAt:     timestamp('gemini_api_key_set_at'),
+
+  // Solo informacional, para mantener compat con código viejo.
+  // NO afecta qué provider/modelo se usa.
+  providerOverride:     varchar('provider_override', { length: 30 }).notNull().default('platform_default'),
+
   isEnabled:        boolean('is_enabled').notNull().default(true),
-
-  // API key cifrada AES-256-GCM en app (lib/crypto.ts). null = usa la global.
-  apiKeyEncrypted:  text('api_key_encrypted'),
-  apiKeyLast4:      varchar('api_key_last4', { length: 8 }),
-  apiKeySetAt:      timestamp('api_key_set_at'),
-
-  // Modelos por provider (nullable = default del provider)
-  modelPrimary:     varchar('model_primary',  { length: 120 }),
-  modelFallback:    varchar('model_fallback', { length: 120 }),
-  modelTtsVoice:    varchar('model_tts_voice', { length: 60 }),
 
   // Rate limits custom por empresa (null = sin override)
   rpmLimit:         integer('rpm_limit'),

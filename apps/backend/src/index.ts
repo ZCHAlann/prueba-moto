@@ -20,6 +20,7 @@ import { attachWebSocket } from './services/websocket';
 import { startMaintenanceCron } from './lib/cron/maintenance';
 import { startMaintenanceOverdueCron, runOverdueMaintenance } from './lib/cron/maintenance-overdue';
 import { startChecklistOverdueCron, runOverdueChecklists } from './lib/cron/checklist-overdue';
+import { startAlertRemindersCron } from './lib/cron/alert-reminders';
 import { startMaintenanceStatusCron } from './lib/cron/maintenanceStatusCron';
 import { startStatsAnomaliesCron } from './lib/cron/stats-anomalies';
 import { startStatsCleanupCron } from './lib/cron/cleanup';
@@ -51,6 +52,10 @@ startMaintenanceOverdueCron();
 // Detección de checklists vencidos (diario 00:10 EC).
 // Se apaga con CHECKLIST_OVERDUE_CRON_ENABLED != true.
 startChecklistOverdueCron();
+
+// jul 2026 v8 — Re-envío periódico de alertas operativas (cada 5 min).
+// Se apaga con ALERT_REMINDERS_CRON_ENABLED != true.
+startAlertRemindersCron();
 
 // (jul 2026 — el cron invoice-due-status fue removido: el módulo Finanzas no
 // usa modelo CxP contable. Las columnas cxp_status/due_date ya no existen.)

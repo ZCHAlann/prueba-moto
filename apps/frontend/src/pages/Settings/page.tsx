@@ -68,6 +68,14 @@ function IconChevron({ className }: { className?: string }) {
     </svg>
   );
 }
+function IconLock({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+      <rect x="4" y="11" width="16" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 018 0v4" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 // ─── Componentes base ─────────────────────────────────────────────────────────
 
@@ -489,14 +497,54 @@ export function SettingsPage() {
       </SectionCard>
 
       {/* ── Asistente IA (jul 2026 v6) ───────────────────────────────────── */}
-      <SectionCard
-        icon={<IconSparkles className="w-4 h-4 text-brand-600 dark:text-brand-400" />}
-        title="Asistente IA"
-        description="Configurá tu propio provider, modelo y API key de IA. Si no tocás nada, usamos la configuración global de la plataforma."
-        delay={0.25}
-      >
-        <AISettingsPanel />
-      </SectionCard>
+      {/* jul 2026 — el módulo `jarvis` (Asistente IA) sólo está disponible
+          en planes Business y Enterprise (ver platform-seed.ts). Si la
+          empresa no tiene el módulo en su plan, mostramos una card
+          informativa en lugar de la config, para que el admin entienda
+          por qué no puede tocar las API keys. */}
+      {((session as any)?.companyModules ?? []).includes("jarvis") ? (
+        <SectionCard
+          icon={<IconSparkles className="w-4 h-4 text-brand-600 dark:text-brand-400" />}
+          title="Asistente IA"
+          description="Configurá tu propio provider, modelo y API key de IA. Si no tocás nada, usamos la configuración global de la plataforma."
+          delay={0.25}
+        >
+          <AISettingsPanel />
+        </SectionCard>
+      ) : (
+        <SectionCard
+          icon={<IconLock className="w-4 h-4 text-gray-500 dark:text-gray-400" />}
+          title="Asistente IA (no disponible en tu plan)"
+          description="El módulo Asistente IA forma parte de los planes Business y Enterprise. Contactá al superadmin para actualizar el plan y poder configurar tus API keys de IA."
+          delay={0.25}
+        >
+          <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-4">
+            <div className="flex items-start gap-3">
+              <svg
+                className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 9v2m0 4h.01M4.93 19h14.14a2 2 0 001.74-3l-7.07-12a2 2 0 00-3.48 0L3.19 16a2 2 0 001.74 3z"
+                />
+              </svg>
+              <div className="flex-1 text-sm text-amber-800 dark:text-amber-200">
+                <p className="font-semibold">Tu plan actual no incluye Asistente IA</p>
+                <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                  Esta funcionalidad forma parte de los planes <strong>Business</strong> y{" "}
+                  <strong>Enterprise</strong>. Si la necesitás, pedile al superadmin de la
+                  plataforma que actualice el plan de esta empresa.
+                </p>
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+      )}
 
     </div>
   );

@@ -1,13 +1,16 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { motion, AnimatePresence } from "framer-motion";
-import { BellRing, X } from "lucide-react";
+import { BellRing, X, CarFront, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useAlerts, type ApiAlert, type AlertSeverity, type AlertStatus, type AlertType } from "../../hooks/useAlerts";
 import { useAlertsFormOptions } from "../../hooks/useFormOptions";
 import { usePermissions } from "../../hooks/usePermissions";
+import { useAuth } from "@/context/AuthContext";
+import { useMyDriverAssignment } from "@/hooks/useMyDriverAssignment";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import { todayEcuador } from "@/lib/datetime";
+import { AlertDetailModal } from "../../components/features/alerts/AlertDetailModal";
 
 // PAGE_SIZE ya no es necesario: la paginación la controla el backend
 // (parsePageParams con default 20, max 100). El componente solo guarda
@@ -181,6 +184,7 @@ function AlertCard({
   canDelete,
   onStatusChange,
   onDelete,
+  onOpen,
 }: {
   alert: ApiAlert;
   assetLabel: string;
@@ -188,6 +192,7 @@ function AlertCard({
   canDelete: boolean;
   onStatusChange: (id: string, status: AlertStatus) => void;
   onDelete: (id: string) => void;
+  onOpen: (alert: ApiAlert) => void;
 }) {
   const [changing, setChanging] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -217,7 +222,12 @@ function AlertCard({
       className={`group relative overflow-hidden rounded-2xl border border-l-4 border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] transition hover:border-gray-300 dark:hover:border-white/[0.12] ${severityBorder[alert.severity]}`}
     >
       <div className="flex items-start gap-4 p-4">
-        <div className="flex-1 min-w-0">
+        <button
+          type="button"
+          onClick={() => onOpen(alert)}
+          aria-label={`Ver detalle de la alerta ${alert.title}`}
+          className="flex-1 min-w-0 cursor-pointer text-left rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+        >
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{alert.title}</p>
             <span className={`inline-flex items-center rounded-lg border px-2 py-0.5 text-[11px] font-bold ${severityBadge[alert.severity]}`}>
@@ -253,7 +263,7 @@ function AlertCard({
           {alert.notes && (
             <p className="mt-2 text-xs text-gray-400 dark:text-gray-500 line-clamp-1">{alert.notes}</p>
           )}
-        </div>
+        </button>
 
         {showActions && (
           <div className="flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
@@ -316,11 +326,16 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 }
 
 function CreateDrawer({
-  open, onClose, assets, onSave,
+  open, onClose, assets, isConductor, assignedAsset, driverLoading, onSave,
 }: {
   open: boolean;
   onClose: () => void;
   assets: { id: string; plate?: string; brand?: string; model?: string; code?: string; name?: string }[];
+  /** jul 2026 v8 — true si el actor es conductor (no elige vehículo). */
+  isConductor: boolean;
+  /** Vehículo ACTIVO asignado al conductor (o null si no tiene). */
+  assignedAsset: { id: string; plate: string; name: string; brand?: string; model?: string } | null;
+  driverLoading: boolean;
   onSave: (form: FormState) => Promise<void>;
 }) {
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -383,22 +398,65 @@ function CreateDrawer({
                 {errors.title && <p className="mt-1 text-xs text-error-500">{errors.title}</p>}
               </div>
 
-              <div>
-                <FieldLabel>Vehículo (opcional)</FieldLabel>
-                <div className="relative">
-                  <select value={form.assetId} onChange={e => setForm(f => ({ ...f, assetId: e.target.value }))} className={`${selectCls} pr-8`}>
-                    <option value="">Sin vehículo asignado</option>
-                    {assets.map(a => (
-                      <option key={a.id} value={a.id}>
-                        {a.plate || a.code || a.name}{a.brand && a.model ? ` — ${a.brand} ${a.model}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  <svg className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
+              {/* jul 2026 v8 — Vehículo: el form se comporta distinto según el rol.
+                  - Si el actor es CONDUCTOR: NO puede elegir vehículo. Mostramos
+                    el de su asignación ACTIVA (forzado por backend) o un
+                    mensaje si no tiene.
+                  - Si NO es conductor: select libre con todos los vehículos. */}
+              {isConductor ? (
+                <div>
+                  <FieldLabel>Vehículo</FieldLabel>
+                  {driverLoading ? (
+                    <div className={`${inputCls} flex items-center gap-2 text-gray-500 dark:text-gray-400`}>
+                      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600" />
+                      Buscando tu vehículo asignado…
+                    </div>
+                  ) : assignedAsset ? (
+                    <div className="flex items-center gap-3 rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50/60 dark:bg-blue-500/10 px-3 py-2.5">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300">
+                        <CarFront size={16} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-gray-800 dark:text-white truncate">
+                          {assignedAsset.plate || assignedAsset.name}
+                        </p>
+                        {assignedAsset.brand && assignedAsset.model && (
+                          <p className="text-[11px] text-gray-500 dark:text-gray-400 truncate">
+                            {assignedAsset.brand} {assignedAsset.model}
+                          </p>
+                        )}
+                      </div>
+                      <span className="rounded-full bg-blue-100 dark:bg-blue-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                        Asignado
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-2 rounded-xl border border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2.5">
+                      <AlertCircle size={16} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        No tenés un vehículo asignado. La alerta se creará sin vehículo asociado.
+                      </p>
+                    </div>
+                  )}
                 </div>
-              </div>
+              ) : (
+                <div>
+                  <FieldLabel>Vehículo (opcional)</FieldLabel>
+                  <div className="relative">
+                    <select value={form.assetId} onChange={e => setForm(f => ({ ...f, assetId: e.target.value }))} className={`${selectCls} pr-8`}>
+                      <option value="">Sin vehículo asignado</option>
+                      {assets.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.plate || a.code || a.name}{a.brand && a.model ? ` — ${a.brand} ${a.model}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <svg className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
@@ -481,15 +539,38 @@ export function AlertsPage() {
   const { data: formOptions } = useAlertsFormOptions();
   const assets = formOptions?.assets ?? [];
   const { can } = usePermissions();
+  const { session } = useAuth();
 
   const canCreate = can("alertas", "alertas", "crear");
   const canEdit   = can("alertas", "alertas", "editar");
   const canDelete = can("alertas", "alertas", "eliminar");
 
+  // jul 2026 v8 — Si el actor es CONDUCTOR, el form debe:
+  //   1. NO mostrar el select libre de vehículo.
+  //   2. Mostrar el vehículo de su asignación ACTIVA (forzado por backend).
+  //   3. Si no tiene asignación, mostrar mensaje y permitir crear sin
+  //      vehículo (assetId = null).
+  const isConductor = session?.role === "conductor";
+  const { acta: driverActa, loading: driverLoading, notFound: driverNotFound } = useMyDriverAssignment();
+  const assignedAsset = isConductor && !driverNotFound && driverActa
+    ? {
+        id:    driverActa.assetId ?? null,
+        plate: driverActa.plate ?? null,
+        name:  driverActa.assetName ?? driverActa.plate ?? null,
+        brand: driverActa.assetBrand ?? undefined,
+        model: driverActa.assetModel ?? undefined,
+      }
+    : null;
+
   const [filter, setFilter]       = useState<FilterValue>("Todas");
   const [search, setSearch]       = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [page, setPage]           = useState(1);
+  // jul 2026 v9 — alerta abierta en el modal de detalle. Se setea desde
+  // click en una card del feed o desde el deep-link `?id=X` que llega
+  // cuando el usuario hace click en una notificación del bell.
+  const [detailAlert, setDetailAlert] = useState<ApiAlert | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   // Deep-link: ?assetId=X pre-filtra por ese vehículo. Lo leemos una vez
   // y armamos un initial filter para useAlerts. El usuario puede limpiarlo
@@ -513,6 +594,75 @@ export function AlertsPage() {
     if (mapped) setFilter(mapped);
   }, []);
 
+  // jul 2026 v9 — Deep-link desde el bell: `?id=<alertId>`. Si la alerta
+  // ya está en el feed actual, la abrimos directo desde `alerts`. Si NO
+  // está (paginación, filtros), hacemos un fetch a GET /alerts/:id para
+  // traerla. Al cerrar el modal, limpiamos el `?id=` para no reabrir al
+  // refrescar.
+  const closeDetail = useCallback(() => {
+    setDetailAlert(null);
+    if (searchParams.get("id")) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("id");
+      navigate({ search: next.toString() ? `?${next.toString()}` : "" }, { replace: true });
+    }
+  }, [searchParams, navigate]);
+
+  useEffect(() => {
+    const idParam = searchParams.get("id");
+    if (!idParam) return;
+    // ¿Ya está en el feed?
+    const fromFeed = alerts.find(a => a.id === idParam);
+    if (fromFeed) {
+      setDetailAlert(fromFeed);
+      return;
+    }
+    // Si ya estamos mostrando ése, no re-fetch.
+    if (detailAlert?.id === idParam) return;
+    // Si ya estamos cargando ése, no re-fetch.
+    if (detailLoading) return;
+    // Si no está, fetch directo.
+    let cancelled = false;
+    setDetailLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(`/api/company/${session?.companyId}/alerts/${idParam}`);
+        if (!res.ok) {
+          if (!cancelled) toast.error("No se pudo cargar la alerta");
+          return;
+        }
+        const json = await res.json();
+        if (cancelled) return;
+        const a = json?.data;
+        if (!a) {
+          toast.error("Alerta no encontrada");
+          return;
+        }
+        // Mapeamos al shape de ApiAlert (mismo orden de campos que mapApi en useAlerts).
+        setDetailAlert({
+          id:             a.id,
+          companyId:      typeof a.companyId === "string" ? Number(a.companyId) : a.companyId,
+          assetId:        a.assetId ?? null,
+          title:          a.title,
+          type:           a.type,
+          severity:       a.severity,
+          status:         a.status,
+          dueDate:        a.dueDate,
+          notes:          a.notes ?? "",
+          createdAt:      a.createdAt,
+          updatedAt:      a.updatedAt,
+          assetName:      a.assetName ?? null,
+          assetPlate:     a.assetPlate ?? null,
+        });
+      } catch {
+        if (!cancelled) toast.error("No se pudo cargar la alerta");
+      } finally {
+        if (!cancelled) setDetailLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [searchParams, alerts, detailAlert, detailLoading, session?.companyId]);
+
   // ── Fetch al backend cuando cambian page/filtros/búsqueda ────────────────
   // El backend pagina, filtra por status/severity/assetId y aplica `q` sobre title/notes.
   // Reset page=1 al cambiar cualquier filtro (si no, podemos quedar en una
@@ -535,6 +685,29 @@ export function AlertsPage() {
   useEffect(() => {
     if (totalPages > 0 && page > totalPages) setPage(1);
   }, [totalPages, page]);
+
+  // jul 2026 v8 — WebSocket → feed de alertas en tiempo real.
+  // El NotificationsBell recibe el WS del backend y dispara un
+  // CustomEvent `aplismart:alert-changed`. Acá lo escuchamos y
+  // refrescamos la lista en background — sin recargar la página.
+  // Solo refrescamos si la alerta está dentro de la página actual
+  // y de los filtros aplicados (si no, simplemente el contador del
+  // header se actualiza, lo cual ya hace el NotificationsBell).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ kind: string; alertId: number; ts: number }>).detail;
+      // Para no interrumpir al usuario mientras lee una alerta en
+      // detalle, refrescamos en background. El toast ya avisa.
+      void fetchPage({
+        page,
+        status: filter === "Todas" ? undefined : (filter as Exclude<FilterValue, "Todas">),
+        assetId: initialAssetFilter ?? undefined,
+        q: search.trim() || undefined,
+      });
+    };
+    window.addEventListener('aplismart:alert-changed', handler);
+    return () => window.removeEventListener('aplismart:alert-changed', handler);
+  }, [page, filter, search, initialAssetFilter, fetchPage]);
 
   const assetLabel = (alert: ApiAlert) => {
     if (!alert.assetName && !alert.assetPlate) return "";
@@ -680,6 +853,7 @@ export function AlertsPage() {
                     canDelete={canDelete}
                     onStatusChange={handleStatusChange}
                     onDelete={handleDelete}
+                    onOpen={setDetailAlert}
                   />
                 ))}
               </AnimatePresence>
@@ -700,8 +874,18 @@ export function AlertsPage() {
           open={drawerOpen}
           onClose={() => setDrawerOpen(false)}
           assets={assets}
+          isConductor={isConductor}
+          assignedAsset={assignedAsset}
+          driverLoading={driverLoading}
           onSave={handleCreate}
         />
+      )}
+
+      {/* jul 2026 v9 — Modal de detalle. Se abre al click en una card o al
+          llegar con `?id=X` desde una notificación. El botón de cierre
+          además limpia el query param para no reabrir al refrescar. */}
+      {detailAlert && (
+        <AlertDetailModal alert={detailAlert} onClose={closeDetail} />
       )}
     </div>
   );

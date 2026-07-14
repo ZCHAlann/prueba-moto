@@ -138,6 +138,45 @@ export async function synthesizeSpeech(
   if (!text.trim()) {
     throw new Error('Texto vacío para TTS.');
   }
+  return doSynthesize(text, voice);
+}
+
+/**
+ * jul 2026 v7 — versión multi-tenant del TTS. Chequea kill-switch
+ * y toggle `useTts` antes de gastar créditos de ElevenLabs.
+ *
+ * ElevenLabs todavía NO tiene override por empresa (la key es global),
+ * pero la empresa puede apagarlo via `useTts = false` o el superadmin
+ * puede kill-switchear la IA de la empresa.
+ */
+export async function synthesizeSpeechForCompany(
+  text: string,
+  voice: VoiceId,
+  companyId: number,
+): Promise<TtsResult> {
+  if (!text.trim()) {
+    throw new Error('Texto vacío para TTS.');
+  }
+
+  const { resolveAiConfig } = await import('./client-factory');
+  const cfg = await resolveAiConfig(companyId);
+  if (cfg.killed) {
+    throw Object.assign(
+      new Error('TTS deshabilitado: la IA de tu empresa está kill-switched por el superadmin.'),
+      { code: 'AI_DISABLED' },
+    );
+  }
+  if (!cfg.useTts) {
+    throw Object.assign(
+      new Error('TTS deshabilitado: tu empresa desactivó esta feature. Pedile a tu admin que la habilite.'),
+      { code: 'AI_DISABLED' },
+    );
+  }
+
+  return doSynthesize(text, voice);
+}
+
+async function doSynthesize(text: string, voice: VoiceId): Promise<TtsResult> {
   // ElevenLabs tiene un límite de ~5000 caracteres por request.
   const trimmed = text.length > 5000 ? text.slice(0, 5000) + '...' : text;
 

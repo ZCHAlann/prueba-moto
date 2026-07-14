@@ -115,10 +115,16 @@ export default function PlatformDashboard() {
   const activeUsers      = data.users.active;
   const trialExpiringSoon = data.alerts.trialExpiringSoon.length;
 
-  const monthLabels = [
-    "Ene", "Feb", "Mar", "Abr", "May", "Jun",
-    "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"
-  ];
+  // Las labels de los 12 meses vienen del backend (`/platform/stats`)
+  // y reflejan la ventana real "hace 11 meses → mes actual", NO un
+  // año calendario fijo. Si el backend no las manda (compat), caemos
+  // a un fallback Ene..Dic — pero el backend SIEMPRE las manda desde
+  // jul 2026 v6+.
+  const monthLabels: string[] =
+    (data as any).monthLabels ?? [
+      "Ene", "Feb", "Mar", "Abr", "May", "Jun",
+      "Jul", "Ago", "Sep", "Oct", "Nov", "Dic",
+    ];
 
   // ============= SERIES DATA PARA GRÁFICAS =============
 

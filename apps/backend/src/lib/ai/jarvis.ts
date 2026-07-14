@@ -61,10 +61,58 @@ function getClient(): Groq | null {
 }
 
 export function isJarvisEnabled(): boolean {
-  // jul 2026 v6 — multi-tenant. Si hay al menos 1 empresa con config propia
-  // o key global, está habilitado. Para el caso típico (sin override),
-  // sigue dependiendo de GROQ_API_KEY del env.
-  return !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.length > 10;
+  // jul 2026 v6 — multi-tenant.
+  //
+  // Esta función se conserva como chequeo GENÉRICO (no por empresa) para
+  // endpoints de admin / health-check que no tienen un `companyId` en el
+  // request. Devuelve `true` si hay AL MENOS una key global disponible
+  // (legacy `GROQ_API_KEY` o cualquiera de la cascada `GROQ_API_KEY1..N`).
+  //
+  // Para endpoints de empresa, usar `isJarvisEnabledForCompany(companyId)`
+  // que respeta el override por empresa definido en `company_ai_settings`.
+  return !!hasAnyGroqKey();
+}
+
+/** ¿Hay al menos una key Groq disponible en el proceso?
+ *  Chequea la var legacy Y la cascada 1-based (GROQ_API_KEY1..N). */
+function hasAnyGroqKey(): boolean {
+  const legacy = process.env.GROQ_API_KEY?.trim();
+  if (legacy && legacy.length > 10) return true;
+
+  // Cascada 1-based: GROQ_API_KEY1, GROQ_API_KEY2, …, GROQ_API_KEY{N}
+  const countStr = process.env.GROQ_API_KEY_COUNT?.trim();
+  const count = countStr && /^\d+$/.test(countStr) ? Math.min(20, Number(countStr)) : 0;
+  for (let i = 1; i <= Math.max(count, 1); i++) {
+    const v = i === 1 && !process.env[`GROQ_API_KEY${i}`] && process.env.GROQ_API_KEY
+      ? process.env.GROQ_API_KEY
+      : process.env[`GROQ_API_KEY${i}`];
+    if (v && v.trim().length > 10) return true;
+  }
+  return false;
+}
+
+/**
+ * jul 2026 v6 — chequeo por empresa. Considera:
+ *   1. Override de la empresa en `company_ai_settings` (si existe y está
+ *      enabled, Y provee una key propia O usa `platform_default` con
+ *      `useJarvis = true`).
+ *   2. Si NO hay override, usa la config global (keys del env) y
+ *      devuelve `true` si hay keys disponibles.
+ *
+ * Devuelve `false` si la empresa está kill-switched por el superadmin
+ * o si `useJarvis = false` en su config.
+ */
+export async function isJarvisEnabledForCompany(companyId: number): Promise<boolean> {
+  try {
+    const cfg = await resolveAiConfig(companyId);
+    if (cfg.killed) return false;
+    if (!cfg.useJarvis) return false;
+    if (cfg.apiKey && cfg.apiKey.length > 10) return true;
+    // Sin key de la empresa → dependemos de las env vars globales.
+    return hasAnyGroqKey();
+  } catch {
+    return hasAnyGroqKey();
+  }
 }
 
 // ─── System Prompt ────────────────────────────────────────────────────

@@ -519,6 +519,10 @@ export const notificationKindEnum = pgEnum('notification_kind_enum', [
   'finance_voucher_closed',
   'finance_petty_cash_limit_reached',
   'finance_petty_cash_replenished',
+  // jul 2026 v8 — Alertas operativas:
+  'alert_created',
+  'alert_closed',
+  'alert_reminder',
 ]);
 
 export const devicePlatformEnum = pgEnum('device_platform_enum', [
@@ -849,6 +853,11 @@ export const companyAlerts = pgTable('company_alerts', {
   status: varchar('status', { length: 40 }).default('Abierta'),
   dueDate: date('due_date'),
   notes: text('notes'),
+  // jul 2026 v8 — re-envío periódico mientras la alerta siga abierta.
+  // 0 = sin recordatorio. Ver migración 0055_alert_reminders.sql.
+  reminderIntervalMinutes: integer('reminder_interval_minutes').notNull().default(0),
+  lastRemindedAt:           timestamp('last_reminded_at', { withTimezone: true }),
+  nextReminderAt:           timestamp('next_reminder_at', { withTimezone: true }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

@@ -51,7 +51,11 @@ import { AppError, NotFoundError } from '../../lib/errors';
 import { parseIdFlexible, toId } from '../../lib/ids';
 import { validate } from '../../lib/validate';
 import { isAdminRole, hasPermOrAdmin } from '../../lib/finance-bypass';
-import { notify } from '../../lib/notification-service';
+import { notify, notifyAdminsExceptActor } from '../../lib/notification-service';
+import {
+  recordVoucherReopenForCorrection,
+  recordVoucherRecloseForCorrection,
+} from '../../lib/finance-movements';
 
 const router = Router({ mergeParams: true });
 
@@ -192,6 +196,32 @@ router.get('/invoice-reviews', requirePermission('finanzas', 'caja_chica', 'revi
     const q = listQuerySchema.parse(req.query);
     const siteIdNum = q.siteId ? parseInt(q.siteId, 10) : null;
 
+    // jul 2026 v6 — Mismo resync defensivo que en GET /vouchers:
+    // si hay vales con review='correction_requested' pero
+    // voucher.status='closed', los reabrimos a 'open' antes de listar.
+    // Idempotente y barato.
+    try {
+      const stale = await db
+        .select({ voucherId: companyInvoiceReviews.voucherId })
+        .from(companyInvoiceReviews)
+        .innerJoin(companyPettyCashVouchers, eq(companyPettyCashVouchers.id, companyInvoiceReviews.voucherId))
+        .where(and(
+          eq(companyInvoiceReviews.companyId, companyId),
+          eq(companyInvoiceReviews.status, 'correction_requested'),
+          eq(companyPettyCashVouchers.status, 'closed'),
+        ));
+      if (stale.length > 0) {
+        const ids = stale.map(s => s.voucherId);
+        await db
+          .update(companyPettyCashVouchers)
+          .set({ status: 'open', updatedAt: sql`now()` })
+          .where(inArray(companyPettyCashVouchers.id, ids));
+        console.log(`[GET /invoice-reviews] Reopen defensivo: ${stale.length} vales reconciliados.`, { companyId, ids });
+      }
+    } catch (syncErr) {
+      console.warn('[GET /invoice-reviews] resync defensivo falló:', (syncErr as Error).message);
+    }
+
     const conditions: any[] = [
       eq(companyInvoiceReviews.companyId, companyId),
       // Nunca devolvemos las 'not_required' (las que no aplican al flujo).
@@ -199,6 +229,15 @@ router.get('/invoice-reviews', requirePermission('finanzas', 'caja_chica', 'revi
     ];
     if (q.tab !== 'all') {
       conditions.push(eq(companyInvoiceReviews.status, q.tab));
+    } else {
+      // jul 2026 v6/v7 — Cuando se pide "all" (vista general de
+      // "Facturas por revisar"), excluimos las que ya están en
+      // 'correction_requested' (viven solo en la pestaña "Correcciones")
+      // Y las 'approved' (trabajo terminado, no requieren revisión).
+      // Si el frontend pide tab=correction_requested o tab=approved
+      // explícito, sí las devolvemos.
+      conditions.push(sql`${companyInvoiceReviews.status} <> 'correction_requested'`);
+      conditions.push(sql`${companyInvoiceReviews.status} <> 'approved'`);
     }
     if (siteIdNum) {
       conditions.push(eq(companyPettyCashVouchers.siteId, siteIdNum));
@@ -218,9 +257,9 @@ router.get('/invoice-reviews', requirePermission('finanzas', 'caja_chica', 'revi
       .innerJoin(companyPettyCashVouchers, eq(companyPettyCashVouchers.id, companyInvoiceReviews.voucherId))
       .innerJoin(companyInvoices, eq(companyInvoices.id, companyInvoiceReviews.invoiceId))
       .innerJoin(companySites, eq(companySites.id, companyPettyCashVouchers.siteId))
+      .leftJoin(companyFinanceRequests, eq(companyFinanceRequests.id, companyPettyCashVouchers.requestId))
       .leftJoin(sql`${companyUsers} AS requester`, sql`requester.id = ${companyFinanceRequests.requesterUserId}`)
       .leftJoin(sql`${companyUsers} AS reviewer`,  sql`reviewer.id = ${companyInvoiceReviews.currentReviewerId}`)
-      .leftJoin(companyFinanceRequests, eq(companyFinanceRequests.id, companyPettyCashVouchers.requestId))
       .where(and(...conditions))
       .orderBy(desc(companyInvoiceReviews.updatedAt))
       .limit(500);
@@ -414,20 +453,77 @@ router.post('/invoice-reviews/:id/approve', requirePermission('finanzas', 'caja_
     }
 
     const [row] = await db
-      .select()
+      .select({
+        review:  companyInvoiceReviews,
+        voucher: companyPettyCashVouchers,
+        request: companyFinanceRequests,
+      })
       .from(companyInvoiceReviews)
+      .innerJoin(companyPettyCashVouchers, eq(companyPettyCashVouchers.id, companyInvoiceReviews.voucherId))
+      .innerJoin(companyFinanceRequests, eq(companyFinanceRequests.id, companyPettyCashVouchers.requestId))
       .where(and(eq(companyInvoiceReviews.id, reviewId), eq(companyInvoiceReviews.companyId, companyId)))
       .limit(1);
     if (!row) throw new NotFoundError('Review', String(reviewId));
 
     await transitionReview(db, {
       companyId:   companyId,
-      reviewId:    row.id,
-      from:        row.status as ReviewStatus,
+      reviewId:    row.review.id,
+      from:        row.review.status as ReviewStatus,
       to:          'approved',
       actorUserId: userId,
       metadata:    { checks },
     });
+
+    // jul 2026 v6 — Cerrar el vale SIEMPRE que se aprueba una review
+    // con closedInvoiceId (que es el caso normal: el vale fue cerrado
+    // por el operador, generó una invoice, y ahora la review se aprueba
+    // — ya sea en el primer ciclo o después de una corrección). La
+    // factura del comprobante original sigue en el ledger, no se duplica.
+    if (row.voucher.closedInvoiceId) {
+      await db
+        .update(companyPettyCashVouchers)
+        .set({ status: 'closed', updatedAt: sql`now()` })
+        .where(eq(companyPettyCashVouchers.id, row.voucher.id));
+      // Solo registramos el movement de "re-cerrado por corrección" si
+      // el vale estaba en 'open' antes (es decir, fue reabierto
+      // previamente). En el caso normal de un vale que ya estaba
+      // 'closed' y se aprueba su review, el historial ya tiene su
+      // movement de cierre normal; no duplicamos.
+      if (row.voucher.status === 'open') {
+        await recordVoucherRecloseForCorrection({
+          voucherId:   row.voucher.id,
+          actorUserId: userId,
+          note:        'Corrección aprobada — vale recerrado.',
+        });
+      }
+    }
+
+    // jul 2026 v6 — Notificar al operador (solicitante del vale) y al
+    // aprobador original que la revisión se aprobó y el vale volvió
+    // a 'closed'. Si el aprobador y el revisor son la misma persona,
+    // no duplicamos la notif.
+    try {
+      const recipientIds = new Set<number>();
+      if (row.request.requesterUserId !== userId) recipientIds.add(row.request.requesterUserId);
+      if (row.request.approverUserId && row.request.approverUserId !== userId) recipientIds.add(row.request.approverUserId);
+      for (const recipientId of recipientIds) {
+        await notify({
+          companyId,
+          userId:    recipientId,
+          kind:      'finance_invoice_approved',
+          title:     `Factura del vale #${row.voucher.id} aprobada`,
+          body:      'El revisor aprobó la corrección. El vale volvió a quedar cerrado y conciliado.',
+          payload:   {
+            reviewId:  row.review.id,
+            voucherId: row.voucher.id,
+            invoiceId: row.review.invoiceId,
+          },
+        });
+      }
+    } catch (notifErr) {
+      console.warn('[approve] notification skipped:', (notifErr as Error).message);
+    }
+
     return res.json({ ok: true, status: 'approved' });
   } catch (err) {
     next(err);
@@ -473,6 +569,21 @@ router.post('/invoice-reviews/:id/send-to-correction', requirePermission('finanz
       metadata:    { failedChecks },
     });
 
+    // jul 2026 v6 — Reabrir el vale SIEMPRE que se mande a corrección
+    // (sin importar si ya estaba 'open' por un error de un envío previo
+    // o si se está reabriendo desde 'closed'). El UPDATE es idempotente.
+    // Mismo vale, no se crea otro. El admin lo cierra de nuevo al
+    // aprobar; el operador NO lo cierra al re-subir foto.
+    await db
+      .update(companyPettyCashVouchers)
+      .set({ status: 'open', updatedAt: sql`now()` })
+      .where(eq(companyPettyCashVouchers.id, row.voucher.id));
+    await recordVoucherReopenForCorrection({
+      voucherId:   row.voucher.id,
+      note,
+      actorUserId: userId,
+    });
+
     // Notificar al solicitante.
     await notify({
       companyId,
@@ -500,8 +611,15 @@ router.post('/invoice-reviews/:id/send-to-correction', requirePermission('finanz
 // El body trae el nuevo fileUrl. NO requiere permiso de revisor; el dueño
 // del vale (request.requesterUserId) puede hacerlo.
 
+// jul 2026 v6 — Acepta tanto URL absoluta (https://...) como path
+// relativo (/uploads/parts/1/abc.jpg). El endpoint /upload/part-photos
+// devuelve path relativo, así que la validación estricta de z.string().url()
+// rompía el reupload.
 const reuploadSchema = z.object({
-  fileUrl:      z.string().url(),
+  fileUrl:      z.string().min(1).refine(
+    (v) => v.startsWith('/') || /^https?:\/\//i.test(v),
+    { message: 'fileUrl debe ser una URL absoluta o un path relativo (ej: /uploads/...)' },
+  ),
   fileMimeType: z.string().min(1),
 }).strict();
 
@@ -562,6 +680,48 @@ router.post('/invoice-reviews/:id/reupload', validate(reuploadSchema), async (re
       note:        'Nueva foto subida por el solicitante',
       metadata:    { fileUrl, fileMimeType },
     });
+
+    // jul 2026 v6 — Notificar a admins (excepto el actor) y al
+    // aprobador original de la solicitud que el operador subió la
+    // nueva foto y la review vuelve a 'pending_review' esperando
+    // revisión. Mismo patrón que send-to-correction, para que el
+    // revisor tenga la foto en su inbox.
+    try {
+      await notifyAdminsExceptActor(companyId, userId, {
+        kind:    'finance_invoice_correction_resubmitted',
+        title:   `Nueva foto del vale #${row.voucher.id} lista para revisar`,
+        body:    'El operador subió una nueva foto de la factura tras la corrección. Pendiente de revisar.',
+        payload: {
+          reviewId:  row.review.id,
+          voucherId: row.voucher.id,
+          invoiceId: row.review.invoiceId,
+        },
+      });
+      const [reqRow] = await db
+        .select({ approverUserId: companyFinanceRequests.approverUserId })
+        .from(companyFinanceRequests)
+        .where(eq(companyFinanceRequests.id, row.voucher.requestId))
+        .limit(1);
+      const approverId = reqRow?.approverUserId ?? null;
+      if (approverId && approverId !== userId) {
+        await notify({
+          companyId,
+          userId:    approverId,
+          kind:      'finance_invoice_correction_resubmitted',
+          title:     `Nueva foto del vale #${row.voucher.id} lista para revisar`,
+          body:      'El operador subió una nueva foto de la factura tras la corrección. Pendiente de revisar.',
+          payload:   {
+            reviewId:  row.review.id,
+            voucherId: row.voucher.id,
+            invoiceId: row.review.invoiceId,
+          },
+        });
+      }
+    } catch (notifErr) {
+      // No-crítico: si falla la notif, igual la foto ya quedó
+      // guardada y la review pasó a 'pending_review'.
+      console.warn('[reupload] notification skipped:', (notifErr as Error).message);
+    }
 
     return res.json({ ok: true, status: 'pending_review' });
   } catch (err) {

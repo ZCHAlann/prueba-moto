@@ -27,6 +27,34 @@ import { db } from '../../db/client';
 import { companyAiSettings } from '../../db/schema/platform';
 import { decryptSecret } from '../crypto';
 import { AppError } from '../errors';
+import { companyEnabledModules, companies } from '../../db/schema/platform';
+
+/**
+ * jul 2026 v9 — Helper local: devuelve los módulos habilitados para
+ * una empresa, leídos desde la tabla puente `company_enabled_modules`
+ * (que es la fuente de verdad del plan+overrides). Si la empresa
+ * no tiene filas, devuelve el array vacío.
+ *
+ * Usado por `getGroqKeyForCompany` para gatear la IA por plan.
+ */
+async function getCompanyModules(companyId: number): Promise<string[]> {
+  try {
+    const rows = await db
+      .select({ moduleId: companyEnabledModules.moduleId })
+      .from(companyEnabledModules)
+      .where(eq(companyEnabledModules.companyId, companyId));
+    return rows.map(r => r.moduleId);
+  } catch {
+    // Si la tabla no existe (BD sin seed), fallamos a enabled_modules
+    // legacy de la tabla companies (text[]).
+    const [row] = await db
+      .select({ mods: companies.enabledModules })
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .limit(1);
+    return (row?.mods as string[] | null) ?? [];
+  }
+}
 
 export type AiProvider = 'platform_default' | 'groq' | 'gemini' | 'openai' | 'anthropic' | 'custom';
 
@@ -268,6 +296,14 @@ export async function getGroqKeyForCompany(
   companyId: number,
   feature: AiFeature = 'jarvis',
 ): Promise<AiKeyForCompany | null> {
+  // jul 2026 v9 — Gate per-modulo. La empresa tiene que tener el módulo
+  // `jarvis` habilitado en su plan (`companyModules`). Sin esto, una
+  // empresa del plan Starter podría usar la IA si el flag `useJarvis`
+  // quedó activo por un override manual. Con esto, la única manera de
+  // usar la IA es que la empresa SÍ tenga `jarvis` en su plan.
+  const companyModules = await getCompanyModules(companyId);
+  if (!companyModules.includes("jarvis")) return null;
+
   const cfg = await resolveAiConfig(companyId);
   if (cfg.killed) return null;
   const flag =

@@ -324,7 +324,10 @@ router.get(
       }
 
       const incluirResueltas = (req.query.incluirResueltas as string) === "true";
-      const limite = Math.min(Number(req.query.limite ?? 100) || 100, 500);
+      // jul 2026 v9 — Default 10 (alineado con el resto de Finanzas y Reportes).
+      // Cap 100 (antes 500) — para un export completo el frontend puede
+      // pedir `limite=100` explícito o hacer paginación manual.
+      const limite = Math.min(Number(req.query.limite ?? 10) || 10, 100);
 
       const all = await db
         .select()

@@ -1793,6 +1793,8 @@ export const pettyCashMovementTypeEnum = pgEnum(
     'voucher_closed_refund',
     'voucher_cancelled',
     'manual_adjustment',
+    'voucher_reopened_correction',
+    'voucher_reclosed_correction',
   ],
 );
 

@@ -30,7 +30,7 @@ import {
   Calendar, CalendarDays, Building2, User, Hash, FileText, Send, Tag,
   TrendingUp, TrendingDown, RefreshCw, ExternalLink,
   Settings, Save, Edit2, Trash2, MapPin, PowerOff, PlusCircle, Wallet2, CircleDollarSign,
-  ClipboardCheck, AlertOctagon, RotateCcw,
+  ClipboardCheck, AlertOctagon, RotateCcw, Clock, Upload
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../../context/AuthContext";
@@ -58,6 +58,7 @@ import { ReviewVoucherDetailModal } from "../../components/finanzas/ReviewVouche
 import { ReuploadInvoiceModal } from "../../components/finanzas/ReuploadInvoiceModal";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import { ModalShell } from "../../components/ui/modal/ModalShell";
+import { Pagination } from "../../components/ui/Pagination";
 
 // ─── Styles (consistente con FacturasPage.tsx) ──────────────────────────────
 
@@ -143,27 +144,39 @@ const VOUCHER_STATUS_LABEL: Record<string, string> = {
 };
 
 const MOVEMENT_TYPE_LABEL: Record<string, string> = {
-  initial_assignment:      "Asignación inicial",
-  replenishment:           "Reposición",
-  period_reset_out:        "Cierre de periodo",
-  period_reset_in:         "Inicio de periodo",
-  request_approved_petty:  "Solicitud aprobada",
-  request_approved_annual: "Solicitud aprobada (anual)",
-  voucher_closed_refund:   "Reembolso de vale",
-  voucher_cancelled:       "Vale cancelado",
-  manual_adjustment:       "Ajuste manual",
+  initial_assignment:           "Asignación inicial",
+  replenishment:                "Reposición",
+  period_reset_out:             "Cierre de periodo",
+  period_reset_in:              "Inicio de periodo",
+  request_approved_petty:       "Solicitud aprobada",
+  request_approved_annual:      "Solicitud aprobada (anual)",
+  voucher_closed_refund:        "Reembolso de vale",
+  voucher_cancelled:            "Vale cancelado",
+  // jul 2026 v6 — Ciclo de corrección: el revisor manda el vale a
+  // corrección → 'voucher_reopened_correction' (se reabre a 'open').
+  // El revisor aprueba la nueva foto → 'voucher_reclosed_correction'
+  // (vuelve a 'closed'). Ambos movimientos aparecen en el historial
+  // con la nota del revisor para auditoría.
+  voucher_reopened_correction:  "Vale reabierto por corrección",
+  voucher_reclosed_correction:  "Vale recerrado tras corrección",
+  manual_adjustment:            "Ajuste manual",
 };
 
 const MOVEMENT_TYPE_BADGE: Record<string, string> = {
-  initial_assignment:      "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30",
-  replenishment:           "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-300 dark:ring-blue-500/30",
-  period_reset_out:        "bg-slate-100 text-slate-600 ring-slate-200 dark:bg-white/[0.06] dark:text-slate-300 dark:ring-white/[0.10]",
-  period_reset_in:         "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-300 dark:ring-blue-500/30",
-  request_approved_petty:  "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-500/30",
-  request_approved_annual: "bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-500/30",
-  voucher_closed_refund:   "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30",
-  voucher_cancelled:       "bg-slate-100 text-slate-600 ring-slate-200 dark:bg-white/[0.06] dark:text-slate-300 dark:ring-white/[0.10]",
-  manual_adjustment:       "bg-slate-100 text-slate-600 ring-slate-200 dark:bg-white/[0.06] dark:text-slate-300 dark:ring-white/[0.10]",
+  initial_assignment:           "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30",
+  replenishment:                "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-300 dark:ring-blue-500/30",
+  period_reset_out:             "bg-slate-100 text-slate-600 ring-slate-200 dark:bg-white/[0.06] dark:text-slate-300 dark:ring-white/[0.10]",
+  period_reset_in:              "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-300 dark:ring-blue-500/30",
+  request_approved_petty:       "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-500/30",
+  request_approved_annual:      "bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-500/30",
+  voucher_closed_refund:        "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30",
+  voucher_cancelled:            "bg-slate-100 text-slate-600 ring-slate-200 dark:bg-white/[0.06] dark:text-slate-300 dark:ring-white/[0.10]",
+  // jul 2026 v6 — Los movimientos de corrección son rojos (warning):
+  // reabierto = el revisor marcó error; recerrado = la corrección
+  // fue aprobada y el vale volvió a quedar en el ledger.
+  voucher_reopened_correction:  "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-500/30",
+  voucher_reclosed_correction:  "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30",
+  manual_adjustment:            "bg-slate-100 text-slate-600 ring-slate-200 dark:bg-white/[0.06] dark:text-slate-300 dark:ring-white/[0.10]",
 };
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -559,22 +572,38 @@ function RequestsTab({ canApprove, canCreate }: { canApprove: boolean; canCreate
   const [requests, setRequests] = useState<FinanceRequest[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<FinanceRequest | null>(null);
+  // jul 2026 v9 — paginación canónica (10 por página).
+  const [page, setPage]         = useState(1);
+  const [total, setTotal]       = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (pageToLoad: number) => {
     setLoading(true);
     try {
-      const rows = await finance.requests.fetch({
+      // jul 2026 v9 — paginación canónica (default 10, cap 100).
+      const result = await finance.requests.fetch({
         status: filter === "all" ? "all" : filter,
+        page:    pageToLoad,
+        pageSize,
       });
-      setRequests(rows);
+      setRequests(result.data);
+      setTotal(result.total);
+      setPageSize(result.pageSize);
+      setTotalPages(result.totalPages);
+      setPage(result.page);
     } catch (err) {
       toast.error("Error al cargar solicitudes");
     } finally {
       setLoading(false);
     }
-  }, [finance, filter]);
+  }, [finance, filter, pageSize]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(1); }, [load]);
+
+  function handlePageChange(nextPage: number) {
+    void load(nextPage);
+  }
 
   return (
     <div className="space-y-4">
@@ -666,6 +695,15 @@ function RequestsTab({ canApprove, canCreate }: { canApprove: boolean; canCreate
               ))}
             </tbody>
           </table>
+          {/* jul 2026 v9 — paginación canónica. */}
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            pageSize={pageSize}
+            onPageChange={handlePageChange}
+            itemLabel="solicitud"
+          />
         </div>
       )}
 
@@ -673,7 +711,7 @@ function RequestsTab({ canApprove, canCreate }: { canApprove: boolean; canCreate
         <RequestDetailModal
           request={selected}
           canApprove={canApprove}
-          onClose={() => { setSelected(null); void load(); }}
+          onClose={() => { setSelected(null); void load(page); }}
         />
       )}
     </div>
@@ -693,16 +731,31 @@ function VouchersTab({ canSeeAll }: { canSeeAll: boolean }) {
   // (emitido, gastado, reembolso, comprobante, vale origen, items).
   const [viewing, setViewing] = useState<Voucher | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  // jul 2026 v9 — paginación canónica.
+  const [page, setPage]         = useState(1);
+  const [total, setTotal]       = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
 
   // jul 2026 v4-b — userId del dueño. El backend expone el id del
   // usuario en `session.id` (no en `sub`), con shape "company-user-12".
   // Extraemos los dígitos para comparar con assignedToUserId (number).
   const userId = session?.id ? Number(String(session.id).replace(/\D/g, "")) : null;
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (pageToLoad: number) => {
     setLoading(true);
     try {
-      const rows = await finance.vouchers.fetch({ status: filter });
+      // jul 2026 v9 — paginación canónica (default 10, cap 100).
+      const result = await finance.vouchers.fetch({
+        status:   filter,
+        page:     pageToLoad,
+        pageSize,
+      });
+      const rows = result.data;
+      setTotal(result.total);
+      setPageSize(result.pageSize);
+      setTotalPages(result.totalPages);
+      setPage(result.page);
       // jul 2026 v4-b — Debug temporal: confirmar que userId y
       // assignedToUserId están bien. Se puede quitar cuando validemos
       // el flujo en producción.
@@ -721,9 +774,13 @@ function VouchersTab({ canSeeAll }: { canSeeAll: boolean }) {
     } finally {
       setLoading(false);
     }
-  }, [finance, filter, refreshKey, session?.sub, userId]);
+  }, [finance, filter, pageSize, refreshKey, session?.sub, userId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(1); }, [load]);
+
+  function handlePageChange(nextPage: number) {
+    void load(nextPage);
+  }
 
   const downloadPdf = useCallback(async (v: Voucher) => {
     try {
@@ -792,10 +849,31 @@ function VouchersTab({ canSeeAll }: { canSeeAll: boolean }) {
                 const ownerIdNum = Number(v.assignedToUserId);
                 const userIdNum  = Number(userId);
                 const isOwner = userIdNum > 0 && ownerIdNum === userIdNum;
-                const canClose = v.status === "open" && isOwner;
+                // jul 2026 v6 — El vale reabierto por corrección tiene
+                // closedInvoiceId (la factura original) pero volvió a
+                // status='open'. NO debe poder finalizarse por el flujo
+                // normal de cierre (que crea una nueva invoice). La
+                // factura se aprueba via /finance/invoice-reviews/:id/approve.
+                const isReopenedForCorrection =
+                  v.status === "open" && v.closedInvoiceId !== null;
+                const canClose = v.status === "open" && isOwner && !isReopenedForCorrection;
+                const showCorrectionTag = v.reviewStatus === "correction_requested";
                 return (
                   <tr key={v.id} className="hover:bg-gray-50/50 dark:hover:bg-white/[0.03]">
-                    <td className="px-4 py-3 text-sm font-mono text-gray-700 dark:text-gray-300">#{v.numericId}</td>
+                    <td className="px-4 py-3 text-sm font-mono text-gray-700 dark:text-gray-300">
+                      <div className="flex items-center gap-2">
+                        <span>#{v.numericId}</span>
+                        {showCorrectionTag && (
+                          <span
+                            title="El revisor envió la factura a corrección. Subí una nueva foto o pedile al admin que la apruebe."
+                            className="inline-flex items-center gap-1 rounded-md bg-rose-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-rose-700 ring-1 ring-rose-300 dark:bg-rose-500/25 dark:text-rose-200 dark:ring-rose-500/50"
+                          >
+                            <AlertCircle size={11} />
+                            Corrección
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-sm text-gray-800 dark:text-gray-200">{v.assignedToName ?? `User #${v.assignedToUserId}`}</td>
                     <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{v.siteName ?? `Sede #${v.siteId}`}</td>
                     <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900 dark:text-gray-100">{fmtMoney(v.issuedAmount)}</td>
@@ -806,9 +884,16 @@ function VouchersTab({ canSeeAll }: { canSeeAll: boolean }) {
                         : <span className="text-gray-400">—</span>}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${VOUCHER_STATUS_BADGE[v.status]}`}>
-                        {VOUCHER_STATUS_LABEL[v.status]}
-                      </span>
+                      <div className="flex flex-col gap-1">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${VOUCHER_STATUS_BADGE[v.status]}`}>
+                          {VOUCHER_STATUS_LABEL[v.status]}
+                        </span>
+                        {isReopenedForCorrection && (
+                          <span className="text-[10px] text-rose-600 dark:text-rose-300" title="Este vale fue reabierto por una corrección de factura. No se finaliza acá — la aprobación la hace el revisor.">
+                            Reabierto por corrección
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{fmtDate(v.createdAt)}</td>
                     <td className="px-4 py-3 text-right">
@@ -845,6 +930,15 @@ function VouchersTab({ canSeeAll }: { canSeeAll: boolean }) {
               })}
             </tbody>
           </table>
+          {/* jul 2026 v9 — paginación canónica. */}
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            pageSize={pageSize}
+            onPageChange={handlePageChange}
+            itemLabel="vale"
+          />
         </div>
       )}
 
@@ -859,6 +953,7 @@ function VouchersTab({ canSeeAll }: { canSeeAll: boolean }) {
         <ViewVoucherModal
           voucher={viewing}
           onClose={() => setViewing(null)}
+          onRefresh={() => setRefreshKey(k => k + 1)}
         />
       )}
     </div>
@@ -869,7 +964,14 @@ function VouchersTab({ canSeeAll }: { canSeeAll: boolean }) {
 
 function HistoryTab({ canReplenish: _ }: { canReplenish: boolean }) {
   const finance = useFinance();
-  const [siteId, setSiteId] = useState<number | undefined>(undefined);
+  // jul 2026 v6 — El dropdown NO tiene opción "Todas": lista únicamente
+  // las cuentas activas. El siteId inicial es la primera cuenta
+  // disponible, no `undefined`, para que el load arranque con una
+  // sede concreta y muestre movimientos desde el primer render.
+  // Un admin_empresa/owner_empresa puede cambiar entre sedes para
+  // auditar cualquiera, pero no hay vista consolidada en este tab
+  // (eso lo cubre el reporte PDF).
+  const [siteId, setSiteId] = useState<number | null>(null);
   const [accounts, setAccounts] = useState<PettyCashAccountWithSite[]>([]);
   const [items, setItems] = useState<Array<{
     id: number;
@@ -884,7 +986,22 @@ function HistoryTab({ canReplenish: _ }: { canReplenish: boolean }) {
   }>>([]);
   const [loading, setLoading] = useState(false);
 
+  // Cargar la lista de cuentas activas. Cuando llegan, si todavía no
+  // hay siteId seleccionado, se setea con la primera cuenta.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const data = await finance.pettyCash.fetchAccount();
+        if (data && "accounts" in data) {
+          setAccounts(data.accounts);
+          setSiteId((prev) => prev ?? data.accounts[0]?.siteId ?? null);
+        }
+      } catch {}
+    })();
+  }, [finance]);
+
   const load = useCallback(async () => {
+    if (siteId == null) return;
     setLoading(true);
     try {
       const accData = await finance.pettyCash.fetchAccount(siteId);
@@ -900,24 +1017,15 @@ function HistoryTab({ canReplenish: _ }: { canReplenish: boolean }) {
     }
   }, [finance, siteId]);
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const data = await finance.pettyCash.fetchAccount();
-        if (data && "accounts" in data) setAccounts(data.accounts);
-      } catch {}
-    })();
-  }, [finance]);
-
   useEffect(() => { void load(); }, [load]);
 
   const exportPdf = useCallback(async () => {
     try {
-      await finance.transactions.downloadPdf({ scope: "petty_cash" });
+      await finance.transactions.downloadPdf({ scope: "petty_cash", siteId: siteId ?? undefined });
     } catch (err) {
       toast.error("Error al exportar el PDF");
     }
-  }, [finance]);
+  }, [finance, siteId]);
 
   return (
     <div className="space-y-4">
@@ -926,7 +1034,7 @@ function HistoryTab({ canReplenish: _ }: { canReplenish: boolean }) {
           <label className={labelCls}>Sede</label>
           <select
             value={siteId ?? ""}
-            onChange={e => setSiteId(e.target.value ? Number(e.target.value) : undefined)}
+            onChange={e => setSiteId(e.target.value ? Number(e.target.value) : null)}
             className={inputCls}
           >
             {accounts.map(a => (
@@ -946,7 +1054,7 @@ function HistoryTab({ canReplenish: _ }: { canReplenish: boolean }) {
         </button>
       </div>
 
-      {loading ? (
+      {loading || siteId == null ? (
         <div className={`${cardCls} flex items-center justify-center p-10`}>
           <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
         </div>
@@ -2537,10 +2645,18 @@ function ConfiguracionReplenishModal({
  *  finance_classification) y, si el vale está cerrado, la factura
  *  asociada con sus items y comprobante embebido.  Acciones: descargar
  *  PDF y, si está cerrado, abrir el comprobante en pestaña nueva. */
-function ViewVoucherModal({ voucher, onClose }: { voucher: Voucher; onClose: () => void }) {
+function ViewVoucherModal({ voucher, onClose, onRefresh }: {
+  voucher: Voucher;
+  onClose: () => void;
+  onRefresh?: () => void;
+}) {
   const finance = useFinance();
   const [invoice, setInvoice] = useState<any | null>(null);
   const [loadingInvoice, setLoadingInvoice] = useState(false);
+  // jul 2026 v6 — Modal de re-subir factura anidado en el modal de
+  // detalle del vale. Aparece cuando el user aprieta "Re-subir foto"
+  // abajo.
+  const [showReupload, setShowReupload] = useState(false);
 
   // Si el vale está cerrado y tiene closedInvoiceId, levantamos la factura
   // del backend para mostrar los items y el comprobante.
@@ -2577,14 +2693,48 @@ function ViewVoucherModal({ voucher, onClose }: { voucher: Voucher; onClose: () 
       {/* jul 2026 v4-b — Modal compacto. max-w-md (no 3xl) para que entre
           en pantalla sin scrollear. Densidad de info alta pero readable. */}
       <div className="max-h-[70vh] space-y-2 overflow-y-auto text-xs">
+        {/* jul 2026 v6 — Etiqueta grande roja de "Corrección" cuando el
+            vale fue reabierto por una corrección de factura. Le dice al
+            operador (y a quien abra el modal) que este vale sigue
+            abierto y que tiene que subir una nueva foto. */}
+        {voucher.reviewStatus === "correction_requested" && (
+          <div className="flex items-start gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800 ring-1 ring-rose-200 dark:border-rose-500/40 dark:bg-rose-500/15 dark:text-rose-200 dark:ring-rose-500/30">
+            <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+            <div className="space-y-1">
+              <p className="text-sm font-bold uppercase tracking-wider">Corrección</p>
+              {voucher.reviewLastCorrectionAt && (
+                <p className="text-[11px] font-semibold">
+                  Reabierto el {fmtDate(voucher.reviewLastCorrectionAt)}
+                </p>
+              )}
+              <p className="text-[11px]">
+                Este vale fue reabierto porque un revisor marcó la factura
+                como incorrecta. El comprobante y todos los datos del vale
+                se conservan — subí una nueva foto con el botón{" "}
+                <strong>Re-subir foto</strong> de abajo y el admin la aprobará.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Header: estado + fecha */}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${VOUCHER_STATUS_BADGE[voucher.status]}`}>
-            {VOUCHER_STATUS_LABEL[voucher.status]}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${VOUCHER_STATUS_BADGE[voucher.status]}`}>
+              {VOUCHER_STATUS_LABEL[voucher.status]}
+            </span>
+            {voucher.reviewStatus === "correction_requested" && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-rose-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-rose-700 ring-1 ring-rose-300 dark:bg-rose-500/25 dark:text-rose-200 dark:ring-rose-500/50">
+                <AlertCircle size={11} />
+                Corrección
+              </span>
+            )}
+          </div>
           <span className="text-xs text-gray-500 dark:text-gray-400">
             Emitido el {fmtDate(voucher.createdAt)}
             {voucher.closedAt && ` · Cerrado el ${fmtDate(voucher.closedAt)}`}
+            {voucher.reviewStatus === "correction_requested" && voucher.reviewLastCorrectionAt &&
+              ` · Reabierto el ${fmtDate(voucher.reviewLastCorrectionAt)}`}
           </span>
         </div>
 
@@ -2721,7 +2871,7 @@ function ViewVoucherModal({ voucher, onClose }: { voucher: Voucher; onClose: () 
         )}
 
         {/* Acciones */}
-        <div className="flex justify-end gap-2 pt-1">
+        <div className="flex flex-wrap justify-end gap-2 pt-1">
           <button
             type="button"
             onClick={onClose}
@@ -2736,8 +2886,75 @@ function ViewVoucherModal({ voucher, onClose }: { voucher: Voucher; onClose: () 
           >
             <FileDown size={13} /> Descargar PDF
           </button>
+          {/*
+            jul 2026 v6 — Botón "Re-subir foto" en el modal del vale. Si
+            el vale está en corrección y el user es el dueño del vale
+            (o admin), le dejamos subir una nueva foto desde acá sin
+            tener que ir a la pestaña "Correcciones". El backend ya
+            valida el plazo de 1 día y que el user sea el solicitante.
+            El handler de "Re-subir" delega al ReuploadInvoiceModal,
+            mismo que se usa en la pestaña "Correcciones".
+          */}
+          {voucher.reviewStatus === "correction_requested" && (
+            <button
+              type="button"
+              onClick={() => setShowReupload(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-700"
+            >
+              <Upload size={13} /> Re-subir foto
+            </button>
+          )}
         </div>
       </div>
+
+      {/*
+        jul 2026 v6 — Modal de re-subir factura anidado en el modal de
+        detalle del vale. Reusamos el ReuploadInvoiceModal armando un
+        InvoiceReviewRow "shim" a partir del Voucher (sólo necesitamos
+        reviewNumericId, voucher.numericId y lastCorrectionAt). Cuando
+        termina con éxito, cierra los dos modales y refresca la lista
+        de vales del tab "Vales" via onRefresh.
+      */}
+      {showReupload && voucher.reviewNumericId != null && (
+        <ReuploadInvoiceModal
+          review={{
+            id:                '',
+            numericId:         voucher.reviewNumericId,
+            status:            'correction_requested',
+            lastCorrectionNote:null,
+            lastCorrectionAt:  voucher.reviewLastCorrectionAt ?? null,
+            approvedAt:        null,
+            approvedBy:        null,
+            currentReviewerId: null,
+            currentReviewerName: null,
+            voucher: {
+              id:            '',
+              numericId:     voucher.numericId,
+              issuedAmount:  voucher.issuedAmount,
+              closedActualAmount: voucher.closedActualAmount,
+              purpose:       voucher.purpose ?? null,
+              siteId:        voucher.siteId,
+              siteName:      voucher.siteName,
+            },
+            invoice: {
+              id:            '',
+              numericId:     voucher.closedInvoiceId ?? 0,
+              invoiceNumber: invoice?.invoiceNumber ?? null,
+              fileUrl:       invoice?.fileUrl ?? null,
+              fileMimeType:  invoice?.fileMimeType ?? null,
+              total:         Number(invoice?.total ?? 0),
+              supplierName:  invoice?.supplierName ?? null,
+            },
+            requesterName: voucher.requesterName ?? null,
+          }}
+          onClose={() => setShowReupload(false)}
+          onSuccess={() => {
+            setShowReupload(false);
+            onRefresh?.();
+            onClose();
+          }}
+        />
+      )}
     </ModalShell>
   );
 }
@@ -2767,7 +2984,7 @@ function FacturasPorRevisarTab() {
   const reviews = useInvoiceReviews();
   const [filter, setFilter] = useState<
     "pending_review" | "seen" | "under_review" | "correction_requested" | "approved" | "all"
-  >("pending_review");
+  >("all");
   const [rows, setRows] = useState<InvoiceReviewRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState<DetailModalState>({ kind: "none" });
@@ -2789,30 +3006,33 @@ function FacturasPorRevisarTab() {
 
   return (
     <div className="space-y-4">
-      {/* Filtros por estado */}
-      <div className="flex flex-wrap gap-2">
-        {([
-          { k: "pending_review" as const,        l: "Pendientes",  c: "bg-blue-500" },
-          { k: "seen" as const,                  l: "Vistas",      c: "bg-orange-500" },
-          { k: "under_review" as const,          l: "En revisión", c: "bg-amber-500" },
-          { k: "correction_requested" as const,  l: "Corrección",  c: "bg-rose-500" },
-          { k: "approved" as const,              l: "Aprobadas",   c: "bg-emerald-500" },
-          { k: "all" as const,                   l: "Todas",       c: "bg-slate-400" },
-        ]).map(({ k, l, c }) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setFilter(k)}
-            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-              filter === k
-                ? "bg-emerald-600 text-white"
-                : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300"
-            }`}
-          >
-            <span className={`h-2 w-2 rounded-full ${c}`} />
-            {l}
-          </button>
-        ))}
+      {/* jul 2026 v6 — Filtro por estado como dropdown (no más chips
+          inline). Cuando NO se filtra (tab="all") la columna "Semáforo"
+          muestra solo el círculo de color para que el ojo ubique el
+          estado de un vistazo. Cuando se filtra por un estado
+          específico, se muestra el círculo + el label (porque ya se
+          sabe qué es, pero ayuda a confirmar). */}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+          Estado
+        </label>
+        <select
+          value={filter}
+          onChange={(e) => setFilter(e.target.value as typeof filter)}
+          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200"
+        >
+          <option value="all">Todas</option>
+          <option value="pending_review">Pendientes</option>
+          <option value="seen">Vistas</option>
+          <option value="under_review">En revisión</option>
+          <option value="correction_requested">Corrección</option>
+          <option value="approved">Aprobadas</option>
+        </select>
+        <span className="text-[11px] text-gray-400">
+          {filter === "all"
+            ? "Mostrando todas · el semáforo indica el estado de cada vale."
+            : "Filtrado · el label del estado se muestra en cada fila."}
+        </span>
       </div>
 
       {/* Tabla */}
@@ -2851,7 +3071,10 @@ function FacturasPorRevisarTab() {
                     {new Intl.NumberFormat("es-EC", { style: "currency", currency: "USD" }).format(r.invoice.total)}
                   </td>
                   <td className="px-4 py-3">
-                    <SemaforoPill status={r.status} />
+                    <SemaforoPill
+                      status={r.status}
+                      variant={filter === "all" ? "all" : "default"}
+                    />
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button
@@ -2888,18 +3111,29 @@ function FacturasPorRevisarTab() {
           review={modal.review}
           onClose={() => setModal({ kind: "detail", review: modal.review })}
           onStartReview={async () => {
-            // Marcar como vista (pending → seen) y abrir el checklist
-            // (seen → under_review) en una sola transición.
-            const seenR = await reviews.markSeen(modal.review.numericId);
-            if (!seenR.ok) {
-              toast.error(seenR.error);
-              return;
+            // jul 2026 v6 — Flow idempotente: si la review ya está en
+            // 'seen' o 'under_review' no re-mandamos /seen (eso rompe
+            // la máquina de estados porque under_review → seen no es
+            // una transición válida). Solo avanzamos a 'under_review'
+            // si todavía está en 'seen'. Si está en 'pending_review',
+            // hacemos los dos pasos.
+            const cur = modal.review.status;
+            if (cur === "pending_review") {
+              const seenR = await reviews.markSeen(modal.review.numericId);
+              if (!seenR.ok) {
+                toast.error(seenR.error);
+                return;
+              }
             }
-            const startR = await reviews.markStart(modal.review.numericId);
-            if (!startR.ok) {
-              toast.error(startR.error);
-              return;
+            if (cur === "pending_review" || cur === "seen") {
+              const startR = await reviews.markStart(modal.review.numericId);
+              if (!startR.ok) {
+                toast.error(startR.error);
+                return;
+              }
             }
+            // Si ya estaba en 'under_review' o 'seen', no hacemos
+            // nada extra — el backend ya tiene el estado correcto.
             toast.success("Checklist abierto");
             setRefreshKey(k => k + 1);
             setModal({ kind: "checklist", review: modal.review });
@@ -3055,7 +3289,7 @@ function CorreccionesTab() {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <SemaforoPill status={r.status} />
+                      <SemaforoPill status={r.status} variant="all" />
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button

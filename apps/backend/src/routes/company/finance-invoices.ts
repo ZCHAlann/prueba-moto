@@ -1583,7 +1583,10 @@ router.get(
       // { data, total, page, pageSize, totalPages } (buildPageResponse).
       const { page, pageSize, offset } = parsePageParams(
         req.query as Record<string, unknown>,
-        { pageSize: 50, maxPageSize: 200 },
+        // jul 2026 v9 — Default 10 para alinear con caja chica y reportes.
+        // El cap se mantiene en 100 para que el admin pueda pedir un
+        // dump grande (export, vista completa) sin que se rompa la query.
+        { pageSize: 10, maxPageSize: 100 },
       );
 
       const [rows, [countRow]] = await Promise.all([

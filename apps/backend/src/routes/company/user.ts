@@ -926,6 +926,30 @@ router.put(
           ? await resolveModulePermissionsForRole(companyId, existing[0].role)
           : modulePermissions;
 
+      // jul 2026 — Para callers con scope 'full' (admin/owner) pero NO
+      // plataforma, validar que el body no incluya keys de módulos que
+      // la empresa no tiene habilitados. El superadmin de plataforma
+      // pasa siempre. Coincide con el filtro del frontend en
+      // UsuariosPage y con la validación de POST/PATCH /roles.
+      if (
+        scope === 'full' &&
+        modulePermissions &&
+        caller.scope !== 'plataforma'
+      ) {
+        const mods = caller.companyModules ?? [];
+        if (mods.length > 0) {
+          for (const mod of Object.keys(modulePermissions)) {
+            if (!mods.includes(mod)) {
+              throw new AppError(
+                400,
+                `El módulo "${mod}" no está habilitado para esta empresa. ` +
+                `Contactá al superadmin para agregarlo al plan antes de asignar permisos.`,
+              );
+            }
+          }
+        }
+      }
+
       const [updated] = await db
         .update(companyUsers)
         .set({ modulePermissions: finalPermissions, updatedAt: new Date() })

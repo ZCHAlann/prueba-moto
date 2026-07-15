@@ -1021,18 +1021,23 @@ export function ReportsPage() {
   const isAdmin = !!session && ADMIN_ROLES.has(session.role as string);
   // jul 2026 v6 — Filtramos los módulos del sidebar interno de
   // /reportes según los módulos activos de la empresa. Si `enabledModules`
-  // no viene (modo system / sin restricción), mostramos todos. Para
-  // superadmin de plataforma mostramos todo también.
+  // jul 2026 v9 — Filtrado por módulos de la empresa. Aplica SIEMPRE
+  // cuando hay `companyId` en la sesión (UI de empresa), incluso al
+  // superadmin. Sin `companyId` (UI master) mostramos todo.
   const companyModules = (session?.companyModules ?? []) as string[];
-  const isPlatformAdmin = session?.scope === "plataforma";
+  const hasCompanyContext = !!session?.companyId;
   const visibleReportModules = useMemo(() => {
-    if (isPlatformAdmin) return REPORT_MODULES;
+    // UI master (sin empresa activa): no filtrar.
+    if (!hasCompanyContext) return REPORT_MODULES;
+    // Si el backend no devolvió módulos (caso raro, sesión vieja),
+    // mostrar todo para no romper la pantalla.
     if (companyModules.length === 0) return REPORT_MODULES;
+    // UI de empresa: filtrar por companyModules.
     return REPORT_MODULES.filter((m) =>
       !m.requiresModule || companyModules.includes(m.requiresModule)
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyModules, isPlatformAdmin, REPORT_MODULES.length]);
+  }, [companyModules, hasCompanyContext, REPORT_MODULES.length]);
   const { assets,       loading: loadingAssets }       = useAssets();
   const { drivers,      loading: loadingDrivers }      = useDrivers();
   const { assignments,  loading: loadingAssignments }  = useAssignments();

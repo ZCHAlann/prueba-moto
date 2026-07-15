@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { usePermissions } from "../../hooks/usePermissions";
 import { useFinance, type TransactionItem } from "../../hooks/useFinance";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
+import { Pagination } from "../../components/ui/Pagination";
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
@@ -150,24 +151,40 @@ function CajaChicaTab() {
   const [toDate, setToDate] = useState<string>("");
   const [items, setItems] = useState<TransactionItem[]>([]);
   const [loading, setLoading] = useState(false);
+  // jul 2026 v9 — paginación canónica.
+  const [page, setPage]         = useState(1);
+  const [total, setTotal]       = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (pageToLoad: number) => {
     setLoading(true);
     try {
-      const rows = await finance.transactions.fetch({
+      // jul 2026 v9 — paginación canónica (default 10, cap 100).
+      const result = await finance.transactions.fetch({
         scope: "petty_cash",
         fromDate: fromDate || undefined,
         toDate: toDate || undefined,
+        page:    pageToLoad,
+        pageSize,
       });
-      setItems(rows);
+      setItems(result.data);
+      setTotal(result.total);
+      setPageSize(result.pageSize);
+      setTotalPages(result.totalPages);
+      setPage(result.page);
     } catch (err) {
       toast.error("Error al cargar movimientos");
     } finally {
       setLoading(false);
     }
-  }, [finance, fromDate, toDate]);
+  }, [finance, fromDate, toDate, pageSize]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(1); }, [load]);
+
+  function handlePageChange(nextPage: number) {
+    void load(nextPage);
+  }
 
   const exportPdf = useCallback(async () => {
     try {
@@ -268,6 +285,15 @@ function CajaChicaTab() {
               </div>
             );
           })}
+          {/* jul 2026 v9 — paginación canónica. */}
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            pageSize={pageSize}
+            onPageChange={handlePageChange}
+            itemLabel="movimiento"
+          />
         </div>
       )}
     </div>
@@ -280,20 +306,38 @@ function GastosAnualesTab() {
   const finance = useFinance();
   const [items, setItems] = useState<TransactionItem[]>([]);
   const [loading, setLoading] = useState(false);
+  // jul 2026 v9 — paginación canónica.
+  const [page, setPage]         = useState(1);
+  const [total, setTotal]       = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (pageToLoad: number) => {
     setLoading(true);
     try {
-      const rows = await finance.transactions.fetch({ scope: "annual" });
-      setItems(rows);
+      // jul 2026 v9 — paginación canónica (default 10, cap 100).
+      const result = await finance.transactions.fetch({
+        scope: "annual",
+        page: pageToLoad,
+        pageSize,
+      });
+      setItems(result.data);
+      setTotal(result.total);
+      setPageSize(result.pageSize);
+      setTotalPages(result.totalPages);
+      setPage(result.page);
     } catch (err) {
       toast.error("Error al cargar gastos anuales");
     } finally {
       setLoading(false);
     }
-  }, [finance]);
+  }, [finance, pageSize]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(1); }, [load]);
+
+  function handlePageChange(nextPage: number) {
+    void load(nextPage);
+  }
 
   const exportPdf = useCallback(async () => {
     try {
@@ -434,6 +478,15 @@ function GastosAnualesTab() {
           })}
         </div>
       )}
+      {/* jul 2026 v9 — paginación canónica. */}
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        total={total}
+        pageSize={pageSize}
+        onPageChange={handlePageChange}
+        itemLabel="gasto anual"
+      />
     </div>
   );
 }

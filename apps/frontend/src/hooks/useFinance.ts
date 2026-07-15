@@ -145,6 +145,17 @@ export type Voucher = {
   // jul 2026 v5 — Migración 0051. Indica si el vale entra al flujo
   // de revisión contable. NULL = legacy (no se revisa).
   purpose?: VoucherPurpose | null;
+  // jul 2026 v6 — Estado de la review contable de la factura del vale.
+  // Si vale 'correction_requested' el vale fue reabierto para que el
+  // operador re-subiera la foto. La UI muestra una etiqueta roja
+  // "Corrección" en la fila.
+  reviewStatus?: 'pending_review' | 'seen' | 'under_review' | 'correction_requested' | 'approved' | 'not_required' | null;
+  reviewLastCorrectionAt?: string | Date | null;
+  // jul 2026 v6 — ID numérico del review (1:1 con la invoice). El
+  // modal "Ver vale" lo usa para abrir el ReuploadInvoiceModal cuando
+  // el vale está en corrección, sin tener que volver a la pestaña
+  // "Correcciones".
+  reviewNumericId?: number | null;
 };
 
 export type TransactionItem = {
@@ -240,12 +251,23 @@ export function useFinance() {
       status?: FinanceRequestStatus | "all" | "approved";
       mine?: boolean;
       siteId?: number;
-    } = {}): Promise<FinanceRequest[]> => {
-      if (!companyId) return [];
+      // jul 2026 v9 — paginación canónica (default 10, cap 100).
+      page?: number;
+      pageSize?: number;
+    } = {}): Promise<{
+      data: FinanceRequest[];
+      total: number;
+      page: number;
+      pageSize: number;
+      totalPages: number;
+    }> => {
+      if (!companyId) return { data: [], total: 0, page: 1, pageSize: 10, totalPages: 1 };
       const params = new URLSearchParams();
       if (filters.status && filters.status !== "all") params.set("status", filters.status);
       if (filters.mine) params.set("mine", "true");
       if (filters.siteId) params.set("siteId", String(filters.siteId));
+      if (filters.page) params.set("page", String(filters.page));
+      if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
       const qs = params.toString();
       const res = await fetch(
         `/api/company/${companyId}/finance/requests${qs ? `?${qs}` : ""}`,
@@ -253,7 +275,13 @@ export function useFinance() {
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => "")}`);
       const json = await res.json();
-      return (json.requests ?? []) as FinanceRequest[];
+      return {
+        data: (json.requests ?? []) as FinanceRequest[],
+        total: Number(json.total ?? 0),
+        page:  Number(json.page  ?? filters.page ?? 1),
+        pageSize: Number(json.pageSize ?? filters.pageSize ?? 10),
+        totalPages: Number(json.totalPages ?? 1),
+      };
     };
 
     const createRequest = async (params: {
@@ -330,12 +358,23 @@ export function useFinance() {
       status?: VoucherStatus | "all";
       mine?: boolean;
       siteId?: number;
-    } = {}): Promise<Voucher[]> => {
-      if (!companyId) return [];
+      // jul 2026 v9 — paginación canónica (default 10, cap 100).
+      page?: number;
+      pageSize?: number;
+    } = {}): Promise<{
+      data: Voucher[];
+      total: number;
+      page: number;
+      pageSize: number;
+      totalPages: number;
+    }> => {
+      if (!companyId) return { data: [], total: 0, page: 1, pageSize: 10, totalPages: 1 };
       const params = new URLSearchParams();
       if (filters.status && filters.status !== "all") params.set("status", filters.status);
       if (filters.mine) params.set("mine", "true");
       if (filters.siteId) params.set("siteId", String(filters.siteId));
+      if (filters.page) params.set("page", String(filters.page));
+      if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
       const qs = params.toString();
       const res = await fetch(
         `/api/company/${companyId}/finance/vouchers${qs ? `?${qs}` : ""}`,
@@ -343,7 +382,13 @@ export function useFinance() {
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => "")}`);
       const json = await res.json();
-      return (json.vouchers ?? []) as Voucher[];
+      return {
+        data: (json.vouchers ?? []) as Voucher[],
+        total: Number(json.total ?? 0),
+        page:  Number(json.page  ?? filters.page ?? 1),
+        pageSize: Number(json.pageSize ?? filters.pageSize ?? 10),
+        totalPages: Number(json.totalPages ?? 1),
+      };
     };
 
     const closeVoucher = async (params: {
@@ -531,19 +576,36 @@ export function useFinance() {
       scope?: "petty_cash" | "annual" | "all";
       fromDate?: string;
       toDate?: string;
-    } = {}): Promise<TransactionItem[]> => {
-      if (!companyId) return [];
+      // jul 2026 v9 — paginación canónica (default 10, cap 100).
+      page?: number;
+      pageSize?: number;
+    } = {}): Promise<{
+      data: TransactionItem[];
+      total: number;
+      page: number;
+      pageSize: number;
+      totalPages: number;
+    }> => {
+      if (!companyId) return { data: [], total: 0, page: 1, pageSize: 10, totalPages: 1 };
       const params = new URLSearchParams();
       params.set("scope", filters.scope ?? "all");
       if (filters.fromDate) params.set("from", filters.fromDate);
       if (filters.toDate) params.set("to", filters.toDate);
+      if (filters.page) params.set("page", String(filters.page));
+      if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
       const res = await fetch(
         `/api/company/${companyId}/finance/transactions?${params.toString()}`,
         { credentials: "include" },
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => "")}`);
       const json = await res.json();
-      return (json.items ?? []) as TransactionItem[];
+      return {
+        data: (json.items ?? []) as TransactionItem[],
+        total: Number(json.total ?? 0),
+        page:  Number(json.page  ?? filters.page ?? 1),
+        pageSize: Number(json.pageSize ?? filters.pageSize ?? 10),
+        totalPages: Number(json.totalPages ?? 1),
+      };
     };
 
     const downloadTransactionsPdf = async (filters: {

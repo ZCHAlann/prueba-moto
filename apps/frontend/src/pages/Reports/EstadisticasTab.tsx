@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useMemo, useRef, useContext } from "react";
+import { useState, useMemo, useRef, useContext, useEffect } from "react";
 import * as React from "react";
 import { useNavigate } from "react-router";
+import { useAuth } from "../../context/AuthContext";
 import {
   Wrench, Fuel, Truck, Users, ClipboardList, Bell,
   AirVent, Shield, MapPin, FileText,
@@ -69,6 +70,14 @@ type ModuloDef = {
   key: Modulo; label: string;
   icon: React.ComponentType<{ size?: number; className?: string }>;
   color: string; group: "Operación" | "Control";
+  /**
+   * jul 2026 — Módulo de empresa requerido para que este item aparezca
+   * en el sidebar de Estadísticas. Mismo mecanismo que `requiresModule`
+   * en REPORT_MODULES (ReportsPage.tsx). Coincide con la `MODULE_TREE`
+   * key del backend (gestion, mantenimiento, combustible, checklist,
+   * alertas, autorizaciones, etc.).
+   */
+  requiresModule?: string;
 };
 
 const MODULE_ROUTES: Record<Modulo, string> = {
@@ -84,17 +93,23 @@ const MODULE_ROUTES: Record<Modulo, string> = {
   asignaciones:   "/operaciones/asignaciones",
 };
 
+// ⚠️ Verifica los `requiresModule` contra la MODULE_TREE real del backend.
+// Los que coinciden 1:1 con REPORT_MODULES (ReportsPage.tsx) son:
+// mantenimiento, combustible, checklist, alertas. El resto (flotas,
+// conductores, ac, seguros, peajes, asignaciones) los mapeé a "gestion"
+// como mejor suposición — ajústalos si tu MODULE_TREE tiene keys propias
+// para alguno de ellos (p.ej. "seguros", "peajes", "ac").
 const MODULOS: ModuloDef[] = [
-  { key: "mantenimiento", label: "Mantenimiento", icon: Wrench,        color: MODULE_COLOR.mantenimiento, group: "Operación" },
-  { key: "combustible",   label: "Combustible",   icon: Fuel,          color: MODULE_COLOR.combustible,   group: "Operación" },
-  { key: "flotas",        label: "Flotas",        icon: Truck,         color: MODULE_COLOR.flotas,        group: "Operación" },
-  { key: "conductores",   label: "Conductores",   icon: Users,         color: MODULE_COLOR.conductores,   group: "Operación" },
-  { key: "checklists",    label: "Checklists",    icon: ClipboardList, color: MODULE_COLOR.checklists,    group: "Control"   },
-  { key: "alertas",       label: "Alertas",       icon: Bell,          color: MODULE_COLOR.alertas,       group: "Control"   },
-  { key: "ac",            label: "A/C",           icon: AirVent,       color: MODULE_COLOR.ac,            group: "Control"   },
-  { key: "seguros",       label: "Seguros",       icon: Shield,        color: MODULE_COLOR.seguros,       group: "Control"   },
-  { key: "peajes",        label: "Peajes",        icon: MapPin,        color: MODULE_COLOR.peajes,        group: "Control"   },
-  { key: "asignaciones",  label: "Asignaciones",  icon: FileText,      color: MODULE_COLOR.asignaciones,  group: "Control"   },
+  { key: "mantenimiento", label: "Mantenimiento", icon: Wrench,        color: MODULE_COLOR.mantenimiento, group: "Operación", requiresModule: "mantenimiento" },
+  { key: "combustible",   label: "Combustible",   icon: Fuel,          color: MODULE_COLOR.combustible,   group: "Operación", requiresModule: "combustible"   },
+  { key: "flotas",        label: "Flotas",        icon: Truck,         color: MODULE_COLOR.flotas,        group: "Operación", requiresModule: "gestion"       },
+  { key: "conductores",   label: "Conductores",   icon: Users,         color: MODULE_COLOR.conductores,   group: "Operación", requiresModule: "gestion"       },
+  { key: "checklists",    label: "Checklists",    icon: ClipboardList, color: MODULE_COLOR.checklists,    group: "Control",   requiresModule: "checklist"     },
+  { key: "alertas",       label: "Alertas",       icon: Bell,          color: MODULE_COLOR.alertas,       group: "Control",   requiresModule: "alertas"       },
+  { key: "ac",            label: "A/C",           icon: AirVent,       color: MODULE_COLOR.ac,            group: "Control",   requiresModule: "ac"            },
+  { key: "seguros",       label: "Seguros",       icon: Shield,        color: MODULE_COLOR.seguros,       group: "Control",   requiresModule: "seguros"       },
+  { key: "peajes",        label: "Peajes",        icon: MapPin,        color: MODULE_COLOR.peajes,        group: "Control",   requiresModule: "peajes"        },
+  { key: "asignaciones",  label: "Asignaciones",  icon: FileText,      color: MODULE_COLOR.asignaciones,  group: "Control",   requiresModule: "gestion"       },
 ];
 
 const PERIODS: { key: Periodo; label: string }[] = [
@@ -104,7 +119,6 @@ const PERIODS: { key: Periodo; label: string }[] = [
 ];
 
 // ─── HELPERS ──────────────────────────────────────────────────────
-// Helpers locales que NO están en el archivo compartido.
 function fmtDelta(pct?: number) {
   if (pct == null || !Number.isFinite(pct)) return null;
   const v = Math.round(pct * 10) / 10;
@@ -112,8 +126,6 @@ function fmtDelta(pct?: number) {
 }
 
 // ─── CHART CARD ───────────────────────────────────────────────────
-// CC no se reutiliza en el canvas (los widgets del canvas usan otro layout)
-// pero vive acá para no romper el resto del archivo.
 function CC({ title, subtitle, children, height = 240, onClick }: {
   title: string; subtitle?: string; children: React.ReactNode; height?: number;
   onClick?: () => void;
@@ -132,20 +144,14 @@ function CC({ title, subtitle, children, height = 240, onClick }: {
 
 // ═══════════════════════════════════════════════════════════════════
 // CHARTS ESPECÍFICOS QUE NO SE REUSAN EN EL CANVAS
-// (AreaComparativa y RadialDist son single-entity — el canvas usa sus
-//  equivalentes multi-entidad desde components/estadisticas/charts.tsx)
 // ═══════════════════════════════════════════════════════════════════
 
-// Area comparativa: período actual vs anterior (single entity)
-// NOTA: usa recharts directo porque solo se usa acá. Mantenemos
-// recharts en este archivo solo para AreaComparativa y RadialDist.
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis,
   LabelList, RadialBar, RadialBarChart,
   ResponsiveContainer, Tooltip, Legend, Cell,
 } from "recharts";
 
-// Area comparativa: período actual vs anterior
 function AreaComparativa({ data, color, label1 = "Actual", label2 = "Anterior", unidad = "" }: {
   data: { x: string; actual: number; anterior: number }[];
   color: string; label1?: string; label2?: string; unidad?: string;
@@ -179,7 +185,6 @@ function AreaComparativa({ data, color, label1 = "Actual", label2 = "Anterior", 
   );
 }
 
-// Radial bar distribución
 function RadialDist({ data, color }: { data: BarPoint[]; color: string }) {
   if (!data.length || data.every(d => d.y === 0)) return <ChartEmpty />;
   const radialData = data.map((d, i) => ({ ...d, fill: SEQ[i % SEQ.length] }));
@@ -357,6 +362,19 @@ function ChecklistsLayout({ d, color, onClick }: { d: EstadisticasData; color: s
   );
 }
 
+function dedupeComp<T extends { categoria?: string; periodo?: string }>(arr: T[]): T[] {
+  if (!Array.isArray(arr)) return arr;
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const row of arr) {
+    const key = `${row.categoria ?? ""}__${row.periodo ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
 function AlertasLayout({ d, color, onClick }: { d: EstadisticasData; color: string; onClick?: () => void }) {
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -491,7 +509,7 @@ function KpiCard({ kpi, color, onClick }: { kpi: KpiItem; color: string; onClick
 // SIDEBAR
 // ═══════════════════════════════════════════════════════════════════
 
-function Sidebar({ activeKey, onSelect }: { activeKey: Modulo; onSelect: (k: Modulo) => void }) {
+function Sidebar({ activeKey, onSelect, modulos }: { activeKey: Modulo; onSelect: (k: Modulo) => void; modulos: ModuloDef[] }) {
   const [pinned, setPinned] = useState(false);
   const [hovered, setHovered] = useState(false);
   const closeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -510,31 +528,35 @@ function Sidebar({ activeKey, onSelect }: { activeKey: Modulo; onSelect: (k: Mod
           {expanded && <span className="text-[12.5px] font-bold text-gray-900 dark:text-white whitespace-nowrap">Estadísticas</span>}
         </div>
         <nav className="flex-1 overflow-y-auto overflow-x-hidden space-y-3 mt-1">
-          {(["Operación", "Control"] as const).map(g => (
-            <div key={g}>
-              {expanded && <p className="px-2 pb-1 text-[9.5px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">{g}</p>}
-              <ul className="space-y-1">
-                {MODULOS.filter(m => m.group === g).map(m => {
-                  const Icon = m.icon;
-                  const active = activeKey === m.key;
-                  return (
-                    <li key={m.key}>
-                      <button type="button" onClick={() => onSelect(m.key)} title={!expanded ? m.label : undefined}
-                        className={`flex w-full items-center gap-2.5 rounded-xl text-[12px] font-medium transition-colors
-                          ${expanded ? "px-2.5 py-2" : "h-11 w-11 justify-center mx-auto"}
-                          ${active ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900" : "text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/[0.06]"}`}>
-                        <span className={`flex flex-shrink-0 items-center justify-center rounded-lg ${expanded ? "h-7 w-7" : "h-8 w-8"} ${active ? "bg-white/15" : ""}`}
-                          style={!active ? { color: m.color, background: `${m.color}18` } : {}}>
-                          <Icon size={expanded ? 13 : 15} className={active ? "text-white dark:text-gray-900" : ""} />
-                        </span>
-                        {expanded && (<><span className="truncate flex-1">{m.label}</span>{active && <ChevronRight size={11} className="opacity-60" />}</>)}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ))}
+          {(["Operación", "Control"] as const).map(g => {
+            const groupModulos = modulos.filter(m => m.group === g);
+            if (groupModulos.length === 0) return null;
+            return (
+              <div key={g}>
+                {expanded && <p className="px-2 pb-1 text-[9.5px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">{g}</p>}
+                <ul className="space-y-1">
+                  {groupModulos.map(m => {
+                    const Icon = m.icon;
+                    const active = activeKey === m.key;
+                    return (
+                      <li key={m.key}>
+                        <button type="button" onClick={() => onSelect(m.key)} title={!expanded ? m.label : undefined}
+                          className={`flex w-full items-center gap-2.5 rounded-xl text-[12px] font-medium transition-colors
+                            ${expanded ? "px-2.5 py-2" : "h-11 w-11 justify-center mx-auto"}
+                            ${active ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900" : "text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/[0.06]"}`}>
+                          <span className={`flex flex-shrink-0 items-center justify-center rounded-lg ${expanded ? "h-7 w-7" : "h-8 w-8"} ${active ? "bg-white/15" : ""}`}
+                            style={!active ? { color: m.color, background: `${m.color}18` } : {}}>
+                            <Icon size={expanded ? 13 : 15} className={active ? "text-white dark:text-gray-900" : ""} />
+                          </span>
+                          {expanded && (<><span className="truncate flex-1">{m.label}</span>{active && <ChevronRight size={11} className="opacity-60" />}</>)}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            );
+          })}
         </nav>
         <div className={`mt-1 border-t border-gray-100 dark:border-white/[0.05] pt-2 flex ${expanded ? "justify-end px-1" : "justify-center"}`}>
           <button type="button" onClick={() => setPinned(p => !p)} title={pinned ? "Soltar" : "Fijar"}
@@ -553,7 +575,26 @@ function Sidebar({ activeKey, onSelect }: { activeKey: Modulo; onSelect: (k: Mod
 
 export function EstadisticasTab({ companyId }: { companyId: string }) {
   const navigate = useNavigate();
-  const [moduloKey, setModuloKey] = useState<Modulo>("mantenimiento");
+  const { session } = useAuth();
+
+  // jul 2026 — Mismo filtrado que `visibleReportModules` en ReportsPage.tsx:
+  // ocultamos del sidebar de Estadísticas los módulos que la empresa no
+  // tiene activos. Sin `companyId` en la sesión (UI master) no filtramos.
+  const companyModules = (session?.companyModules ?? []) as string[];
+  const hasCompanyContext = !!session?.companyId;
+  // jul 2026 v9 — Gate del botón "Informe completo" (línea ~697). El
+  // informe lo genera la IA (Groq); si la empresa no tiene el módulo
+  // `jarvis` habilitado en su plan, el botón no debe aparecer. Coincide
+  // con el gating de `getGroqKeyForCompany` en el backend.
+  const hasJarvis = !hasCompanyContext || companyModules.includes("jarvis");
+  const visibleModulos = useMemo(() => {
+    if (!hasCompanyContext) return MODULOS;
+    if (companyModules.length === 0) return MODULOS;
+    return MODULOS.filter((m) => !m.requiresModule || companyModules.includes(m.requiresModule));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyModules, hasCompanyContext]);
+
+  const [moduloKey, setModuloKey] = useState<Modulo>(() => visibleModulos[0]?.key ?? "mantenimiento");
   const [periodo, setPeriodo]     = useState<Periodo>("month");
 
   const [fechaDesde, setFechaDesde]     = useState(daysFromNowEcuador(-90));
@@ -565,19 +606,29 @@ export function EstadisticasTab({ companyId }: { companyId: string }) {
   const [assetId]  = useState<number | null>(null);
   const [driverId] = useState<number | null>(null);
 
-  const modulo = useMemo(() => MODULOS.find(m => m.key === moduloKey)!, [moduloKey]);
+  // jul 2026 — Si moduloKey quedó apuntando a un módulo que la empresa no
+  // tiene habilitado (cambió de plan, o quedó guardado de una sesión
+  // vieja), caemos al primero visible. Mismo fallback que en ReportsPage.
+  useEffect(() => {
+    if (!visibleModulos.some((m) => m.key === moduloKey)) {
+      setModuloKey(visibleModulos[0]?.key ?? "mantenimiento");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleModulos]);
+
+  const modulo = useMemo(
+    () => visibleModulos.find(m => m.key === moduloKey) ?? visibleModulos[0] ?? MODULOS[0],
+    [visibleModulos, moduloKey],
+  );
   const { exportar, loading: exporting } = useExportarPDF();
 
   const { data, loading, error, refetch } = useEstadisticas({
-    companyId, modulo: moduloKey, periodo,
+    companyId, modulo: modulo.key, periodo,
     fecha: fechaApDesde, fechaHasta: fechaApHasta, assetId, driverId,
   });
 
   function applyDates() { setFechaApDesde(fechaDesde); setFechaApHasta(fechaHasta); setDateOpen(false); }
 
-  // Cuando cambia el período (Mes/Trimestre/Año), actualizar el rango
-  // de fechas aplicado a las gráficas para que realmente se regeneren
-  // con el rango correspondiente al período elegido.
   function setPeriodoAndApply(p: Periodo) {
     setPeriodo(p);
     const today = todayEcuador();
@@ -589,14 +640,12 @@ export function EstadisticasTab({ companyId }: { companyId: string }) {
       const d = new Date(today);
       d.setMonth(startMonth, 1);
       const isoStart = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-      // último día del trimestre: ir al primer día del siguiente trimestre menos 1
       const end = new Date(d);
       end.setMonth(startMonth + 3, 0);
       const isoEnd = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
       setFechaApDesde(isoStart);
       setFechaApHasta(isoEnd);
     } else {
-      // year
       const y = new Date(today).getFullYear();
       setFechaApDesde(`${y}-01-01`);
       setFechaApHasta(today);
@@ -605,9 +654,9 @@ export function EstadisticasTab({ companyId }: { companyId: string }) {
 
   return (
     <div className="flex items-start gap-4">
-      <Sidebar activeKey={moduloKey} onSelect={setModuloKey} />
+      <Sidebar activeKey={modulo.key} onSelect={setModuloKey} modulos={visibleModulos} />
       <AnimatePresence mode="wait">
-        <motion.div key={moduloKey}
+        <motion.div key={modulo.key}
           initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
           transition={{ duration: 0.16, ease: "easeOut" }}
           className="flex-1 min-w-0 space-y-4">
@@ -650,16 +699,22 @@ export function EstadisticasTab({ companyId }: { companyId: string }) {
                 className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] px-3 py-1.5 text-[12px] font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-white/[0.04]">
                 <RefreshCw size={11} className={loading ? "animate-spin" : ""} /> Refrescar
               </button>
-              <button type="button" onClick={() => setInformeOpen((v) => !v)}
-                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[12px] font-semibold transition ${
-                  informeOpen
-                    ? "border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900"
-                    : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 dark:border-white/[0.06] dark:bg-white/[0.02] dark:text-gray-200"
-                }`}>
-                <Sparkles size={11} /> {informeOpen ? "Ocultar informe" : "Informe completo"}
-              </button>
+              {/* jul 2026 v9 — El botón "Informe completo" sólo aparece si la
+                  empresa tiene el módulo `jarvis` (Asistente IA) en su plan.
+                  Sin jarvis, el backend devuelve 503 al pedir el informe y
+                  la UX queda mejor simplemente ocultando el control. */}
+              {hasJarvis && (
+                <button type="button" onClick={() => setInformeOpen((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[12px] font-semibold transition ${
+                    informeOpen
+                      ? "border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900"
+                      : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 dark:border-white/[0.06] dark:bg-white/[0.02] dark:text-gray-200"
+                  }`}>
+                  <Sparkles size={11} /> {informeOpen ? "Ocultar informe" : "Informe completo"}
+                </button>
+              )}
               <button type="button" disabled={exporting}
-                onClick={() => exportar({ companyId, modulo: moduloKey, periodo, fecha: fechaApDesde, fechaHasta: fechaApHasta, assetId, driverId })}
+                onClick={() => exportar({ companyId, modulo: modulo.key, periodo, fecha: fechaApDesde, fechaHasta: fechaApHasta, assetId, driverId })}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-gray-900 hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-100 dark:text-gray-900 px-3.5 py-1.5 text-[12px] font-semibold text-white shadow-sm disabled:opacity-50">
                 <FileDown size={11} className={exporting ? "animate-pulse" : ""} />
                 {exporting ? "Generando…" : "PDF"}
@@ -691,7 +746,7 @@ export function EstadisticasTab({ companyId }: { companyId: string }) {
             <AIInsightsProvider companyId={companyId} modulo={modulo} periodo={periodo}
               fecha={fechaApDesde} fechaHasta={fechaApHasta} assetId={assetId} driverId={driverId}>
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                {data.kpis.map(k => <KpiCard key={k.label} kpi={k} color={modulo.color} onClick={() => navigate(`${MODULE_ROUTES[moduloKey]}?from=${fechaApDesde}&to=${fechaApHasta}&kpi=${encodeURIComponent(k.label)}`)} />)}
+                {data.kpis.map(k => <KpiCard key={k.label} kpi={k} color={modulo.color} onClick={() => navigate(`${MODULE_ROUTES[modulo.key]}?from=${fechaApDesde}&to=${fechaApHasta}&kpi=${encodeURIComponent(k.label)}`)} />)}
               </div>
               <ModuleCharts modulo={modulo} data={data} navigate={navigate} />
               <AIInformeCompleto open={informeOpen}

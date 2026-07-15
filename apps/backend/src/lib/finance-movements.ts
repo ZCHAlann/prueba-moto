@@ -737,6 +737,8 @@ export async function listTransactions(params: {
   fromDate?: string;
   toDate?: string;
   scope: 'petty_cash' | 'annual' | 'all';
+  // jul 2026 v6 — Filtrar por sede (para el PDF del tab Historial).
+  siteId?: number | null;
 }): Promise<Array<{
   source: 'petty_cash_movement' | 'annual_expense';
   id: number;
@@ -749,7 +751,7 @@ export async function listTransactions(params: {
   actorName: string | null;
   balanceAfter: string | null;
 }>> {
-  const { companyId, fromDate, toDate, scope } = params;
+  const { companyId, fromDate, toDate, scope, siteId } = params;
   const out: Array<{
     source: 'petty_cash_movement' | 'annual_expense';
     id: number;
@@ -783,6 +785,7 @@ export async function listTransactions(params: {
       FROM company_petty_cash_movements m
       LEFT JOIN company_users u ON u.id = m.actor_user_id
       WHERE m.company_id = ${companyId}
+        ${siteId ? sql`AND m.account_id IN (SELECT id FROM company_petty_cash_accounts WHERE site_id = ${siteId})` : sql``}
         ${fromDate ? sql`AND m.occurred_at >= ${fromDate}::timestamp` : sql``}
         ${toDate   ? sql`AND m.occurred_at <= ${toDate}::timestamp`   : sql``}
       ORDER BY m.occurred_at DESC
@@ -883,7 +886,126 @@ function humanizeMovementType(type: string): string {
     case 'request_approved_annual':    return 'Solicitud aprobada (gasto anual)';
     case 'voucher_closed_refund':      return 'Reembolso por vale cerrado';
     case 'voucher_cancelled':          return 'Vale cancelado';
+    case 'voucher_reopened_correction':return 'Vale reabierto por corrección';
+    case 'voucher_reclosed_correction':return 'Vale recerrado tras corrección';
     case 'manual_adjustment':          return 'Ajuste manual';
     default: return type;
   }
+}
+
+// ─── jul 2026 v6 — Vale reabierto por corrección de factura ────────────────
+//
+// Cuando un revisor manda una factura a corrección, el vale asociado
+// (que ya estaba 'closed') se re-abre a 'open' para que el operador
+// pueda re-subir la foto. Esto NO crea un vale nuevo — es el mismo vale
+// con un nuevo estado. Aquí dejamos el rastro en el historial de
+// movimientos con un type explícito y notificamos a admins + al
+// aprobador original (no al operador, que ya recibe su propia
+// notificación via /finance/invoice-reviews/:id/send-to-correction).
+//
+// El cierre posterior (al aprobar la corrección) lo registra
+// `recordVoucherRecloseForCorrection`.
+
+export async function recordVoucherReopenForCorrection(params: {
+  voucherId: number;
+  note: string;
+  actorUserId: number;
+}) {
+  const { voucherId, note, actorUserId } = params;
+  const [voucher] = await db
+    .select()
+    .from(companyPettyCashVouchers)
+    .where(eq(companyPettyCashVouchers.id, voucherId))
+    .limit(1);
+  if (!voucher) return;
+  // El saldo de la caja NO cambia al reabrir/cerrar — el balance
+  // After se materializa en el PL cuando se cierra originalmente, y
+  // al re-cerrar se vuelve a aplicar. Acá el balanceAfter es el
+  // currentBalance de la cuenta activa en esa sede (mismo valor que
+  // tendría hoy).
+  const [account] = await db
+    .select()
+    .from(companyPettyCashAccounts)
+    .where(and(
+      eq(companyPettyCashAccounts.companyId, voucher.companyId),
+      eq(companyPettyCashAccounts.siteId, voucher.siteId),
+      eq(companyPettyCashAccounts.isActive, true),
+    ))
+    .limit(1);
+  if (!account) return;
+  await db.insert(companyPettyCashMovements).values({
+    companyId: voucher.companyId,
+    accountId: account.id,
+    type: 'voucher_reopened_correction',
+    amount: '0',
+    balanceAfter: String(account.currentBalance),
+    relatedVoucherId: voucher.id,
+    relatedRequestId: voucher.requestId,
+    actorUserId,
+    note: note.slice(0, 500),
+  });
+
+  // Notificar a admins (excepto el actor) y al aprobador original
+  // para que tengan visibilidad en su inbox.
+  await notifyAdminsExceptActor(voucher.companyId, actorUserId, {
+    kind: 'finance_invoice_correction_requested_admin',
+    title: `Vale #${voucher.id} reabierto por corrección`,
+    body:  note.slice(0, 200),
+    payload: { voucherId: voucher.id, reason: 'correction' },
+  });
+  try {
+    const [reqRow] = await db
+      .select({ approverUserId: companyFinanceRequests.approverUserId })
+      .from(companyFinanceRequests)
+      .where(eq(companyFinanceRequests.id, voucher.requestId))
+      .limit(1);
+    const approverId = reqRow?.approverUserId ?? null;
+    if (approverId && approverId !== actorUserId) {
+      await notify({
+        companyId: voucher.companyId,
+        userId: approverId,
+        kind: 'finance_invoice_correction_requested_admin',
+        title: `Vale #${voucher.id} reabierto por corrección`,
+        body:  note.slice(0, 200),
+        payload: { voucherId: voucher.id, reason: 'correction' },
+      });
+    }
+  } catch (approverNotifErr) {
+    console.warn('[recordVoucherReopenForCorrection] approver notification skipped:', (approverNotifErr as Error).message);
+  }
+}
+
+export async function recordVoucherRecloseForCorrection(params: {
+  voucherId: number;
+  actorUserId: number;
+  note?: string;
+}) {
+  const { voucherId, actorUserId, note } = params;
+  const [voucher] = await db
+    .select()
+    .from(companyPettyCashVouchers)
+    .where(eq(companyPettyCashVouchers.id, voucherId))
+    .limit(1);
+  if (!voucher) return;
+  const [account] = await db
+    .select()
+    .from(companyPettyCashAccounts)
+    .where(and(
+      eq(companyPettyCashAccounts.companyId, voucher.companyId),
+      eq(companyPettyCashAccounts.siteId, voucher.siteId),
+      eq(companyPettyCashAccounts.isActive, true),
+    ))
+    .limit(1);
+  if (!account) return;
+  await db.insert(companyPettyCashMovements).values({
+    companyId: voucher.companyId,
+    accountId: account.id,
+    type: 'voucher_reclosed_correction',
+    amount: '0',
+    balanceAfter: String(account.currentBalance),
+    relatedVoucherId: voucher.id,
+    relatedRequestId: voucher.requestId,
+    actorUserId,
+    note: (note ?? 'Corrección de factura aprobada; vale recerrado.').slice(0, 500),
+  });
 }

@@ -63,6 +63,7 @@ import { AppError, NotFoundError } from '../../lib/errors';
 import { toId, parseIdFlexible } from '../../lib/ids';
 import { validate } from '../../lib/validate';
 import { isAdminRole, hasPermOrAdmin } from '../../lib/finance-bypass';
+import { parsePageParams } from '../../lib/pagination';
 import {
   applyFinanceRequestApproval,
   rejectFinanceRequest,
@@ -292,6 +293,12 @@ router.get('/requests', async (req, res, next) => {
     const companyId = ensureCompanyId(req.companyId);
     const userId    = getUserId(req);
 
+    // jul 2026 v9 — paginación canónica (default 10, cap 100).
+    const { page, pageSize, offset } = parsePageParams(
+      req.query as Record<string, unknown>,
+      { pageSize: 10, maxPageSize: 100 },
+    );
+
     const rawStatus = typeof req.query.status === 'string' ? req.query.status
                     : typeof req.query.tab   === 'string' ? req.query.tab
                     : null;
@@ -324,29 +331,37 @@ router.get('/requests', async (req, res, next) => {
     }
     if (siteId) conditions.push(eq(companyFinanceRequests.siteId, siteId));
 
-    const rows = await db
-      .select({
-        id: companyFinanceRequests.id,
-        siteId: companyFinanceRequests.siteId,
-        siteName: companySites.name,
-        requesterUserId: companyFinanceRequests.requesterUserId,
-        approverUserId: companyFinanceRequests.approverUserId,
-        amount: companyFinanceRequests.amount,
-        reason: companyFinanceRequests.reason,
-        origin: companyFinanceRequests.origin,
-        maintenanceId: companyFinanceRequests.maintenanceId,
-        maintenanceItemId: companyFinanceRequests.maintenanceItemId,
-        classification: companyFinanceRequests.classification,
-        status: companyFinanceRequests.status,
-        rejectionReason: companyFinanceRequests.rejectionReason,
-        reviewedAt: companyFinanceRequests.reviewedAt,
-        createdAt: companyFinanceRequests.createdAt,
-      })
-      .from(companyFinanceRequests)
-      .leftJoin(companySites, eq(companySites.id, companyFinanceRequests.siteId))
-      .where(and(...conditions))
-      .orderBy(desc(companyFinanceRequests.createdAt))
-      .limit(200);
+    const [rows, [countRow]] = await Promise.all([
+      db
+        .select({
+          id: companyFinanceRequests.id,
+          siteId: companyFinanceRequests.siteId,
+          siteName: companySites.name,
+          requesterUserId: companyFinanceRequests.requesterUserId,
+          approverUserId: companyFinanceRequests.approverUserId,
+          amount: companyFinanceRequests.amount,
+          reason: companyFinanceRequests.reason,
+          origin: companyFinanceRequests.origin,
+          maintenanceId: companyFinanceRequests.maintenanceId,
+          maintenanceItemId: companyFinanceRequests.maintenanceItemId,
+          classification: companyFinanceRequests.classification,
+          status: companyFinanceRequests.status,
+          rejectionReason: companyFinanceRequests.rejectionReason,
+          reviewedAt: companyFinanceRequests.reviewedAt,
+          createdAt: companyFinanceRequests.createdAt,
+        })
+        .from(companyFinanceRequests)
+        .leftJoin(companySites, eq(companySites.id, companyFinanceRequests.siteId))
+        .where(and(...conditions))
+        .orderBy(desc(companyFinanceRequests.createdAt))
+        .limit(pageSize)
+        .offset(offset),
+      db
+        .select({ value: sql<number>`cast(count(*) as int)` })
+        .from(companyFinanceRequests)
+        .where(and(...conditions)),
+    ]);
+    const total = countRow?.value ?? 0;
 
     // Hidratamos nombres de usuario con una query batch.
     const userIds = Array.from(new Set([
@@ -390,6 +405,11 @@ router.get('/requests', async (req, res, next) => {
         reviewedAt: r.reviewedAt,
         createdAt: r.createdAt,
       })),
+      // jul 2026 v9 — paginación canónica (mismo shape que buildPageResponse).
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
     });
   } catch (err) {
     next(err);
@@ -527,7 +547,21 @@ router.post('/requests',
 router.get('/requests/:id', async (req, res, next) => {
   try {
     const companyId = ensureCompanyId(req.companyId);
+    const userId    = getUserId(req);
     const numericId = parseIdFlexible('any', String(req.params.id));
+
+    // jul 2026 v6 — Permisos granulares: un operador normal solo puede
+    // ver el detalle de SUS solicitudes. Si no es admin/owner y no
+    // tiene permiso 'ver_todos'/'aprobar'/'reponer', validamos que
+    // sea el dueño. Devuelve 404 (no 403) para no leakear la
+    // existencia de la solicitud.
+    const userPerms     = ((req.user as any)?.modulePermissions as Record<string, Record<string, string[]>>) ?? {};
+    const cajaChicaPerms = new Set(userPerms.finanzas?.caja_chica ?? []);
+    const canSeeAllRequests =
+      isAdminRole(req) ||
+      cajaChicaPerms.has('aprobar') ||
+      cajaChicaPerms.has('reponer') ||
+      cajaChicaPerms.has('ver_todos');
 
     const [row] = await db
       .select({
@@ -544,6 +578,10 @@ router.get('/requests/:id', async (req, res, next) => {
       .limit(1);
 
     if (!row) throw new NotFoundError('Solicitud', String(numericId));
+    if (!canSeeAllRequests && row.req.requesterUserId !== userId) {
+      // 404 (no 403) para no revelar que existe.
+      throw new NotFoundError('Solicitud', String(numericId));
+    }
 
     // Si la solicitud tiene voucher asociado, lo devolvemos también.
     const [voucher] = await db
@@ -662,6 +700,44 @@ router.get('/vouchers', async (req, res, next) => {
     const companyId = ensureCompanyId(req.companyId);
     const userId    = getUserId(req);
 
+    // jul 2026 v6 — Resync defensivo. Antes de devolver la lista,
+    // reconcilia vales que quedaron en estado inconsistente: cerrados
+    // (voucher.status='closed') pero con su review en
+    // 'correction_requested' (que debería haberlos reabierto a 'open').
+    // Esto pasa con vales que se enviaron a corrección ANTES de que el
+    // backend tuviera la lógica de reopen, o si el `tsx watch` no
+    // alcanzó a recompilar el handler a tiempo. La reconciliación es
+    // idempotente y barata (índice en (voucher_id)).
+    try {
+      const stale = await db
+        .select({ voucherId: companyInvoiceReviews.voucherId })
+        .from(companyInvoiceReviews)
+        .innerJoin(companyPettyCashVouchers, eq(companyPettyCashVouchers.id, companyInvoiceReviews.voucherId))
+        .where(and(
+          eq(companyInvoiceReviews.companyId, companyId),
+          eq(companyInvoiceReviews.status, 'correction_requested'),
+          eq(companyPettyCashVouchers.status, 'closed'),
+        ));
+      if (stale.length > 0) {
+        const ids = stale.map(s => s.voucherId);
+        await db
+          .update(companyPettyCashVouchers)
+          .set({ status: 'open', updatedAt: sql`now()` })
+          .where(inArray(companyPettyCashVouchers.id, ids));
+        console.log(`[GET /vouchers] Reopen defensivo: ${stale.length} vales reconciliados.`, { companyId, ids });
+      }
+    } catch (syncErr) {
+      // No-crítico: si falla el resync, devolvemos la lista igual
+      // (puede que la próxima request lo reconcilie).
+      console.warn('[GET /vouchers] resync defensivo falló:', (syncErr as Error).message);
+    }
+
+    // jul 2026 v9 — paginación canónica (default 10, cap 100).
+    const { page, pageSize, offset } = parsePageParams(
+      req.query as Record<string, unknown>,
+      { pageSize: 10, maxPageSize: 100 },
+    );
+
     const rawStatus = typeof req.query.status === 'string' ? req.query.status : null;
     const mine = req.query.mine === 'true' || req.query.mine === '1';
     const siteIdRaw = req.query.siteId;
@@ -694,33 +770,51 @@ router.get('/vouchers', async (req, res, next) => {
     }
     if (siteId) conditions.push(eq(companyPettyCashVouchers.siteId, siteId));
 
-    const rows = await db
-      .select({
-        v: companyPettyCashVouchers,
-        siteName: companySites.name,
-        assigneeUsername: companyUsers.username,
-        assigneeProfile: companyUsers.profileData,
-        // jul 2026 v4 — origin / maintenanceId para que el frontend sepa
-        // si este vale viene de un mantenimiento y por tanto al cerrarlo
-        // debe reusar la factura del maintenance, en vez de pedir upload.
-        reqOrigin: companyFinanceRequests.origin,
-        reqMaintenanceId: companyFinanceRequests.maintenanceId,
-        reqMaintenanceItemId: companyFinanceRequests.maintenanceItemId,
-        // jul 2026 v4-b — finance_classification del maintenance_item
-        // asociado (repuesto | mano_obra | lavada | null).
-        reqFinanceClassification: companyMaintenanceItems.financeClassification,
-      })
-      .from(companyPettyCashVouchers)
-      .leftJoin(companySites, eq(companySites.id, companyPettyCashVouchers.siteId))
-      .leftJoin(companyUsers, eq(companyUsers.id, companyPettyCashVouchers.assignedToUserId))
-      .leftJoin(companyFinanceRequests, eq(companyFinanceRequests.id, companyPettyCashVouchers.requestId))
-      .leftJoin(
-        companyMaintenanceItems,
-        eq(companyMaintenanceItems.id, companyFinanceRequests.maintenanceItemId),
-      )
-      .where(and(...conditions))
-      .orderBy(desc(companyPettyCashVouchers.createdAt))
-      .limit(200);
+    const [rows, [countRow]] = await Promise.all([
+      db
+        .select({
+          v: companyPettyCashVouchers,
+          siteName: companySites.name,
+          assigneeUsername: companyUsers.username,
+          assigneeProfile: companyUsers.profileData,
+          // jul 2026 v4 — origin / maintenanceId para que el frontend sepa
+          // si este vale viene de un mantenimiento y por tanto al cerrarlo
+          // debe reusar la factura del maintenance, en vez de pedir upload.
+          reqOrigin: companyFinanceRequests.origin,
+          reqMaintenanceId: companyFinanceRequests.maintenanceId,
+          reqMaintenanceItemId: companyFinanceRequests.maintenanceItemId,
+          // jul 2026 v4-b — finance_classification del maintenance_item
+          // asociado (repuesto | mano_obra | lavada | null).
+          reqFinanceClassification: companyMaintenanceItems.financeClassification,
+          // jul 2026 v6 — Estado de la review contable (1:1 con la
+          // invoice). Sirve para que la fila del vale pueda mostrar la
+          // etiqueta "Corrección" cuando se reabrió por una corrección.
+          reviewStatus: companyInvoiceReviews.status,
+          reviewLastCorrectionAt: companyInvoiceReviews.lastCorrectionAt,
+          reviewId: companyInvoiceReviews.id,
+        })
+        .from(companyPettyCashVouchers)
+        .leftJoin(companySites, eq(companySites.id, companyPettyCashVouchers.siteId))
+        .leftJoin(companyUsers, eq(companyUsers.id, companyPettyCashVouchers.assignedToUserId))
+        .leftJoin(companyFinanceRequests, eq(companyFinanceRequests.id, companyPettyCashVouchers.requestId))
+        .leftJoin(
+          companyMaintenanceItems,
+          eq(companyMaintenanceItems.id, companyFinanceRequests.maintenanceItemId),
+        )
+        .leftJoin(
+          companyInvoiceReviews,
+          eq(companyInvoiceReviews.voucherId, companyPettyCashVouchers.id),
+        )
+        .where(and(...conditions))
+        .orderBy(desc(companyPettyCashVouchers.createdAt))
+        .limit(pageSize)
+        .offset(offset),
+      db
+        .select({ value: sql<number>`cast(count(*) as int)` })
+        .from(companyPettyCashVouchers)
+        .where(and(...conditions)),
+    ]);
+    const total = countRow?.value ?? 0;
 
     return res.json({
       vouchers: rows.map(r => {
@@ -752,8 +846,23 @@ router.get('/vouchers', async (req, res, next) => {
           // v5 — Migración 0051. Indica si el vale entra al flujo de
           // revisión contable. NULL = legacy (no se revisa).
           purpose: r.v.purpose ?? null,
+          // v6 — Estado de la review contable. Si está en
+          // 'correction_requested' el vale fue reabierto para que el
+          // operador re-subiera la foto. La UI muestra una etiqueta
+          // roja "Corrección" en la fila.
+          reviewStatus: r.reviewStatus ?? null,
+          reviewLastCorrectionAt: r.reviewLastCorrectionAt ?? null,
+          // v6 — ID numérico del review (1:1 con la invoice del vale).
+          // Lo necesita el modal del vale para llamar directo al
+          // endpoint /finance/invoice-reviews/:id/reupload.
+          reviewNumericId: r.reviewId ?? null,
         };
       }),
+      // jul 2026 v9 — paginación canónica.
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
     });
   } catch (err) {
     next(err);
@@ -1113,6 +1222,11 @@ router.get('/transactions',
   async (req, res, next) => {
     try {
       const companyId = ensureCompanyId(req.companyId);
+      // jul 2026 v9 — paginación canónica (default 10, cap 100).
+      const { page, pageSize, offset } = parsePageParams(
+        req.query as Record<string, unknown>,
+        { pageSize: 10, maxPageSize: 100 },
+      );
       const scopeRaw = typeof req.query.scope === 'string' ? req.query.scope : 'all';
       const scope = (['petty_cash', 'annual', 'all'] as const).includes(scopeRaw as any)
         ? (scopeRaw as 'petty_cash' | 'annual' | 'all')
@@ -1122,8 +1236,20 @@ router.get('/transactions',
       const toDate   = typeof req.query.to   === 'string' && DATE_RE.test(req.query.to)
         ? req.query.to : undefined;
 
-      const items = await listTransactions({ companyId, scope, fromDate, toDate });
-      return res.json({ items });
+      // listTransactions trae hasta 500 items combinados; el slice/paginación
+      // se hace acá. Para la UI 10 por página es más que suficiente (el cap
+      // interno de 500 items cubre 50 páginas). Si en el futuro se necesita
+      // más, se hace un count separado o paginación por source.
+      const allItems = await listTransactions({ companyId, scope, fromDate, toDate });
+      const total = allItems.length;
+      const items = allItems.slice(offset, offset + pageSize);
+      return res.json({
+        items,
+        total,
+        page,
+        pageSize,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      });
     } catch (err) {
       next(err);
     }
@@ -1145,8 +1271,13 @@ router.get('/transactions/export.pdf',
         ? req.query.from : undefined;
       const toDate   = typeof req.query.to   === 'string' && DATE_RE.test(req.query.to)
         ? req.query.to : undefined;
+      // jul 2026 v6 — Acepta siteId para que el PDF se filtre por la
+      // sede que el user está viendo en el tab "Historial". Antes solo
+      // exportaba TODAS las transacciones de la empresa.
+      const siteIdRaw = req.query.siteId;
+      const siteId = siteIdRaw ? parseIdFlexible('any', String(siteIdRaw)) : null;
 
-      const items = await listTransactions({ companyId, scope, fromDate, toDate });
+      const items = await listTransactions({ companyId, scope, fromDate, toDate, siteId });
       const pdfBuffer = await buildTransactionsPdf({
         companyName: (req.user as any)?.companyName ?? 'Empresa',
         scope,

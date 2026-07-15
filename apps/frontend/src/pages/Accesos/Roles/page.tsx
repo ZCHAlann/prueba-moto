@@ -8,6 +8,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useCompanyRoles, type CompanyRole, type PermissionMap } from "@/hooks/useCompanyRoles";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { MODULE_TREE, type ActionKey } from "@/lib/module-tree";
+import { useAuth } from "@/context/AuthContext";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -229,6 +230,26 @@ function ModuleSection({
 export function RolesPage() {
   const { can } = usePermissions();
   const canManage = can("accesos", "accesos", "editar");
+
+  // jul 2026 — Filtrar el MODULE_TREE por los módulos activos de la empresa.
+  // El superadmin de plataforma sigue viendo todos (puede editar roles de
+  // cualquier empresa). Para admins de empresa, sólo se muestran los
+  // módulos que la empresa tiene habilitados (mismo criterio que el menú
+  // lateral y el editor de usuarios). Coincide con la validación del
+  // backend: PUT /roles/:id rechaza submódulos cuyo módulo no esté en
+  // `companyModules`, así que mostrar menos acá no rompe la UX pero sí
+  // la alinea.
+  // jul 2026 v9 — Mismo fix que Reports/page.tsx: filtrar por
+  // `companyModules` siempre que haya contexto de empresa, sin
+  // eximir al superadmin. Sin `companyId` (master) mostramos todo.
+  const { session } = useAuth();
+  const companyModules = (session?.companyModules ?? []) as string[];
+  const hasCompanyContext = !!session?.companyId;
+  const visibleModuleKeys = useMemo(() => {
+    if (!hasCompanyContext) return Object.keys(MODULE_TREE);
+    if (companyModules.length === 0) return Object.keys(MODULE_TREE);
+    return Object.keys(MODULE_TREE).filter((k) => companyModules.includes(k));
+  }, [hasCompanyContext, companyModules.length, companyModules.join("|")]);
 
   const { roles, loading, createRole, updateRole, deleteRole } = useCompanyRoles();
 
@@ -556,17 +577,21 @@ export function RolesPage() {
                 <col className="w-[14%]" />
               </colgroup>
               <tbody>
-                {Object.entries(MODULE_TREE).map(([modKey, modDef]) => (
-                  <ModuleSection
-                    key={modKey}
-                    modKey={modKey}
-                    modDef={modDef}
-                    draft={draft}
-                    canManage={canManage}
-                    onToggle={handleToggleAction}
-                    onSetAll={handleSetAll}
-                  />
-                ))}
+                {visibleModuleKeys.map((modKey) => {
+                  const modDef = MODULE_TREE[modKey as keyof typeof MODULE_TREE];
+                  if (!modDef) return null;
+                  return (
+                    <ModuleSection
+                      key={modKey}
+                      modKey={modKey}
+                      modDef={modDef}
+                      draft={draft}
+                      canManage={canManage}
+                      onToggle={handleToggleAction}
+                      onSetAll={handleSetAll}
+                    />
+                  );
+                })}
               </tbody>
             </motion.table>
           </AnimatePresence>

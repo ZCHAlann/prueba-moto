@@ -39,6 +39,42 @@ import {
 
 const router = Router({ mergeParams: true });
 
+// ── Helper ────────────────────────────────────────────────────────────────────
+
+/**
+ * jul 2026 — Valida que el mapa `permissions` que manda el cliente en
+ * POST/PATCH /roles no incluya keys de módulos que la empresa NO tiene
+ * habilitados en su plan. El superadmin de plataforma pasa siempre.
+ *
+ * Coincide con el filtro del frontend (RolesPage, UsuariosPage) — si el
+ * admin de empresa no ve módulos en el editor, tampoco puede guardarlos.
+ *
+ * NO valida los submódulos: si el módulo está habilitado, asumimos que
+ * los submódulos que el cliente manda son válidos (los valida el frontend
+ * contra el MODULE_TREE del cliente, que es la misma fuente de verdad).
+ */
+function assertPermissionsWithinCompanyModules(
+  companyModules: string[] | undefined,
+  isPlatformAdmin: boolean,
+  permissions: Record<string, unknown>,
+): void {
+  if (isPlatformAdmin) return;
+  if (!companyModules || companyModules.length === 0) {
+    // Sin info de módulos, no podemos validar. Pasamos (dejamos que el
+    // requirePermission granular rechace si corresponde).
+    return;
+  }
+  for (const mod of Object.keys(permissions)) {
+    if (!companyModules.includes(mod)) {
+      throw new AppError(
+        400,
+        `El módulo "${mod}" no está habilitado para esta empresa. ` +
+        `Contactá al superadmin para agregarlo al plan antes de asignar permisos.`,
+      );
+    }
+  }
+}
+
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
 const permissionsSchema = z.record(
@@ -122,6 +158,14 @@ router.post("/", requirePermission("accesos", "roles", "crear"), validate(create
     const companyId = req.companyId!;
     const body = req.body as z.infer<typeof createRoleSchema>;
 
+    // jul 2026 — rechazar permissions con keys de módulos no habilitados
+    // en el plan de la empresa. Coincide con el filtro del frontend.
+    assertPermissionsWithinCompanyModules(
+      req.user?.companyModules,
+      req.user?.scope === "plataforma",
+      body.permissions as Record<string, unknown>,
+    );
+
     // Validar que el key no colisione con uno existente
     const existing = await db
       .select({ id: companyRoles.id })
@@ -194,6 +238,16 @@ router.patch("/:roleId", requirePermission("accesos", "roles", "editar"), valida
     const companyId = req.companyId!;
     const roleId = parseId("company-role", req.params.roleId);
     const body = req.body as z.infer<typeof updateRoleSchema>;
+
+    // jul 2026 — mismo gating que POST: si el cliente manda `permissions`,
+    // validar que no incluya keys de módulos no habilitados.
+    if (body.permissions !== undefined) {
+      assertPermissionsWithinCompanyModules(
+        req.user?.companyModules,
+        req.user?.scope === "plataforma",
+        body.permissions as Record<string, unknown>,
+      );
+    }
 
     const [existing] = await db
       .select()

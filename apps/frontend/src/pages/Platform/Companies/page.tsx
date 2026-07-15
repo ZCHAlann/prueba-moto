@@ -20,7 +20,7 @@ import ReactApexChart from "react-apexcharts";
 import type { ApexOptions } from "apexcharts";
 import { useAuth } from "../../../context/AuthContext";
 import { usePlatformCompanies } from "../../../hooks/usePlatformCompanies";
-import { usePlatformPlans } from "../../../hooks/usePlatformPlans";
+import { usePlatformPlans, usePlatformModules } from "../../../hooks/usePlatformPlans";
 import { usePlatformStats } from "../../../hooks/usePlatformStats";
 import { fmtDateShortEc } from "@/lib/datetime";
 import {
@@ -519,13 +519,18 @@ interface CompanyFormExtended extends PlatformCompanyInput {
 }
 
 function CompanyWizard({
-  initialForm, onSubmit, onCancel, plans, isEdit,
+  initialForm, onSubmit, onCancel, plans, isEdit, allCatalogModules,
 }: {
   initialForm: PlatformCompanyInput;
   onSubmit: (f: CompanyFormExtended) => Promise<void>;
   onCancel: () => void;
   plans: PlatformPlan[];
   isEdit: boolean;
+  // jul 2026 v9 — Pasamos el catálogo completo de módulos como prop
+  // (no llamamos al hook adentro del wizard para no duplicar la query).
+  // El padre (`PlatformCompaniesPage`) ya invoca `usePlatformModules()`
+  // una vez y se lo pasa.
+  allCatalogModules: PlatformModule[];
 }) {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<CompanyFormExtended>({
@@ -675,19 +680,46 @@ function CompanyWizard({
 
             <div>
               <p className="mb-2 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                <span>Módulos habilitados ({form.enabledModules?.length ?? 0})</span>
+                <span>
+                  Módulos habilitados ({form.enabledModules?.length ?? 0} de {allCatalogModules.length})
+                </span>
                 <button type="button"
                   onClick={() => {
+                    // jul 2026 v9 — "Aplicar plan" ahora setea TODOS los
+                    // módulos del plan. "Quitar todos" desmarca todos los
+                    // 18 del catálogo (útil para arrancar de cero).
                     set("enabledModules",
-                      form.enabledModules?.length === planModules.length ? [] : [...planModules]);
+                      form.enabledModules?.length === planModules.length && planModules.length > 0
+                        ? []
+                        : [...planModules]);
                   }}
                   className="normal-case text-brand-600 dark:text-brand-400 hover:underline">
-                  {form.enabledModules?.length === planModules.length ? "Quitar todos" : "Aplicar plan"}
+                  {form.enabledModules?.length === planModules.length && planModules.length > 0
+                    ? "Quitar todos"
+                    : "Aplicar plan"}
                 </button>
               </p>
+              {/* jul 2026 v9 — Mostramos TODOS los módulos del catálogo, con
+                  los del plan preseleccionados. El superadmin puede agregar
+                  o quitar a mano cualquier módulo extra (override por
+                  empresa). El orden es: primero los del plan (preseleccionados),
+                  después el resto. */}
               <div className="grid max-h-72 gap-2 overflow-y-auto sm:grid-cols-2">
-                {planModules.map((m: string) => {
+                {[
+                  // Primero los del plan en el orden original del catálogo,
+                  // después los del plan restantes (por si el catálogo local
+                  // y el servidor difieren) y al final el resto del catálogo.
+                  ...planModules,
+                  ...allCatalogModules
+                    .map(m => m.id)
+                    .filter(id => !planModules.includes(id)),
+                ].map((m: string) => {
                   const active = form.enabledModules?.includes(m);
+                  // Buscar el label legible (si está en el catálogo) o
+                  // caer al id en lowercase como fallback.
+                  const modLabel =
+                    allCatalogModules.find(x => x.id === m)?.label ?? m;
+                  const inPlan = planModules.includes(m);
                   return (
                     <button key={m} type="button"
                       onClick={() => {
@@ -700,7 +732,14 @@ function CompanyWizard({
                           ? "border-brand-400 bg-brand-50 dark:bg-brand-500/10"
                           : "border-gray-200 dark:border-white/[0.08] hover:border-gray-300"
                         }`}>
-                      <span className="text-xs font-medium text-gray-700 dark:text-gray-200">{m}</span>
+                      <span className="flex items-center gap-2 text-xs font-medium text-gray-700 dark:text-gray-200">
+                        {modLabel}
+                        {inPlan && (
+                          <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+                            Plan
+                          </span>
+                        )}
+                      </span>
                       {active && <Check size={12} className="text-brand-500" />}
                     </button>
                   );
@@ -710,7 +749,13 @@ function CompanyWizard({
                 form.enabledModules.length < planModules.length && (
                 <p className="mt-2 flex items-start gap-1 text-[11px] text-amber-700 dark:text-amber-400">
                   <AlertCircle size={11} className="mt-0.5 shrink-0" />
-                  {form.enabledModules.length} de {planModules.length} módulos activados.
+                  {form.enabledModules.length} de {planModules.length} módulos del plan activados.
+                </p>
+              )}
+              {form.enabledModules && form.enabledModules.length > planModules.length && (
+                <p className="mt-2 flex items-start gap-1 text-[11px] text-blue-700 dark:text-blue-400">
+                  <AlertCircle size={11} className="mt-0.5 shrink-0" />
+                  {form.enabledModules.length - planModules.length} módulo(s) extra del catálogo activados manualmente.
                 </p>
               )}
             </div>
@@ -797,6 +842,11 @@ export function CompaniesPage() {
 
   const { companies, loading, createCompany, updateCompany, deleteCompany } = usePlatformCompanies();
   const { plans }    = usePlatformPlans();
+  // jul 2026 v9 — Catálogo completo de módulos de la plataforma. En el
+  // form de crear/editar empresa mostramos TODOS los módulos disponibles,
+  // con los del plan seleccionado preseleccionados (los demás quedan
+  // desmarcados para que el superadmin pueda agregarlos a mano si quiere).
+  const { modules: allCatalogModules } = usePlatformModules();
   const { data: stats } = usePlatformStats();
 
   const [view,       setView]       = useState<ViewMode>("table");
@@ -1326,6 +1376,7 @@ export function CompaniesPage() {
           onCancel={() => setModalOpen(false)}
           plans={plans}
           isEdit={!!editing}
+          allCatalogModules={allCatalogModules}
         />
       </PlatformModal>
 

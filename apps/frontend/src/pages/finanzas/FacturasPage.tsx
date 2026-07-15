@@ -120,7 +120,10 @@ const STATUS_LABELS: Record<ApiFinanceInvoice["status"], string> = {
   anulada:   "Anulada",
 };
 
-const PAGE_SIZE = 15;
+// jul 2026 v9 — Alinear a la regla global de 10 por página (igual que
+// caja chica, transacciones y reportes). Si el backend soporta un cap
+// mayor, el usuario puede pedir más desde el selector de tamaño.
+const PAGE_SIZE = 10;
 
 /** URL interna para navegar al origen según sourceModule. */
 function originHref(inv: ApiFinanceInvoice): string | null {

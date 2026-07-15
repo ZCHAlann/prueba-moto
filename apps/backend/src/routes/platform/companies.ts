@@ -21,6 +21,7 @@ import {
   companyUsers,
   companyRoles,
   companyEnabledModules,
+  companyUserCounts,
   platformPlanModules,
   platformPlans,
   platformModules,
@@ -473,6 +474,15 @@ router.delete('/:id', requireSuperadmin, async (req, res, next) => {
     });
     await db.delete(companyAuditEntries).where(eq(companyAuditEntries.companyId, companyId)).catch((e) => {
       console.warn('[DELETE company] cleanup company_audit_entries falló (ignorado):', e?.message);
+    });
+    // jul 2026 v9 — `company_user_counts` debería tener ON DELETE CASCADE
+    // en su FK hacia companies (el schema Drizzle lo declara), pero la
+    // migración que creó la tabla en el VPS de producción lo dejó sin
+    // cascade. Borramos explícitamente la fila para no romper el
+    // DELETE con "null value in column 'company_id' violates not-null
+    // constraint".
+    await db.delete(companyUserCounts).where(eq(companyUserCounts.companyId, companyId)).catch((e) => {
+      console.warn('[DELETE company] cleanup company_user_counts falló (ignorado):', e?.message);
     });
 
     await db.delete(companies).where(eq(companies.id, companyId));

@@ -29,12 +29,17 @@ export default defineConfig({
         target:'http://localhost:5000/uploads',
         rewrite: (path) => path.replace(/^\/uploads/, ""),
       },
-      "/ws": {
+      // WebSocket: usar regex para matchear TANTO `/ws` (existente,
+      // broadcasts reactivos de checklist/etc) COMO `/ws/chat` (nuevo,
+      // chat interno). Con path-to-regexp, un string es match EXACTO
+      // — `/ws` solo matchea `/ws`, no `/ws/chat`. Con regex prefijo
+      // matcheamos todo lo que empiece con `/ws`.
+      "^/ws(/.*)?$": {
         target: "http://localhost:5000",
         ws: true,
         changeOrigin: true,
         secure: false,
-        rewrite: (path) => path, 
+        rewrite: (path) => path,
       },
     },
   },

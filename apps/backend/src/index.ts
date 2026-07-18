@@ -17,6 +17,7 @@ process.env.TZ = 'UTC';
 import { createServer } from 'http';
 import app from './app';
 import { attachWebSocket } from './services/websocket';
+import { attachChatWebSocket, chatWsStats } from './services/chat-websocket';
 import { startMaintenanceCron } from './lib/cron/maintenance';
 import { startMaintenanceOverdueCron, runOverdueMaintenance } from './lib/cron/maintenance-overdue';
 import { startChecklistOverdueCron, runOverdueChecklists } from './lib/cron/checklist-overdue';
@@ -32,6 +33,7 @@ const PORT = process.env.PORT || 5000;
 
 const server = createServer(app);
 attachWebSocket(server);
+attachChatWebSocket(server);
 
 // Seed del catálogo de módulos + 4 planes (Starter/Pro/Business/Enterprise).
 // Idempotente: corre las veces que sea. No bloquea el arranque si falla.
@@ -101,5 +103,6 @@ server.listen(PORT, () => {
   console.log(`✓ Backend corriendo en puerto ${PORT} (TZ=${process.env.TZ})`);
   console.log(`✓ API: http://localhost:${PORT}`);
   console.log(`✓ Health: http://localhost:${PORT}/health`);
-  console.log(`✓ WebSocket: ws://localhost:${PORT}/ws`);
+  console.log(`✓ WebSocket genérico: ws://localhost:${PORT}/ws`);
+  console.log(`✓ WebSocket chat: ws://localhost:${PORT}/ws/chat`);
 });

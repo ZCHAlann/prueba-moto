@@ -6,7 +6,8 @@ import { canAccessHref } from "../lib/access-control";
 import AppHeader from "./AppHeader";
 import Backdrop from "./Backdrop";
 import AppSidebar from "./AppSidebar";
-import { FloatingAiAssistant } from "../components/ui/FloatingAiAssistant";
+import { FloatingChatWidget } from "../components/ui/FloatingChatWidget";
+
 
 const LayoutContent: React.FC = () => {
   const { isExpanded, isHovered, isMobileOpen } = useSidebar();
@@ -70,9 +71,16 @@ const LayoutContent: React.FC = () => {
         </div>
       </div>
 
-      {/* Asistente IA (Jarvis) — solo visible para admin_empresa y
-          owner_empresa. El componente filtra internamente por rol. */}
-      <FloatingAiAssistant />
+      {/* Un solo widget flotante con dos tabs:
+            1. "Mensajes"  → chat interno entre personas (visible para TODOS los roles)
+            2. "Asistente" → chat con IA (visible solo para admin/owner + módulo jarvis)
+          El FloatingChatWidget es el ÚNICO FAB; el FloatingAiAssistant vive
+          embebido dentro del tab "Asistente" cuando aplica. */}
+      <FloatingChatWidget />
+
+      {/* NOTA: <FloatingAiAssistant /> ya NO se monta standalone acá.
+          Si en el futuro se quiere usar el FAB del Jarvis en una página
+          específica (ej. /jarvis), importarlo localmente con embedded={false}. */}
     </div>
   );
 };

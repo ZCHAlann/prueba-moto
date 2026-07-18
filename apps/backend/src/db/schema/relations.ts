@@ -4,7 +4,6 @@ import {
   companyUsers,
   companyUserCounts,
   companyEnabledModules,
-  companyEnabledSubmodules,
   platformUsers,
   platformPlans,
   platformModules,
@@ -66,9 +65,8 @@ export const platformModulesRelations = relations(platformModules, ({ many }) =>
   companies:   many(companyEnabledModules),
 }));
 
-export const platformModuleSubmodulesRelations = relations(platformModuleSubmodules, ({ one, many }) => ({
+export const platformModuleSubmodulesRelations = relations(platformModuleSubmodules, ({ one }) => ({
   module:    one(platformModules, { fields: [platformModuleSubmodules.moduleId], references: [platformModules.id] }),
-  companies: many(companyEnabledSubmodules),
 }));
 
 export const platformPlanModulesRelations = relations(platformPlanModules, ({ one }) => ({
@@ -136,11 +134,6 @@ export const companyUserCountsRelations = relations(companyUserCounts, ({ one })
 export const companyEnabledModulesRelations = relations(companyEnabledModules, ({ one }) => ({
   company: one(companies,        { fields: [companyEnabledModules.companyId], references: [companies.id] }),
   module:  one(platformModules,  { fields: [companyEnabledModules.moduleId],  references: [platformModules.id] }),
-}));
-
-export const companyEnabledSubmodulesRelations = relations(companyEnabledSubmodules, ({ one }) => ({
-  company:    one(companies,                 { fields: [companyEnabledSubmodules.companyId],   references: [companies.id] }),
-  submodule:  one(platformModuleSubmodules,  { fields: [companyEnabledSubmodules.submoduleId], references: [platformModuleSubmodules.id] }),
 }));
 
 

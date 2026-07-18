@@ -1446,6 +1446,13 @@ export function ReportsPage() {
         // V2: totalCost ya viene recalculado por el backend (labor + items).
         const total = m.totalCost ?? labor;
         const parts = Math.max(0, total - labor);
+        // Resolver placa: viene del backend (m.assetPlate) o la sacamos
+        // del asset joined en __raw. Si no hay, caemos al nombre del asset
+        // para no perder el agrupado.
+        const plate = m.assetPlate
+                   || m.assetName
+                   || (m as any).__raw?.asset?.plate
+                   || "—";
         return {
           kind:          m.type ?? "—",
           status:        m.status,
@@ -1455,6 +1462,9 @@ export function ReportsPage() {
           labor,
           parts,
           cost:          total,
+          // jul 2026 v10 — Clave de agrupado (groupKey="assetPlate").
+          // Sin esto, groupRowsByKey cae al fallback "Sin placa".
+          assetPlate:    plate,
           // Clave de categoría cruda del backend ("Primordial:Bombas",
           // "Aceite:Cambio", custom, "Otro", etc.). No es columna visible;
           // solo se usa para el dropdown de filtro por carpetita.

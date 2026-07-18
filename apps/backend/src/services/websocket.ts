@@ -47,8 +47,15 @@ export function attachWebSocket(server: HttpServer) {
     //console.log('WS UPGRADE');
     //console.log(req.headers.cookie);
     //console.log(req.url);
-    if (!req.url || !req.url.startsWith('/ws')) {
-      socket.destroy();
+    // Solo manejamos upgrades a EXACTAMENTE /ws (con query string opcional).
+    // /ws/chat lo maneja `services/chat-websocket.ts`. Si el path no es uno
+    // de los nuestros, destruimos el socket (otro server debería hacerse cargo,
+    // o el request se rechaza).
+    const path = (req.url ?? '').split('?')[0];
+    if (path !== '/ws') {
+      // No es /ws → lo dejamos pasar (el otro handler de upgrade,
+      // como el de chat-websocket, puede tomarlo). Si nadie lo agarra,
+      // el server eventualmente cierra el socket.
       return;
     }
 

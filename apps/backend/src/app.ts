@@ -90,6 +90,13 @@ app.get('/ws-stats', (_req, res) => {
   res.json(wsStats());
 });
 
+// WebSocket chat stats (debug) — salas, usuarios online, etc.
+app.get('/ws-chat-stats', (_req, res) => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { chatWsStats } = require('./services/chat-websocket') as typeof import('./services/chat-websocket');
+  res.json(chatWsStats());
+});
+
 // Rate-limit "default" para endpoints sueltos (oil-check, /health, /metrics,
 // /ws-stats). 120/min por (user+IP). NOTA: va DESPUÉS de las routes para
 // no aplicar dos veces a las routes que ya tienen su propio limitador

@@ -102,7 +102,18 @@ function SiriWave({ level }: { level: number }) {
 
 // ─── Componente principal ─────────────────────────────────────────────
 
-export function FloatingAiAssistant() {
+/**
+ * FloatingAiAssistant — Asistente IA (Jarvis) en FAB flotante.
+ *
+ * Modos:
+ *   • Standalone (default): renderiza FAB + panel. Visible para admin_empresa
+ *     y owner_empresa si la empresa tiene el módulo 'jarvis' habilitado.
+ *   • `embedded={true}`: NO renderiza el FAB. Solo el panel. Útil para
+ *     embeber dentro de otro componente (ej. como tab del FloatingChatWidget).
+ *     En modo embedded, el componente caller es responsable de
+ *     mostrar/ocultar el panel y de posicionarlo.
+ */
+export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean } = {}) {
   const { session, companyId } = useAuth();
   const [isOpen, setIsOpen]         = useState(false);
   const [showHistory, setShowHistory] = useState(true);
@@ -961,73 +972,73 @@ function speakLastResponse() {
 
   return (
     <>
-      {/* ── FAB (draggable) ──────────────────────────────────────────── */}
-      <div
-        ref={fabRef}
-        className="fixed z-50 select-none"
-        role="button"
-        tabIndex={0}
-        aria-label="Abrir asistente IA (arrastrable)"
-        style={{
-          right:  fabPos.x,
-          bottom: fabPos.y,
-          width:  FAB_SIZE,
-          height: FAB_SIZE,
-          cursor: isDragging ? "grabbing" : "grab",
-          userSelect: "none",
-          touchAction: "none",
-          WebkitUserSelect: "none",
-        }}
-        onPointerDown={onFabPointerDown}
-        onPointerMove={onFabPointerMove}
-        onPointerUp={onFabPointerUp}
-        onPointerCancel={onFabPointerUp}
-      >
+      {/* ── FAB (draggable) — solo en modo standalone, no en embedded ── */}
+      {!embedded && (
         <div
-          className={`relative w-full h-full rounded-full flex items-center justify-center transition-shadow duration-300 ${
-            isOpen ? "rotate-90 scale-95" : "rotate-0"
-          } ${isDragging ? "scale-110" : ""}`}
+          ref={fabRef}
+          className="fixed z-50 select-none"
+          role="button"
+          tabIndex={0}
+          aria-label="Abrir asistente IA (arrastrable)"
           style={{
-            background: "linear-gradient(135deg, rgba(99,102,241,0.85) 0%, rgba(168,85,247,0.85) 100%)",
-            boxShadow: isDragging
-              ? "0 0 30px rgba(139,92,246,0.95), 0 0 60px rgba(124,58,237,0.6)"
-              : "0 0 20px rgba(139,92,246,0.5), 0 0 40px rgba(124,58,237,0.3)",
-            border: "2px solid rgba(255,255,255,0.15)",
+            right:  fabPos.x,
+            bottom: fabPos.y,
+            width:  FAB_SIZE,
+            height: FAB_SIZE,
+            cursor: isDragging ? "grabbing" : "grab",
+            userSelect: "none",
+            touchAction: "none",
+            WebkitUserSelect: "none",
           }}
+          onPointerDown={onFabPointerDown}
+          onPointerMove={onFabPointerMove}
+          onPointerUp={onFabPointerUp}
+          onPointerCancel={onFabPointerUp}
         >
-          <div className="absolute inset-0 rounded-full bg-gradient-to-b from-white/20 to-transparent opacity-30" />
-          <div className="absolute inset-0 rounded-full border-2 border-white/10" />
-          <div className="relative z-10 pointer-events-none">
-            {isOpen ? <X className="h-7 w-7 text-white" /> : <Bot className="h-7 w-7 text-white" />}
+          <div
+            className={`relative w-full h-full rounded-full flex items-center justify-center transition-shadow duration-300 ${
+              isOpen ? "rotate-90 scale-95" : "rotate-0"
+            } ${isDragging ? "scale-110" : ""}`}
+            style={{
+              background: "linear-gradient(135deg, rgba(99,102,241,0.85) 0%, rgba(168,85,247,0.85) 100%)",
+              boxShadow: isDragging
+                ? "0 0 30px rgba(139,92,246,0.95), 0 0 60px rgba(124,58,237,0.6)"
+                : "0 0 20px rgba(139,92,246,0.5), 0 0 40px rgba(124,58,237,0.3)",
+              border: "2px solid rgba(255,255,255,0.15)",
+            }}
+          >
+            <div className="absolute inset-0 rounded-full bg-gradient-to-b from-white/20 to-transparent opacity-30" />
+            <div className="absolute inset-0 rounded-full border-2 border-white/10" />
+            <div className="relative z-10 pointer-events-none">
+              {isOpen ? <X className="h-7 w-7 text-white" /> : <Bot className="h-7 w-7 text-white" />}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* ── Panel ────────────────────────────────────────────────────── */}
-      {isOpen && (
+      {(isOpen || embedded) && (
         <div
           ref={chatRef}
           className={[
-            "fixed z-50",
-            "w-[min(720px,calc(100vw-3rem))] max-h-[80vh]",
-            "overflow-hidden flex",
-            "rounded-2xl border shadow-2xl backdrop-blur-xl",
-            // Light: blanco con borde gris suave
+            embedded
+              ? "w-full h-full overflow-hidden flex rounded-2xl"
+              : "fixed z-50 w-[min(720px,calc(100vw-3rem))] max-h-[80vh] overflow-hidden flex rounded-2xl border shadow-2xl backdrop-blur-xl",
             "bg-white border-gray-200",
-            // Dark: bg oscuro del sistema, borde sutil
             "dark:bg-[#0F172A] dark:border-white/[0.06]",
           ].join(" ")}
-          style={{
-            // Posición del panel relativa al FAB.
-            // Si el FAB está en la mitad derecha, el panel se ancla a la derecha;
-            // si está en la izquierda, se ancla a la izquierda.
-            bottom: fabPos.y + FAB_SIZE + 8,
-            right:  fabPos.x,
-            animation: "panelIn 0.3s cubic-bezier(0.175,0.885,0.32,1.275) forwards",
-            transformOrigin: fabPos.x > (typeof window !== "undefined" ? window.innerWidth / 2 : 0)
-              ? "bottom right"
-              : "bottom left",
-          }}
+          style={embedded
+            ? undefined
+            : {
+                // Posición del panel relativa al FAB (solo en modo standalone).
+                bottom: fabPos.y + FAB_SIZE + 8,
+                right:  fabPos.x,
+                animation: "panelIn 0.3s cubic-bezier(0.175,0.885,0.32,1.275) forwards",
+                transformOrigin: fabPos.x > (typeof window !== "undefined" ? window.innerWidth / 2 : 0)
+                  ? "bottom right"
+                  : "bottom left",
+              }
+          }
         >
 
           {/* ── Sidebar historial ──────────────────────────────────── */}

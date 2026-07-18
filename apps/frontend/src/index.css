@@ -974,3 +974,163 @@ span.flatpickr-weekday,
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
 }
+
+/*
+  ─── Animaciones del FloatingChatWidget ──────────────────────────────────
+  Jul 2026 — Se agregan porque la animación `panelIn` referenciada en
+  FloatingAiAssistant.tsx no está definida en ningún CSS. Replicamos
+  la misma curva de easing (cubic-bezier con overshoot) para que el chat
+  y el Jarvis se sientan consistentes.
+*/
+@keyframes chatPanelIn {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes chatPanelOut {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+}
+
+@keyframes chatFabPulse {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(70, 95, 255, 0.5), 0 0 40px rgba(11, 165, 236, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(70, 95, 255, 0.7), 0 0 50px rgba(11, 165, 236, 0.5);
+  }
+}
+
+/* Typing indicator dots (jul 2026 v8.1) */
+@keyframes chatTypingBounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* Mensaje entrando: pequeño "saltito" estilo iMessage/WhatsApp (jul 2026 v8.1) */
+@keyframes chatMessageIn {
+  0% {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Panel cerrando: misma curva pero al revés (jul 2026 v8.1) */
+@keyframes chatPanelOut {
+  0% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.95) translateY(8px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Respeta la preferencia del SO: usuarios con "reducir movimiento"
+     activado no ven las animaciones de entrada/salida del panel. */
+  .chat-panel-anim,
+  [style*="chatPanelIn"],
+  [style*="chatPanelOut"],
+  [style*="chatMessageIn"],
+  [style*="chatTypingBounce"] {
+    animation: none !important;
+  }
+}
+
+/* ─── Highlight de mensaje nuevo (jul 2026 v8.2) ─────────────────────────
+   Cuando llega un mensaje nuevo vía WS, se le agrega esta clase al bubble
+   por 2 segundos. El highlight es un flash amarillo/ámbar que se
+   desvanece, atrayendo la vista del usuario sin ser intrusivo.
+   ─────────────────────────────────────────────────────────────────────── */
+@keyframes chatNewMsgHighlight {
+  0% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.0);
+    background-color: rgba(251, 191, 36, 0.35);
+  }
+  20% {
+    box-shadow: 0 0 0 6px rgba(251, 191, 36, 0.4);
+    background-color: rgba(251, 191, 36, 0.25);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0);
+    background-color: rgba(251, 191, 36, 0);
+  }
+}
+.chat-new-msg-highlight {
+  animation: chatNewMsgHighlight 2s ease-out forwards;
+}
+
+/* ─── Scrollbar custom del chat (jul 2026 v8.2) ─────────────────────────
+   Por defecto el navegador muestra un scrollbar blanco/gris en dark theme
+   que queda FEO. Customizamos para que:
+   - Light theme: thumb gris medio, track transparente.
+   - Dark theme: thumb blanco semi-transparente, track transparente.
+   - Mismo estilo para el thread de mensajes y el textarea del input.
+   - Width de 6px (sutil, no invasivo). En hover se aclara un poco.
+   ─────────────────────────────────────────────────────────────────────── */
+.chat-scroll,
+.chat-scroll * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.25) transparent;
+}
+.dark .chat-scroll,
+.dark .chat-scroll * {
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+/* WebKit (Chrome, Edge, Safari) */
+.chat-scroll::-webkit-scrollbar,
+.chat-scroll *::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.chat-scroll::-webkit-scrollbar-track,
+.chat-scroll *::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-scroll::-webkit-scrollbar-thumb,
+.chat-scroll *::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 3px;
+  transition: background 150ms ease;
+}
+.chat-scroll::-webkit-scrollbar-thumb:hover,
+.chat-scroll *::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+.dark .chat-scroll::-webkit-scrollbar-thumb,
+.dark .chat-scroll *::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+}
+.dark .chat-scroll::-webkit-scrollbar-thumb:hover,
+.dark .chat-scroll *::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}

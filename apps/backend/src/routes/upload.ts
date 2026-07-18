@@ -55,6 +55,7 @@ const ALLOWED_CATEGORIES = [
   'fuel',
   'parts',
   'toll',
+  'chat',
 ] as const;
 
 type UploadCategory = (typeof ALLOWED_CATEGORIES)[number];
@@ -753,7 +754,13 @@ router.post('/photos', (req: Request, res: Response, next: NextFunction) => {
     }
   }
 
-  const upload = buildUpload(safeCategory);
+  // IMPORTANTE: buildUpload debe recibir el folder COMPLETO (con companyId),
+  // no solo el category. Si no, multer guarda en uploads/chat/<filename>
+  // pero resolveUrls genera /uploads/chat/<companyId>/<filename> → 404.
+  // (jul 2026: bug que rompía imágenes del chat porque el archivo terminaba
+  //  en una carpeta y la URL apuntaba a otra.)
+  const folder = companyId ? `${safeCategory}/${companyId}` : safeCategory;
+  const upload = buildUpload(folder);
   upload(req, res, async (err) => {
     if (err) return next(err);
     const files = req.files as Express.Multer.File[];
@@ -767,6 +774,62 @@ router.post('/photos', (req: Request, res: Response, next: NextFunction) => {
     }
     await Promise.allSettled(files.map((f) => optimizeImageIfNeeded(f)));
     res.json({ urls: resolveUrls(files, safeCategory, companyId?.toString()) });
+  });
+});
+
+// ─── POST /upload/file ────────────────────────────────────────────────────────
+// jul 2026 v8.1 — Upload genérico para adjuntos del chat (PDFs, docs, etc).
+// Acepta cualquier tipo de archivo hasta 20 MB. El frontend usa esto para
+// archivos NO-imagen; las imágenes van por /upload/photos?category=chat
+// (que las optimiza con sharp).
+const CHAT_FILE_MIME_DENYLIST = [
+  'application/x-msdownload',                         // .exe
+  'application/x-msdos-program',
+  'application/x-shockwave-flash',
+  'application/x-sh',                                  // .sh
+  'application/x-bat',                                 // .bat
+  'application/x-php',
+];
+router.post('/file', (req: Request, res: Response, next: NextFunction) => {
+  const category = (req.query.category as string) || 'chat';
+  const safeCategory: UploadCategory = (ALLOWED_CATEGORIES as readonly string[]).includes(category)
+    ? (category as UploadCategory)
+    : 'chat';
+
+  let companyId: number | undefined;
+  if (req.query.companyId) {
+    try {
+      companyId = validateUploadCompanyId(
+        req.query.companyId as string | undefined,
+        req.user?.companyId ?? undefined,
+      );
+    } catch (e) {
+      return next(new AppError(403, (e as Error).message));
+    }
+  }
+  const folder = companyId ? `${safeCategory}/${companyId}` : safeCategory;
+
+  const upload = multer({
+    storage: buildStorage(folder),
+    limits: { fileSize: 20 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (CHAT_FILE_MIME_DENYLIST.includes(file.mimetype)) {
+        return cb(new AppError(400, `Tipo de archivo no permitido: ${file.mimetype}`));
+      }
+      cb(null, true);
+    },
+  }).single('file');
+
+  upload(req, res, (err) => {
+    if (err) return next(err);
+    const file = req.file;
+    if (!file) return next(new AppError(400, 'No se recibió el archivo.'));
+    res.json({
+      url:         `/uploads/${folder}/${file.filename}`,
+      mime_type:   file.mimetype,
+      size_bytes:  file.size,
+      filename:    file.originalname,
+    });
   });
 });
 

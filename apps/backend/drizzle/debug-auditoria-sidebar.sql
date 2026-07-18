@@ -1,57 +1,65 @@
--- ============================================================================
--- debug-auditoria-sidebar.sql
--- ============================================================================
--- Pegar este bloque en psql para ver, paso a paso, qué está pasando con
--- el módulo Auditoría en tu empresa.
--- ============================================================================
+-- Diagnóstico completo: TODOS los triggers, reglas y FKs en TODAS las
+-- tablas que apuntan a companies.id. Buscamos:
+--   - FKs con delete_action = 'n' (SET NULL) o 'a' (NO ACTION)
+--   - Triggers en CUALQUIER tabla
+--   - Rules en CUALQUIER tabla
 
-\echo '==[1] Módulos habilitados en la empresa del user=='
-SELECT id, name, enabled_modules
-  FROM companies
- WHERE id = 1;   -- ← ajustá al id de tu empresa
--- ¿La lista contiene 'auditoria'? Si no, el backfill no corrió.
-
-\echo ''
-\echo '==[2] Roles de la empresa: ¿supervisor tiene permiso?=='
-SELECT key, permissions
-  FROM company_roles
- WHERE company_id = 1
-   AND key IN ('supervisor', 'operador', 'conductor', 'owner_empresa', 'admin_empresa');
--- ¿La columna permissions del supervisor tiene
---   "auditoria": { "auditoria": ["ver"] }
--- ? Si no, el backfill del rol no corrió.
-
-\echo ''
-\echo '==[3] Si los dos anteriores están OK pero el sidebar no muestra,=='
-\echo '    el problema es el JWT cacheado. Forzá un nuevo login:=='
-\echo '    DELETE FROM company_users WHERE id = <TU_USER_ID>;  (NO — eso borra el user)'
-\echo '    La forma correcta es cerrar sesión y volver a entrar.=='
-\echo '    En la próxima respuesta te muestro cómo decodificar el JWT actual.=='
-
-\echo ''
-\echo '==[4] Si el backfill no corrió, aplicá esto manualmente:=='
-UPDATE companies
-   SET enabled_modules = array_append(enabled_modules, 'auditoria')
- WHERE NOT ('auditoria' = ANY(enabled_modules));
-
-UPDATE company_roles
-   SET permissions = jsonb_set(
-         permissions,
-         '{auditoria,auditoria}',
-         '["ver"]'::jsonb,
-         true
-       ),
-       updated_at = now()
- WHERE key = 'supervisor'
-   AND NOT (permissions #> '{auditoria,auditoria}' IS NOT NULL);
-
-\echo ''
-\echo '==[5] Verificación post-backfill:=='
+-- 1) TODAS las FKs hacia companies.id
 SELECT
-  c.id  AS company_id,
-  c.name,
-  'auditoria' = ANY(c.enabled_modules) AS has_auditoria_in_company,
-  (permissions #> '{auditoria,auditoria}' IS NOT NULL) AS supervisor_can_see
-FROM companies c
-LEFT JOIN company_roles r ON r.company_id = c.id AND r.key = 'supervisor'
-WHERE c.id = 1;
+  tc.table_schema,
+  tc.table_name,
+  tc.constraint_name,
+  kcu.column_name,
+  CASE c.confdeltype
+    WHEN 'c' THEN 'CASCADE'
+    WHEN 'r' THEN 'RESTRICT'
+    WHEN 'n' THEN 'SET NULL'
+    WHEN 'a' THEN 'NO ACTION'
+    WHEN 'd' THEN 'SET DEFAULT'
+    ELSE c.confdeltype
+  END AS delete_action,
+  CASE c.confupdtype
+    WHEN 'c' THEN 'CASCADE'
+    WHEN 'r' THEN 'RESTRICT'
+    WHEN 'n' THEN 'SET NULL'
+    WHEN 'a' THEN 'NO ACTION'
+    WHEN 'd' THEN 'SET DEFAULT'
+    ELSE c.confupdtype
+  END AS update_action,
+  pg_get_constraintdef(c.oid) AS definicion
+FROM information_schema.table_constraints tc
+JOIN information_schema.key_column_usage kcu
+  ON tc.constraint_name = kcu.constraint_name
+  AND tc.table_schema = kcu.table_schema
+JOIN pg_constraint c
+  ON c.conname = tc.constraint_name
+WHERE tc.constraint_type = 'FOREIGN KEY'
+  AND EXISTS (
+    SELECT 1 FROM information_schema.constraint_column_usage ccu
+    WHERE ccu.constraint_name = tc.constraint_name
+      AND ccu.table_schema = 'public'
+      AND ccu.table_name = 'companies'
+  )
+ORDER BY
+  CASE c.confdeltype
+    WHEN 'c' THEN 0
+    WHEN 'r' THEN 1
+    WHEN 'n' THEN 2
+    WHEN 'a' THEN 3
+    ELSE 4
+  END,
+  tc.table_name;
+
+-- 2) TODOS los triggers en TODAS las tablas (no solo companies)
+SELECT
+  n.nspname AS schema,
+  c.relname AS tabla,
+  t.tgname  AS trigger_name,
+  t.tgenabled AS enabled,
+  pg_get_triggerdef(t.oid) AS definicion
+FROM pg_trigger t
+JOIN pg_class c ON c.oid = t.tgrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE NOT t.tgisinternal
+  AND n.nspname = 'public'
+ORDER BY c.relname, t.tgname;

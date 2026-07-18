@@ -45,6 +45,8 @@ import financeInvoiceTypesRouter from './finance-invoice-types';
 import financePettyCashRouter from './finance-petty-cash';
 import financeInvoiceReviewsRouter from './finance-invoice-reviews';
 import companyAiSettingsRouter from './ai-settings';
+import agentRouter from './agent';
+import chatRouter from './chat';
 
 const router = Router({ mergeParams: true });
 
@@ -138,12 +140,34 @@ router.use('/finance', financePettyCashRouter);
 //   - GET    /finance/invoice-reviews/:id/timeline     → eventos
 router.use('/finance', financeInvoiceReviewsRouter);
 
+// ── Agent Core / Event Bus / Audit log del Asistente IA Transversal ────────
+// jul 2026 v7 — endpoints admin para inspeccionar el ciclo del agente:
+//   - GET  /agent/ollama-status
+//   - GET  /agent/events[/:id]
+//   - POST /agent/events/emit              (test)
+//   - POST /agent/process-now              (forzar procesamiento)
+//   - GET  /agent/audit[?stage=&toolName=&correlationId=]
+//   - GET  /agent/audit/trace/:correlationId
+//   - GET  /agent/proposals[/:id]
+//   - POST /agent/proposals/:id/resolve
+//   - POST /agent/proposals/expire-stale
+router.use('/agent', agentRouter);
+router.use('/chat', chatRouter);
+
 // ── IA multi-tenant (jul 2026 v6) ────────────────────────────────────────────
-// Cada empresa puede configurar su propio provider/model/API key.
+// IMPORTANTE: este router se monta SIN prefijo, lo que hace que Express
+// lo matchee para CUALQUIER path que llegue al company router. Su primer
+// middleware es `requireModule('jarvis', 'asistente')`, así que DEBE
+// ir al FINAL del archivo, después de todos los routers con prefijo
+// (`/agent`, `/chat`, `/finance`, etc). Si estuviera antes, bloquearía
+// con 403 "jarvis" cualquier request de usuarios sin permiso de IA
+// (ej: conductores) — incluso las del chat interno, que no usan jarvis.
+//
+// Endpoints que sirve:
 //   - GET    /ai-settings       → config actual (sin la key)
 //   - PUT    /ai-settings       → crea/actualiza (admin)
 //   - DELETE /ai-settings       → reset a platform_default (admin)
-//   - POST   /ai-settings/test  → prueba conexión contra el provider (admin)
+//   - POST   /ai-settings/test  → prueba conexión contra el provider
 //   - GET    /ai-usage?from&to  → métricas de uso
 //   - GET    /ai-providers      → catálogo de providers/models
 router.use(companyAiSettingsRouter);

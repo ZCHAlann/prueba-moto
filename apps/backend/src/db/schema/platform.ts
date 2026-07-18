@@ -105,14 +105,12 @@ export const companyUserCounts = pgTable('company_user_counts', {
 // fuente de verdad de QUÉ módulos están habilitados es la tabla
 // `company_enabled_modules` (sin detalle). Esta tabla es opcional y
 // la llena la UI de Accesos → Empresa cuando el admin granular permisos
-// por submódulo. Ausencia == todos los submódulos del módulo están activos.
-export const companyEnabledSubmodules = pgTable('company_enabled_submodules', {
-  companyId:    integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
-  submoduleId:  varchar('submodule_id', { length: 80 }).notNull().references(() => platformModuleSubmodules.id, { onDelete: 'cascade' }),
-  isActive:     boolean('is_active').notNull().default(true),
-}, (table) => [
-  unique('company_enabled_subs_pk').on(table.companyId, table.submoduleId),
-]);
+// ─── (removido jul 2026 v8) ──────────────────────────────────────────────────
+// Antes existía `company_enabled_submodules` para control granular por
+// empresa a nivel submódulo. Se eliminó porque ningún middleware la leía
+// (la granularidad real vive en `company_users.module_permissions` per-user).
+// Si en el futuro se necesita control per-empresa a nivel submódulo, se
+// re-agrega junto con su middleware correspondiente.
 
 // ─────────────────────────────────────────────
 // Planes

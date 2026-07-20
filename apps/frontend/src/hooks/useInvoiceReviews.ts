@@ -103,6 +103,46 @@ export type MutationResult<T = unknown> =
   | { ok: true; data: T }
   | { ok: false; error: string };
 
+// Helper: mapea el mensaje crudo del backend ("Transición inválida:
+// pending_review → approved") a algo entendible para el user final. Si
+// el mensaje no matchea ninguno de los patrones conocidos, lo devuelve
+// tal cual. Exportado para que CajaChicaPage lo use al armar el toast.
+export function friendlyInvoiceReviewError(
+  rawError: string,
+  ctx: "approve" | "send-to-correction" | "reupload" | "mark-seen" | "mark-start" | "general" = "general",
+): string {
+  const m = rawError.match(/Transición inválida:\s*(\w+)\s*→\s*(\w+)/);
+  if (!m) return rawError;
+
+  const [, from] = m;
+  // Mensajes por acción + estado origen. Cubre los casos típicos donde
+  // el user saltea un paso del flujo y termina con un toast feo tipo
+  // "Transición inválida: pending_review → approved".
+  const guide: Record<string, string> = {
+    "approve:seen":                 "Primero abrí el checklist haciendo click en \"Revisar factura\" antes de aprobar.",
+    "approve:pending_review":       "Tenés que abrir la factura y el checklist antes de aprobar.",
+    "approve:correction_requested": "La factura está en corrección. Esperá a que el operador suba la nueva foto.",
+    "approve:approved":             "La factura ya estaba aprobada.",
+    "send-to-correction:seen":                 "Estás a un paso — abrí el checklist y desmarcá los checks que fallan.",
+    "send-to-correction:pending_review":       "Abrí la factura y el checklist primero (pasos: Ver factura → Revisar factura).",
+    "send-to-correction:under_review":         "Estás revisando — desmarcá los checks que fallan y agregá la nota.",
+    "send-to-correction:correction_requested": "Ya está marcada para corrección. Esperá la nueva foto del operador.",
+    "send-to-correction:approved":             "La factura ya estaba aprobada.",
+    "reupload:pending_review":         "Esta factura no está marcada para corrección. Pasale al revisor.",
+    "reupload:under_review":           "Aún no se marcó para corrección. Esperá a que el revisor la marque.",
+    "reupload:approved":               "La factura ya está aprobada, no hay nada que re-subir.",
+    "mark-seen:seen":                  "Ya la habías abierto antes.",
+    "mark-seen:under_review":          "Ya está bajo revisión.",
+    "mark-seen:correction_requested":  "Está marcada para corrección.",
+    "mark-seen:approved":              "La factura ya está aprobada.",
+    "mark-start:pending_review":       "Primero abrí la factura (click en \"Ver factura\").",
+    "mark-start:under_review":         "Ya estás revisando.",
+    "mark-start:correction_requested":  "Está en corrección, no se puede abrir el checklist hasta que llegue la nueva foto.",
+    "mark-start:approved":             "La factura ya está aprobada.",
+  };
+  return guide[`${ctx}:${from}`] ?? `Acción no permitida en el estado actual (${from}).`;
+}
+
 export function useInvoiceReviews() {
   const { session } = useAuth();
   const companyId = session?.companyId;

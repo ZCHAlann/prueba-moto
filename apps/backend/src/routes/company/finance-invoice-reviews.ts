@@ -681,12 +681,18 @@ router.post('/invoice-reviews/:id/reupload', validate(reuploadSchema), async (re
       metadata:    { fileUrl, fileMimeType },
     });
 
-    // jul 2026 v6 — Notificar a admins (excepto el actor) y al
-    // aprobador original de la solicitud que el operador subió la
-    // nueva foto y la review vuelve a 'pending_review' esperando
-    // revisión. Mismo patrón que send-to-correction, para que el
-    // revisor tenga la foto en su inbox.
+    // jul 2026 v6 — Notificar a admins (excepto el actor), al
+    // aprobador original de la solicitud Y al revisor actual
+    // (currentReviewerId) que el operador subió la nueva foto y la
+    // review vuelve a 'pending_review' esperando revisión.
+    //
+    // Importante: currentReviewerId es el user que marcó la review
+    // como "seen" (abrió la foto por primera vez). Si ese user no es
+    // admin ni el aprobador, NO recibiría la notificación sin este
+    // path — y entonces NO se entera de que tiene que revisar. Por eso
+    // es crítico mandarle a él también.
     try {
+      // 1) Notificar a admins (excepto el actor que subió la foto)
       await notifyAdminsExceptActor(companyId, userId, {
         kind:    'finance_invoice_correction_resubmitted',
         title:   `Nueva foto del vale #${row.voucher.id} lista para revisar`,
@@ -697,16 +703,35 @@ router.post('/invoice-reviews/:id/reupload', validate(reuploadSchema), async (re
           invoiceId: row.review.invoiceId,
         },
       });
+      // 2) Aprobador original de la solicitud
       const [reqRow] = await db
         .select({ approverUserId: companyFinanceRequests.approverUserId })
         .from(companyFinanceRequests)
         .where(eq(companyFinanceRequests.id, row.voucher.requestId))
         .limit(1);
-      const approverId = reqRow?.approverUserId ?? null;
-      if (approverId && approverId !== userId) {
+      if (reqRow?.approverUserId && reqRow.approverUserId !== userId) {
         await notify({
           companyId,
-          userId:    approverId,
+          userId:    reqRow.approverUserId,
+          kind:      'finance_invoice_correction_resubmitted',
+          title:     `Nueva foto del vale #${row.voucher.id} lista para revisar`,
+          body:      'El operador subió una nueva foto de la factura tras la corrección. Pendiente de revisar.',
+          payload:   {
+            reviewId:  row.review.id,
+            voucherId: row.voucher.id,
+            invoiceId: row.review.invoiceId,
+          },
+        });
+      }
+      // 3) jul 2026 v6 — El revisor actual (currentReviewerId) es el
+      // user que más probablemente va a revisar la corrección. Si no es
+      // ni admin ni aprobador, no recibiría la notificación sin este
+      // path — y entonces NO se entera de que tiene que revisar. Por eso
+      // es crítico mandarle a él también (idempotente en notif-service).
+      if (row.review.currentReviewerId && row.review.currentReviewerId !== userId) {
+        await notify({
+          companyId,
+          userId:    row.review.currentReviewerId,
           kind:      'finance_invoice_correction_resubmitted',
           title:     `Nueva foto del vale #${row.voucher.id} lista para revisar`,
           body:      'El operador subió una nueva foto de la factura tras la corrección. Pendiente de revisar.',

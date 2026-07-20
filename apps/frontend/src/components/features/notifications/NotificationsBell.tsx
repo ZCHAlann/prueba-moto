@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, CheckCheck, Clock, Trash2, X } from "lucide-react";
+import { Bell, Check, CheckCheck, Clock, FileText, Trash2, Wallet, X } from "lucide-react";
 import { useNotifications, useUnreadCount, useMarkRead, useMarkAllRead, useDeleteNotification } from "../../../hooks/useNotifications";
 import { useAuth } from "../../../context/AuthContext";
 import { toast } from "sonner";
@@ -63,6 +63,19 @@ const KIND_META: Record<string, { icon: React.ElementType; color: string; label:
   workshop_assigned:           { icon: Bell,  color: 'blue',    label: 'Asignado a taller' },
   supplier_invoice:            { icon: Bell,  color: 'amber',   label: 'Compra a proveedor' },
   system:                      { icon: Bell,  color: 'gray',    label: 'Sistema' },
+  // Finanzas (CajaChica + vale + factura) ─ jul 2026 v6
+  // Antes estas 9 kinds caían en el fallback genérico (Bell gris) porque
+  // no tenían entrada en este mapa. Ahora cada una tiene ícono/color/label
+  // propios para que el panel de notificaciones sea legible.
+  finance_request_created:             { icon: Wallet,     color: 'blue',    label: 'Solicitud de dinero' },
+  finance_request_reviewed:            { icon: CheckCheck, color: 'emerald', label: 'Solicitud revisada' },
+  finance_voucher_issued:              { icon: Wallet,     color: 'blue',    label: 'Vale emitido' },
+  finance_voucher_closed:              { icon: Check,      color: 'emerald', label: 'Vale cerrado' },
+  finance_petty_cash_limit_reached:    { icon: Clock,      color: 'rose',    label: 'Límite de caja chica' },
+  finance_petty_cash_replenished:      { icon: Wallet,     color: 'emerald', label: 'Reposición de caja' },
+  finance_invoice_correction_requested: { icon: FileText,  color: 'rose',    label: 'Factura requiere corrección' },
+  finance_invoice_correction_resubmitted: { icon: FileText, color: 'blue',   label: 'Factura corregida' },
+  finance_invoice_approved:            { icon: Check,      color: 'emerald', label: 'Factura aprobada' },
 };
 
 const COLOR_CLASSES: Record<string, { fg: string; bg: string }> = {
@@ -149,6 +162,22 @@ function routeForKind(kind: string, payload: Record<string, unknown> | undefined
       return '/alertas' + (alertId ? `?id=${alertId}` : '');
     case 'anomaly_detected':
       return '/estadisticas/anomalias';
+    case 'finance_request_created':
+    case 'finance_request_reviewed':
+      return '/finanzas/caja-chica?tab=solicitudes';
+    case 'finance_voucher_issued':
+    case 'finance_voucher_closed':
+    case 'finance_invoice_correction_requested':
+    case 'finance_invoice_correction_resubmitted':
+    case 'finance_invoice_approved': {
+      // jul 2026 v6 — Deep-link al vale correspondiente. CajaChicaPage
+      // abre el ReviewVoucherDetailModal cuando la URL trae `?voucher=`.
+      const voucherId = payload?.voucherId as string | number | undefined;
+      return voucherId ? `/finanzas/caja-chica?tab=vales&voucher=${voucherId}` : '/finanzas/caja-chica?tab=vales';
+    }
+    case 'finance_petty_cash_limit_reached':
+    case 'finance_petty_cash_replenished':
+      return '/finanzas/caja-chica?tab=caja';
     default:
       return null;
   }

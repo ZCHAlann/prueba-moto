@@ -55,7 +55,6 @@ export function ReviewVoucherDetailModal({
   const reviews = useInvoiceReviews();
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [loadingTimeline, setLoadingTimeline] = useState(false);
-  const [markingSeen, setMarkingSeen] = useState(false);
 
   // Cargar timeline (sólo en mode="correction" o cuando se abre la modal)
   useEffect(() => {
@@ -89,21 +88,6 @@ export function ReviewVoucherDetailModal({
   // (la comparación real está en el backend; acá mostramos el botón
   // siempre que el vale esté en correction, y si el user no es el
   // solicitante el backend rechazará con 403).
-
-  const handleMarkSeen = async () => {
-    setMarkingSeen(true);
-    try {
-      const r = await reviews.markSeen(review.numericId);
-      if (!r.ok) {
-        toast.error(r.error);
-        return;
-      }
-      toast.success("Marcada como vista");
-      onAction();
-    } finally {
-      setMarkingSeen(false);
-    }
-  };
 
   return (
     <ModalShell
@@ -186,31 +170,29 @@ export function ReviewVoucherDetailModal({
           <div className="flex flex-wrap gap-2">
             {mode === "review" && (
               <>
-                {review.status === "pending_review" && (
-                  <button
-                    type="button"
-                    disabled={markingSeen}
-                    onClick={() => void handleMarkSeen()}
-                    className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600 disabled:opacity-60"
-                  >
-                    {markingSeen && <Loader2 className="h-4 w-4 animate-spin" />}
-                    Marcar como vista
-                  </button>
-                )}
+                {/* jul 2026 v6 — El botón "Revisar factura" se eliminó
+                    de este modal. El flujo correcto es: Ver factura
+                    (auto-marca como vista) → desde el photo viewer
+                    o el sidebar se accede al checklist. Esto evita
+                    que el revisor avance de estado sin haber visto
+                    la foto primero. */}
                 <button
                   type="button"
-                  onClick={() => onOpenViewer(review)}
+                  onClick={async () => {
+                    // Auto-marcar como vista al abrir la foto. Idempotente
+                    // en backend si la review ya está en 'seen' o más allá
+                    // — el cliente no rompe, simplemente ignora el error
+                    // de "transición inválida" que viene del backend.
+                    if (review.status === "pending_review") {
+                      const r = await reviews.markSeen(review.numericId);
+                      if (r.ok) onAction();
+                    }
+                    onOpenViewer(review);
+                  }}
                   className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-50 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200 dark:hover:bg-sky-500/20"
                 >
                   <Eye size={14} />
                   Ver factura
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenChecklist(review)}
-                  className="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600"
-                >
-                  Revisar factura
                 </button>
               </>
             )}

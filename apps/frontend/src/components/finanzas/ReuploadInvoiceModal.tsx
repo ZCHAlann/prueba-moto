@@ -20,6 +20,9 @@ import {
   isCorrectionExpired,
   getCorrectionRemainingMs,
   formatRemaining,
+  // jul 2026 v6 — Para envolver mensajes de "Transición inválida" del
+  // backend en algo legible para el user final.
+  friendlyInvoiceReviewError,
 } from "../../hooks/useInvoiceReviews";
 import { useAuth } from "../../context/AuthContext";
 
@@ -89,7 +92,10 @@ export function ReuploadInvoiceModal({ review, onClose, onSuccess }: Props) {
       // 2) Llamar al endpoint reupload de review.
       const r = await reviews.reupload(review.numericId, fileUrl, file.type);
       if (!r.ok) {
-        toast.error(r.error);
+        // jul 2026 v6 — envolver el mensaje del backend (puede ser
+        // "Transición inválida: correction_requested → pending_review"
+        // si el estado cambió mientras se subía la foto) en algo legible.
+        toast.error(friendlyInvoiceReviewError(r.error, "reupload"));
         setUploading(false);
         return;
       }

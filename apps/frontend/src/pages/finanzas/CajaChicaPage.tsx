@@ -50,6 +50,11 @@ import {
   isCorrectionExpired,
   getCorrectionRemainingMs,
   formatRemaining,
+  // jul 2026 v6 — Para envolver mensajes de "Transición inválida" del
+  // backend a algo legible para el user. Antes salía un toast con
+  // "Transición inválida: pending_review → approved" que era técnico
+  // y dejaba al user sin saber qué hacer.
+  friendlyInvoiceReviewError,
 } from "../../hooks/useInvoiceReviews";
 import { SemaforoPill } from "../../components/finanzas/SemaforoPill";
 import { InvoiceViewerModal } from "../../components/finanzas/InvoiceViewerModal";
@@ -3111,32 +3116,39 @@ function FacturasPorRevisarTab() {
           review={modal.review}
           onClose={() => setModal({ kind: "detail", review: modal.review })}
           onStartReview={async () => {
-            // jul 2026 v6 — Flow idempotente: si la review ya está en
-            // 'seen' o 'under_review' no re-mandamos /seen (eso rompe
-            // la máquina de estados porque under_review → seen no es
-            // una transición válida). Solo avanzamos a 'under_review'
-            // si todavía está en 'seen'. Si está en 'pending_review',
-            // hacemos los dos pasos.
-            const cur = modal.review.status;
-            if (cur === "pending_review") {
-              const seenR = await reviews.markSeen(modal.review.numericId);
-              if (!seenR.ok) {
-                toast.error(seenR.error);
-                return;
-              }
+            // jul 2026 v6 — "Revisar factura" SOLO pasa a 'under_review'
+            // (markStart). NO marca como vista — eso lo hace el botón
+            // "Ver factura" del detail modal. Si el status por algún
+            // motivo todavía es 'pending_review' (ej: el user abrió el
+            // viewer desde un deep-link sin pasar por el detail), el
+            // backend rechaza con 409 y le mostramos el error amigable.
+            let fresh;
+            try {
+              fresh = await reviews.get(modal.review.numericId);
+            } catch (e) {
+              toast.error(friendlyInvoiceReviewError((e as Error).message, "general"));
+              return;
             }
-            if (cur === "pending_review" || cur === "seen") {
+            if (fresh.status === "seen") {
               const startR = await reviews.markStart(modal.review.numericId);
               if (!startR.ok) {
-                toast.error(startR.error);
+                toast.error(friendlyInvoiceReviewError(startR.error, "mark-start"));
                 return;
               }
+              try {
+                fresh = await reviews.get(modal.review.numericId);
+              } catch { /* no crítico */ }
+            } else if (fresh.status === "pending_review") {
+              // No debería pasar si el user vino del detail modal (ahí
+              // ya se marcó como visto), pero por si acaso:
+              toast.error("Primero abrí la factura haciendo click en \"Ver factura\".");
+              return;
             }
-            // Si ya estaba en 'under_review' o 'seen', no hacemos
-            // nada extra — el backend ya tiene el estado correcto.
+            // Si ya está en 'under_review' o posterior, solo abrimos
+            // el checklist sin re-mand transiciones.
             toast.success("Checklist abierto");
             setRefreshKey(k => k + 1);
-            setModal({ kind: "checklist", review: modal.review });
+            setModal({ kind: "checklist", review: fresh });
           }}
         />
       )}
@@ -3148,7 +3160,7 @@ function FacturasPorRevisarTab() {
           onApprove={async (checks) => {
             const r = await reviews.approve(modal.review.numericId, checks);
             if (!r.ok) {
-              toast.error(r.error);
+              toast.error(friendlyInvoiceReviewError(r.error, "approve"));
               return;
             }
             toast.success("Factura aprobada");
@@ -3162,7 +3174,7 @@ function FacturasPorRevisarTab() {
               failedKeys as string[],
             );
             if (!r.ok) {
-              toast.error(r.error);
+              toast.error(friendlyInvoiceReviewError(r.error, "send-to-correction"));
               return;
             }
             toast.success("Enviada a corrección. Se notificó al solicitante.");
@@ -3328,10 +3340,32 @@ function CorreccionesTab() {
           review={modal.review}
           onClose={() => setModal({ kind: "detail", review: modal.review })}
           onStartReview={async () => {
-            const startR = await reviews.markStart(modal.review.numericId);
-            if (!startR.ok) { toast.error(startR.error); return; }
+            // jul 2026 v6 — Igual que en mode="review": "Revisar
+            // factura" SOLO pasa a 'under_review'. NO marca como vista.
+            // "Ver factura" (en el detail modal) es lo que marca como vista.
+            let fresh;
+            try {
+              fresh = await reviews.get(modal.review.numericId);
+            } catch (e) {
+              toast.error(friendlyInvoiceReviewError((e as Error).message, "general"));
+              return;
+            }
+            if (fresh.status === "seen") {
+              const startR = await reviews.markStart(modal.review.numericId);
+              if (!startR.ok) {
+                toast.error(friendlyInvoiceReviewError(startR.error, "mark-start"));
+                return;
+              }
+              try {
+                fresh = await reviews.get(modal.review.numericId);
+              } catch { /* no crítico */ }
+            } else if (fresh.status === "pending_review") {
+              toast.error("Primero abrí la factura haciendo click en \"Ver factura\".");
+              return;
+            }
+            toast.success("Checklist abierto");
             setRefreshKey(k => k + 1);
-            setModal({ kind: "checklist", review: modal.review });
+            setModal({ kind: "checklist", review: fresh });
           }}
         />
       )}
@@ -3342,14 +3376,14 @@ function CorreccionesTab() {
           onClose={() => setModal({ kind: "detail", review: modal.review })}
           onApprove={async (checks) => {
             const r = await reviews.approve(modal.review.numericId, checks);
-            if (!r.ok) { toast.error(r.error); return; }
+            if (!r.ok) { toast.error(friendlyInvoiceReviewError(r.error, "approve")); return; }
             toast.success("Factura aprobada");
             setRefreshKey(k => k + 1);
             setModal({ kind: "none" });
           }}
           onSendToCorrection={async (note, failedKeys) => {
             const r = await reviews.sendToCorrection(modal.review.numericId, note, failedKeys as string[]);
-            if (!r.ok) { toast.error(r.error); return; }
+            if (!r.ok) { toast.error(friendlyInvoiceReviewError(r.error, "send-to-correction")); return; }
             toast.success("Volvió a corrección");
             setRefreshKey(k => k + 1);
             setModal({ kind: "none" });

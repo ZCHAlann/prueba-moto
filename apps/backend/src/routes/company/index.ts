@@ -15,6 +15,8 @@ import assetsRouter from './assets';
 import driversRouter from './drivers';
 import assignmentsRouter from './assignments';
 import maintenancesRouter from './maintenances';
+// jul 2026 — Horario de conductores (driver_time_off). CRUD + copy.
+import driverScheduleRouter from './driver-schedule';
 import fuelRouter from './fuel';
 import tollRouter from './toll';
 import alertsRouter from './alerts';
@@ -45,7 +47,7 @@ import financeInvoiceTypesRouter from './finance-invoice-types';
 import financePettyCashRouter from './finance-petty-cash';
 import financeInvoiceReviewsRouter from './finance-invoice-reviews';
 import companyAiSettingsRouter from './ai-settings';
-import agentRouter from './agent';
+import whatsappSettingsRouter from './whatsapp-settings';
 import chatRouter from './chat';
 
 const router = Router({ mergeParams: true });
@@ -67,6 +69,7 @@ router.use('/settings', settingsRouter);
 router.use('/sites', sitesRouter);
 router.use('/assets', assetsRouter);
 router.use('/drivers', driversRouter);
+router.use('/driver-schedule', driverScheduleRouter);
 
 // Form-options: endpoints de catálogos que cada módulo necesita para
 // sus forms/selectores. NO están bajo ningún sub-router de recurso
@@ -151,7 +154,7 @@ router.use('/finance', financeInvoiceReviewsRouter);
 //   - GET  /agent/proposals[/:id]
 //   - POST /agent/proposals/:id/resolve
 //   - POST /agent/proposals/expire-stale
-router.use('/agent', agentRouter);
+// router.use('/agent', agentRouter);  ← jul 2026 v6: borrado, era selfhosted
 router.use('/chat', chatRouter);
 
 // ── IA multi-tenant (jul 2026 v6) ────────────────────────────────────────────
@@ -171,6 +174,17 @@ router.use('/chat', chatRouter);
 //   - GET    /ai-usage?from&to  → métricas de uso
 //   - GET    /ai-providers      → catálogo de providers/models
 router.use(companyAiSettingsRouter);
+
+// ── Config WhatsApp por empresa (jul 2026 v8.6) ────────────────────────────
+// jul 2026 v8.6 — Multi-tenant: cada empresa tiene su propia lista
+// de números destinatarios y plantillas custom. Si la empresa no
+// configuró nada, se usan los defaults globales (WHATSAPP_NOTIFY_NUMBERS
+// del .env + plantillas hardcoded en whatsappService).
+//
+// Endpoints:
+//   - GET /whatsapp-settings     → config de la empresa (o defaults)
+//   - PUT /whatsapp-settings     → upsert (solo admin)
+router.use(whatsappSettingsRouter);
 
 // ── Límites del plan (jul 2026 v6) ──────────────────────────────────────────
 // jul 2026 v6 — Para que el admin de empresa pueda ver los límites del

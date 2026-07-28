@@ -1,21 +1,4 @@
 // lib/pagination.ts
-//
-// Helper reutilizable para TODOS los endpoints que devuelvan listas paginadas.
-//
-// REGLAS DEL CONTRATO (no cambiar sin consenso del dueño):
-//   - page: entero >= 1 (default 1). NaN/0/negativo/"abc" → 1.
-//   - pageSize: entero >= 1, default 20, cap 100 (configurable via
-//               defaults.maxPageSize). 0/negativo → 1. > maxPageSize → maxPageSize.
-//   - offset = (page - 1) * pageSize.
-//   - buildPageResponse arma SIEMPRE { data, total, page, pageSize, totalPages }.
-//     totalPages = Math.max(1, Math.ceil(total / pageSize)) — incluso para
-//     total=0 devuelve 1 (evita "Página 0 de 0" en la UI, igual que el patrón
-//     client-side ya usado en el proyecto).
-//
-// MANTENER ESTE ARCHIVO:
-//   - Sin dependencias de Drizzle, Zod o Express.
-//   - Sin validación de query params que ya esté en middlewares existentes.
-//   - Es un módulo PURO: recibir y devolver, nada de logs, nada de side-effects.
 
 /**
  * Resultado normalizado de parsePageParams.
@@ -89,6 +72,8 @@ export function parsePageParams(
     offset: (page - 1) * pageSize,
   };
 }
+
+
 
 /**
  * Construye la respuesta paginada con la forma canónica del contrato.

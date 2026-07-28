@@ -18,7 +18,7 @@
 // marca el vale como cerrado.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { eq, and, inArray, sql } from 'drizzle-orm';
+import { eq, and, inArray, sql, desc } from 'drizzle-orm';
 import { db } from '../db/client';
 import {
   companyMaintenanceRecords,

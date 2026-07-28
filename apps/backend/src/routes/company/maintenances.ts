@@ -1,39 +1,8 @@
 // routes/company/maintenances.ts
-//
-// Mantenimientos v3 — flujo:
-//  - Estados: Programado, En proceso, Completado. (Sin PendienteAtencion ni Cancelado.)
-//  - Categorías: las base del enum + las custom de company_maintenance_categories.
-//  - Asignación: admin/supervisor/owner pueden asignar a un operador. El operador
-//    puede auto-asignarse o crear libres.
-//  - El operador ve solo lo suyo (asignado, creado, tomado).
-//  - Línea de tiempo completa: cada acción se registra en company_maintenance_events.
-//  - Cancelar + reprogramar: vuelve a Programado, mantiene timeline, borra items y fotos.
-//
-// v3.2: se agrega recalcMaintenanceTotal() en POST / (creación con items
-// precargados) y en PUT /:id (edición de items y/o laborCost). Antes solo
-// se llamaba desde POST /:id/items, lo que dejaba totalCost desactualizado
-// cuando los repuestos se agregaban/editaban desde el modal de edición en
-// vez del quick-add del drawer.
-//
-// v3.3: reautorización de mantenimientos 'Atrasado' rehecha:
-//   - Permiso propio `mantenimiento.reautorizaciones.editar` (antes usaba
-//     `mantenimiento.records.ver`, demasiado laxo).
-//   - El asignado/creador del mantenimiento NO puede reautorizarlo aunque
-//     tenga el permiso — debe hacerlo otra persona (un superior).
-//   - Al reautorizar, el mantenimiento vuelve a 'Programado' (el estado en
-//     el que estaba antes de vencer), no a 'En proceso' automáticamente.
-//
-// v3.4: sincronización automática de company_assets.status = 'En mantenimiento'
-//   - Se llama a syncAssetMaintenanceStatus() en cada punto donde status o
-//     scheduledFor del mantenimiento pueden cambiar si "hoy" cuenta como
-//     activo (crear, editar, iniciar, finalizar, cancelar/reprogramar,
-//     reautorizar, solicitar corrección, eliminar).
-//   - Ver lib/maintenanceStatusSync.ts para la lógica completa y
-//     lib/cron/maintenanceStatusCron.ts para el respaldo diario.
 
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, gte, lte, desc, ilike, or, inArray, sql, isNull, asc } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, ilike, or, inArray, sql, isNull, asc, lt } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db, client } from '../../db/client';
 import {
@@ -145,18 +114,13 @@ const itemSchema = z.object({
   name:       safeString({ min: 1, max: 180, fieldLabel: 'Repuesto', allowEmpty: false }),
   quantity:   z.number().positive().max(1_000_000).default(1),
   unitCost:   z.number().nonnegative().max(1_000_000_000).default(0),
-  // jul 2026 v4-c — `discountValue` es IMPORTE monetario (no porcentaje).
-  // Antes se llamaba `discountPercent` (0..100) y representaba un
-  // porcentaje. Ver migración 0042 (rename) + lib/maintenance-totals.
-  // El backend clampea al subtotal original (qty*unitCost) para que
-  // nunca quede negativo — no hace falta validación adicional acá.
+  // jul 2026 v4-d — 'amount' (default, back-compat) | 'percent'.
+  // Define cómo se interpreta discountValue: importe en $ o % sobre
+  // quantity*unitCost. Ver lib/maintenance-totals.computeItemTotals.
+  discountType:  z.enum(['amount', 'percent']).default('amount'),
   discountValue: z.number().min(0).default(0),
   ivaPercent:    z.number().min(0).max(100).default(15),
   photoUrl:   z.string().min(1).optional().nullable(),
-  // jul 2026 — FK lógica al attachment del array `attachments` del
-  // mismo mantenimiento (Opción A). NULL = item sin factura.
-  // Se valida que el attachment_key exista en el array attachments[] a
-  // nivel de aplicación en lib/invoices-sync.
   attachmentKey: z.string().min(1).max(40).optional().nullable(),
 });
 
@@ -369,6 +333,81 @@ function isCompanyAdmin(role: string | undefined): boolean {
   return role === 'owner_empresa' || role === 'admin_empresa';
 }
 
+/**
+ * Parsea `from` / `to` (YYYY-MM-DD) como DÍAS CALENDARIO en
+ * America/Guayaquil (Ecuador) y devuelve un rango semi-abierto
+ * `[from, toExclusive)` apto para `WHERE scheduledFor >= from AND
+ * scheduledFor < toExclusive`.
+ *
+ * Por qué NO usar `new Date('YYYY-MM-DD')` directamente: esa forma se
+ * parsea como **UTC midnight** según ECMA-262, así que un mantenimiento
+ * agendado para 28 jul 8am EC (= 28 jul 13:00 UTC) quedaba AFUERA del
+ * filtro `lte(2026-07-28T00:00:00Z)`. El picker del frontend manda
+ * fechas calendario en la zona del usuario (EC), así que el backend
+ * tiene que interpretarlas como tales: 00:00 EC → 05:00 UTC (EC es
+ * UTC-5 todo el año, sin DST). Devolvemos `toExclusive` como el
+ * INICIO del día siguiente para usar con `<` y cubrir el día entero
+ * sin off-by-one.
+ *
+ * Defaults: si el caller no manda `from`/`to`, usamos offsets relativos
+ * a HOY EC (no al server-time UTC). Por ejemplo, `toDaysFromToday: 30`
+ * → "desde hoy hasta 30 días después, interpretado en EC". Si no se
+ * pasan defaults, se devuelve el día de hoy EC.
+ *
+ * jul 2026 — bug fix. Antes `new Date(req.query.from as string)` se
+ * usaba crudo y rompía el filtro para cualquier mantenimiento
+ * programado después de las 00:00 UTC (i.e. después de las 7pm EC del
+ * día anterior). Síntoma típico: admin/owner abría la lista, veía 0
+ * resultados en días con data.
+ */
+function parseEcDayRange(
+  fromStr: string | undefined,
+  toStr:   string | undefined,
+  defaults: { fromDaysFromToday?: number; toDaysFromToday?: number } = {},
+): { from: Date; toExclusive: Date } {
+  const EC_TZ = 'America/Guayaquil';
+
+  const ecYmd = (d: Date): string =>
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: EC_TZ,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(d); // "YYYY-MM-DD" en EC
+
+  // 00:00 EC del día YYYY-MM-DD = 05:00 UTC (Ecuador es UTC-5, sin DST).
+  const ecDayStartUtc = (ymd: string): Date => {
+    const [y, m, d] = ymd.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d, 5, 0, 0, 0));
+  };
+
+  const addDaysToYmd = (ymd: string, days: number): string => {
+    // Importante: construimos el Date a las 12:00 UTC (no 00:00).
+    // Razón: EC es UTC-5, así que `Date.UTC(2026, 6, 28)` es 7pm del
+    // 27 jul en EC; sumar 1 día vía `setUTCDate` da 7pm del 28 jul
+    // en EC, no 29 jul. Para evitar el off-by-one, anclemos al
+    // mediodía UTC: `Date.UTC(y, m-1, d, 12)` es 7am del mismo día
+    // en EC, y sumar 1 día da 7am del día siguiente en EC (correcto).
+    const [y, m, d] = ymd.split('-').map(Number);
+    const base = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    base.setUTCDate(base.getUTCDate() + days);
+    return ecYmd(base);
+  };
+
+  const isYmd = (s: string | undefined): s is string =>
+    typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+  const todayEcYmd = ecYmd(new Date());
+  const fromYmd = isYmd(fromStr) ? fromStr
+    : (defaults.fromDaysFromToday !== undefined ? addDaysToYmd(todayEcYmd, defaults.fromDaysFromToday) : todayEcYmd);
+  const toYmd   = isYmd(toStr)   ? toStr
+    : (defaults.toDaysFromToday   !== undefined ? addDaysToYmd(todayEcYmd, defaults.toDaysFromToday)   : todayEcYmd);
+
+  // `toExclusive` = inicio del día SIGUIENTE en EC (uso con `lt`).
+  return {
+    from:        ecDayStartUtc(fromYmd),
+    toExclusive: ecDayStartUtc(addDaysToYmd(toYmd, 1)),
+  };
+}
+
 function getUserIdFromSub(sub: string | undefined): number | null {
   if (!sub) return null;
   const m = String(sub).match(/(\d+)$/);
@@ -463,8 +502,7 @@ async function loadItemsMap(maintenanceIds: number[]): Promise<Map<number, any[]
       name:           companyMaintenanceItems.name,
       quantity:       companyMaintenanceItems.quantity,
       unitCost:       companyMaintenanceItems.unitCost,
-      subtotal:       companyMaintenanceItems.subtotal,
-      // jul 2026 v4-c — IMPORTE del descuento (no porcentaje). Migración 0042.
+      discountType:   companyMaintenanceItems.discountType, 
       discountValue:  companyMaintenanceItems.discountValue,
       ivaPercent:     companyMaintenanceItems.ivaPercent,
       ivaAmount:      companyMaintenanceItems.ivaAmount,
@@ -487,6 +525,7 @@ async function loadItemsMap(maintenanceIds: number[]): Promise<Map<number, any[]
       supplierName:   i.supplierName,
       name:           i.name,
       quantity:       Number(i.quantity),
+      discountType:  i.discountType ?? 'amount',
       unitCost:       Number(i.unitCost),
       subtotal:       Number(i.subtotal),
       photoUrl:       i.photoUrl ?? null,
@@ -530,29 +569,29 @@ async function loadEventsMap(maintenanceIds: number[]): Promise<Map<number, any[
 // jul 2026 v4-b — Migración 0050. Subtotal/iva/total se calculan con
 // el helper de lib/maintenance-totals.ts (mismo fórmula que el frontend).
 import { computeItemTotals, aggregateTotals } from '../../lib/maintenance-totals';
+import { notifyAll, formatDate, formatCurrency } from '../../services/whatsappService';
+// (jul 2026 v8.6) — Multi-tenant: config efectiva de WhatsApp por
+// empresa + render de plantillas con placeholders. Si la empresa no
+// tiene config, usa defaults globales.
+import { getEffectiveWhatsappConfig } from '../../services/whatsappSettingsService';
+import { renderTemplate } from '../../services/whatsappTemplateService';
 
 function buildItemValues(maintenanceId: number, items: z.infer<typeof itemSchema>[]) {
   return items.map((i) => {
     const t = computeItemTotals(i);
     return {
       maintenanceId,
-      // jul 2026 v4-b — IMPORTANTE: `null` literal, no `undefined`. Si un
-      // campo no está definido en el Zod schema (ej. i.attachmentKey
-      // cuando no hay factura), postgres-js rompe el bind de la query
-      // y tira "Failed query:" sin código SQL state. Normalizamos a
-      // null explícito para que drizzle envie NULL a Postgres.
       supplierId: i.supplierId ? parseId('supplier', i.supplierId) : null,
       name:       i.name,
       quantity:   i.quantity.toFixed(2),
       unitCost:   i.unitCost.toFixed(2),
       subtotal:   t.subtotal.toFixed(2),
-      // jul 2026 v4-c — IMPORTE del descuento (no porcentaje). Migración 0042.
+      discountType:  i.discountType ?? 'amount',
       discountValue: (i.discountValue ?? 0).toFixed(2),
       ivaPercent:    (i.ivaPercent    ?? 15).toFixed(2),
       ivaAmount:     t.ivaAmount.toFixed(2),
       total:         t.total.toFixed(2),
       photoUrl:   i.photoUrl ?? null,
-      // jul 2026 — Opción A: FK lógica al attachment del array `attachments`.
       attachmentKey: i.attachmentKey == null ? null : String(i.attachmentKey),
     };
   });
@@ -700,7 +739,7 @@ router.get(
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
-      const { status, type, category, workshopId, assetId, from, to, q, mine, scope, overdue } = req.query as Record<string, string | undefined>;
+      const { status, type, category, workshopId, assetId, from, to, q, mine, scope, overdue, excludeStatus } = req.query as Record<string, string | undefined>;
       const meId   = getUserIdFromSub(req.user!.sub);
       const meRole = req.user!.role;
       const isFull = hasFullAccess(meRole);
@@ -770,6 +809,17 @@ router.get(
           conditions.push(eq(companyMaintenanceRecords.status, s));
         }
       }
+      // jul 2026 — excludeStatus: filtra MANTENIMIENTOS cuyo status NO sea
+      // el pasado. Usado por la lista principal (default = "no mostrar
+      // Completado") y por el calendario (también "no Completado"). El
+      // historial de cerrados vive en su propio tab (sub_status=Completado).
+      // Es excluyente: si el caller pasa ambos `status` y `excludeStatus`,
+      // gana `status` (filtro más específico). Usamos `sql` template en vez
+      // de `ne()` porque drizzle's ne() exige un literal del enum y acá el
+      // valor viene de req.query (string genérico).
+      if (excludeStatus && !status) {
+        conditions.push(sql`${companyMaintenanceRecords.status} != ${excludeStatus}`);
+      }
       if (type)      conditions.push(eq(companyMaintenanceRecords.type, type as any));
       if (category)  conditions.push(eq(companyMaintenanceRecords.category, category));
       if (workshopId) conditions.push(eq(companyMaintenanceRecords.workshopId, parseId('workshop', workshopId)));
@@ -781,8 +831,16 @@ router.get(
         if (!assetId) return null;
         try { return parseId('asset', assetId); } catch { return null; }
       })();
-      if (from)      conditions.push(gte(companyMaintenanceRecords.scheduledFor, new Date(from)));
-      if (to)        conditions.push(lte(companyMaintenanceRecords.scheduledFor, new Date(to)));
+      // jul 2026 — `from`/`to` se interpretan como DÍAS CALENDARIO en
+      // America/Guayaquil (ver `parseEcDayRange` arriba). Antes
+      // `new Date('YYYY-MM-DD')` se parseaba como UTC midnight, así que
+      // un mantenimiento agendado para 28 jul 8am EC quedaba AFUERA
+      // del filtro `lte(2026-07-28T00:00:00Z)`.
+      if (from || to) {
+        const range = parseEcDayRange(from, to, { fromDaysFromToday: 0, toDaysFromToday: 0 });
+        conditions.push(gte(companyMaintenanceRecords.scheduledFor, range.from));
+        conditions.push(lt(companyMaintenanceRecords.scheduledFor, range.toExclusive));
+      }
       if (q && q.trim().length > 0) {
         const needle = `%${q.trim()}%`;
         conditions.push(or(
@@ -935,8 +993,13 @@ router.get(
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
-      const from = (req.query.from as string) ? new Date(req.query.from as string) : new Date();
-      const to   = (req.query.to   as string) ? new Date(req.query.to   as string) : (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d; })();
+      // jul 2026 — `from`/`to` interpretados como DÍAS CALENDARIO en EC
+      // (ver `parseEcDayRange` arriba). Default: [hoy EC, hoy EC + 30d).
+      const { from, toExclusive } = parseEcDayRange(
+        req.query.from as string | undefined,
+        req.query.to   as string | undefined,
+        { fromDaysFromToday: 0, toDaysFromToday: 30 },
+      );
       const meId   = getUserIdFromSub(req.user!.sub);
       const meRole = req.user!.role;
       const isFull = hasFullAccess(meRole);
@@ -944,7 +1007,7 @@ router.get(
       const whereParts: any[] = [
         eq(companyMaintenanceRecords.companyId, companyId),
         gte(companyMaintenanceRecords.scheduledFor, from),
-        lte(companyMaintenanceRecords.scheduledFor, to),
+        lt(companyMaintenanceRecords.scheduledFor, toExclusive),
       ];
       // Igual que en GET / : el operador ve lo suyo + lo libre (sin asignar)
       // para poder tomarlo desde la agenda también.
@@ -1023,12 +1086,15 @@ router.get(
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
-      const from = (req.query.from as string | undefined)
-        ? new Date(req.query.from as string)
-        : (() => { const d = new Date(); d.setMonth(d.getMonth() - 12); return d; })();
-      const to = (req.query.to as string | undefined)
-        ? new Date(req.query.to as string)
-        : new Date();
+      // jul 2026 — `from`/`to` interpretados como DÍAS CALENDARIO en EC
+      // (ver `parseEcDayRange` arriba). Default: últimos 12 meses, desde
+      // el inicio del día EC correspondiente hasta fin del día EC
+      // correspondiente.
+      const { from, toExclusive } = parseEcDayRange(
+        req.query.from as string | undefined,
+        req.query.to   as string | undefined,
+        { fromDaysFromToday: -365, toDaysFromToday: 0 },
+      );
       const workshopId = req.query.workshopId ? Number(req.query.workshopId) : null;
       const supplierId = req.query.supplierId ? Number(req.query.supplierId) : null;
       const assetId    = req.query.assetId    ? Number(req.query.assetId)    : null;
@@ -1036,7 +1102,7 @@ router.get(
       const whereMant: any[] = [
         eq(companyMaintenanceRecords.companyId, companyId),
         gte(companyMaintenanceRecords.scheduledFor, from),
-        lte(companyMaintenanceRecords.scheduledFor, to),
+        lt(companyMaintenanceRecords.scheduledFor, toExclusive),
       ];
       if (assetId)    whereMant.push(eq(companyMaintenanceRecords.assetId, assetId));
       if (workshopId) whereMant.push(eq(companyMaintenanceRecords.workshopId, workshopId));
@@ -1207,7 +1273,10 @@ router.get(
       };
 
       return res.json({
-        rango:        { desde: from.toISOString().slice(0, 10), hasta: to.toISOString().slice(0, 10) },
+        // jul 2026 — `toExclusive` es el INICIO del día SIGUIENTE
+        // (exclusivo para `lt`); para el reporte le mostramos al user
+        // el último día INCLUIDO, que es `toExclusive - 1ms`.
+        rango:        { desde: from.toISOString().slice(0, 10), hasta: new Date(toExclusive.getTime() - 1).toISOString().slice(0, 10) },
         filtros:      { workshopId, supplierId, assetId },
         totals,
         byWorkshop:   Object.values(byWorkshop).sort((a, b) => b.total - a.total),
@@ -1259,6 +1328,110 @@ router.get(
         .limit(500);
 
       res.json(rows.map(serializeReauth));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─── GET /assets  ──────────────────────────────────────────────────────────────
+// jul 2026 — Catálogo paginado de assets para el sidebar del calendario
+// de agendar (página /mantenimientos/agendar). El endpoint viejo
+// (GET /maintenances) devuelve TODOS los assets de la empresa en el
+// payload de catálogos, lo cual rompe la performance cuando hay 500+
+// vehículos. Este endpoint nuevo trae solo una página por vez y
+// soporta `?q=` para el buscador del sidebar.
+//
+// IMPORTANTE: esta ruta DEBE ir ANTES del `GET /:id` de abajo. Si se
+// pone después, Express matchea "assets" como id numérico y devuelve
+// 404 con "Mantenimiento con id assets no encontrado".
+//
+// Permiso: `mantenimiento` (mismo que el resto del router). El sidebar
+// lo consume el operador que está agendando, no requiere permiso de
+// Flotas (gestion/flotas).
+//
+// Query params:
+//   - page:      número de página (1-indexed). Default 1.
+//   - pageSize:  tamaño de página. Default 20, max 100.
+//   - q:         filtro opcional por nombre/placa/código (ILIKE).
+//
+// Response: { items, total, page, pageSize, totalPages }
+// ─────────────────────────────────────────────────────────────────────────
+
+const assetSearchSchema = z.object({
+  page:     z.coerce.number().int().positive().max(10_000).default(1),
+  pageSize: z.coerce.number().int().positive().max(100).default(20),
+  q:        z.string().max(60).optional().nullable(),
+});
+
+router.get(
+  '/assets',
+  requireModule('mantenimiento'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const params = assetSearchSchema.parse(req.query);
+      const offset = (params.page - 1) * params.pageSize;
+
+      // Filtro de búsqueda: case-insensitive sobre name/plate/code.
+      const q = params.q?.trim();
+      const searchFilter = q && q.length > 0
+        ? or(
+            ilike(companyAssets.name, `%${q}%`),
+            ilike(companyAssets.plate, `%${q}%`),
+            ilike(companyAssets.code, `%${q}%`),
+          )
+        : undefined;
+
+      const where = searchFilter
+        ? and(eq(companyAssets.companyId, companyId), searchFilter)
+        : eq(companyAssets.companyId, companyId);
+
+      const [rows, countRow] = await Promise.all([
+        db
+          .select({
+            id:     companyAssets.id,
+            name:   companyAssets.name,
+            plate:  companyAssets.plate,
+            brand:  companyAssets.brand,
+            model:  companyAssets.model,
+            code:   companyAssets.code,
+            status: companyAssets.status,
+            siteId: companyAssets.siteId,
+          })
+          .from(companyAssets)
+          .where(where)
+          // Orden estable: por nombre y, como tie-breaker, por id. Sin
+          // tie-breaker el orden de paginación se rompe entre requests
+          // cuando hay nombres duplicados.
+          .orderBy(asc(companyAssets.name), asc(companyAssets.id))
+          .limit(params.pageSize)
+          .offset(offset),
+        db
+          .select({ value: sql<number>`cast(count(*) as int)` })
+          .from(companyAssets)
+          .where(where),
+      ]);
+
+      const total = Number(countRow?.value ?? 0);
+      const totalPages = Math.max(1, Math.ceil(total / params.pageSize));
+
+      res.json({
+        items: rows.map((a) => ({
+          id:     toId('asset', a.id),
+          name:   a.name,
+          plate:  a.plate,
+          brand:  a.brand,
+          model:  a.model,
+          code:   a.code,
+          status: a.status,
+          siteId: a.siteId ? toId('site', a.siteId) : null,
+        })),
+        total,
+        page:     params.page,
+        pageSize: params.pageSize,
+        totalPages,
+      });
     } catch (err) {
       next(err);
     }
@@ -1535,6 +1708,42 @@ router.post(
         console.warn('[maintenances] notify created falló (no crítico):', (err as Error).message);
       }
 
+      // ── WhatsApp (jul 2026 v8.6) ─────────────────────────────────
+      // (jul 2026 v8.6) — WhatsApp multi-tenant: usamos la config
+      // efectiva de la empresa (su lista de números + plantilla
+      // custom, o defaults si no tiene). Fire-and-forget: si WAHA
+      // está caído, el mantenimiento igual queda creado.
+      try {
+        const isFree = !created.assignedUserId;
+        const responsibleName = isFree
+          ? ''
+          : (full?.assignedUserName ?? 'Sin asignar');
+        const createdByName = req.user!.name ?? 'Operador';
+        const waConfig = await getEffectiveWhatsappConfig(companyId);
+        if (waConfig.enabled && waConfig.notifyNumbers.length > 0) {
+          const msg = renderTemplate(waConfig.templateScheduled, {
+            placa:             full?.assetPlate ?? 'desconocida',
+            tipo:              created.type,
+            titulo:            created.title ?? '',
+            descripcion:       created.description ?? '',
+            fecha:             formatDate(created.scheduledFor),
+            responsable:       responsibleName || 'Sin asignar',
+            responsable_linea: responsibleName
+              ? `• Responsable: ${responsibleName}`
+              : '• Responsable: Mantenimiento libre (sin asignar)',
+            creado_por:        createdByName,
+          });
+          notifyAll(
+            msg,
+            'maintenance_scheduled',
+            String(created.id),
+            waConfig.notifyNumbers,
+          );
+        }
+      } catch (err) {
+        console.warn('[maintenances] whatsapp scheduled falló (no crítico):', (err as Error).message);
+      }
+
       res.status(201).json(serializeMaintenance({ ...full!.m, ...full! }, itemsMap.get(created.id) ?? [], eventsMap.get(created.id) ?? []));
     } catch (err) {
       next(err);
@@ -1680,6 +1889,7 @@ router.put(
                 r.quantity,                   // string numeric
                 r.unitCost,                   // string numeric
                 r.subtotal,                   // string numeric
+                r.discountType,
                 r.discountValue,              // string numeric
                 r.ivaPercent,                 // string numeric
                 r.ivaAmount,                  // string numeric
@@ -2196,6 +2406,12 @@ router.post(
         }
       }
 
+      // (jul 2026 v8.6) — Recalcular total ANTES de finalizar para
+      // que el totalCost del WhatsApp refleje IVA + items + extras
+      // actualizados. Bug conocido: este endpoint antes solo
+      // cambiaba status sin tocar totalCost.
+      await recalcMaintenanceTotal(id, companyId);
+
       const [updated] = await db
         .update(companyMaintenanceRecords)
         .set({
@@ -2243,6 +2459,65 @@ router.post(
         });
       } catch (err) {
         console.warn('[maintenances] notify complete falló (no crítico):', (err as Error).message);
+      }
+
+      // ── WhatsApp (jul 2026 v8.6) ─────────────────────────────────
+      // Fire-and-forget: notifica que el mantenimiento se finalizó.
+      // El recalcMaintenanceTotal ya corrió arriba, así que
+      // updated.totalCost refleja el total con IVA + items + extras.
+      try {
+        const [finalData] = await db
+          .select({
+            plate:              companyAssets.plate,
+            assignedUserName:   companyUsersAsigned.username,
+          })
+          .from(companyMaintenanceRecords)
+          .leftJoin(companyAssets, eq(companyMaintenanceRecords.assetId, companyAssets.id))
+          .leftJoin(
+            companyUsersAsigned,
+            eq(companyMaintenanceRecords.assignedUserId, companyUsersAsigned.id),
+          )
+          .where(eq(companyMaintenanceRecords.id, id))
+          .limit(1);
+        const isFree = !updated.assignedUserId;
+        const responsibleName = isFree
+          ? ''
+          : (finalData?.assignedUserName ?? 'Sin asignar');
+        const finalizedByName = req.user!.name ?? 'Operador';
+
+        // (jul 2026 v8.6) — Multi-tenant: leemos config efectiva de la
+        // empresa. Si no hay config, defaults globales. Si está
+        // deshabilitado, no enviamos nada.
+        const waConfig = await getEffectiveWhatsappConfig(companyId);
+        if (waConfig.enabled && waConfig.notifyNumbers.length > 0) {
+          const observations = updated.notes ?? '';
+          const costStr = formatCurrency(updated.totalCost);
+          const msg = renderTemplate(waConfig.templateCompleted, {
+            placa:               finalData?.plate ?? 'desconocida',
+            tipo:                updated.type,
+            titulo:              updated.title ?? '',
+            descripcion:         updated.description ?? '',
+            costo:               costStr,
+            fecha_fin:           formatDate(updated.completedAt ?? new Date()),
+            responsable:         responsibleName || 'Sin asignar',
+            responsable_linea:   responsibleName
+              ? `• Responsable: ${responsibleName}`
+              : '• Responsable: Mantenimiento libre (sin asignar)',
+            observaciones:       observations,
+            observaciones_linea: observations
+              ? `• Observaciones: ${observations}`
+              : '',
+            finalizado_por:      finalizedByName,
+          });
+          notifyAll(
+            msg,
+            'maintenance_finalized',
+            String(updated.id),
+            waConfig.notifyNumbers,
+          );
+        }
+      } catch (err) {
+        console.warn('[maintenances] whatsapp finalized falló (no crítico):', (err as Error).message);
       }
 
       res.json({ ok: true, id: toId('maintenance', updated.id), status: 'Completado' });

@@ -89,6 +89,20 @@ function scan(value: unknown, path: string[], depth = 0): string | null {
  * y rechaza con 400 ante cualquier contenido peligroso.
  */
 export function sanitizeRequest(req: Request, _res: Response, next: NextFunction) {
+  // jul 2026 v8.6 — Los endpoints internos de Jarvis (/ai/chat, /ai/tts,
+  // /ai/chat/stream, /ai/voice) reciben el output del LLM, NO input
+  // del usuario. Esos textos legítimamente pueden tener caracteres
+  // como backticks, asteriscos, etc. que el sanitizador confunde
+  // con intentos de XSS. Skipeamos para esos paths.
+  //
+  // El path completo del request (req.originalUrl) viene con el prefijo
+  // del proxy + mount. Para `/api/company/1/ai/tts`, el `req.path` es
+  // `/company/1/ai/tts` y el `req.originalUrl` es `/api/company/1/ai/tts`.
+  // Chequeamos ambos por las dudas.
+  const path = req.originalUrl || req.path || '';
+  if (path.includes('/ai/') || path.includes('/ai')) {
+    return next();
+  }
   for (const source of ['body', 'params', 'query'] as const) {
     const err = scan((req as any)[source], [source]);
     if (err) {

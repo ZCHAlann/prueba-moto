@@ -59,6 +59,7 @@ import {
 } from '../../db/schema/operational';
 import { companyUsers } from '../../db/schema/platform';
 import { requirePermission } from '../../middlewares/requirePermission';
+import { requireModule } from '../../middlewares/requireModule';
 import { AppError, NotFoundError } from '../../lib/errors';
 import { toId, parseIdFlexible } from '../../lib/ids';
 import { validate } from '../../lib/validate';
@@ -1348,6 +1349,424 @@ router.get('/maintenance/:maintenanceId/status', async (req, res, next) => {
     const snapshot = await getMaintenanceFinanceSnapshot(maintenanceId);
     return res.json(snapshot);
   } catch (err) {
+    next(err);
+  }
+});
+
+// ─── GET /finance/petty-cash/closed  ──────────────────────────────────────────
+// jul 2026 — Reporte de cuentas de caja chica CERRADAS (isActive=false).
+// Cada fila es una cuenta histórica (modo period cerrado por cron, o modo
+// balance reemplazado al reconfigurar). El frontend la muestra en el módulo
+// "Caja Chica" del Centro de Reportes, agrupada por sede.
+//
+// Query params:
+//   - siteId: filtrar por sede (opcional)
+//   - from / to: rango sobre period_started_at (opcional, ISO date YYYY-MM-DD)
+//   - mode: 'period' | 'balance' | 'all' (default 'all')
+//   - page / pageSize: paginación canónica (default 20, cap 100)
+//
+// Permisos: requiere que la empresa tenga el módulo `finanzas` habilitado.
+// requireModule('finanzas') verifica tanto `companyModules.includes('finanzas')`
+// (gate de módulo empresa) como que el user tenga al menos un permiso en
+// finanzas.* (granular). El frontend espeja este gate con
+// `requiresModule: "finanzas"` en el REPORT_MODULES para no mostrar la pestaña.
+
+router.get('/petty-cash/closed', requireModule('finanzas'), async (req, res, next) => {
+  try {
+    const companyId = ensureCompanyId(req.companyId);
+
+    const { page, pageSize, offset } = parsePageParams(
+      req.query as Record<string, unknown>,
+      { pageSize: 20, maxPageSize: 100 },
+    );
+
+    const siteId = req.query.siteId
+      ? parseIdFlexible('any', String(req.query.siteId))
+      : null;
+    const from = typeof req.query.from === 'string' && DATE_RE.test(req.query.from)
+      ? req.query.from
+      : null;
+    const to = typeof req.query.to === 'string' && DATE_RE.test(req.query.to)
+      ? req.query.to
+      : null;
+    const mode = typeof req.query.mode === 'string' && ['period', 'balance'].includes(req.query.mode)
+      ? (req.query.mode as 'period' | 'balance')
+      : null;
+
+    const conditions: any[] = [
+      eq(companyPettyCashAccounts.companyId, companyId),
+      eq(companyPettyCashAccounts.isActive, false),
+    ];
+    if (siteId) conditions.push(eq(companyPettyCashAccounts.siteId, siteId));
+    if (mode)   conditions.push(eq(companyPettyCashAccounts.mode, mode));
+    if (from)   conditions.push(sql`${companyPettyCashAccounts.periodStartedAt} >= ${from}::date`);
+    if (to)     conditions.push(sql`${companyPettyCashAccounts.periodStartedAt} <= ${to}::date + interval '1 day'`);
+
+    const [rows, [countRow]] = await Promise.all([
+      db
+        .select({
+          id: companyPettyCashAccounts.id,
+          siteId: companyPettyCashAccounts.siteId,
+          siteName: companySites.name,
+          siteCode: companySites.code,
+          mode: companyPettyCashAccounts.mode,
+          periodKind: companyPettyCashAccounts.periodKind,
+          initialAmount: companyPettyCashAccounts.initialAmount,
+          limitAmount: companyPettyCashAccounts.limitAmount,
+          currentBalance: companyPettyCashAccounts.currentBalance,
+          periodStartedAt: companyPettyCashAccounts.periodStartedAt,
+          createdBy: companyPettyCashAccounts.createdBy,
+          updatedAt: companyPettyCashAccounts.updatedAt,
+        })
+        .from(companyPettyCashAccounts)
+        .leftJoin(companySites, eq(companySites.id, companyPettyCashAccounts.siteId))
+        .where(and(...conditions))
+        .orderBy(desc(companyPettyCashAccounts.periodStartedAt))
+        .limit(pageSize)
+        .offset(offset),
+      db
+        .select({ value: sql<number>`cast(count(*) as int)` })
+        .from(companyPettyCashAccounts)
+        .where(and(...conditions)),
+    ]);
+
+    const total = countRow?.value ?? 0;
+
+    // Hidratamos los conteos de movimientos + vales + solicitudes por cuenta
+    // (1 query batch por tabla, IN sobre los ids de la página actual).
+    // Para requests: NO hay FK directa request.accountId; resolvemos vía
+    // voucher.requestId → request.id. JOIN en SQL, agrupado por accountId.
+    const accountIds = rows.map(r => r.id);
+    const [movementCounts, voucherCounts, requestCounts] = await Promise.all([
+      accountIds.length === 0
+        ? []
+        : db
+            .select({
+              accountId: companyPettyCashMovements.accountId,
+              count: sql<number>`cast(count(*) as int)`,
+            })
+            .from(companyPettyCashMovements)
+            .where(inArray(companyPettyCashMovements.accountId, accountIds))
+            .groupBy(companyPettyCashMovements.accountId),
+      accountIds.length === 0
+        ? []
+        : db
+            .select({
+              accountId: companyPettyCashVouchers.accountId,
+              count: sql<number>`cast(count(*) as int)`,
+            })
+            .from(companyPettyCashVouchers)
+            .where(inArray(companyPettyCashVouchers.accountId, accountIds))
+            .groupBy(companyPettyCashVouchers.accountId),
+      accountIds.length === 0
+        ? []
+        : db.execute<{ account_id: number; count: number }>(sql`
+            SELECT v.account_id AS account_id,
+                   count(DISTINCT v.request_id)::int AS count
+            FROM company_petty_cash_vouchers v
+            WHERE v.account_id = ANY(${sql.raw(`ARRAY[${accountIds.join(",")}]::int[]`)})
+            GROUP BY v.account_id
+          `),
+    ]);
+    const movementsByAcc = new Map(movementCounts.map(r => [r.accountId, r.count]));
+    const vouchersByAcc  = new Map(voucherCounts.map(r => [r.accountId, r.count]));
+    const requestsByAcc  = new Map(
+      (requestCounts as unknown as Array<{ account_id: number; count: number }>)
+        .map(r => [r.account_id, r.count])
+    );
+
+    // Resolvemos el nombre del creador (la cuenta se crea con un usuario;
+    // útil para saber QUIÉN configuró originalmente esa caja).
+    const creatorIds = Array.from(new Set(rows.map(r => r.createdBy).filter((x): x is number => x != null)));
+    const creatorNameById = new Map<number, string>();
+    if (creatorIds.length > 0) {
+      const creators = await db
+        .select({
+          id: companyUsers.id,
+          fullName: sql<string | null>`${companyUsers.profileData}->>'fullName'`,
+          username: companyUsers.username,
+        })
+        .from(companyUsers)
+        .where(inArray(companyUsers.id, creatorIds));
+      for (const c of creators) {
+        creatorNameById.set(c.id, c.fullName ?? c.username ?? `User #${c.id}`);
+      }
+    }
+
+    return res.json({
+      rows: rows.map(r => ({
+        id: r.id,
+        siteId: r.siteId,
+        siteName: r.siteName ?? `Sede #${r.siteId}`,
+        siteCode: r.siteCode ?? null,
+        mode: r.mode,
+        periodKind: r.periodKind ?? null,
+        initialAmount: Number(r.initialAmount),
+        limitAmount: Number(r.limitAmount),
+        finalBalance: Number(r.currentBalance),
+        periodStartedAt: r.periodStartedAt,
+        closedAt: r.updatedAt,
+        createdBy: r.createdBy ?? null,
+        createdByName: r.createdBy ? (creatorNameById.get(r.createdBy) ?? null) : null,
+        movementCount: movementsByAcc.get(r.id) ?? 0,
+        voucherCount:  vouchersByAcc.get(r.id) ?? 0,
+        requestCount:  requestsByAcc.get(r.id) ?? 0,
+      })),
+      total,
+      page,
+      pageSize,
+    });
+  } catch (err) {
+    console.error('[finance/petty-cash/closed] GET error:', (err as Error)?.message);
+    next(err);
+  }
+});
+
+// ─── GET /finance/petty-cash/accounts/:accountId/flow  ────────────────────────
+// jul 2026 — Devuelve el flujo completo (timeline) de una cuenta de caja
+// chica, sea activa o cerrada. Mezcla en orden cronológico:
+//   - movements (initial_assignment, replenishment, period_reset_in/out, etc.)
+//   - vouchers cerrados con su refundAmount y link a la factura
+//   - solicitudes (creadas, aprobadas, rechazadas) que vivieron en la cuenta
+// El frontend lo renderiza como una línea de tiempo vertical.
+//
+// Permisos: misma justificación que GET /petty-cash/closed — gate de módulo
+// empresa `finanzas` (más estricto que solo `caja_chica.ver`).
+
+router.get('/petty-cash/accounts/:accountId/flow', requireModule('finanzas'), async (req, res, next) => {
+  try {
+    const companyId = ensureCompanyId(req.companyId);
+    const accountId = parseIdFlexible('any', String(req.params.accountId));
+
+    // 1) Verificar que la cuenta pertenece a la empresa.
+    const [account] = await db
+      .select({
+        id: companyPettyCashAccounts.id,
+        companyId: companyPettyCashAccounts.companyId,
+        siteId: companyPettyCashAccounts.siteId,
+        siteName: companySites.name,
+        siteCode: companySites.code,
+        mode: companyPettyCashAccounts.mode,
+        periodKind: companyPettyCashAccounts.periodKind,
+        initialAmount: companyPettyCashAccounts.initialAmount,
+        limitAmount: companyPettyCashAccounts.limitAmount,
+        currentBalance: companyPettyCashAccounts.currentBalance,
+        isActive: companyPettyCashAccounts.isActive,
+        periodStartedAt: companyPettyCashAccounts.periodStartedAt,
+        updatedAt: companyPettyCashAccounts.updatedAt,
+        createdBy: companyPettyCashAccounts.createdBy,
+      })
+      .from(companyPettyCashAccounts)
+      .leftJoin(companySites, eq(companySites.id, companyPettyCashAccounts.siteId))
+      .where(and(
+        eq(companyPettyCashAccounts.id, accountId),
+        eq(companyPettyCashAccounts.companyId, companyId),
+      ))
+      .limit(1);
+
+    if (!account) {
+      throw new NotFoundError("Cuenta de caja chica", String(accountId));
+    }
+
+    // 2) Movements de la cuenta (con nombre del actor).
+    const movementRows = await db.execute<{
+      id: number;
+      type: string;
+      amount: string;
+      balance_after: string;
+      note: string | null;
+      occurred_at: Date;
+      related_request_id: number | null;
+      related_voucher_id: number | null;
+      actor_name: string | null;
+    }>(sql`
+      SELECT
+        m.id, m.type, m.amount, m.balance_after, m.note, m.occurred_at,
+        m.related_request_id, m.related_voucher_id,
+        COALESCE(u.profile_data->>'fullName', u.username) AS actor_name
+      FROM company_petty_cash_movements m
+      LEFT JOIN company_users u ON u.id = m.actor_user_id
+      WHERE m.account_id = ${accountId}
+      ORDER BY m.occurred_at ASC
+    `);
+    const movements = (movementRows as unknown as Array<{
+      id: number;
+      type: string;
+      amount: string;
+      balance_after: string;
+      note: string | null;
+      occurred_at: Date;
+      related_request_id: number | null;
+      related_voucher_id: number | null;
+      actor_name: string | null;
+    }>).map(r => ({
+      kind: 'movement' as const,
+      id: r.id,
+      type: r.type,
+      amount: Number(r.amount),
+      balanceAfter: Number(r.balance_after),
+      note: r.note,
+      occurredAt: r.occurred_at,
+      actorName: r.actor_name,
+      relatedRequestId: r.related_request_id,
+      relatedVoucherId: r.related_voucher_id,
+    }));
+
+    // 3) Vales cerrados asociados a esta cuenta (con link a invoice + assignedTo).
+    const voucherRows = await db
+      .select({
+        id: companyPettyCashVouchers.id,
+        requestId: companyPettyCashVouchers.requestId,
+        assignedToUserId: companyPettyCashVouchers.assignedToUserId,
+        issuedAmount: companyPettyCashVouchers.issuedAmount,
+        status: companyPettyCashVouchers.status,
+        closedAt: companyPettyCashVouchers.closedAt,
+        closedActualAmount: companyPettyCashVouchers.closedActualAmount,
+        closedInvoiceId: companyPettyCashVouchers.closedInvoiceId,
+        closedNotes: companyPettyCashVouchers.closedNotes,
+        refundAmount: companyPettyCashVouchers.refundAmount,
+        purpose: companyPettyCashVouchers.purpose,
+        createdAt: companyPettyCashVouchers.createdAt,
+      })
+      .from(companyPettyCashVouchers)
+      .where(eq(companyPettyCashVouchers.accountId, accountId))
+      .orderBy(asc(companyPettyCashVouchers.createdAt));
+
+    // Hidratamos assignedTo y closedInvoiceNumber.
+    const userIds = Array.from(new Set(voucherRows.map(v => v.assignedToUserId)));
+    const userNameById = new Map<number, string>();
+    if (userIds.length > 0) {
+      const us = await db
+        .select({
+          id: companyUsers.id,
+          fullName: sql<string | null>`${companyUsers.profileData}->>'fullName'`,
+          username: companyUsers.username,
+        })
+        .from(companyUsers)
+        .where(inArray(companyUsers.id, userIds));
+      for (const u of us) userNameById.set(u.id, u.fullName ?? u.username ?? `User #${u.id}`);
+    }
+    const invoiceIds = Array.from(new Set(
+      voucherRows.map(v => v.closedInvoiceId).filter((x): x is number => x != null)
+    ));
+    const invoiceNumberById = new Map<number, string>();
+    if (invoiceIds.length > 0) {
+      const invs = await db
+        .select({
+          id: companyInvoices.id,
+          invoiceNumber: companyInvoices.invoiceNumber,
+        })
+        .from(companyInvoices)
+        .where(inArray(companyInvoices.id, invoiceIds));
+      for (const inv of invs) {
+        invoiceNumberById.set(inv.id, inv.invoiceNumber ?? `Factura #${inv.id}`);
+      }
+    }
+
+    const vouchers = voucherRows.map(v => ({
+      kind: 'voucher' as const,
+      id: v.id,
+      requestId: v.requestId,
+      assignedToUserId: v.assignedToUserId,
+      assignedToName: userNameById.get(v.assignedToUserId) ?? `User #${v.assignedToUserId}`,
+      issuedAmount: Number(v.issuedAmount),
+      status: v.status,
+      closedAt: v.closedAt,
+      closedActualAmount: v.closedActualAmount != null ? Number(v.closedActualAmount) : null,
+      closedInvoiceId: v.closedInvoiceId ?? null,
+      closedInvoiceNumber: v.closedInvoiceId ? (invoiceNumberById.get(v.closedInvoiceId) ?? null) : null,
+      closedNotes: v.closedNotes,
+      refundAmount: Number(v.refundAmount),
+      purpose: v.purpose ?? null,
+      createdAt: v.createdAt,
+    }));
+
+    // 4) Solicitudes que vivieron en esta cuenta. NO hay FK directa
+    // accountId → request; la relación es voucher.requestId → request.id.
+    // Resolvemos: voucher.accountId = X → requestIds únicos → requests.
+    const requestIds = Array.from(new Set(voucherRows.map(v => v.requestId)));
+    const requestRows = requestIds.length === 0 ? [] : await db
+      .select({
+        id: companyFinanceRequests.id,
+        requesterUserId: companyFinanceRequests.requesterUserId,
+        approverUserId: companyFinanceRequests.approverUserId,
+        amount: companyFinanceRequests.amount,
+        reason: companyFinanceRequests.reason,
+        justificationNotes: companyFinanceRequests.justificationNotes,
+        origin: companyFinanceRequests.origin,
+        classification: companyFinanceRequests.classification,
+        status: companyFinanceRequests.status,
+        rejectionReason: companyFinanceRequests.rejectionReason,
+        reviewedAt: companyFinanceRequests.reviewedAt,
+        createdAt: companyFinanceRequests.createdAt,
+      })
+      .from(companyFinanceRequests)
+      .where(inArray(companyFinanceRequests.id, requestIds))
+      .orderBy(asc(companyFinanceRequests.createdAt));
+
+    const requestUserIds = Array.from(new Set([
+      ...requestRows.map(r => r.requesterUserId),
+      ...requestRows.map(r => r.approverUserId).filter((x): x is number => x != null),
+    ]));
+    if (requestUserIds.length > 0) {
+      const us = await db
+        .select({
+          id: companyUsers.id,
+          fullName: sql<string | null>`${companyUsers.profileData}->>'fullName'`,
+          username: companyUsers.username,
+        })
+        .from(companyUsers)
+        .where(inArray(companyUsers.id, requestUserIds));
+      for (const u of us) userNameById.set(u.id, u.fullName ?? u.username ?? `User #${u.id}`);
+    }
+    const requests = requestRows.map(r => ({
+      kind: 'request' as const,
+      id: r.id,
+      requesterUserId: r.requesterUserId,
+      requesterName: userNameById.get(r.requesterUserId) ?? `User #${r.requesterUserId}`,
+      approverUserId: r.approverUserId ?? null,
+      approverName: r.approverUserId ? (userNameById.get(r.approverUserId) ?? null) : null,
+      amount: Number(r.amount),
+      reason: r.reason,
+      justificationNotes: r.justificationNotes,
+      origin: r.origin,
+      classification: r.classification,
+      status: r.status,
+      rejectionReason: r.rejectionReason,
+      reviewedAt: r.reviewedAt,
+      createdAt: r.createdAt,
+    }));
+
+    // 5) Mezclamos y ordenamos cronológicamente.
+    const timeline = [
+      ...movements,
+      ...vouchers.map(v => ({ ...v, occurredAt: v.closedAt ?? v.createdAt })),
+      ...requests.map(r => ({ ...r, occurredAt: r.reviewedAt ?? r.createdAt })),
+    ].sort((a, b) => {
+      const ta = new Date(a.occurredAt).getTime();
+      const tb = new Date(b.occurredAt).getTime();
+      return ta - tb;
+    });
+
+    return res.json({
+      account: {
+        id: account.id,
+        siteId: account.siteId,
+        siteName: account.siteName ?? `Sede #${account.siteId}`,
+        siteCode: account.siteCode ?? null,
+        mode: account.mode,
+        periodKind: account.periodKind ?? null,
+        initialAmount: Number(account.initialAmount),
+        limitAmount: Number(account.limitAmount),
+        currentBalance: Number(account.currentBalance),
+        isActive: account.isActive,
+        periodStartedAt: account.periodStartedAt,
+        closedAt: account.updatedAt,
+      },
+      timeline,
+    });
+  } catch (err) {
+    console.error('[finance/petty-cash/accounts/:id/flow] GET error:', (err as Error)?.message);
     next(err);
   }
 });

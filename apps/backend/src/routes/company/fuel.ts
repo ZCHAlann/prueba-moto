@@ -225,8 +225,14 @@ router.post(
       // jul 2026 v3 — Generamos invoice_number per-origen (COMB-NNN) por
       // empresa via la PL/pgSQL `next_invoice_number`. El cliente ya NO
       // manda este campo.
+      //
+      // NOTA: usar `sql.raw("'fuel'")` para el source porque Drizzle
+      // trata cualquier ${string} dentro de `sql` template como
+      // placeholder parametrizado; el 'fuel' literal se convertiría en
+      // un $N extra y Postgres tira "could not determine data type".
+      const fuelSourceSql = sql.raw("'fuel'");
       const genRows = await db.execute(sql`
-        SELECT next_invoice_number(${companyId}, 'fuel') AS invoice_number
+        SELECT next_invoice_number(${companyId}, ${fuelSourceSql}) AS invoice_number
       `) as unknown as { rows: Array<{ invoice_number: string }> };
       const invoiceNumber: string =
         genRows.rows?.[0]?.invoice_number ?? `COMB-${String(Date.now()).slice(-6)}`;

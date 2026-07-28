@@ -523,6 +523,10 @@ export const notificationKindEnum = pgEnum('notification_kind_enum', [
   'alert_created',
   'alert_closed',
   'alert_reminder',
+  // jul 2026 — Horario de conductores: cron diario 19:00 EC manda
+  // resumen de conductores libres del día siguiente al admin.
+  // Migration 0070.
+  'driver_time_off_reminder',
 ]);
 
 export const devicePlatformEnum = pgEnum('device_platform_enum', [
@@ -697,19 +701,13 @@ export const companyMaintenanceItems = pgTable('company_maintenance_items', {
   quantity:       numeric('quantity', { precision: 10, scale: 2 }).notNull().default('1'),
   unitCost:       numeric('unit_cost', { precision: 12, scale: 2 }).notNull().default('0'),
   subtotal:       numeric('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
-  // jul 2026 v4-b — Migración 0050 + 0042 (rename). IMPORTE monetario del
-  // descuento (no porcentaje). El backend clampea al subtotal original
-  // para que no quede negativo.
+  discountType:   varchar('discount_type', { length: 10 }).notNull().default('amount'),
   discountValue:  numeric('discount_value', { precision: 12, scale: 2 }).notNull().default('0'),
   ivaPercent:      numeric('iva_percent',      { precision: 5, scale: 2 }).notNull().default('15'),
   ivaAmount:       numeric('iva_amount',       { precision: 12, scale: 2 }).notNull().default('0'),
   total:           numeric('total',            { precision: 12, scale: 2 }).notNull().default('0'),
   attachmentKey:  varchar('attachment_key', { length: 40 }),
   financeRequestId: integer('finance_request_id'),
-  // jul 2026 v4 — clasificación contable del item (migration 0047).
-  // NULL = sin clasificar todavía. La columna es text + CHECK en DB
-  // (no un enum de Postgres) porque la 0047 lo implementó como text
-  // para mantener idempotencia con el migration runner.
   financeClassification: text('finance_classification'),
   createdAt:      timestamp('created_at').notNull().defaultNow(),
 });
@@ -1978,4 +1976,40 @@ export const companyInvoiceReviewEvents = pgTable(
     metadata:        jsonb('metadata').notNull().default({}),
     createdAt:       timestamp('created_at').notNull().defaultNow(),
   },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// jul 2026 — Horario de conductores: UNA fila por (empresa, conductor, día)
+// con el status de "libre" (o el reason que se defina después). Migration 0070.
+//
+// No bloquea asignación a mantenimientos (es solo informativo). El cron
+// diario 19:00 EC lee esta tabla y manda `notifyAdmins` con kind
+// `driver_time_off_reminder` para el día siguiente.
+//
+// Reglas de UNIQUE:
+//   - (company_id, driver_id, date) → no duplicar mismo conductor mismo día
+//   - El `created_by` es on-delete SET NULL porque si el admin que armó
+//     el schedule se va de la empresa, queremos conservar el registro.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const driverTimeOff = pgTable(
+  'driver_time_off',
+  {
+    id:          serial('id').primaryKey(),
+    companyId:   integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+    driverId:    integer('driver_id').notNull().references(() => companyDrivers.id, { onDelete: 'cascade' }),
+    // `date` no es `timestamp` porque el feature es día-puntual, no
+    // timestamp exacto. El front manda YYYY-MM-DD, el back lo guarda así.
+    // Si en el futuro hace falta una hora (ej. "sale a las 14:00"), se
+    // agrega `startTime` / `endTime` aparte — no se cambia este.
+    date:        date('date').notNull(),
+    reason:      varchar('reason', { length: 40 }),
+    notes:       text('notes'),
+    createdBy:   integer('created_by').references(() => companyUsers.id, { onDelete: 'set null' }),
+    createdAt:   timestamp('created_at').notNull().defaultNow(),
+    updatedAt:   timestamp('updated_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCompanyDriverDate: unique('driver_time_off_company_driver_date_uniq').on(t.companyId, t.driverId, t.date),
+  }),
 );

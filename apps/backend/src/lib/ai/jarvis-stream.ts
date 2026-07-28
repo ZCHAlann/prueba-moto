@@ -623,6 +623,9 @@ async function executeToolCall(
   toolCtx: ToolContext,
 ): Promise<ToolExecutionResult> {
   const toolStart = Date.now();
+  // jul 2026 v8.6 — Instrumentación de tiempo por etapa. Mismo
+  // formato que en jarvis.ts. Permite ver dónde se va la latencia.
+  const stageStart = { parse: toolStart, validate: 0, run: 0 };
   const toolDef = getToolByName(tc.function.name);
 
   let resultCount: number | undefined;
@@ -641,6 +644,26 @@ async function executeToolCall(
       const rawArgs = tc.function.arguments || '{}';
       let parsedArgs: unknown;
       try { parsedArgs = JSON.parse(rawArgs); } catch { parsedArgs = {}; }
+      stageStart.validate = Date.now();
+
+      // jul 2026 v8.6 — Pre-procesado defensivo de los args.
+      // Ver el mismo bloque en jarvis.ts. Groq manda `null` en lugar
+      // de omitir params opcionales, y Zod con `.optional()` rechaza
+      // `null` (solo acepta `undefined`). Convertimos `null` → undefined,
+      // `[]` → undefined y strings vacíos → undefined.
+      if (parsedArgs && typeof parsedArgs === 'object' && !Array.isArray(parsedArgs)) {
+        const obj = parsedArgs as Record<string, unknown>;
+        for (const k of Object.keys(obj)) {
+          if (obj[k] === null) {
+            delete obj[k];
+          } else if (Array.isArray(obj[k]) && (obj[k] as unknown[]).length === 0) {
+            delete obj[k];
+          } else if (typeof obj[k] === 'string' && (obj[k] as string).trim() === '') {
+            delete obj[k];
+          }
+        }
+      }
+
       let argsParsed = toolDef.schema.safeParse(parsedArgs);
 
       // Rescate 1: aplanar el objeto args por si el LLM envolvió los
@@ -688,6 +711,7 @@ async function executeToolCall(
         }
       }
       if (argsParsed.success) {
+        stageStart.run = Date.now();
         // Cache wrapper: si los args ya se consultaron hace <5min,
         // devolvemos el resultado cacheado sin tocar la DB.
         const { result, fromCache } = await runTool(tc.function.name, argsParsed.data, toolCtx);
@@ -701,6 +725,20 @@ async function executeToolCall(
     toolError = err instanceof Error ? err.message : 'tool_threw';
     toolResult = { error: toolError };
   }
+
+  // jul 2026 v8.6 — Log de tiempo por etapa. Mismo formato que
+  // jarvis.ts. Permite identificar si la latencia está en el
+  // parseo/validación (~ms) o en la ejecución real (~s).
+  const parseMs    = stageStart.validate - stageStart.parse;
+  const validateMs = stageStart.run - stageStart.validate;
+  const execMs     = Date.now() - stageStart.run;
+  // eslint-disable-next-line no-console
+  console.log(
+    `[jarvis:tool] ${tc.function.name} ` +
+    `parse=${parseMs}ms validate=${validateMs}ms exec=${execMs}ms ` +
+    `total=${Date.now() - toolStart}ms ` +
+    (toolError ? `error=${toolError}` : `rows=${resultCount ?? 'n/a'}`),
+  );
 
   return {
     toolCallId:    tc.id,

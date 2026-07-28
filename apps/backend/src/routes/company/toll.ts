@@ -203,6 +203,7 @@ router.post(
       // jul 2026 v3 — Generamos invoice_number per-origen (PEAJ-NNN) por
       // empresa usando la PL/pgSQL `next_invoice_number`. El cliente ya
       // NO manda este campo.
+
       const genRows = await db.execute(sql`
         SELECT next_invoice_number(${companyId}, 'toll') AS invoice_number
       `) as unknown as { rows: Array<{ invoice_number: string }> };

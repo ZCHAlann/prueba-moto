@@ -1,5 +1,5 @@
 // lib/ai/tts.ts
-// ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Text-to-Speech usando ElevenLabs (voces humanas multilingües).
 //
 // Antes: Groq Orpheus (solo inglés/árabe, voz robótica).
@@ -13,7 +13,7 @@
 //
 // Caché en memoria con TTL 10 min, máximo 100 entradas.
 // Si ElevenLabs falla, el frontend hace fallback a Web Speech API.
-// ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
 const ELEVENLABS_TTS_URL = (voiceId: string) =>
   `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
@@ -85,31 +85,31 @@ const cache = new Map<string, TtsCacheEntry>();
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 100;
 
-function cacheKey(text: string, voice: VoiceId, model: string): string {
+function cacheKey(text: string, voice: VoiceId): string {
   let h = 5381;
-  const combined = `${model}:${voice}:${text}`;
+  const combined = `${voice}:${text}`;
   for (let i = 0; i < combined.length; i++) {
     h = ((h << 5) + h) ^ combined.charCodeAt(i);
   }
   return `${combined.length}:${h.toString(36)}`;
 }
 
-function getFromCache(text: string, voice: VoiceId, model: string): Buffer | null {
-  const entry = cache.get(cacheKey(text, voice, model));
+function getFromCache(text: string, voice: VoiceId): Buffer | null {
+  const entry = cache.get(cacheKey(text, voice));
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
-    cache.delete(cacheKey(text, voice, model));
+    cache.delete(cacheKey(text, voice));
     return null;
   }
   return entry.buffer;
 }
 
-function putInCache(text: string, voice: VoiceId, model: string, buffer: Buffer): void {
+function putInCache(text: string, voice: VoiceId, buffer: Buffer): void {
   if (cache.size >= CACHE_MAX_ENTRIES) {
     const first = cache.keys().next().value;
     if (first) cache.delete(first);
   }
-  cache.set(cacheKey(text, voice, model), { buffer, expiresAt: Date.now() + CACHE_TTL_MS });
+  cache.set(cacheKey(text, voice), { buffer, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
 // ─── Synth principal ───────────────────────────────────────────────
@@ -181,7 +181,7 @@ async function doSynthesize(text: string, voice: VoiceId): Promise<TtsResult> {
   const trimmed = text.length > 5000 ? text.slice(0, 5000) + '...' : text;
 
   // Cache hit
-  const cached = getFromCache(trimmed, voice, ELEVENLABS_MODEL);
+  const cached = getFromCache(trimmed, voice);
   if (cached) {
     return {
       buffer: cached,
@@ -228,7 +228,7 @@ async function doSynthesize(text: string, voice: VoiceId): Promise<TtsResult> {
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  putInCache(trimmed, voice, ELEVENLABS_MODEL, buffer);
+  putInCache(trimmed, voice, buffer);
 
   return {
     buffer,

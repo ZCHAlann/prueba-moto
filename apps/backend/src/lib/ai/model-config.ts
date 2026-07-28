@@ -19,8 +19,17 @@
 //   - Permite más requests por minuto antes de rate limit.
 // ─────────────────────────────────────────────────────────────────────
 
-const DEFAULT_PRIMARY  = 'llama-3.1-8b-instant';
-const DEFAULT_FALLBACK = 'llama-3.3-70b-versatile';
+// jul 2026 v6 — Migracion de Gemma local a Groq hosted.
+// Modelo principal: `openai/gpt-oss-120b` (recomendacion oficial de Groq
+// para tool calling / agentic en produccion, ~500 tok/s, $0.15/$0.60 por
+// 1M tokens). Reemplaza a los deprecados llama-3.x.
+//
+// Modelo liviano: `openai/gpt-oss-20b` (mas chico, mas barato, $0.075/$0.30
+// por 1M). Usado como clasificador barato previo al razonamiento grande
+// en el Chat Listener (seccion 2.3 del plan), y como fallback automatico
+// si el primario da rate limit (gpt-oss-120B consume mas TPM).
+const DEFAULT_PRIMARY  = 'openai/gpt-oss-120b';
+const DEFAULT_FALLBACK = 'openai/gpt-oss-20b';
 
 /** Modelo actualmente en uso (cambia dinámicamente con switchToFallback). */
 let _currentModel: string = readPrimary();
@@ -95,4 +104,32 @@ export function getModelConfig() {
     fallback:    readFallback(),
     enabled:     isFallbackEnabled(),
   };
+}
+
+/**
+ * jul 2026 v6 — Modelo "clasificador" barato, separado del primario y
+ * del fallback. Se usa en `classifyAndMaybeAnswer()` y en cualquier
+ * punto del pipeline donde queremos gastar menos tokens (ej. el
+ * pre-filtro del Chat Listener, parseo de intent, etc).
+ *
+ * Por que un modelo aparte y no el mismo `fallback`?
+ *   - El `fallback` se activa SOLO en rate limit del primario.
+ *   - El clasificador lo queremos usar SIEMPRE que llegue un
+ *     mensaje trivial, para no gastar tokens del primario.
+ *   - Si usaran el mismo modelo, en un rate limit del primario
+ *     tambien estariamos rate-limiteando el clasificador.
+ */
+let _currentClassifier: string = readClassifier();
+
+function readClassifier(): string {
+  const v = process.env.GROQ_MODEL_CLASSIFIER?.trim();
+  return v && v.length > 0 ? v : 'openai/gpt-oss-20b';
+}
+
+export function getClassifier(): string {
+  return _currentClassifier;
+}
+
+export function setClassifier(model: string): void {
+  _currentClassifier = model;
 }

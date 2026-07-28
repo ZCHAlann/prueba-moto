@@ -87,7 +87,10 @@ export type NotificationKind =
   | 'finance_petty_cash_limit_reached'
   | 'finance_petty_cash_replenished'
   // ── jul 2026 v5 — Sistema de revisión contable de facturas (migration 0051)
-  | 'finance_invoice_correction_requested';
+  | 'finance_invoice_correction_requested'
+  // ── jul 2026 — Horario de conductores: cron diario 19:00 EC manda
+  // resumen al admin de los conductores libres del día siguiente. Migration 0070.
+  | 'driver_time_off_reminder';
 
 export interface NotifyArgs {
   companyId:   number;

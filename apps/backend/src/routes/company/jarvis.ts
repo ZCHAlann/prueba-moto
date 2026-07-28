@@ -14,7 +14,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
 import ffmpeg from 'fluent-ffmpeg';
-import { PassThrough } from 'stream';
+import { PassThrough, Readable } from 'stream';
 import { and, eq, desc, sql } from 'drizzle-orm';
 import { ForbiddenError, AppError } from '../../lib/errors';
 import { requireAdminOwner } from '../../middlewares/requireAdminOwner';
@@ -50,6 +50,7 @@ import { toFile as groqToFile } from 'groq-sdk';
 import { triggerWeeklySummaryNow } from '../../scheduled/weekly-summary';
 import { getRateLimitStats } from '../../lib/ai/rate-limit';
 import { requireModule } from '../../middlewares/requireModule';
+import { cleanForTts } from '../../lib/ai/text-clean';
 
 const router = Router({ mergeParams: true });
 
@@ -91,9 +92,12 @@ router.post(
       const voice: VoiceId =
         reqVoice && isValidVoice(reqVoice) ? reqVoice : DEFAULT_VOICE;
 
-      // jul 2026 v7 — per-empresa. Chequea kill-switch y useTts.
-      const empresaId = req.companyId!;
-      const result = await synthesizeSpeechForCompany(text, voice, empresaId);
+      // Limpiamos SIEMPRE antes de mandar a Kokoro — este endpoint puede
+      // recibir texto con markdown crudo (ej. un botón "leer" que toma el
+      // texto ya renderizado en pantalla, con **bold**, tablas, etc.)
+      console.log('[TTS DEBUG] texto crudo recibido:', JSON.stringify(text).slice(0, 500));
+      const cleanText = await cleanForTts(text);
+      const result = await synthesizeSpeechForCompany(cleanText, voice, empresaId);
       res.setHeader('Content-Type', 'audio/mpeg');
       res.setHeader('Content-Length', String(result.bytes));
       res.setHeader('X-TTS-Cached', result.cached ? '1' : '0');
@@ -168,6 +172,11 @@ router.post(
         empresaNombre: req.user!.companyName ?? 'Tu empresa',
         message:   body.message,
         conversationId: body.conversationId ?? null,
+        // jul 2026 v8.5 — Pasamos cookie de sesión y baseUrl para que las
+        // tools de ACCIÓN puedan hacer fetch autenticado a otros
+        // endpoints del backend.
+        cookieHeader: req.headers.cookie,
+        baseUrl:      process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`,
       });
 
       res.json(result);
@@ -622,6 +631,9 @@ router.post(
             empresaNombre: req.user!.companyName ?? 'Tu empresa',
             message:   body.message,
             conversationId: body.conversationId ?? null,
+            // jul 2026 v8.5 — cookieHeader y baseUrl para tools de acción.
+            cookieHeader: req.headers.cookie,
+            baseUrl:      process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`,
           },
           { send },
         );
@@ -677,9 +689,17 @@ function transcodeToWavPcm16k(input: Buffer): Promise<Buffer> {
     out.on('end',  () => resolve(Buffer.concat(chunks)));
     out.on('error', reject);
 
+    // jul 2026 v8.6 — NO usar inputFormat('auto'): a veces ffmpeg
+    // autodetecta mal el contenedor (especialmente webm truncados del
+    // MediaRecorder) y tira "Invalid input" antes de intentar parsear.
+    // Sin hint, ffmpeg prueba TODOS los demuxers y suele tener éxito.
+    //
+    // NOTA: fluent-ffmpeg no acepta Buffer directo en .input() (en
+    // algunas versiones de tipos). Lo envolvemos en un Readable.from()
+    // que es más portable.
+    const inputStream = Readable.from(input);
     const cmd = ffmpeg()
-      .input(input)
-      .inputFormat('auto')
+      .input(inputStream)
       .audioFrequency(16000)
       .audioChannels(1)
       .audioCodec('pcm_s16le')
@@ -753,6 +773,35 @@ router.post(
       }
 
       const file = (req as any).file as Express.Multer.File | undefined;
+
+      // jul 2026 v8.6 — Wake word flow (Vosk STT local en el browser).
+      // Si el query trae __skipStt=1, el frontend ya transcribió el
+      // audio con Vosk y nos manda el texto en un form field `text`.
+      // Saltamos Whisper + ffmpeg completamente y vamos directo al
+      // chat. Esto baja la latencia de ~6s a ~3s y elimina el 400
+      // "Invalid input" cuando el contenedor webm viene corrupto.
+      const skipStt = req.query.__skipStt === '1' || req.query.skipStt === '1';
+      const textFromBody = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+
+      if (skipStt) {
+        if (!textFromBody) {
+          throw new AppError(400, 'Falta el campo "text" cuando __skipStt=1.');
+        }
+        // Saltamos directo al chat con el texto pre-transcrito.
+        return await handleVoiceChatWithText(
+          req,
+          res,
+          empresaId,
+          userId,
+          textFromBody,
+          // (jul 2026 v8.6) — Historial de la conversación de voz
+          // (acumulado en el frontend). El backend lo pasa al LLM
+          // como contexto multi-turn sin persistir.
+          Array.isArray(req.body?.history) ? req.body.history : [],
+          t0,
+        );
+      }
+
       if (!file || !file.buffer || file.size === 0) {
         throw new AppError(400, 'Falta el archivo "audio" (multipart).');
       }
@@ -789,10 +838,28 @@ router.post(
             sttBuffer  = wavBuf;
             sttFilename = 'voice.wav';
             sttMime     = 'audio/wav';
+          } else {
+            // jul 2026 v8.6 — ffmpeg devolvió un WAV vacío o demasiado
+            // chico (header solo). El contenedor original casi seguro
+            // también va a fallar en Whisper. Devolvemos 400 claro
+            // para que el frontend sepa que reintente.
+            throw new AppError(
+              400,
+              'El audio grabado está vacío o corrupto. Mantené presionado el botón de micrófono al menos 1 segundo antes de soltarlo.',
+            );
           }
         } catch (tcErr) {
+          if (tcErr instanceof AppError) throw tcErr;
+          // jul 2026 v8.6 — antes caíamos al contenedor original, pero
+          // Whisper también lo rechazaba con "could not process file".
+          // Ahora devolvemos 400 directo: el contenedor está mal y no
+          // tiene sentido reintentarlo con la misma entrada.
           // eslint-disable-next-line no-console
-          console.warn('[jarvis/voice] ffmpeg transcode falló, enviando contenedor original:', tcErr);
+          console.warn('[jarvis/voice] ffmpeg transcode falló:', tcErr);
+          throw new AppError(
+            400,
+            'No pude procesar el audio grabado. Asegurate de hablar al menos 1 segundo y que el micrófono no esté silenciado.',
+          );
         }
       }
 
@@ -830,9 +897,16 @@ router.post(
         empresaNombre: req.user!.companyName ?? 'Tu empresa',
         message:   transcript,
         conversationId: convIdRaw ?? null,
+        // jul 2026 v8.5 — Voice mode (respuesta hablada) + cookieHeader/baseUrl.
+        voiceMode: true,
+        cookieHeader: req.headers.cookie,
+        baseUrl:      process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`,
       });
 
-      const answerText = chatResult.answer ?? '';
+      // jul 2026 v8.6 — Usamos `answerSpoken` (limpio) para el TTS, no
+      // `answer` (con markdown). Si por alguna razón no viene, caemos
+      // al answer normal (defensa redundante).
+      const answerText = chatResult.answerSpoken || chatResult.answer || '';
 
       // 3) TTS: ElevenLabs. Si falla, devolvemos answer sin audio y la app
       // hace fallback a Web Speech API en el cliente.
@@ -867,5 +941,83 @@ router.post(
     }
   },
 );
+
+/**
+ * jul 2026 v8.6 — Wake word flow (Vosk STT local en el browser).
+ *
+ * Helper que ejecuta el chat + TTS sin pasar por Whisper. Usado cuando
+ * el frontend manda `?__skipStt=1` con un campo `text` pre-transcrito
+ * por Vosk. Salva ~2-3s vs el flujo tradicional con Whisper + ffmpeg.
+ *
+ * Comparte el response shape del endpoint /voice original.
+ */
+async function handleVoiceChatWithText(
+  req: any,
+  res: any,
+  empresaId: number,
+  userId: number,
+  transcript: string,
+  ephemeralHistory: Array<{ role: 'user' | 'assistant'; content: string }>,
+  t0: number,
+): Promise<void> {
+  // jul 2026 v8.5 — Voice mode + cookieHeader/baseUrl para tools
+  // de acción que pegan al backend vía HTTP.
+  const convIdRaw =
+    (typeof req.body?.conversationId === 'string' && req.body.conversationId) ||
+    (typeof req.query.conversationId === 'string' && req.query.conversationId) ||
+    (typeof req.query.cid === 'string' && req.query.cid) ||
+    undefined;
+  const voiceRaw =
+    (typeof req.body?.voice === 'string' && req.body.voice) ||
+    (typeof req.query.voice === 'string' && req.query.voice) ||
+    undefined;
+  void convIdRaw; // en ephemeral el conversationId se ignora.
+
+  const chatResult = await jarvisChat({
+    empresaId,
+    userId,
+    userName:  req.user!.name ?? 'Usuario',
+    rol:       req.user!.role,
+    empresaNombre: req.user!.companyName ?? 'Tu empresa',
+    message:   transcript,
+    // (jul 2026 v8.6) — Modo ephemeral: el wake word → STT → jarvis
+    // NO persiste la conversación. El user quiere una respuesta
+    // hablada sin que aparezca en su historial de chat.
+    // Pero para dar continuidad multi-turn (el LLM tiene contexto
+    // de los turnos previos), le mandamos el historial en memoria.
+    conversationId: null,
+    voiceMode: true,
+    ephemeral:  true,
+    ephemeralHistory,
+    cookieHeader: req.headers.cookie,
+    baseUrl:      process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`,
+  });
+
+  const answerText = chatResult.answerSpoken || chatResult.answer || '';
+
+  // TTS ElevenLabs con fallback a "sin audio" si falla.
+  let audioBase64: string | null = null;
+  let audioMime:  string | null = null;
+  try {
+    const voiceId: VoiceId =
+      voiceRaw && isValidVoice(voiceRaw) ? voiceRaw : DEFAULT_VOICE;
+    const tts = await synthesizeSpeechForCompany(answerText, voiceId, empresaId);
+    audioBase64 = tts.buffer.toString('base64');
+    audioMime   = 'audio/mpeg';
+  } catch (ttsErr) {
+    // eslint-disable-next-line no-console
+    console.warn('[jarvis/voice] TTS falló, devolviendo solo texto:', ttsErr);
+  }
+
+  res.json({
+    transcript,
+    answer:         answerText,
+    conversationId: chatResult.conversationId ?? null,
+    audioBase64,
+    audioMime,
+    latencyMs:      Date.now() - t0,
+    healedKey:      false, // no hubo Whisper, no aplica auto-recovery
+  });
+}
 
 export default router;

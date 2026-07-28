@@ -25,6 +25,18 @@ export interface ToolContext {
   /** userId autenticado, útil para auditoría por usuario. */
   userId: number;
   rol: JarvisRole;
+  /**
+   * Cookie de sesión del request HTTP original. Solo presente en
+   * tools de ACCIÓN (POST/PUT/DELETE) que necesitan reusar la
+   * autenticación del usuario para llamar a otros endpoints del
+   * backend. Para tools de lectura no es necesario.
+   */
+  cookieHeader?: string;
+  /**
+   * URL base del backend (ej: "http://localhost:5000"). Usado por
+   * las tools de acción para hacer fetch a otros endpoints.
+   */
+  baseUrl?: string;
 }
 
 export interface ToolDefinition<TArgs = any> {
@@ -62,7 +74,7 @@ export interface ToolResult {
 // Jarvis es solo lectura: lista y consulta datos de la operación, no
 // modifica ni crea nada. Por eso el catálogo solo tiene tools de GET.
 
-import { vehiculosTool } from './vehiculos';
+import { VEHICULOS_TOOLS } from './vehiculos';
 import { mantenimientosTool } from './mantenimientos';
 import { combustibleTool } from './combustible';
 import { segurosTool } from './seguros';
@@ -70,9 +82,10 @@ import { checklistsTool } from './checklists';
 import { asignacionesTool } from './asignaciones';
 import { conductoresTool } from './conductores';
 import { peajesTool } from './peajes';
+import { ACCIONES_TOOLS } from './acciones';
 
 export const TOOL_REGISTRY: ToolDefinition[] = [
-  vehiculosTool,
+  ...VEHICULOS_TOOLS,
   mantenimientosTool,
   combustibleTool,
   segurosTool,
@@ -80,6 +93,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
   asignacionesTool,
   conductoresTool,
   peajesTool,
+  ...ACCIONES_TOOLS,
 ];
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -131,12 +145,26 @@ export async function runTool(
   if (cacheable) {
     const cached = toolCache.get(ctx.empresaId, ctx.rol, toolName, args);
     if (cached) {
+      // eslint-disable-next-line no-console
+      console.log(`[jarvis:cache] HIT ${toolName}`);
       return { result: cached, fromCache: true };
     }
   }
   const result = await def.execute(args as any, ctx);
   if (cacheable) {
     toolCache.set(ctx.empresaId, ctx.rol, toolName, args, result);
+    // eslint-disable-next-line no-console
+    console.log(`[jarvis:cache] MISS ${toolName} (set, TTL 5min)`);
+  } else {
+    // jul 2026 v8.6 — Tool de escritura exitosa: invalidamos TODO
+    // el cache de la empresa. Si dejamos el cache stale, la próxima
+    // lectura devolvería datos viejos (ej: "cuántos mantenimientos
+    // tiene este vehículo" justo después de crear uno).
+    // Invalidación por empresa entera es la opción segura: son
+    // solo ~500 entradas y la latencia del map es ~1ms.
+    const invalidated = toolCache.invalidate(ctx.empresaId);
+    // eslint-disable-next-line no-console
+    console.log(`[jarvis:cache] WRITE ${toolName} → invalidated ${invalidated} entries`);
   }
   return { result, fromCache: false };
 }
@@ -179,8 +207,26 @@ function zodToJsonSchema(schema: any): Record<string, unknown> {
     const properties: Record<string, unknown> = {};
     const required: string[] = [];
     for (const [k, v] of Object.entries(shape)) {
-      properties[k] = zodToJsonSchema(v);
-      if (!isOptionalOrHasDefault(v)) required.push(k);
+      const child = zodToJsonSchema(v);
+      // jul 2026 v8.6 — Aceptar `null` en params opcionales.
+      //
+      // gpt-oss-120b vía Groq manda `null` en lugar de omitir
+      // params opcionales. Zod con `.optional()` rechaza `null` en
+      // runtime, pero la validación en el response de Groq (que corre
+      // ANTES de mi pre-procesador) también rechaza porque el
+      // JSON-schema generado dice `type: string` y Groq valida
+      // `expected string, but got null`.
+      //
+      // Solución: wrappear el schema del prop en `anyOf: [original, null]`
+      // para los que son opcionales. Eso le dice a Groq que
+      // también acepte `null` para ese campo. Mismo criterio que la
+      // opción `nullable: true` en OpenAPI 3.0.
+      if (!isOptionalOrHasDefault(v)) {
+        properties[k] = child;
+        required.push(k);
+      } else {
+        properties[k] = { anyOf: [child, { type: 'null' }] };
+      }
     }
     const result: Record<string, unknown> = { type: 'object', properties };
     if (required.length > 0) result.required = required;
@@ -284,18 +330,47 @@ function isOptionalOrHasDefault(schema: any): boolean {
 }
 
 /**
- * Emite un JSON Schema para number/integer incluyendo minimum/maximum
- * extraídos de los checks de Zod. Sin esto, el LLM no ve las restricciones
- * y puede generar valores fuera de rango (e.g. limit: 0) que Groq rechaza
- * con 400 antes de llegar al backend.
+ * Emite un JSON Schema para number/integer incluyendo minimum/maximum y
+ * el flag `integer` derivados de los checks de Zod v4. Sin esto, el LLM
+ * no ve las restricciones y puede generar valores fuera de rango
+ * (e.g. limit: 0) o tipos incorrectos (e.g. dias: "10" en vez de 10)
+ * que Groq rechaza con 400 antes de llegar al backend.
+ *
+ * En Zod v4 los checks son class instances con metadata en
+ * `check._zod.def` (no en `check._def` ni `check.kind`).
+ * Estructuras relevantes que vimos empíricamente:
+ *   - .int()       → $ZodNumberFormat / ZodNumberFormat con
+ *                    _zod.def = {check: "number_format", format: "safeint"}
+ *   - .min(n)      → $ZodCheckGreaterThan con
+ *                    _zod.def = {check: "greater_than", value: n, inclusive: true}
+ *   - .max(n)      → $ZodCheckLessThan con
+ *                    _zod.def = {check: "less_than", value: n, inclusive: true}
+ *   - .positive()  → min(>0) en el check interno
+ *   - .nonnegative() / .gte() / .lte() → variantes equivalentes
  */
 function numberSchemaWithBounds(def: Record<string, any>, baseType: 'number' | 'integer' = 'number'): Record<string, unknown> {
   const result: Record<string, unknown> = { type: baseType };
   const checks = Array.isArray(def.checks) ? def.checks : [];
   for (const c of checks) {
     if (!c || typeof c !== 'object') continue;
-    if (c.kind === 'min' && c.value !== undefined) result.minimum = c.value;
-    if (c.kind === 'max' && c.value !== undefined) result.maximum = c.value;
+    // En Zod v4 los checks son class instances; la metadata real vive en c._zod.def
+    const checkDef = c._zod?.def ?? c.def ?? {};
+    const checkType: string = checkDef.check ?? '';
+    const value: number | undefined = checkDef.value;
+    const inclusive: boolean = checkDef.inclusive !== false; // default true
+
+    if (checkType === 'number_format' && checkDef.format === 'safeint') {
+      // .int() → forzar integer en JSON Schema
+      result.type = 'integer';
+    } else if (checkType === 'greater_than' && typeof value === 'number') {
+      if (inclusive) result.minimum = value;
+      else result.exclusiveMinimum = value;
+    } else if (checkType === 'less_than' && typeof value === 'number') {
+      if (inclusive) result.maximum = value;
+      else result.exclusiveMaximum = value;
+    } else if (checkType === 'multiple_of' && typeof value === 'number') {
+      result.multipleOf = value;
+    }
   }
   return result;
 }

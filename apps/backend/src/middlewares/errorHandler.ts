@@ -3,6 +3,7 @@ import { AppError, ValidationError } from '../lib/errors';
 
 export const errorHandler = (err: any, req: Request, res: Response, next: NextFunction) => {
   console.error('[errorHandler]', req.method, req.originalUrl, '→', err?.message, err?.code);
+  console.error('[errorHandler] cause:', err?.cause)
 
   if (err instanceof ValidationError) {
     return res.status(err.status).json({

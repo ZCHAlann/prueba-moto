@@ -15,6 +15,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@google/genai": "^2.13.0",
     "@google/generative-ai": "^0.24.1",
     "@neondatabase/serverless": "^1.1.0",
     "axios": "^1.16.1",
@@ -36,9 +37,15 @@
     "morgan": "^1.10.1",
     "multer": "^2.1.1",
     "node-cron": "^3.0.3",
-    "pg": "^8.21.0",
+    "openai": "^6.48.0",
+    "pg": "^8.22.0",
     "postgres": "^3.4.9",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-stringify": "^11.0.0",
     "sharp": "^0.35.2",
+    "strip-markdown": "^6.0.0",
+    "unified": "^11.0.5",
     "ws": "^8.18.0",
     "zod": "^4.4.3"
   },
@@ -55,7 +62,7 @@
     "@types/ws": "^8.5.13",
     "cookie-parser": "^1.4.7",
     "drizzle-kit": "^0.31.10",
-    "tsx": "^4.22.3",
+    "tsx": "^4.23.1",
     "typescript": "^6.0.3"
   }
 }

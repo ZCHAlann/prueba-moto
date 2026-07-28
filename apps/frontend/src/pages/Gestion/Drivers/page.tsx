@@ -10,8 +10,9 @@ import { ModulePageHeader } from "../../../components/features/modules/ModulePag
 import { DriverActa } from "../../../components/features/drivers/DriverActa";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import { validationRules, digitsOnlyInputFilter, sanitizeString } from "../../../lib/form-validation";
+import { HorarioConductoresCalendar } from "./components/HorarioConductoresCalendar";
 import {
-  AlertTriangle, Car, ChevronDown, ChevronLeft, ChevronRight,
+  AlertTriangle, Car, CalendarDays, ChevronDown, ChevronLeft, ChevronRight,
   Eye, Filter, Loader2, Mail, MapPin, Pencil,
   Phone, Plus, Search, Trash2, User, X,
   Fuel, Droplets, ClipboardList, FileText,
@@ -1300,7 +1301,7 @@ export default function DriversPage() {
   const canEdit   = can("gestion", "conductores", "editar");
   const canDelete = can("gestion", "conductores", "eliminar");
 
-  const [activeTab, setActiveTab] = useState<"conductores" | "reportes">("conductores");
+  const [activeTab, setActiveTab] = useState<"conductores" | "horario">("conductores");
 
   const [search, setSearch]             = useState("");
   const [filterStatus, setFilterStatus] = useState("");
@@ -1393,7 +1394,7 @@ const paginated = drivers;
         subtitle="Control del personal asignable — licencias, contacto, vehículo activo y reportes en un solo lugar. Los conductores nuevos se crean desde Accesos / Usuarios (necesitan login)."
         accent="cyan"
         action={
-          canCreate ? (
+          canCreate && activeTab === "conductores" ? (
             <button onClick={openCreateModal}
               className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-cyan-500/20 hover:bg-cyan-600 active:scale-95">
               <Plus size={15} />Nuevo conductor
@@ -1402,18 +1403,19 @@ const paginated = drivers;
         }
       />
 
-      <KpiRow drivers={drivers} />
+      {activeTab === "conductores" && <KpiRow drivers={drivers} />}
 
       {/* ─── Tabs ─────────────────────────────────────────────── */}
       <div className="flex w-full gap-1 rounded-xl border border-gray-200 bg-gray-100/60 p-1 dark:border-white/[0.06] dark:bg-white/[0.03] md:w-fit">
-        {(["conductores", "reportes"] as const).map(tab => (
+        {(["conductores", "horario"] as const).map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-semibold capitalize transition md:flex-none md:px-5 ${
               activeTab === tab
                 ? "bg-white text-gray-800 shadow-sm dark:bg-white/[0.08] dark:text-white"
                 : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
             }`}>
-            {tab === "conductores" ? "Conductores" : `Reportes${allReports.length > 0 ? ` (${allReports.length})` : ""}`}
+            {tab === "conductores" ? "Conductores"
+              : "Horario"}
           </button>
         ))}
       </div>
@@ -1512,100 +1514,12 @@ const paginated = drivers;
         </>
       )}
 
-      {/* ─── Tab: Reportes ────────────────────────────────────── */}
-      {activeTab === "reportes" && (
-        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-white/[0.06] dark:bg-white/[0.03]">
-          <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5 dark:border-white/[0.06]">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-800 dark:text-white">Reportes operativos</h3>
-              <p className="text-xs text-gray-400">{filteredReports.length} reporte{filteredReports.length !== 1 ? "s" : ""}</p>
-            </div>
-            <div className="relative w-56">
-              <Search size={12} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input type="text" value={reportSearch} onChange={e => setReportSearch(e.target.value)}
-                placeholder="Buscar conductor o novedad..."
-                className="h-8 w-full rounded-xl border border-gray-200 bg-transparent pl-8 pr-3 text-xs text-gray-800 placeholder:text-gray-400 focus:border-cyan-400 focus:outline-none dark:border-white/[0.08] dark:text-white" />
-            </div>
-          </div>
-
-          {loadingAll ? (
-            <div className="flex items-center justify-center gap-3 py-12 text-gray-400">
-              <Loader2 size={16} className="animate-spin" /><span className="text-sm">Cargando reportes...</span>
-            </div>
-          ) : filteredReports.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-10">
-              <ClipboardList size={18} className="text-gray-300 dark:text-gray-600" />
-              <p className="text-sm text-gray-400">Sin reportes registrados</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[700px]">
-                <thead>
-                  <tr className="border-b border-gray-100 dark:border-white/[0.06]">
-                    {["#", "Conductor", "Combustible", "Aceite", "Novedades", "Facturas", "Fecha", ""].map((h, i) => (
-                      <th key={i} className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredReports.map((r, i) => {
-                    const invCount = (r.invoices as DriverReportInvoice[])?.length ?? 0;
-                    return (
-                      <tr key={r.id}
-                        className="group cursor-pointer border-b border-gray-100 transition-colors hover:bg-gray-50/80 dark:border-white/[0.04] dark:hover:bg-white/[0.02]"
-                        onClick={() => setReportDrawer(r)}>
-                        <td className="px-4 py-3 text-xs font-semibold text-gray-400">{i + 1}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-cyan-50 dark:bg-cyan-500/10 text-[10px] font-black text-cyan-600 dark:text-cyan-400">
-                              {(r.driverName ?? "?")[0]}
-                            </div>
-                            <p className="text-sm font-semibold text-gray-800 dark:text-white">{r.driverName ?? "—"}</p>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-bold ${levelBadge(r.fuelLevel)}`}>
-                            <Fuel size={10} />{r.fuelLevel ?? "—"}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-bold ${levelBadge(r.oilLevel)}`}>
-                            <Droplets size={10} />{r.oilLevel ?? "—"}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 max-w-[200px]">
-                          <p className="truncate text-xs text-gray-600 dark:text-gray-300">{r.vehicleFaults || "—"}</p>
-                        </td>
-                        <td className="px-4 py-3">
-                          {invCount > 0 ? (
-                            <span className="inline-flex items-center gap-1 rounded-lg bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:bg-white/[0.08] dark:text-gray-300">
-                              <ClipboardList size={10} />{invCount}
-                            </span>
-                          ) : <span className="text-xs text-gray-400">—</span>}
-                        </td>
-                        <td className="px-4 py-3">
-                          <p className="text-xs text-gray-500 dark:text-gray-400">
-                            {fmtDateShortEc(r.createdAt)}
-                          </p>
-                          <p className="text-[11px] text-gray-400">
-                            {fmtTimeEc(r.createdAt)}
-                          </p>
-                        </td>
-                        <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                          <button onClick={() => setReportDrawer(r)}
-                            className="rounded-lg border border-cyan-200 px-2 py-1 text-[11px] font-semibold text-cyan-600 hover:bg-cyan-50 dark:border-cyan-500/20 dark:text-cyan-400">
-                            Ver
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
+      {/* ─── Tab: Horario (jul 2026 v5) ─────────────────────────
+          Migrado desde /gestion/horario-conductores (submódulo propio)
+          a una tab dentro de Conductores. El componente es self-
+          contained: trae su propio estado, queries, modals. No usa
+          nada del estado local de este componente padre. */}
+      {activeTab === "horario" && <HorarioConductoresCalendar />}
 
       {/* ─── Drawers y modals ─────────────────────────────────── */}
       {reportDrawer && (

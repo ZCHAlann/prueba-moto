@@ -1,4 +1,4 @@
-﻿﻿"use client";
+﻿"use client";
 
 import { JSX, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import { PettyCashClosedFlowDrawer } from "./PettyCashClosedFlowDrawer";
 import type { ReportRow } from "./page";
 
 function fmtDate(s: string | null | undefined): string {
@@ -149,17 +150,26 @@ const maintenanceSchema: ModuleSchema = (raw) => {
     const labor = pickNum(m.laborCost);
     const total = pickNum(m.totalCost) ?? labor;
     const parts = labor != null && total != null ? Math.max(0, total - labor) : null;
+    // jul 2026 — Aliases para tolerar los nombres viejos Y los nuevos que
+    // devuelve el hook V2. Antes la schema leía `m.kind`/`m.scheduledDate`/
+    // `m.completedDate`/`m.technician` y mostraba "—" en el drawer aunque
+    // la tabla SÍ mostrara los datos (la tabla los lee con los nombres
+    // correctos en buildPreview). Ahora aceptamos ambos con fallback.
+    const tipo         = pickStr(m.type)        ?? pickStr(m.kind);
+    const programado   = pickStr(m.scheduledFor) ?? pickStr(m.scheduledDate);
+    const completado   = pickStr(m.completedAt)  ?? pickStr(m.completedDate);
+    const tecnico      = pickStr(m.assignedUserName) ?? pickStr(m.technician);
     sections.push({
       title: "Detalle del mantenimiento",
       icon: Wrench,
       fields: [
         { label: "Título",      value: pickStr(m.title) ?? "—" },
-        { label: "Tipo",        value: pickStr(m.kind) ?? "—" },
+        { label: "Tipo",        value: tipo ?? "—" },
         { label: "Estado",      value: pickStr(m.status) ?? "—" },
         { label: "Prioridad",   value: pickStr(m.priority) ?? "—" },
-        { label: "Programado",  value: fmtDate(pickStr(m.scheduledDate)) },
-        { label: "Completado",  value: fmtDate(pickStr(m.completedDate)) },
-        { label: "Técnico",     value: pickStr(m.technician) ?? "—" },
+        { label: "Programado",  value: fmtDate(programado) },
+        { label: "Completado",  value: fmtDate(completado) },
+        { label: "Técnico",     value: tecnico ?? "—" },
         { label: "Mano de obra",value: fmtMoney(labor) },
         { label: "Repuestos",   value: fmtMoney(parts) },
         { label: "Costo total", value: fmtMoney(total), highlight: true },
@@ -592,6 +602,24 @@ function ModuleFullDetail({
         alertId={alertId}
         companyId={companyId ?? null}
         onAfterNavigate={onAfterNavigate}
+      />
+    );
+  }
+
+  // jul 2026 — rep-010: Caja Chica histórica. Cada fila es una cuenta
+  // cerrada; el drawer muestra la línea de tiempo del flujo completo
+  // (movements + vouchers + requests) en orden cronológico.
+  if (moduleId === "rep-010") {
+    const closedRaw = (raw as { kind?: string; closedAccount?: any } | null);
+    const closedAccount = (closedRaw?.kind === "closed-petty-cash" && closedRaw.closedAccount)
+      ? closedRaw.closedAccount
+      : null;
+    const accountId = (closedRaw?.closedAccount?.id as number | null | undefined) ?? null;
+    return (
+      <PettyCashClosedFlowDrawer
+        companyId={companyId ?? null}
+        accountId={accountId}
+        closedAccount={closedAccount}
       />
     );
   }

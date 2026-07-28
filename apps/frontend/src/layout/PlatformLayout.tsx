@@ -15,7 +15,7 @@ const PlatformLayoutContent: React.FC = () => {
   useEffect(() => {
     if (!ready) return;
     if (!session || session.scope !== "plataforma") {
-      navigate("/platform/signin", { replace: true });
+      navigate("/panel/signin", { replace: true });
     }
   }, [ready, session, navigate]);
 
@@ -27,7 +27,7 @@ const PlatformLayoutContent: React.FC = () => {
       <div>
         <AppSidebar
           sections={platformNavigationSections}
-          homeHref="/platform/dashboard"
+          homeHref="/panel/dashboard"
         />
         <Backdrop />
       </div>

@@ -267,9 +267,6 @@ export function AISettingsPanel() {
                 toast.success("Key de Groq borrada");
               }}
             />
-            <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-              Modelo: <code className="font-mono">llama-3.3-70b-versatile</code> (definido por ApliSmart)
-            </p>
           </div>
 
           <div>
@@ -287,9 +284,6 @@ export function AISettingsPanel() {
                 toast.success("Key de Gemini borrada");
               }}
             />
-            <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-              Modelo: <code className="font-mono">gemini-2.5-flash</code> (definido por ApliSmart)
-            </p>
           </div>
         </div>
       </Section>

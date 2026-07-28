@@ -87,8 +87,7 @@ export function ChecklistHistorial({ onOpenDetail, pageSize = 7 }: Props) {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("No se pudo generar el PDF");
     } finally {
       setExportingId(null);

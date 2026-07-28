@@ -40,6 +40,9 @@ import { SitesManagementPage } from "./pages/Gestion/Sedes/page";
 import { InsuranceManagementPage } from "./pages/Gestion/Seguros/page";
 import { GestionTalleresPage } from "./pages/Gestion/Talleres/page";
 import { GestionProveedoresPage } from "./pages/Gestion/Proveedores/page";
+// jul 2026 v5 — Horario de conductores ya no es ruta propia. Vive
+// como TAB dentro de /operaciones/conductores (page.tsx de Drivers).
+// Se importa via ./pages/Gestion/Drivers/page.tsx.
 import { UsersPage } from "./pages/Accesos/Usuarios/page";
 import { RolesPage } from "./pages/Accesos/Roles/page";
 import { AutorizacionesPage } from "./pages/Autorizaciones/page";
@@ -89,7 +92,7 @@ function RequirePlatform() {
       <div className="h-6 w-6 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
     </div>
   );
-  if (!session || session.scope !== "plataforma") return <Navigate to="/platform/signin" replace />;
+  if (!session || session.scope !== "plataforma") return <Navigate to="/panel/signin" replace />;
   return <PlatformLayout />;
 }
 
@@ -105,7 +108,7 @@ function GuestOperacion({ children }: { children: React.ReactNode }) {
 function GuestPlatform({ children }: { children: React.ReactNode }) {
   const { ready, session } = useAuth();
   if (!ready) return null;
-  if (session?.scope === "plataforma") return <Navigate to="/platform/dashboard" replace />;
+  if (session?.scope === "plataforma") return <Navigate to="/panel/dashboard" replace />;
   return <>{children}</>;
 }
 
@@ -370,26 +373,26 @@ export default function App() {
 
         {/* ── Plataforma ── */}
         <Route element={<RequirePlatform />}>
-          <Route path="/platform/dashboard" element={<PlatformDashboard />} />
-          <Route path="/platform/plans" element={<PlansPage />} />
-          <Route path="/platform/companies" element={<CompaniesPage />} />
-          <Route path="/platform/companies/:id/ai" element={<CompanyAIPage />} />
-          <Route path="/platform/modules" element={<ModulesPage />} />
-          <Route path="/platform/users" element={<PlatformUsersPage />} />
-          <Route path="/platform/audit" element={<AuditPage />} />
-          <Route path="/platform/settings" element={<PlatformSettingsPage />} />
-          <Route path="/platform/fleet" element={<FleetHealthPage />} />
-          <Route path="/platform/tickets" element={<PlatformTicketsPage />} />
+          <Route path="/panel/dashboard" element={<PlatformDashboard />} />
+          <Route path="/panel/plans" element={<PlansPage />} />
+          <Route path="/panel/companies" element={<CompaniesPage />} />
+          <Route path="/panel/companies/:id/ai" element={<CompanyAIPage />} />
+          <Route path="/panel/modules" element={<ModulesPage />} />
+          <Route path="/panel/users" element={<PlatformUsersPage />} />
+          <Route path="/panel/audit" element={<AuditPage />} />
+          <Route path="/panel/settings" element={<PlatformSettingsPage />} />
+          <Route path="/panel/fleet" element={<FleetHealthPage />} />
+          <Route path="/panel/tickets" element={<PlatformTicketsPage />} />
           {/* jul 2026 v6 — Placeholder de Geolocalización en panel master.
               Muestra "Trabajando en el desarrollo del módulo" en vez de
               quedar en blanco. Cuando el feature esté listo, reemplazar
               por la página real. */}
-          <Route path="/platform/geolocalizacion" element={<PlatformGeolocationPage />} />
+          <Route path="/panel/geolocalizacion" element={<PlatformGeolocationPage />} />
         </Route>
 
         {/* ── Auth (público) ── */}
         <Route path="/signin" element={<GuestOperacion><SignIn /></GuestOperacion>} />
-        <Route path="/platform/signin" element={<GuestPlatform><PlatformSignIn /></GuestPlatform>} />
+        <Route path="/panel/signin" element={<GuestPlatform><PlatformSignIn /></GuestPlatform>} />
 
         <Route path="*" element={<NotFound />} />
       </Routes>

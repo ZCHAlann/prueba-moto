@@ -89,11 +89,7 @@ export function AIInsightsProvider({
       ].filter(Boolean);
       const unicos = new Set(refsUsados);
       if (refsUsados.length > 1 && unicos.size === 1) {
-        console.warn(
-          "[AIInsights] Todos los hallazgos comparten el mismo chartRef:",
-          [...unicos][0],
-          "— revisar el prompt del backend."
-        );
+        // (revisar prompt del backend si esto pasa)
       }
     }
     return (ref: ChartRef) => map.get(ref) ?? null;

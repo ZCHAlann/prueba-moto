@@ -173,13 +173,12 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
           }
         }
         if (skipped.length > 0) {
-          console.warn('[wizard:corrections] tipos sin mapping (no se pueden rehacer):', skipped);
+          // silent
         }
         setLocalCorrectionItems(mapped);
       })
       .catch((err) => {
         if (cancelled) return;
-        console.error('[wizard:corrections] error:', err);
         setCorrectionsError(err instanceof Error ? err.message : 'Error al cargar correcciones');
       })
       .finally(() => {
@@ -294,7 +293,6 @@ export function SolicitarSalidaWizard({ open, onClose, onCreated, initialAsset =
 
     const isVideo = step.type === "video";
     enqueue(step.id, toUpload, isVideo).catch((err: any) => {
-      console.error("[wizard:capture-error] full err:", err);
       let msg = err?.message ?? String(err);
       if (err?.name === "TypeError" && /fetch/i.test(msg)) {
         msg = "No se pudo conectar al servidor. Revisá tu conexión.";

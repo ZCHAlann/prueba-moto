@@ -90,6 +90,15 @@ const inputCls =
 
 const labelCls = "text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-1.5 block";
 
+// jul 2026 v4-f — Input "de celda" para la tabla de repuestos estilo
+// factura: SIN borde ni fondo propios (se apoya en el borde de la celda
+// que ya dibuja la tabla), transparente, sin flechitas nativas del
+// spinner numérico. Solo aparece un anillo sutil al enfocar. Así la
+// tabla se lee como una factura real, no como un formulario con cajas
+// superpuestas.
+const cellInputCls =
+  "w-full min-w-0 bg-transparent border-0 px-0 py-0.5 text-xs text-gray-800 dark:text-white placeholder:text-gray-300 dark:placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-violet-400/50 focus:rounded-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
+
 // ─── Props ─────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -159,6 +168,11 @@ export function MaintenanceFormModal({
   const [notes, setNotes]                     = useState<string>("");
   const [items, setItems]                     = useState<ItemRow[]>([]);
   const [assignedUserId, setAssignedUserId]   = useState<string>("");
+  // jul 2026 v4-d — % de IVA único aplicado a TODOS los items del
+  // mantenimiento. Antes se preguntaba por fila, lo cual era redundante
+  // cuando (como es casi siempre) el % es el mismo para todo. Al
+  // cambiarlo, se propaga a cada item vía applyGlobalIva().
+  const [globalIvaPercent, setGlobalIvaPercent] = useState<number>(15);
   // Adjuntos (facturas, fotos de evidencia) — sincronizados con
   // maintenance.attachments. Cada item puede traer metadata rica
   // (kind / amount / invoiceNumber) que el backend usa para crear
@@ -207,7 +221,16 @@ export function MaintenanceFormModal({
       setNextTriggerKm(maintenance.nextTriggerKm);
       setScheduledFor(maintenance.scheduledFor?.slice(0, 16) ?? "");
       setNotes(maintenance.notes ?? "");
-      setItems((maintenance.items ?? []).map((i) => ({ ...i, photoUrl: i.photoUrl ?? null, uploading: false })));
+      setItems((maintenance.items ?? []).map((i) => ({
+        ...i,
+        discountType: (i as any).discountType ?? "amount",
+        photoUrl: i.photoUrl ?? null,
+        uploading: false,
+      })));
+      // jul 2026 v4-d — hidratar el % de IVA global desde el primer item
+      // existente (todos deberían compartir el mismo valor en la práctica).
+      const firstIva = maintenance.items?.[0]?.ivaPercent;
+      setGlobalIvaPercent(firstIva != null ? Number(firstIva) : 15);
       setAssignedUserId(maintenance.assignedUserId ?? "");
       setCarwashLocation(maintenance.carwashLocation ?? "");
       setCarwashProvider(maintenance.carwashProvider ?? "");
@@ -232,6 +255,7 @@ export function MaintenanceFormModal({
       setScheduledFor(prefill?.scheduledFor ?? new Date().toISOString().slice(0, 16));
       setNotes("");
       setItems([]);
+      setGlobalIvaPercent(15);
       setAssignedUserId("");
       setCarwashLocation("");
       setCarwashProvider("");
@@ -286,14 +310,17 @@ export function MaintenanceFormModal({
     // jul 2026 v4-b — Migración 0050. Defaults: 15% IVA Ecuador,
     // 0% descuento. quantity=1, unitCost=0. photoUrl null hasta que
     // se suba.
+    // jul 2026 v4-d — el % de IVA nuevo toma el valor global vigente
+    // (no un 15 fijo) y discountType arranca en 'amount' (importe $).
     setItems((p) => [
       ...p,
       {
         name: "",
         quantity: 1,
         unitCost: 0,
-        discountValue: 0,  // jul 2026 v4-c — IMPORTE del descuento.
-        ivaPercent: 15,
+        discountType: "amount",
+        discountValue: 0,  // jul 2026 v4-c — IMPORTE o % segun discountType.
+        ivaPercent: globalIvaPercent,
         photoUrl: null,
         uploading: false,
       },
@@ -305,6 +332,14 @@ export function MaintenanceFormModal({
   const removeItem = (idx: number) => {
     setItems((p) => p.filter((_, i) => i !== idx));
   };
+
+  // jul 2026 v4-d — Cambia el % de IVA global y lo propaga a todos los
+  // items existentes de una sola vez. Ya no se pregunta por fila.
+  const applyGlobalIva = (value: number) => {
+    setGlobalIvaPercent(value);
+    setItems((prev) => prev.map((it) => ({ ...it, ivaPercent: value })));
+  };
+
   const handleItemPhoto = async (idx: number, file: File) => {
     updateItem(idx, { uploading: true });
     setUploadingIdx(idx);
@@ -394,7 +429,9 @@ export function MaintenanceFormModal({
       // Lavada: no items / no workshop / no cadencia
       items: isLavada ? [] : (items.length ? items.map((i) => ({
         name: i.name, quantity: i.quantity, unitCost: i.unitCost,
-        // jul 2026 v4-c — IMPORTE del descuento (no porcentaje). Migración 0042.
+        // jul 2026 v4-d — descuento por importe ($) o porcentaje (%),
+        // según discountType. El backend resuelve el importe efectivo.
+        discountType:  i.discountType ?? "amount",
         discountValue: i.discountValue ?? 0,
         ivaPercent:    i.ivaPercent ?? 15,
         photoUrl: i.photoUrl, supplierId: i.supplierId ?? null,
@@ -404,10 +441,12 @@ export function MaintenanceFormModal({
       carwashNotes:    isLavada ? (carwashNotes.trim() || null) : null,
       // Costo explícito que digitó el admin en el modal de lavada.
       carwashTotal:    isLavada ? (carwashTotal ?? 0)             : 0,
-      // Adjuntos: solo aplicables en Programado→En proceso o Completado.
-      // En creación el array está vacío (no se pueden subir fotos antes de
-      // que exista el ID). En edición se mandan los actuales.
-      attachments: isEditing && !isLavada ? attachments : (isEditing ? attachments : []),
+      // Adjuntos: se permiten para cualquier tipo de mantenimiento
+      // (jul 2026 v8.6 — también en lavadas, donde no hay items de
+      // repuesto pero sí se quieren subir fotos de evidencia al
+      // pasar a "En proceso" o "Completado").
+      // En creación el array está vacío. En edición se mandan los actuales.
+      attachments: isEditing ? attachments : [],
       assignedUserId: assignedUserId || null,
     };
     try {
@@ -682,47 +721,6 @@ export function MaintenanceFormModal({
             )}
           </div>
 
-          {/* ── Mano de obra + odómetro (solo Programado/Correctivo) ── */}
-          {!isLavada && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className={labelCls}>
-                  <span className="inline-flex items-center gap-1.5">
-                    <DollarSign size={11} /> Mano de obra
-                  </span>
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  placeholder="0"
-                  value={laborCost === 0 ? "" : laborCost}
-                  disabled={isReadOnly}
-                  onChange={(e) => setLaborCost(e.target.value === "" ? 0 : Number(e.target.value))}
-                  className={inputCls}
-                />
-                <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
-                  Servicio del taller. Se muestra separado de los repuestos.
-                </p>
-              </div>
-              <div>
-                <label className={labelCls}>
-                  <span className="inline-flex items-center gap-1.5">
-                    <Hash size={11} /> Odómetro (km)
-                  </span>
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  placeholder="Lectura actual del vehículo"
-                  value={odometerKm ?? ""}
-                  disabled={isReadOnly}
-                  onChange={(e) => setOdometerKm(e.target.value === "" ? null : Number(e.target.value))}
-                  className={inputCls}
-                />
-              </div>
-            </div>
-          )}
-
           {/* ── Asignación (solo admin/owner/supervisor) ── */}
           {isFullAccess && !isLavada && (
             <div>
@@ -748,218 +746,262 @@ export function MaintenanceFormModal({
             </div>
           )}
 
-          {/* ── Repuestos / Insumos ──
-              Solo se muestra cuando el mantenimiento ya está "En proceso",
-              "Completado", o cuando ya hay items cargados. Al agendar un
-              mantenimiento nuevo (status=Programado, sin items), la sección
-              está oculta — se desbloquea cuando el operador lo inicia y
-              empieza a cargar repuestos.
-
-              jul 2026 v4-c — Layout: por cada item editable hay
-              Cantidad | Precio unitario | $ Desc. | % IVA | Subtotal
-              | Total. El descuento es IMPORTE monetario (no porcentaje):
-              "lo que le descontaron en $". Ver migración 0042.
-              En el footer del bloque se acumulan los totales globales
-              con desglose por % de IVA (0% exento / 12% / 15%). */}
           {!isLavada && (status === "En proceso" || status === "Completado" || items.length > 0) && (
             <div className="rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] p-4 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   <Package size={14} className="text-violet-600 dark:text-violet-400" />
                   <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 uppercase tracking-wider">
                     Repuestos / Insumos
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={addItem}
-                  disabled={isReadOnly}
-                  className="inline-flex items-center gap-1 rounded-md border border-violet-200 dark:border-violet-500/40 px-2.5 py-1 text-xs font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-500/10 transition"
-                >
-                  <Plus size={12} /> Agregar
-                </button>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                      % IVA
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.01"
+                      value={globalIvaPercent}
+                      disabled={isReadOnly}
+                      onChange={(e) => applyGlobalIva(e.target.value === "" ? 0 : Number(e.target.value))}
+                      className="w-16 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-[#0f1320] px-2 py-1 text-xs text-right tabular-nums text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-400/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addItem}
+                    disabled={isReadOnly}
+                    className="inline-flex items-center gap-1 rounded-md border border-violet-200 dark:border-violet-500/40 px-2.5 py-1 text-xs font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-500/10 transition"
+                  >
+                    <Plus size={12} /> Agregar
+                  </button>
+                </div>
               </div>
+
               {items.length === 0 && (
                 <p className="text-xs text-gray-400 dark:text-gray-500 text-center py-3">
                   Sin repuestos. El operador puede agregar después.
                 </p>
               )}
 
-              {/* Encabezado de columnas (solo desktop). 24 cols en total:
-                  Repuesto 6 · Proveedor 4 · Cant 2 · Precio 3 · %Desc 2 · %IVA 2 · Subtotal 3 · Acción 2. */}
+              {/* jul 2026 v4-d — Tabla estilo factura: encabezado fijo,
+                  filas con bordes finos, alineación numérica a la derecha
+                  (como los PDFs de taller). El % IVA ya no aparece por
+                  columna — ver control global arriba. La columna "Desc."
+                  incluye el toggle $/%. */}
               {items.length > 0 && (
-                <div className="hidden md:grid grid-cols-24 gap-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                  <div className="col-span-6">Repuesto</div>
-                  <div className="col-span-4">Proveedor</div>
-                  <div className="col-span-2 text-right">Cant.</div>
-                  <div className="col-span-3 text-right">Precio unit.</div>
-                  <div className="col-span-2 text-right">% Desc.</div>
-                  <div className="col-span-2 text-right">% IVA</div>
-                  <div className="col-span-3 text-right">Subtotal</div>
-                  <div className="col-span-2" />
+                <div className="overflow-x-auto rounded-lg border border-gray-300 dark:border-white/[0.1]">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-gray-100 dark:bg-white/[0.05] text-[10px] font-bold uppercase tracking-wide text-gray-600 dark:text-gray-300">
+                        <th className="px-2.5 py-2 text-left border border-gray-300 dark:border-white/[0.1]">Repuesto</th>
+                        <th className="px-2.5 py-2 text-left border border-gray-300 dark:border-white/[0.1] hidden md:table-cell">Proveedor</th>
+                        <th className="px-2.5 py-2 text-right border border-gray-300 dark:border-white/[0.1]">Cant.</th>
+                        <th className="px-2.5 py-2 text-right border border-gray-300 dark:border-white/[0.1]">Precio unit.</th>
+                        <th className="px-2.5 py-2 text-right border border-gray-300 dark:border-white/[0.1]">Desc.</th>
+                        <th className="px-2.5 py-2 text-right border border-gray-300 dark:border-white/[0.1]">Subtotal</th>
+                        <th className="px-2.5 py-2 text-right border border-gray-300 dark:border-white/[0.1]">IVA</th>
+                        <th className="px-2.5 py-2 text-right border border-gray-300 dark:border-white/[0.1]">Total</th>
+                        <th className="px-2 py-2 border border-gray-300 dark:border-white/[0.1] w-8" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map((it, idx) => {
+                        const t = computeItemTotals(it);
+                        const discountType = it.discountType ?? "amount";
+                        return (
+                          <tr
+                            key={idx}
+                            className={`align-middle ${idx % 2 === 1 ? "bg-gray-50/60 dark:bg-white/[0.015]" : "bg-white dark:bg-transparent"}`}
+                          >
+                            {/* Repuesto + foto */}
+                            <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] min-w-[160px]">
+                              <input
+                                placeholder="Nombre del repuesto"
+                                value={it.name}
+                                disabled={isReadOnly}
+                                onChange={(e) => updateItem(idx, { name: e.target.value })}
+                                className={cellInputCls}
+                              />
+                              <div className="mt-1">
+                                {it.photoUrl ? (
+                                  <div className="relative inline-block h-8 w-8 rounded overflow-hidden border border-gray-200 dark:border-white/[0.08]">
+                                    <img src={it.photoUrl} alt="" className="h-full w-full object-cover" />
+                                    <button
+                                      type="button"
+                                      onClick={() => updateItem(idx, { photoUrl: null })}
+                                      className="absolute top-0 right-0 bg-black/60 text-white p-0.5"
+                                      title="Quitar foto"
+                                    >
+                                      <XCircle size={9} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <label className="inline-flex items-center gap-1 cursor-pointer rounded border border-dashed border-gray-300 dark:border-white/[0.08] px-1.5 py-0.5 text-[9px] text-gray-400 dark:text-gray-500 hover:border-violet-400 dark:hover:border-violet-500/50 transition">
+                                    <ImagePlus size={9} /> {it.uploading ? "Subiendo…" : "Foto"}
+                                    <input
+                                      ref={uploadingIdx === idx ? fileInputRef : undefined}
+                                      type="file"
+                                      accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,application/pdf"
+                                      disabled={isReadOnly || it.uploading}
+                                      className="hidden"
+                                      onChange={(e) => {
+                                        const f = e.target.files?.[0];
+                                        if (f) handleItemPhoto(idx, f);
+                                      }}
+                                    />
+                                  </label>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Proveedor */}
+                            <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] hidden md:table-cell min-w-[130px]">
+                              <select
+                                value={it.supplierId ?? ""}
+                                disabled={isReadOnly}
+                                onChange={(e) => updateItem(idx, { supplierId: e.target.value || null })}
+                                className={cellInputCls}
+                              >
+                                <option value="">Sin proveedor</option>
+                                {suppliers.map((s) => (
+                                  <option key={s.id} value={s.id}>{s.name}</option>
+                                ))}
+                              </select>
+                            </td>
+
+                            {/* Cantidad */}
+                            <td className="px-2 py-1.5 border border-gray-200 dark:border-white/[0.07] w-14">
+                              <input
+                                type="number" min={0} step="0.01" placeholder="1"
+                                value={it.quantity}
+                                disabled={isReadOnly}
+                                onChange={(e) => updateItem(idx, { quantity: Number(e.target.value) })}
+                                className={`${cellInputCls} text-right tabular-nums`}
+                                title="Cantidad"
+                              />
+                            </td>
+
+                            {/* Precio unitario */}
+                            <td className="px-2 py-1.5 border border-gray-200 dark:border-white/[0.07] w-20">
+                              <input
+                                type="number" min={0} step="0.01" placeholder="0.00"
+                                value={it.unitCost === 0 ? "" : it.unitCost}
+                                disabled={isReadOnly}
+                                onChange={(e) => updateItem(idx, { unitCost: e.target.value === "" ? 0 : Number(e.target.value) })}
+                                className={`${cellInputCls} text-right tabular-nums`}
+                                title="Precio unitario"
+                              />
+                            </td>
+
+                            {/* jul 2026 v4-f — Descuento: input sin borde
+                                (igual que el resto de la fila) + toggle
+                                $/% chico como un par de letras discretas
+                                al lado, no como botones grandes. */}
+                            <td className="px-2 py-1.5 border border-gray-200 dark:border-white/[0.07] w-24">
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={discountType === "percent" ? 100 : undefined}
+                                  step="0.01"
+                                  placeholder="0"
+                                  value={it.discountValue ?? 0}
+                                  disabled={isReadOnly}
+                                  onChange={(e) => updateItem(idx, { discountValue: e.target.value === "" ? 0 : Number(e.target.value) })}
+                                  className={`${cellInputCls} text-right tabular-nums flex-1 min-w-0`}
+                                  title={discountType === "percent" ? "% de descuento" : "Descuento en $"}
+                                />
+                                <div className="flex shrink-0 rounded border border-gray-200 dark:border-white/[0.1] overflow-hidden text-[9px] font-bold leading-none">
+                                  <button
+                                    type="button"
+                                    disabled={isReadOnly}
+                                    onClick={() => updateItem(idx, { discountType: "amount" })}
+                                    className={`px-1 py-1 transition ${
+                                      discountType === "amount"
+                                        ? "bg-violet-600 text-white"
+                                        : "bg-transparent text-gray-300 dark:text-gray-600 hover:text-gray-500"
+                                    }`}
+                                    title="Descuento en importe ($)"
+                                  >
+                                    $
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isReadOnly}
+                                    onClick={() => updateItem(idx, { discountType: "percent" })}
+                                    className={`px-1 py-1 border-l border-gray-200 dark:border-white/[0.1] transition ${
+                                      discountType === "percent"
+                                        ? "bg-violet-600 text-white"
+                                        : "bg-transparent text-gray-300 dark:text-gray-600 hover:text-gray-500"
+                                    }`}
+                                    title="Descuento en porcentaje (%)"
+                                  >
+                                    %
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Subtotal / IVA / Total calculados */}
+                            <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] text-right tabular-nums text-gray-700 dark:text-gray-200">
+                              ${t.subtotal.toFixed(2)}
+                            </td>
+                            <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] text-right tabular-nums text-gray-500 dark:text-gray-400">
+                              ${t.ivaAmount.toFixed(2)}
+                            </td>
+                            <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] text-right tabular-nums font-semibold text-gray-900 dark:text-white">
+                              ${t.total.toFixed(2)}
+                            </td>
+
+                            {/* Acción */}
+                            <td className="px-1 py-1.5 border border-gray-200 dark:border-white/[0.07] text-center">
+                              <button
+                                type="button"
+                                onClick={() => removeItem(idx)}
+                                disabled={isReadOnly}
+                                className="inline-flex items-center justify-center text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded p-1 transition"
+                                title="Quitar"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
 
-              <div className="space-y-2">
-                {items.map((it, idx) => {
-                  const t = computeItemTotals(it);
-                  return (
-                    <div key={idx} className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-2.5">
-                      {/* jul 2026 v4-b — Grid 24 cols en desktop para que
-                          los inputs Cant / Precio / %Desc / %IVA respiren
-                          (no se corten al escribir 5+ dígitos). */}
-                      <div className="grid grid-cols-12 md:grid-cols-24 gap-2 text-xs">
-                        <input
-                          placeholder="Nombre del repuesto"
-                          value={it.name}
-                          disabled={isReadOnly}
-                          onChange={(e) => updateItem(idx, { name: e.target.value })}
-                          className={`${inputCls} col-span-12 md:col-span-6 py-1.5`}
-                        />
-                        <select
-                          value={it.supplierId ?? ""}
-                          disabled={isReadOnly}
-                          onChange={(e) => updateItem(idx, { supplierId: e.target.value || null })}
-                          className={`${inputCls} col-span-12 md:col-span-4 py-1.5`}
-                        >
-                          <option value="">Sin proveedor</option>
-                          {suppliers.map((s) => (
-                            <option key={s.id} value={s.id}>{s.name}</option>
-                          ))}
-                        </select>
-                        <input
-                          type="number" min={0} step="0.01" placeholder="1"
-                          value={it.quantity}
-                          disabled={isReadOnly}
-                          onChange={(e) => updateItem(idx, { quantity: Number(e.target.value) })}
-                          className={`${inputCls} col-span-4 md:col-span-2 py-1.5 text-right tabular-nums`}
-                          title="Cantidad"
-                        />
-                        <input
-                          type="number" min={0} step="0.01" placeholder="0.00"
-                          value={it.unitCost === 0 ? "" : it.unitCost}
-                          disabled={isReadOnly}
-                          onChange={(e) => updateItem(idx, { unitCost: e.target.value === "" ? 0 : Number(e.target.value) })}
-                          className={`${inputCls} col-span-4 md:col-span-3 py-1.5 text-right tabular-nums`}
-                          title="Precio unitario"
-                        />
-                        <input
-                          type="number" min={0} step="0.01" placeholder="0.00"
-                          value={it.discountValue ?? 0}
-                          disabled={isReadOnly}
-                          onChange={(e) => updateItem(idx, { discountValue: e.target.value === "" ? 0 : Number(e.target.value) })}
-                          className={`${inputCls} col-span-2 md:col-span-2 py-1.5 text-right tabular-nums`}
-                          title="Descuento (importe monetario)"
-                        />
-                        <input
-                          type="number" min={0} max={100} step="0.01" placeholder="15"
-                          value={it.ivaPercent ?? 15}
-                          disabled={isReadOnly}
-                          onChange={(e) => updateItem(idx, { ivaPercent: e.target.value === "" ? 15 : Number(e.target.value) })}
-                          className={`${inputCls} col-span-2 md:col-span-2 py-1.5 text-right tabular-nums`}
-                          title="% IVA"
-                        />
-                        <div className="col-span-6 md:col-span-3 flex items-center justify-end gap-1 text-xs text-gray-700 dark:text-gray-200 tabular-nums">
-                          ${t.subtotal.toFixed(2)}
-                        </div>
-                        <div className="col-span-2 md:col-span-2 flex items-center justify-center">
-                          <button
-                            type="button"
-                            onClick={() => removeItem(idx)}
-                            disabled={isReadOnly}
-                            className="inline-flex items-center justify-center text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-md p-1.5 transition"
-                            title="Quitar"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Segunda fila: foto + valores calculados por item */}
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        {it.photoUrl ? (
-                          <div className="relative h-12 w-12 rounded-md overflow-hidden border border-gray-200 dark:border-white/[0.08]">
-                            <img src={it.photoUrl} alt="" className="h-full w-full object-cover" />
-                            <button
-                              type="button"
-                              onClick={() => updateItem(idx, { photoUrl: null })}
-                              className="absolute top-0 right-0 bg-black/60 text-white p-0.5"
-                              title="Quitar foto"
-                            >
-                              <XCircle size={12} />
-                            </button>
-                          </div>
-                        ) : (
-                          <label className="inline-flex items-center gap-1.5 cursor-pointer rounded-md border border-dashed border-gray-300 dark:border-white/[0.08] px-2.5 py-1 text-xs text-gray-500 dark:text-gray-400 hover:border-violet-400 dark:hover:border-violet-500/50 transition">
-                            <ImagePlus size={12} /> {it.uploading ? "Subiendo…" : "Foto"}
-                            <input
-                              ref={uploadingIdx === idx ? fileInputRef : undefined}
-                              type="file"
-                              accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,application/pdf"
-                              disabled={isReadOnly || it.uploading}
-                              className="hidden"
-                              onChange={(e) => {
-                                const f = e.target.files?.[0];
-                                if (f) handleItemPhoto(idx, f);
-                              }}
-                            />
-                          </label>
-                        )}
-                        <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
-                          <span>
-                            IVA: <strong className="text-gray-700 dark:text-gray-200">${t.ivaAmount.toFixed(2)}</strong>
-                          </span>
-                          <span>
-                            Total item: <strong className="text-gray-800 dark:text-white">${t.total.toFixed(2)}</strong>
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Footer con totales agregados (jul 2026 v4-b) */}
+              {/* Footer con totales agregados (jul 2026 v4-d) — estilo
+                  factura: subtotal, descuento, IVA al % global (ya no hace
+                  falta desglose por bucket porque todos comparten el
+                    mismo %), total. */}
               {items.length > 0 && (() => {
                 const agg = aggregateTotals(items);
-                const buckets = Object.entries(agg.byIvaPercent)
-                  .sort(([a], [b]) => Number(a) - Number(b));
                 return (
-                  <div className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-3 mt-2">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                      <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">
-                          Subtotal por % de IVA
-                        </p>
-                        <div className="space-y-0.5">
-                          {buckets.length === 0 && (
-                            <p className="text-gray-400 dark:text-gray-500">—</p>
-                          )}
-                          {buckets.map(([pct, b]) => (
-                            <div key={pct} className="flex items-center justify-between text-gray-600 dark:text-gray-300">
-                              <span>Subtotal {pct}%</span>
-                              <span className="font-mono">${b.subtotal.toFixed(2)} · IVA ${b.iva.toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
+                  <div className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] overflow-hidden mt-2">
+                    <div className="ml-auto w-full sm:w-72 divide-y divide-gray-100 dark:divide-white/[0.06]">
+                      <div className="flex items-center justify-between px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300">
+                        <span>Subtotal</span>
+                        <span className="font-mono">${agg.grandSubtotal.toFixed(2)}</span>
                       </div>
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between text-gray-600 dark:text-gray-300">
-                          <span>Subtotal sin IVA</span>
-                          <span className="font-mono">${agg.grandSubtotal.toFixed(2)}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-gray-600 dark:text-gray-300">
-                          <span>Total descuento</span>
-                          <span className="font-mono">- ${agg.totalDiscount.toFixed(2)}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-gray-600 dark:text-gray-300">
-                          <span>Total IVA</span>
-                          <span className="font-mono">${agg.grandIva.toFixed(2)}</span>
-                        </div>
-                        <div className="flex items-center justify-between border-t border-gray-200 dark:border-white/[0.06] pt-1 mt-1 text-gray-900 dark:text-white font-bold">
-                          <span>Valor total repuestos</span>
-                          <span className="font-mono">${agg.grandTotal.toFixed(2)}</span>
-                        </div>
+                      <div className="flex items-center justify-between px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300">
+                        <span>Descuento</span>
+                        <span className="font-mono">- ${agg.totalDiscount.toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center justify-between px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300">
+                        <span>IVA ({globalIvaPercent}%)</span>
+                        <span className="font-mono">${agg.grandIva.toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center justify-between px-3 py-2 text-sm font-bold text-gray-900 dark:text-white bg-gray-50 dark:bg-white/[0.03]">
+                        <span>Total</span>
+                        <span className="font-mono">${agg.grandTotal.toFixed(2)}</span>
                       </div>
                     </div>
                   </div>
@@ -1023,7 +1065,7 @@ export function MaintenanceFormModal({
               de repuestos: arranca oculta al agendar, aparece al iniciar.
               Al elegir un archivo, se pregunta explícitamente si es
               Factura o Evidencia antes de subirlo (mini-panel abajo). */}
-          {!isLavada && (status === "En proceso" || status === "Completado" || attachments.length > 0) && (
+          {(status === "En proceso" || status === "Completado" || attachments.length > 0) && (
             <div className="rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">

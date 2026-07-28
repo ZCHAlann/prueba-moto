@@ -3,6 +3,8 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import listPlugin from "@fullcalendar/list";
+// jul 2026 — Driver schedule integration: highlight en panel + drag
+import { useAssetDriverAvailability, todayYmdEc, monthRangeEc } from "../../hooks/useDriverSchedule";
 import interactionPlugin from "@fullcalendar/interaction";
 import {
   Car, Plus, Download, Search, ChevronLeft, ChevronRight,
@@ -11,6 +13,7 @@ import {
 import { toast } from "sonner";
 import { useMaintenanceFormOptions } from "../../hooks/useFormOptions";
 import { useMaintenanceAgenda, useMaintenanceCategories } from "../../hooks/useMaintenancesV2";
+import { useMaintenanceAssets, useMaintenanceAssetsSearch } from "../../hooks/useMaintenanceAssets";
 import { useAuth } from "../../context/AuthContext";
 import { usePermissions } from "../../hooks/usePermissions";
 import { MaintenanceFormModal } from "./components/MaintenanceFormModal";
@@ -82,8 +85,14 @@ function isPastDate(iso: string): boolean {
 type AssetLite = { id: string; name: string; plate?: string | null; status?: string };
 
 // ─── VehicleCard ─────────────────────────────────────────────────────────────
-function VehicleCard({ asset, compact = false, onDragStarted }: {
-  asset: AssetLite; compact?: boolean; onDragStarted?: (a: AssetLite) => void;
+function VehicleCard({ asset, compact = false, onDragStarted, driverFreeToday }: {
+  asset: AssetLite;
+  compact?: boolean;
+  onDragStarted?: (a: AssetLite) => void;
+  // jul 2026 — si true, pintamos la card de verde para señalar que
+  // el conductor activo del vehículo está libre HOY. El admin sabe
+  // de un vistazo que ese carro se puede agendar hoy.
+  driverFreeToday?: boolean;
 }) {
   const [dragging, setDragging] = useState(false);
   return (
@@ -97,25 +106,47 @@ function VehicleCard({ asset, compact = false, onDragStarted }: {
         onDragStarted?.(asset);
       }}
       onDragEnd={() => setDragging(false)}
+      title={
+        driverFreeToday
+          ? "Conductor libre hoy — se puede agendar mantenimiento"
+          : undefined
+      }
       className={`
         group flex items-center gap-2.5 rounded-xl border cursor-grab active:cursor-grabbing
         select-none transition-all duration-150
-        border-gray-200 dark:border-white/[0.06]
-        bg-white dark:bg-white/[0.03]
+        ${driverFreeToday
+          ? "border-emerald-300 dark:border-emerald-500/40 bg-emerald-50/60 dark:bg-emerald-500/10"
+          : "border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03]"}
         hover:bg-violet-50 dark:hover:bg-white/[0.07]
         hover:border-violet-300 dark:hover:border-violet-500/40
         ${dragging ? "opacity-30 scale-95" : ""}
         ${compact ? "p-2 justify-center" : "p-2.5"}
       `}
     >
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-100 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400">
+      <div
+        className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${
+          driverFreeToday
+            ? "bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300"
+            : "bg-violet-100 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400"
+        }`}
+      >
         <Car size={14} />
       </div>
       {!compact && (
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-800 dark:text-white truncate leading-tight">
-            {asset.plate ?? asset.name}
-          </p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-sm font-medium text-gray-800 dark:text-white truncate leading-tight">
+              {asset.plate ?? asset.name}
+            </p>
+            {driverFreeToday && (
+              <span
+                className="inline-flex shrink-0 items-center gap-0.5 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
+                title="Conductor libre hoy"
+              >
+                Libre hoy
+              </span>
+            )}
+          </div>
           {asset.plate && (
             <p className="text-[11px] text-gray-400 dark:text-gray-500 truncate">{asset.name}</p>
           )}
@@ -196,21 +227,32 @@ function DayListModal({ date, events, onClose, onSelect, resolveCategoryLabel }:
           {events.map((m) => {
             const color = STATUS_COLOR[m.status] ?? "#7c3aed";
             const time  = m.scheduledFor ? fmtTime(m.scheduledFor) : null;
+            // jul 2026 — Los completados se tachan + shadow: el operador
+            // ve de un vistazo qué ya pasó y qué falta hacer.
+            const isCompletado = m.status === "Completado";
             return (
               <button
                 key={m.id}
                 onClick={() => { onSelect(m); onClose(); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-gray-50 dark:hover:bg-white/[0.04] transition text-left group"
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-gray-50 dark:hover:bg-white/[0.04] transition text-left group ${
+                  isCompletado
+                    ? "opacity-60 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)] dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]"
+                    : ""
+                }`}
               >
                 {/* Barra de color */}
                 <span className="h-8 w-[3px] shrink-0 rounded-full" style={{ backgroundColor: color }} />
 
                 {/* Info */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-semibold text-gray-800 dark:text-white truncate leading-tight">
+                  <p className={`text-[13px] font-semibold text-gray-800 dark:text-white truncate leading-tight ${
+                    isCompletado ? "line-through" : ""
+                  }`}>
                     {m.assetPlate ?? m.assetName ?? "Vehículo"}
                   </p>
-                  <p className="text-[11px] text-gray-400 dark:text-gray-500 truncate">
+                  <p className={`text-[11px] text-gray-400 dark:text-gray-500 truncate ${
+                    isCompletado ? "line-through" : ""
+                  }`}>
                     {m.title ?? resolveCategoryLabel(m.category)}
                   </p>
                 </div>
@@ -259,10 +301,11 @@ function MaintenanceDetailModal({ maintenance, onClose, onEdit, canEdit, resolve
     >
       <div className="w-full max-w-sm rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-[#0f172a] shadow-2xl overflow-hidden">
 
-        {/* Header coloreado */}
+        {/* Header coloreado — jul 2026 v4: sin gradient, color plano
+            con opacidad fija. */}
         <div
           className="px-5 pt-5 pb-4"
-          style={{ background: `linear-gradient(135deg, ${color}18 0%, ${color}08 100%)` }}
+          style={{ background: `${color}14` }}
         >
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -385,6 +428,59 @@ export function MantenimientosAgendar() {
   const [search, setSearch]           = useState("");
   const [fcTitle, setFcTitle]         = useState("");
 
+  // ── jul 2026 — Driver schedule integration ──────────────────────────────
+  // Rango visible del calendario: tomamos el mes actual EC como
+  // referencia (FullCalendar podría ampliarlo a +1 mes, pero con el
+  // mes actual cubrimos el 95% de los casos). El hook se re-fetch
+  // automáticamente si la queryKey cambia.
+  const driverAvailRange = useMemo(() => {
+    const t = todayYmdEc().split("-").map(Number);
+    const y = t[0], m = t[1];
+    return monthRangeEc(y, m);
+  }, []);
+  // jul 2026 — BUG FIX: TanStack Query v5 retorna el QueryResult
+  // (objeto con status/isPending/data, etc), NO la data directa.
+  // Antes hacía `assetDriverAvail[assetId]` lo cual devolvía undefined
+  // porque el proxy no tiene keys de assets — `set` siempre era
+  // undefined y NINGÚN asset quedaba marcado como libre. Ahora
+  // destructuro `.data` (que es el Record<assetId, Set<date>> del
+  // `select` callback) y uso eso.
+  const assetDriverAvailQuery = useAssetDriverAvailability(
+    driverAvailRange.from,
+    driverAvailRange.toExclusive,
+  );
+  const assetDriverAvail = assetDriverAvailQuery.data;
+  const todayYmd = useMemo(todayYmdEc, []);
+
+
+  /**
+   * Determina si el asset está "libre HOY" (señal: el conductor activo
+   * tiene entrada en driver_time_off para hoy). Se usa para pintar
+   * la card de verde en el panel.
+   */
+  const isAssetDriverFreeToday = useCallback(
+    (assetId: string): boolean => {
+      if (!assetDriverAvail) return false;
+      const set = assetDriverAvail[assetId];
+      return !!(set && set.has(todayYmd));
+    },
+    [assetDriverAvail, todayYmd],
+  );
+
+  /**
+   * Determina si el asset está libre en una fecha específica (durante
+   * el drag, marca los días disponibles). Usado por el `dayCellClassNames`
+   * del FullCalendar para agregar la clase `fc-day-driver-free`.
+   */
+  const isAssetDriverFreeOn = useCallback(
+    (assetId: string, dateYmd: string): boolean => {
+      if (!assetDriverAvail) return false;
+      const set = assetDriverAvail[assetId];
+      return !!(set && set.has(dateYmd));
+    },
+    [assetDriverAvail],
+  );
+
   // ── Modales ──────────────────────────────────────────────────────────────
   const [dayListModal, setDayListModal]       = useState<{ date: string; events: Maintenance[] } | null>(null);
   const [detailModal, setDetailModal]         = useState<Maintenance | null>(null);
@@ -401,6 +497,27 @@ export function MantenimientosAgendar() {
   const { data: formOptions } = useMaintenanceFormOptions();
   const assetsList = formOptions?.assets ?? [];
   const { data: agenda, isLoading } = useMaintenanceAgenda(viewRange);
+
+  // jul 2026 — Sidebar de vehículos: paginado e infinito. Reemplaza
+  // la lista completa de assets por un fetch por páginas de 20 que
+  // se auto-completa con scroll. Si el usuario escribe en el buscador,
+  // se hace búsqueda server-side con `q=`.
+  const {
+    items:       pagedAssets,
+    total:       pagedTotal,
+    totalLoaded: pagedLoaded,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useMaintenanceAssets();
+  const {
+    items:    searchAssets,
+    isFetching: isSearching,
+  } = useMaintenanceAssetsSearch(search);
+  // jul 2026 — Cuando hay búsqueda activa usamos el resultado
+  // server-side; si no, la lista paginada.
+  const isSearchingActive = search.trim().length > 0;
+  const sidebarAssets = isSearchingActive ? searchAssets : pagedAssets;
   // jul 2026 v5 — categorías custom. Las usamos para resolver el label
   // legible de `m.category` en los tooltips / modales del calendario.
   // Si la categoría es built-in, caemos al fallback `CATEGORY_LABEL`.
@@ -430,8 +547,16 @@ export function MantenimientosAgendar() {
   }, [agenda]);
 
   // ── Eventos FC ────────────────────────────────────────────────────────────
+  // jul 2026 — El calendario de agendamiento muestra SOLO lo "por hacer".
+  // Los completados no aparecen en la grilla (siguen viviendo en el tab
+  // Historial del módulo y en Reportes). PERO la query al backend NO los
+  // filtra — los necesitamos para el modal "lista del día" (que muestra
+  // los ya completados con strikethrough/shadow). Por eso filtramos
+  // acá en cliente, no en backend.
   const events: EventInput[] = useMemo(() =>
-    (agenda?.data ?? []).map((m) => ({
+    (agenda?.data ?? [])
+      .filter((m) => m.status !== "Completado")
+      .map((m) => ({
       id:              m.id,
       title:           m.assetPlate ?? m.assetName ?? "Vehículo",
       start:           m.scheduledFor,
@@ -441,15 +566,17 @@ export function MantenimientosAgendar() {
       classNames:      ["agenda-pill"],
       extendedProps:   { maintenance: m },
     })),
-  [agenda]);
+  [agenda?.data]);
 
   // ── Filtro vehículos ──────────────────────────────────────────────────────
-  const filteredAssets = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return q
-      ? assetsList.filter((a) => (a.plate ?? "").toLowerCase().includes(q) || a.name.toLowerCase().includes(q))
-      : assetsList;
-  }, [assetsList, search]);
+  // jul 2026 — antes se filtraba client-side sobre `assetsList` (la lista
+  // completa del catálogo). Ahora la búsqueda es server-side vía
+  // `useMaintenanceAssetsSearch(search)`, así que este `useMemo` ya
+  // no se usa. Lo dejamos como no-op para no romper imports de
+  // terceros que pudieran referenciarlo.
+  const filteredAssets = useMemo<typeof assetsList>(() => {
+    return assetsList;
+  }, [assetsList]);
 
   // ── Drag handlers ─────────────────────────────────────────────────────────
   const handleCalDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -732,6 +859,24 @@ export function MantenimientosAgendar() {
       .fc.fc-has-dragging .fc-daygrid-day:not(.fc-day-drop-target) .fc-daygrid-day-frame {
         opacity:.45; transition:opacity 120ms ease;
       }
+      /* jul 2026 v4 — Driver schedule integration: día con conductor
+         libre del asset que se está arrastrando. Pastel verde plano,
+         sin gradient. El inset shadow le da el "ring" sin saturar. */
+      .fc.fc-has-dragging .fc-daygrid-day.fc-day-driver-free .fc-daygrid-day-frame {
+        opacity:1;
+        background-color:rgba(16,185,129,0.08);
+        box-shadow:inset 0 0 0 1.5px rgba(16,185,129,0.45);
+      }
+      .fc.fc-has-dragging .fc-daygrid-day.fc-day-driver-free .fc-daygrid-day-number {
+        color:#059669 !important; font-weight:600;
+      }
+      .dark .fc.fc-has-dragging .fc-daygrid-day.fc-day-driver-free .fc-daygrid-day-frame {
+        background-color:rgba(16,185,129,0.14);
+        box-shadow:inset 0 0 0 1.5px rgba(16,185,129,0.55);
+      }
+      .dark .fc.fc-has-dragging .fc-daygrid-day.fc-day-driver-free .fc-daygrid-day-number {
+        color:#34d399 !important; font-weight:600;
+      }
     `;
     document.head.appendChild(s);
   }, []);
@@ -799,18 +944,64 @@ export function MantenimientosAgendar() {
             </div>
           )}
 
-          <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-2 space-y-1.5 min-h-0">
-            {filteredAssets.length === 0
-              ? sidebarOpen && <p className="text-[11px] text-gray-400 dark:text-gray-600 text-center py-4">Sin vehículos</p>
-              : filteredAssets.map((a) => (
+          <div
+            className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-2 space-y-1.5 min-h-0"
+            // jul 2026 — el scroll infinito se dispara cuando el último
+            // item visible entra en viewport. Usamos un sentinel al final
+            // de la lista (abajo) en vez de observar cada item, para
+            // no crear un observer por cada vehículo cuando hay cientos.
+            onScroll={(e) => {
+              if (isSearchingActive) return; // en búsqueda no autoload
+              const el = e.currentTarget;
+              if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
+                if (hasNextPage && !isFetchingNextPage) {
+                  void fetchNextPage();
+                }
+              }
+            }}
+          >
+            {sidebarAssets.length === 0
+              ? sidebarOpen && (
+                  <p className="text-[11px] text-gray-400 dark:text-gray-600 text-center py-4">
+                    {isSearchingActive
+                      ? (isSearching ? "Buscando…" : "Sin resultados")
+                      : "Sin vehículos"}
+                  </p>
+                )
+              : sidebarAssets.map((a) => (
                   <VehicleCard
                     key={a.id}
                     asset={{ id: a.id, name: a.name, plate: a.plate, status: a.status }}
                     compact={!sidebarOpen}
                     onDragStarted={(asset) => { dragAssetRef.current = asset; setActiveAsset(asset); }}
+                    driverFreeToday={isAssetDriverFreeToday(a.id)}
                   />
                 ))
             }
+
+            {/* Sentinel de paginación + indicador de carga */}
+            {!isSearchingActive && sidebarOpen && hasNextPage && (
+              <div className="flex items-center justify-center py-2 text-[10px] text-gray-400 dark:text-gray-600">
+                {isFetchingNextPage ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-gray-400 animate-pulse" />
+                    Cargando más…
+                  </span>
+                ) : (
+                  <span>Desplazá para ver más</span>
+                )}
+              </div>
+            )}
+
+            {/* Contador de paginación (jul 2026) — muestra cuántos se
+                cargaron vs el total. El sidebar queda mucho más usable
+                cuando el usuario ve "20 de 487" en lugar de una lista
+                que parece no tener fin. */}
+            {!isSearchingActive && sidebarOpen && pagedTotal > 0 && (
+              <p className="text-center text-[10px] text-gray-400 dark:text-gray-600 pb-1">
+                Mostrando {pagedLoaded} de {pagedTotal} vehículo{pagedTotal === 1 ? "" : "s"}
+              </p>
+            )}
           </div>
 
           <div className="shrink-0 border-t border-gray-200 dark:border-white/[0.06] px-2 py-2 space-y-1">
@@ -900,6 +1091,18 @@ export function MantenimientosAgendar() {
               moreLinkClick={handleMoreClick}
               fixedWeekCount={true}
               showNonCurrentDates={true}
+              // jul 2026 — Si hay un asset siendo arrastrado y su
+              // driver está libre ese día, pintamos la celda de verde
+              // (clase `fc-day-driver-free`). El `activeAsset` se setea
+              // en onDragStarted de la VehicleCard y se limpia en
+              // handleCalDrop. Si no hay drag activo, no se agrega
+              // ninguna clase (los días quedan como siempre).
+              dayCellClassNames={(arg) => {
+                if (!activeAsset) return [];
+                if (arg.date < new Date(todayYmd + "T00:00:00")) return []; // no pintar pasados
+                const ymd = arg.date.toISOString().slice(0, 10);
+                return isAssetDriverFreeOn(activeAsset.id, ymd) ? ["fc-day-driver-free"] : [];
+              }}
 
               eventContent={(arg) => {
                 const m     = arg.event.extendedProps?.maintenance as Maintenance | undefined;

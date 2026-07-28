@@ -48,6 +48,7 @@ import { useSuppliers } from "../../../hooks/useSuppliers";
 import { useAuth } from "../../../context/AuthContext";
 import { EditDatesInline } from "../../../components/features/maintenances/EditDatesInline";
 import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
+import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../../../lib/mediaCompress";
 import {
   AttachmentFacturaModal,
   type AttachmentFacturaResult,
@@ -284,6 +285,13 @@ export function MaintenanceDetailDrawer({
   const [newExtra, setNewExtra] = useState<{ name: string; quantity: number; unitCost: number; photoUrl: string }>({
     name: "", quantity: 1, unitCost: 0, photoUrl: "",
   });
+  // jul 2026 — Estado de upload para la foto del ADICIONAL de lavada.
+  // Antes el form pedía "URL foto (opcional)" como texto plano, obligando al
+  // operador a subir el archivo por otro lado y pegar la URL. Ahora el form
+  // acepta un file real: lo sube a /api/upload/photos, recibe la URL, y la
+  // guarda en `newExtra.photoUrl` para cuando se confirme "Guardar adicional".
+  const [uploadingExtraPhoto, setUploadingExtraPhoto] = useState(false);
+  const extraPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const [newPhotoCaption, setNewPhotoCaption] = useState<string>("");
   // Ref al input file de lavada (usado para resetear el control tras subir).
   const carwashPhotoInputRef = useRef<HTMLInputElement | null>(null);
@@ -306,6 +314,48 @@ export function MaintenanceDetailDrawer({
   const updateMut = useUpdateMaintenance();
   const addCarwashExtraMut = useAddCarwashExtras();
   const addCarwashPhotoMut = useAddCarwashPhotos();
+
+  // jul 2026 — Sube la foto del ADICIONAL de lavada y guarda la URL en
+  // `newExtra.photoUrl`. Replica el patrón de useAddCarwashPhotos (mismo
+  // endpoint /api/upload/photos?category=maintenance) pero sin persistir
+  // todavía — la foto queda "en el adicional en draft" hasta que el
+  // operador aprieta "Guardar adicional" (recién ahí se manda al backend
+  // vía addCarwashExtraMut). Si el operador cancela, el siguiente
+  // useEffect con cambio de `id` resetea el form y la URL huérfana queda
+  // en el storage (se limpia aparte con cron o manualmente).
+  const { companyId: companyIdForUpload } = useAuth();
+  const handleExtraPhotoFile = async (file: File) => {
+    if (!companyIdForUpload) {
+      toast.error("Sesión inválida");
+      return;
+    }
+    setUploadingExtraPhoto(true);
+    try {
+      const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
+      const fd = new FormData();
+      fd.append("photos", toUpload);
+      const upRes = await fetch(
+        `/api/upload/photos?category=maintenance&companyId=${encodeURIComponent(String(companyIdForUpload))}`,
+        { method: "POST", body: fd, credentials: "include" },
+      );
+      if (!upRes.ok) {
+        const body = await upRes.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error ?? `Error subiendo foto (${upRes.status})`);
+      }
+      const upData = (await upRes.json()) as { urls?: string[] };
+      const url = upData.urls?.[0];
+      if (!url) throw new Error("El servidor no devolvió la URL de la foto.");
+      setNewExtra((p) => ({ ...p, photoUrl: url }));
+      toast.success("Foto lista — tocá 'Guardar adicional' para confirmar");
+    } catch (err) {
+      toast.error("No se pudo subir la foto del adicional", {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setUploadingExtraPhoto(false);
+      if (extraPhotoInputRef.current) extraPhotoInputRef.current.value = "";
+    }
+  };
 
   useEffect(() => {
     setNewNote("");
@@ -410,7 +460,9 @@ export function MaintenanceDetailDrawer({
   // Facturas y evidencias: subir habilitado mientras está "En proceso" y
   // el usuario puede operar. La sección igual se muestra (solo lectura)
   // si ya hay adjuntos cargados, sin importar el estado.
-  const canUploadAttachment = !isLavada && isProceso && canOperate;
+  // jul 2026 v8.6 — desde esta versión, lavadas también permiten subir
+  // fotos de evidencia en "En proceso" (antes solo Programado/Correctivo).
+  const canUploadAttachment = isProceso && canOperate;
   const attachments = item?.attachments || [];
   // jul 2026 — Opcion A: solo los attachments que tienen invoiceNumber
   // son candidatos a recibir items "agregados después" desde el form de
@@ -832,11 +884,13 @@ export function MaintenanceDetailDrawer({
                     </Section>
                   )}
 
-                  {/* ── Facturas y evidencias — Programado/Correctivo, no lavada ──
+                  {/* ── Facturas y evidencias — Programado/Correctivo y Lavada (jul 2026 v8.6) ──
                       Subida habilitada en "En proceso" (dueño o full access);
                       la sección se muestra de solo lectura si ya hay adjuntos
-                      cargados, sin importar el estado (ej. ya Completado). */}
-                  {!isLavada && (canUploadAttachment || attachments.length > 0) && (
+                      cargados, sin importar el estado (ej. ya Completado).
+                      Desde jul 2026 v8.6 también se permite en lavadas para
+                      que el operador suba fotos del proceso. */}
+                  {(canUploadAttachment || attachments.length > 0) && (
                     <Section
                       icon={<Receipt size={11} />}
                       title={`Facturas y evidencias${attachments.length ? ` · ${attachments.length}` : ""}`}
@@ -1447,12 +1501,79 @@ export function MaintenanceDetailDrawer({
                             onChange={(e) => setNewExtra((p) => ({ ...p, unitCost: e.target.value === "" ? 0 : Number(e.target.value) }))}
                             className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5"
                           />
-                          <input
-                            placeholder="URL foto (opcional)"
-                            value={newExtra.photoUrl}
-                            onChange={(e) => setNewExtra((p) => ({ ...p, photoUrl: e.target.value }))}
-                            className="rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5 col-span-2"
-                          />
+                          {/* jul 2026 — Foto del adicional: file input real, NO URL text.
+                              Antes este campo era un <input placeholder="URL foto (opcional)">
+                              que obligaba al operador a subir el archivo por fuera y pegar
+                              la URL. Ahora: file picker → upload a /api/upload/photos →
+                              URL guardada en newExtra.photoUrl. Preview con miniatura + botón
+                              para cambiar/quitar. */}
+                          <div className="col-span-2 flex items-center gap-2">
+                            {newExtra.photoUrl ? (
+                              <>
+                                <a
+                                  href={newExtra.photoUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="shrink-0 flex h-12 w-12 items-center justify-center overflow-hidden rounded-md border border-gray-200 dark:border-white/[0.08] bg-gray-50 dark:bg-white/[0.04]"
+                                  title="Ver foto"
+                                >
+                                  {/\.(jpe?g|png|webp|gif|heic|heif)$/i.test(newExtra.photoUrl) ? (
+                                    <img src={newExtra.photoUrl} alt="Foto" className="h-full w-full object-cover" />
+                                  ) : (
+                                    <FileText size={16} className="text-gray-400" />
+                                  )}
+                                </a>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-[10px] text-gray-500 dark:text-gray-400">
+                                    {newExtra.photoUrl.split("/").pop()}
+                                  </p>
+                                  <div className="mt-0.5 flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      disabled={uploadingExtraPhoto}
+                                      onClick={() => extraPhotoInputRef.current?.click()}
+                                      className="text-[10px] font-semibold text-sky-700 dark:text-sky-300 hover:underline disabled:opacity-50"
+                                    >
+                                      Cambiar
+                                    </button>
+                                    <span className="text-[10px] text-gray-300 dark:text-gray-600">·</span>
+                                    <button
+                                      type="button"
+                                      disabled={uploadingExtraPhoto}
+                                      onClick={() => setNewExtra((p) => ({ ...p, photoUrl: "" }))}
+                                      className="text-[10px] font-semibold text-rose-600 dark:text-rose-400 hover:underline disabled:opacity-50"
+                                    >
+                                      Quitar
+                                    </button>
+                                  </div>
+                                </div>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={uploadingExtraPhoto}
+                                onClick={() => extraPhotoInputRef.current?.click()}
+                                className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-gray-300 dark:border-white/[0.12] bg-white dark:bg-white/[0.02] px-3 py-2 text-xs font-medium text-gray-600 dark:text-gray-300 hover:border-sky-400 hover:text-sky-700 dark:hover:text-sky-300 transition disabled:opacity-50"
+                              >
+                                {uploadingExtraPhoto ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : (
+                                  <Camera size={12} />
+                                )}
+                                {uploadingExtraPhoto ? "Subiendo…" : "Subir foto (opcional)"}
+                              </button>
+                            )}
+                            <input
+                              ref={extraPhotoInputRef}
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) void handleExtraPhotoFile(file);
+                              }}
+                            />
+                          </div>
                           <button
                             onClick={async () => {
                               if (!newExtra.name.trim()) { toast.error("Nombre requerido"); return; }

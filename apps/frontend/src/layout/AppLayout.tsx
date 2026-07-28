@@ -7,6 +7,8 @@ import AppHeader from "./AppHeader";
 import Backdrop from "./Backdrop";
 import AppSidebar from "./AppSidebar";
 import { FloatingChatWidget } from "../components/ui/FloatingChatWidget";
+import { JarvisWakeWordController } from "../components/jarvis/JarvisWakeWordController";
+import { JarvisVoiceOverlay } from "../components/jarvis/JarvisVoiceOverlay";
 
 
 const LayoutContent: React.FC = () => {
@@ -77,6 +79,22 @@ const LayoutContent: React.FC = () => {
           El FloatingChatWidget es el ÚNICO FAB; el FloatingAiAssistant vive
           embebido dentro del tab "Asistente" cuando aplica. */}
       <FloatingChatWidget />
+
+      {/* jul 2026 v8.4 — Controlador del wake word. Se monta ACÁ (en el
+          layout), NO dentro del FloatingAiAssistant, porque ese último
+          solo se monta cuando el user abre el tab "Asistente". El wake
+          word tiene que estar vivo SIEMPRE que el user esté logueado y
+          tenga permisos, así "Jarvis" lo agarra aunque el chat esté
+          cerrado. Cuando detecta, dispatcha un CustomEvent global
+          'jarvis:wake-detected'. */}
+
+      {/* jul 2026 v8.6 — Overlay estilo Siri. Escucha el mismo evento
+          y muestra el flujo de voz fullscreen-ish sobre la esquina
+          inferior derecha. NO abre el chat. Se monta siempre que el
+          user esté logueado; el control de permisos vive adentro
+          (canUseAssistant). */}
+      <JarvisVoiceOverlay />
+      <JarvisWakeWordController silent={false} />
 
       {/* NOTA: <FloatingAiAssistant /> ya NO se monta standalone acá.
           Si en el futuro se quiere usar el FAB del Jarvis en una página

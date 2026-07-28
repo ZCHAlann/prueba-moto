@@ -82,10 +82,9 @@ async function getFFmpeg(): Promise<FFmpeg> {
  * archivo original.
  */
 export function warmupFFmpeg(): void {
-  // No await-eamos: corre en background. Capturamos errores en consola
-  // para diagnóstico pero no propagamos.
-  getFFmpeg().catch((err) => {
-    console.warn("[mediaCompress:warmup] ffmpeg no se pudo pre-cargar:", err?.message ?? err);
+  // No await-eamos: corre en background. Capturamos errores pero no propagamos.
+  getFFmpeg().catch(() => {
+    // silent
   });
 }
 
@@ -193,8 +192,7 @@ export async function compressImagesBatch(
       if (idx >= files.length) return;
       try {
         results[idx] = await compressImage(files[idx], opts);
-      } catch (err) {
-        console.warn(`[mediaCompress:batch] idx=${idx} falló, subiendo original:`, err);
+      } catch {
         results[idx] = files[idx];
       }
     }
@@ -270,7 +268,6 @@ export async function compressVideo(
     ff = await getFFmpeg();
   } catch {
     // ffmpeg.wasm no disponible — subir original
-    console.warn("[mediaCompress] ffmpeg no cargó, subiendo video original");
     return file;
   }
 
@@ -315,8 +312,7 @@ export async function compressVideo(
       type: "video/mp4",
       lastModified: Date.now(),
     });
-  } catch (err) {
-    console.error("[mediaCompress] Error comprimiendo video:", err);
+  } catch {
     // Fallback seguro: subir original
     return file;
   }

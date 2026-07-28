@@ -91,7 +91,7 @@ export function FinancePanel({
       const data = await finance.maintenance.fetchFinance(maintenanceId);
       setSnapshot(data);
     } catch {
-      // Silenciar — el panel solo muestra datos si los hay.
+      // silent
     } finally {
       setLoading(false);
     }
@@ -104,20 +104,30 @@ export function FinancePanel({
   const isProceso = item.status === "En proceso" || item.status === "En curso";
   if (!isProceso) return null;
 
-  const pendingRequest = snapshot.requests.find(r => r.status === "pending");
-  const annualRequest = snapshot.requests.find(
-    r => r.classification === "annual_expense" && r.status === "approved",
+  // jul 2026 v4-fix — Snapshots a veces vienen con arrays null/undefined desde
+  // el backend (sobre todo en edge cases como records de prueba). Defensivo.
+  const safeRequests = Array.isArray(snapshot.requests) ? snapshot.requests : [];
+  const safeClosedVouchers = Array.isArray(snapshot.closedVouchers) ? snapshot.closedVouchers : [];
+
+  const pendingRequest = safeRequests.find(r => r && r.status === "pending");
+  const annualRequest = safeRequests.find(
+    r => r && r.classification === "annual_expense" && r.status === "approved",
   );
-  const closedVoucherRequest = snapshot.requests.find(
-    r => r.classification === "petty_cash" && r.status === "approved" && !snapshot.openVoucher,
+  const closedVoucherRequest = safeRequests.find(
+    r => r && r.classification === "petty_cash" && r.status === "approved" && !snapshot.openVoucher,
   );
 
   // ── Render del indicador compacto (botón o badge) ──────────────────────
   // Caso 1: sin solicitud → botón "Caja Chica" verde
-  // Caso 2: pendiente → badge ámbar "Solicitud #N · pendiente"
-  // Caso 3: gasto anual aprobado → badge violeta "Gasto anual #N"
-  // Caso 4: vale abierto → botón verde "Vale #N · abierto" (click → cierra)
-  // Caso 5: vale cerrado → badge gris "Vale #N · cerrado"
+  // Caso 2: pendiente → badge ámbar "Solicitud #N · pendiente" (sin botón nuevo, ya hay pending)
+  // Caso 3: gasto anual aprobado → badge violeta "Gasto anual #N" (sin botón nuevo, no aplica)
+  // Caso 4: vale abierto → botón verde "Vale #N · abierto" (click → cierra; sin botón nuevo)
+  // Caso 5: vale cerrado → badge gris "Caja #N cerrada" + botón "+ Caja Chica" al lado
+  //
+  // jul 2026 v4-fix — Antes el Caso 5 tapaba el botón "Caja Chica" y el operador
+  // no podía crear una nueva solicitud sin reabrir la vieja. Ahora el badge del
+  // vale cerrado se mantiene (es trazabilidad) y se renderiza ADEMÁS el botón
+  // verde para abrir una caja nueva.
 
   let indicator: React.ReactNode = null;
   if (snapshot.requests.length === 0) {
@@ -176,32 +186,70 @@ export function FinancePanel({
     );
   } else if (closedVoucherRequest) {
     // jul 2026 v4 — Si hay un vale cerrado y trajo invoiceId, mostramos
-    // el link al comprobante directamente.
-    const closed = snapshot.closedVouchers.find(v => v.id === closedVoucherRequest.id);
-    if (closed?.closedInvoiceId) {
-      indicator = (
-        <a
-          href={`/finanzas/facturas?q=CC-${closed.closedInvoiceId}`}
-          onClick={e => e.stopPropagation()}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-200 dark:hover:bg-emerald-500/25"
-          title={`Solicitud #${closedVoucherRequest.id} cerrada · Ver comprobante CC-${String(closed.closedInvoiceId).padStart(3, "0")}`}
-        >
-          <CheckCircle2 size={11} />
-          Caja #{closedVoucherRequest.id} cerrada
-          <ExternalLink size={10} />
-        </a>
-      );
-    } else {
-      indicator = (
-        <span
-          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50/60 px-2.5 py-1.5 text-xs font-medium text-emerald-700/80 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200/80"
-          title={`Solicitud #${closedVoucherRequest.id} cerrada (sin comprobante adjunto)`}
-        >
-          <CheckCircle2 size={11} />
-          Caja #{closedVoucherRequest.id} cerrada
-        </span>
-      );
-    }
+    // el link al comprobante directamente. Y ADEMAS, siempre mostramos el
+    // botón verde "+ Caja Chica" al lado, para que el operador pueda abrir
+    // una nueva solicitud sin reabrir la vieja.
+    const closed = safeClosedVouchers.find(v => v && v.id === closedVoucherRequest.id);
+    const closedBadge = closed?.closedInvoiceId ? (
+      <a
+        href={`/finanzas/facturas?q=CC-${closed.closedInvoiceId}`}
+        onClick={e => e.stopPropagation()}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-200 dark:hover:bg-emerald-500/25"
+        title={`Solicitud #${closedVoucherRequest.id} cerrada · Ver comprobante CC-${String(closed.closedInvoiceId).padStart(3, "0")}`}
+      >
+        <CheckCircle2 size={11} />
+        Caja #{closedVoucherRequest.id} cerrada
+        <ExternalLink size={10} />
+      </a>
+    ) : (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50/60 px-2.5 py-1.5 text-xs font-medium text-emerald-700/80 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200/80"
+        title={`Solicitud #${closedVoucherRequest.id} cerrada (sin comprobante adjunto)`}
+      >
+        <CheckCircle2 size={11} />
+        Caja #{closedVoucherRequest.id} cerrada
+      </span>
+    );
+
+    const newRequestButton = (
+      <button
+        type="button"
+        onClick={() => setShowCreate(true)}
+        disabled={loading}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 backdrop-blur transition hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-200 dark:hover:bg-emerald-500/25"
+        title="Solicitar un nuevo recurso a finanzas (la anterior ya está cerrada)"
+      >
+        {loading ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+        Caja Chica
+      </button>
+    );
+
+    indicator = (
+      <span className="inline-flex items-center gap-1.5">
+        {closedBadge}
+        {newRequestButton}
+      </span>
+    );
+  }
+
+  // jul 2026 v4-fix — Fallback: si por alguna razón ninguna rama matcheó
+  // (ej: el backend devolvió un shape inesperado, o el request no clasifica
+  // como petty_cash / annual_expense / pending), igual mostramos el botón
+  // verde "Caja Chica" para que el operador pueda crear la solicitud.
+  // Antes esto quedaba invisible y era un bug confuso.
+  if (indicator === null && !loading) {
+    indicator = (
+      <button
+        type="button"
+        onClick={() => setShowCreate(true)}
+        disabled={loading}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 backdrop-blur transition hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-200 dark:hover:bg-emerald-500/25"
+        title="Solicitar recurso a finanzas"
+      >
+        <Plus size={11} />
+        Caja Chica
+      </button>
+    );
   }
 
   return (

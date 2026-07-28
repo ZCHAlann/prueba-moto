@@ -32,8 +32,9 @@ const VIDEO_CHUNK_SIZE = 2 * 1024 * 1024;
 const MAX_CONCURRENT = 3;
 
 /** Log helper con prefijo para identificar origen en consola. */
-const log = (tag: string, ...args: unknown[]) =>
-  console.log(`[upload:${tag}]`, ...args);
+const log = (..._args: unknown[]) => {
+  void _args;
+};
 
 /**
  * Genera un UUID v4 sin depender de `crypto.randomUUID()`, que NO

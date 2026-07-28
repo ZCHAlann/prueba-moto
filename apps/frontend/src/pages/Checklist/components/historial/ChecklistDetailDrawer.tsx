@@ -101,8 +101,7 @@ export function ChecklistDetailDrawer({ checklist, onClose, focusOnAnomalies = f
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("No se pudo generar el PDF");
     } finally {
       setExporting(false);

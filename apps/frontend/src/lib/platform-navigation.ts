@@ -9,7 +9,7 @@ export const platformNavigationSections: NavigationSection[] = [
     items: [
       {
         label: "Dashboard",
-        href: "/platform/dashboard",
+        href: "/panel/dashboard",
         icon: "DB",
         description: "Vision general del producto",
         accent: "emerald",
@@ -22,13 +22,13 @@ export const platformNavigationSections: NavigationSection[] = [
     description: "Administracion global",
     accent: "sky",
     items: [
-      { label: "Empresas",          href: "/platform/companies", icon: "EM",  description: "Clientes, planes y modulos activos",  accent: "sky" },
-      { label: "Planes",            href: "/platform/plans",     icon: "PL",  description: "Oferta comercial y limites",           accent: "sky" },
-      { label: "Módulos",           href: "/platform/modules",   icon: "MD",  description: "Habilitacion por empresa",             accent: "sky" },
-      { label: "Usuarios globales", href: "/platform/users",     icon: "US",  description: "Roles y accesos de plataforma",        accent: "sky" },
-      { label: "Soporte",           href: "/platform/tickets",   icon: "TK",  description: "Gestión de tickets de soporte",        accent: "sky" },
-      { label: "Auditoría",         href: "/platform/audit",     icon: "AU",  description: "Logs y trazabilidad",                  accent: "sky" },
-      { label: "Configuración",     href: "/platform/settings",  icon: "CF",  description: "Branding e integraciones",             accent: "sky" },
+      { label: "Empresas",          href: "/panel/companies", icon: "EM",  description: "Clientes, planes y modulos activos",  accent: "sky" },
+      { label: "Planes",            href: "/panel/plans",     icon: "PL",  description: "Oferta comercial y limites",           accent: "sky" },
+      { label: "Módulos",           href: "/panel/modules",   icon: "MD",  description: "Habilitacion por empresa",             accent: "sky" },
+      { label: "Usuarios globales", href: "/panel/users",     icon: "US",  description: "Roles y accesos de plataforma",        accent: "sky" },
+      { label: "Soporte",           href: "/panel/tickets",   icon: "TK",  description: "Gestión de tickets de soporte",        accent: "sky" },
+      { label: "Auditoría",         href: "/panel/audit",     icon: "AU",  description: "Logs y trazabilidad",                  accent: "sky" },
+      { label: "Configuración",     href: "/panel/settings",  icon: "CF",  description: "Branding e integraciones",             accent: "sky" },
     ],
   },
   {
@@ -37,8 +37,8 @@ export const platformNavigationSections: NavigationSection[] = [
     description: "Activos fisicos",
     accent: "orange",
     items: [
-      { label: "Flotas",      href: "/platform/fleet",      icon: "FL", description: "Vehiculos operativos por empresa", accent: "orange" },
-      { label: "Generadores", href: "/platform/generators", icon: "GE", description: "Equipos de respaldo electrico",    accent: "orange" },
+      { label: "Flotas",      href: "/panel/fleet",      icon: "FL", description: "Vehiculos operativos por empresa", accent: "orange" },
+      { label: "Generadores", href: "/panel/generators", icon: "GE", description: "Equipos de respaldo electrico",    accent: "orange" },
     ],
   },
   {
@@ -53,7 +53,7 @@ export const platformNavigationSections: NavigationSection[] = [
         // operacion) que dejaba la pagina en blanco para el superadmin
         // porque no tiene empresa. Ahora apunta al placeholder de
         // plataforma.
-        href: "/platform/geolocalizacion",
+        href: "/panel/geolocalizacion",
         icon: "GL",
         description: "Vista de unidades y zonas activas",
         accent: "teal",

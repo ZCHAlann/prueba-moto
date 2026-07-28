@@ -111,10 +111,16 @@ export const MODULE_TREE = {
       agenda:       "Agendar",
       execution:    "Preventivo y correctivo",
       records:      "Histórico de mantenimientos",
-      // Jun 2026 — reautorización de mantenimientos atrasados (flujo
+      // Jun 2026 - reautorización de mantenimientos atrasados (flujo
       // pedir/aprobar/rechazar, similar al de checklist.reautorizaciones).
       // Backend lo usa en maintenances.ts:1612.
       reautorizaciones: "Reautorización de atrasados",
+      // jul 2026 - Historial de mantenimientos CERRADOS (status=Completado).
+      // La lista principal del módulo oculta los Completado (se ven en
+      // Reportes); este submódulo expone una pestaña dedicada para que
+      // admin/owner (o quien tenga el permiso granular) pueda revisarlos
+      // sin abrir la página de Reportes.
+      historial:     "Historial (cerrados)",
     },
   },
   checklist: {

@@ -215,13 +215,10 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
       try {
         const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
         const url = `${proto}://${window.location.hostname}:5000/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`;
-        // eslint-disable-next-line no-console
-        console.log('[WS] connecting to', url.replace(/token=[^&]+/, 'token=***'));
         const ws = new WebSocket(url);
         wsRef.current = ws;
         ws.onopen = () => {
-          // eslint-disable-next-line no-console
-          console.log('[WS] connected');
+          // ws opened
         };
         ws.onmessage = (ev) => {
           try {
@@ -275,23 +272,20 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
             }
           } catch {}
         };
-        ws.onclose = (ev) => {
-          // eslint-disable-next-line no-console
-          console.warn('[WS] closed', { code: ev.code, reason: ev.reason });
+        ws.onclose = () => {
           wsRef.current = null;
           // Reconexión con backoff (1s, 2s, 5s, max 10s).
           const delay = Math.min(1000 * Math.pow(2, Math.min(3, Math.floor(Math.random() * 3))), 10_000);
           reconnectTimerRef.current = window.setTimeout(connect, delay);
         };
-        ws.onerror = (ev) => {
-          // eslint-disable-next-line no-console
-          console.warn('[WS] error', ev);
+        ws.onerror = () => {
+          // silent
         };
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('[WS] connect failed', err);
+      } catch {
+        // silent
       }
     }
+
     connect();
 
     return () => {

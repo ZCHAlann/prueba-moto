@@ -81,7 +81,7 @@ interface Props {
   onReauthorize?: (m: Maintenance, reason: string) => void;
 }
 
-export function MaintenanceListTab({ title, onReauthorize }: Props) {
+export function MaintenanceListTab({ title, onReauthorize, mode = "active" }: Props & { mode?: "active" | "historial" }) {
   const { session, companyId } = useAuth();
   const { can } = usePermissions();
   const meId   = userIdFromSession(session?.id);
@@ -102,12 +102,43 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
 
-  const [subTab, setSubTab] = useState<"all" | MaintenanceStatus>("all");
+  const [subTab, setSubTab] = useState<"all" | MaintenanceStatus>(
+    // jul 2026 — Modo historial arranca con subTab fijo en "Completado".
+    // Modo active arranca en "all" pero el filters useMemo inyecta
+    // excludeStatus="Completado" así la lista principal oculta cerrados.
+    mode === "historial" ? "Completado" : "all",
+  );
   const [catChip, setCatChip] = useState<"all" | string>("all");
   const [typeChip, setTypeChip] = useState<"all" | "Correctivo" | "Programado">("all");
 
-  const [from, setFrom] = useState<string>("");
-  const [to,   setTo]   = useState<string>("");
+  // jul 2026 — Default del filtro de fecha: HOY (ambos extremos iguales).
+  // La lista principal es "por día" — el operador entra y ve qué tiene
+  // que hacer HOY. El admin/owner puede navegar a otro día con el
+  // picker. Si quisieras un rango (semana, mes), seguís pudiendo setear
+  // `from` y `to` distintos manualmente.
+  // useMemo: la fecha solo se evalúa una vez al montar. Si el usuario
+  // deja la página abierta cruzando medianoche, el default NO salta
+  // (puede haber consistencia con la query que ya tenía cacheada).
+  const todayIso = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }, []);
+  const [from, setFrom] = useState<string>(todayIso);
+  const [to,   setTo]   = useState<string>(todayIso);
+
+  // jul 2026 — El scope (Todos vs Míos) NO se manda al backend ni se
+  // expone en la UI. La razón: el backend ya filtra por rol —
+  // owner_empresa / admin_empresa / supervisor reciben TODOS los
+  // mantenimientos del día, de TODOS los operadores; los operadores
+  // reciben solo los asignados a ellos + los libres (assignedUserId IS
+  // NULL) para que puedan tomarlos. Ver `hasFullAccess` en
+  // apps/backend/src/routes/company/maintenances.ts:325-329 y el bloque
+  // de role filter en 686-722. Exponer un toggle "Todos / Míos" en la
+  // UI es ruido y confunde: hace pensar que el backend no está haciendo
+  // su trabajo, cuando en realidad sí lo hace.
 
   const [searchParams, setSearchParams] = useSearchParams();
   const assetIdFromUrl = searchParams.get("assetId") || "";
@@ -156,7 +187,29 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
 
   const filters = useMemo(() => {
     const f: Record<string, string | number> = { page };
-    if (subTab !== "all")   f.status   = subTab;
+    // jul 2026 — NO mandamos `scope` ni `mine` al backend. El filtro
+    // por rol lo hace el server-side automáticamente según el rol del
+    // usuario autenticado (admin/owner/supervisor → todos; operador →
+    // assignedUserId=me OR createdBy=me OR assignedUserId IS NULL).
+    // jul 2026 — MODO HISTORIAL: forzar status=Completado sin importar
+    // el subTab. El tab Historial SOLO debe mostrar mantenimientos
+    // CERRADOS, siempre. Aunque el usuario manipule el state (URL
+    // params, deep link, devtools) o el subTab se quede en "all", el
+    // request al backend va con status=Completado sí o sí. Es la única
+    // forma de garantizar que la regla de negocio ("Historial =
+    // cerrados") se respete del lado del cliente.
+    if (mode === "historial") {
+      f.status = "Completado";
+    } else if (subTab !== "all") {
+      f.status = subTab;
+    }
+    // jul 2026 — En modo "active", cuando el subTab es "all", ocultamos
+    // los Completado de la lista principal (se ven en el tab Historial
+    // y en Reportes). El subTab ya filtra por un status específico, así
+    // que el excludeStatus NO se aplica cuando hay un status elegido.
+    if (mode === "active" && subTab === "all") {
+      f.excludeStatus = "Completado";
+    }
     if (catChip !== "all")  f.category = catChip;
     if (typeChip !== "all") f.type     = typeChip;
     if (search) f.q = search;
@@ -164,7 +217,7 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
     if (to)     f.to   = to;
     if (assetIdFromUrl) f.assetId = assetIdFromUrl;
     return f;
-  }, [subTab, catChip, typeChip, search, from, to, assetIdFromUrl, page]);
+  }, [mode, subTab, catChip, typeChip, search, from, to, assetIdFromUrl, page]);
 
   const clearAssetFilter = () => {
     const next = new URLSearchParams(searchParams);
@@ -450,49 +503,62 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
       {/* ── KPIs por estado (clickeables) ──────────────────────────────
           Cards estilo "CRÍTICAS / OPERATIVAS / UNIDADES" pero aplicadas
           a los estados de mantenimiento. Click → setea subTab al
-          estado correspondiente (toggle off si ya estaba activo). */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <StatusKpiCard
-          label="Programado"
-          count={statusCounts.Programado}
-          spark={sparkByStatus.Programado}
-          color="violet"
-          active={subTab === "Programado"}
-          onClick={() => { setSubTab(subTab === "Programado" ? "all" : "Programado"); setPage(1); }}
-        />
-        <StatusKpiCard
-          label="En proceso"
-          count={statusCounts["En proceso"]}
-          spark={sparkByStatus["En proceso"]}
-          color="sky"
-          active={subTab === "En proceso"}
-          onClick={() => { setSubTab(subTab === "En proceso" ? "all" : "En proceso"); setPage(1); }}
-        />
-        <StatusKpiCard
-          label="Completado"
-          count={statusCounts.Completado}
-          spark={sparkByStatus.Completado}
-          color="emerald"
-          active={subTab === "Completado"}
-          onClick={() => { setSubTab(subTab === "Completado" ? "all" : "Completado"); setPage(1); }}
-        />
-        <StatusKpiCard
-          label="Corrección"
-          count={statusCounts.Correccion}
-          spark={sparkByStatus.Correccion}
-          color="rose"
-          active={subTab === "Correccion"}
-          onClick={() => { setSubTab(subTab === "Correccion" ? "all" : "Correccion"); setPage(1); }}
-        />
-        <StatusKpiCard
-          label="Atrasados"
-          count={statusCounts.Atrasado}
-          spark={sparkByStatus.Atrasado}
-          color="rose"
-          active={subTab === "Atrasado"}
-          onClick={() => { setSubTab(subTab === "Atrasado" ? "all" : "Atrasado"); setPage(1); }}
-        />
-      </div>
+          estado correspondiente (toggle off si ya estaba activo).
+          jul 2026 — En modo historial SOLO se muestra el KPI
+          "Completado" (con grid 1 col, ancho completo). Mostrar
+          Programado/En proceso/Atrasados en Historial no tiene
+          sentido y confunde (la regla de negocio es: Historial =
+          cerrados, full stop). El KPI Completado en historial NO es
+          clickeable (no hay nada que filtrar — el request ya va
+          forzado a status=Completado). */}
+      {mode === "active" ? (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          <StatusKpiCard
+            label="Programado"
+            count={statusCounts.Programado}
+            spark={sparkByStatus.Programado}
+            color="violet"
+            active={subTab === "Programado"}
+            onClick={() => { setSubTab(subTab === "Programado" ? "all" : "Programado"); setPage(1); }}
+          />
+          <StatusKpiCard
+            label="En proceso"
+            count={statusCounts["En proceso"]}
+            spark={sparkByStatus["En proceso"]}
+            color="sky"
+            active={subTab === "En proceso"}
+            onClick={() => { setSubTab(subTab === "En proceso" ? "all" : "En proceso"); setPage(1); }}
+          />
+          <StatusKpiCard
+            label="Completado"
+            count={statusCounts.Completado}
+            spark={sparkByStatus.Completado}
+            color="emerald"
+            active={subTab === "Completado"}
+            onClick={() => { setSubTab(subTab === "Completado" ? "all" : "Completado"); setPage(1); }}
+          />
+          <StatusKpiCard
+            label="Corrección"
+            count={statusCounts.Correccion}
+            spark={sparkByStatus.Correccion}
+            color="rose"
+            active={subTab === "Correccion"}
+            onClick={() => { setSubTab(subTab === "Correccion" ? "all" : "Correccion"); setPage(1); }}
+          />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div className="lg:col-span-1">
+            <StatusKpiCard
+              label="Completado"
+              count={statusCounts.Completado}
+              spark={sparkByStatus.Completado}
+              color="emerald"
+              active
+            />
+          </div>
+        </div>
+      )}
 
       {/* ── Filtro por vehículo activo (vino del cockpit) ── */}
       {assetIdFromUrl && (
@@ -514,20 +580,25 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
 
       {/* ── Filtros como 3 dropdowns: Estado / Categoría / Tipo ── */}
       <div className="flex flex-wrap items-end gap-2">
-        {/* Estado */}
-        <FilterDropdown
-          label="Estado"
-          value={subTab}
-          onChange={(v) => { setSubTab(v as typeof subTab); setPage(1); }}
-          options={[
-            { id: "all",         label: "Todos",       dot: <span className="h-1.5 w-1.5 rounded-full bg-gray-400" /> },
-            { id: "Programado",  label: "Programado",  dot: <span className="h-1.5 w-1.5 rounded-full bg-violet-500 dark:bg-violet-400" /> },
-            { id: "En proceso",  label: "En proceso",  dot: <span className="h-1.5 w-1.5 rounded-full bg-sky-500 dark:bg-sky-400" /> },
-            { id: "Completado",  label: "Completado",  dot: <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" /> },
-            { id: "Correccion",  label: "Corrección",  dot: <span className="h-1.5 w-1.5 rounded-full bg-rose-500 dark:bg-rose-400" /> },
-            { id: "Atrasado",    label: "Atrasados",   dot: <span className="h-1.5 w-1.5 rounded-full bg-rose-600 dark:bg-rose-400" /> },
-          ]}
-        />
+        {/* Estado — jul 2026: OCULTO en modo historial. En ese modo solo
+            se muestran Completado (forzado en el request), así que el
+            dropdown no aplica y solo confundiría (antes el usuario
+            podía poner "Todos" y ver Atrasado en la tabla). */}
+        {mode === "active" && (
+          <FilterDropdown
+            label="Estado"
+            value={subTab}
+            onChange={(v) => { setSubTab(v as typeof subTab); setPage(1); }}
+            options={[
+              { id: "all",         label: "Todos",       dot: <span className="h-1.5 w-1.5 rounded-full bg-gray-400" /> },
+              { id: "Programado",  label: "Programado",  dot: <span className="h-1.5 w-1.5 rounded-full bg-violet-500 dark:bg-violet-400" /> },
+              { id: "En proceso",  label: "En proceso",  dot: <span className="h-1.5 w-1.5 rounded-full bg-sky-500 dark:bg-sky-400" /> },
+              { id: "Completado",  label: "Completado",  dot: <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" /> },
+              { id: "Correccion",  label: "Corrección",  dot: <span className="h-1.5 w-1.5 rounded-full bg-rose-500 dark:bg-rose-400" /> },
+              { id: "Atrasado",    label: "Atrasados",   dot: <span className="h-1.5 w-1.5 rounded-full bg-rose-600 dark:bg-rose-400" /> },
+            ]}
+          />
+        )}
 
         {/* Categoría */}
         <FilterDropdown
@@ -561,8 +632,30 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
           </p>
         </div>
         <div className="flex flex-col sm:flex-row sm:items-end gap-2">
-          <DatePicker compact label="Desde" value={from} onChange={(v) => { setFrom(v); setPage(1); }} maxDate={to || undefined} />
-          <DatePicker compact label="Hasta" value={to}   onChange={(v) => { setTo(v); setPage(1); }}   minDate={from || undefined} />
+          {/* jul 2026 — Picker único "Día" (from=to). El usuario quiere
+              la lista filtrada por día; un solo picker es más claro que
+              Desde/Hasta. Si necesitás un rango, editá la URL con
+              ?from=YYYY-MM-DD&to=YYYY-MM-DD. */}
+          <DatePicker
+            compact
+            label="Día"
+            value={from}
+            onChange={(v) => {
+              setFrom(v);
+              setTo(v);
+              setPage(1);
+            }}
+          />
+          {from !== todayIso && (
+            <button
+              type="button"
+              onClick={() => { setFrom(todayIso); setTo(todayIso); setPage(1); }}
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.06] transition whitespace-nowrap"
+              title="Volver a hoy"
+            >
+              Hoy
+            </button>
+          )}
           <div className="relative flex-1 sm:flex-none">
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
             <input
@@ -733,16 +826,19 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
                         <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-200 font-medium">{fmtMoney(m.totalCost)}</td>
                         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                           <div className="flex justify-end gap-1">
-                            {/* Reautorizar (solo Atrasado + Programado, si el user
-                                tiene el permiso independiente `reautorizaciones.editar`
-                                Y no es su propio mantenimiento — regla dura del
-                                backend, ver POST /:id/reauthorize): confirma que el
-                                mantenimiento sigue autorizado para ejecutarse aunque
-                                haya pasado la fecha prevista. Para Correctivo esta
-                                acción no aplica (el botón se oculta). Muestra un
-                                prompt nativo para que el aprobador escriba el motivo
-                                antes de invocar el endpoint. */}
-                            {canReauthorize && overdue && m.type === "Programado" && m.status !== "Completado" && !isOwnMaintenance && (
+                            {/* jul 2026 — Reautorizar (solo Atrasado + Programado):
+                                DEPRECADO. El flujo de reautorización manual se
+                                reemplazó por el cron de auto-reassign
+                                (`startMaintenanceAutoReassignCron` en el backend):
+                                a las 21:00 EC, los mantenimientos no
+                                completados se mueven automáticamente al día
+                                siguiente. El admin/owner ya no necesita
+                                aprobar manualmente cada reagendamiento.
+                                Mantenemos el botón comentado para rollback
+                                rápido. Para activarlo: descomentar la línea
+                                siguiente + restaurar el import de
+                                RequestReauthModal arriba. */}
+                            {false && canReauthorize && overdue && m.type === "Programado" && m.status !== "Completado" && !isOwnMaintenance && (
                               <button
                                 onClick={() => {
                                   // window.prompt devuelve null si el admin cancela.
@@ -772,10 +868,13 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
                                 <RefreshCw size={13} />
                               </button>
                             )}
-                            {/* Pedir reautorización (jun 2026): solo atraso, NO full,
-                                y el caller es el asignado/creador. Abre el modal que
-                                envía POST /request-reauth. */}
-                            {overdue && m.status !== "Completado" && !isFullAccess && isOwnMaintenance && (
+                            {/* Pedir reautorización (jun 2026): DEPRECADO.
+                                jul 2026 — El operador ya no necesita pedir
+                                permiso: a las 21:00 EC el sistema mueve los
+                                pendientes automáticamente al día siguiente
+                                (cron de auto-reassign). El botón se
+                                mantiene comentado para rollback rápido. */}
+                            {false && overdue && m.status !== "Completado" && !isFullAccess && isOwnMaintenance && (
                               <button
                                 onClick={() => setReauthRequestTarget(m)}
                                 className="p-1.5 rounded-md text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition"
@@ -898,12 +997,16 @@ export function MaintenanceListTab({ title, onReauthorize }: Props) {
         description={finalizeTarget ? <>¿Marcar <strong className="text-gray-800 dark:text-white">{finalizeTarget.title}</strong> como completado?</> : null}
       />
 
-      {/* jun 2026 — Modal de pedido de reautorización (operador/conductor). */}
-      <RequestReauthModal
+      {/* jul 2026 — Modal de pedido de reautorización: DEPRECADO.
+          El flujo de reautorización manual se reemplazó por el cron de
+          auto-reassign. El componente sigue importado (por si hay que
+          restaurar) pero no se renderiza. Si querés rehabilitar el flujo
+          viejo, descomentar este bloque. */}
+      {/* <RequestReauthModal
         open={!!reauthRequestTarget}
         target={reauthRequestTarget}
         onClose={() => setReauthRequestTarget(null)}
-      />
+      /> */}
 
       <ConfirmModal
         open={!!deleteTarget}
@@ -1027,7 +1130,10 @@ function StatusKpiCard({
   spark: number[];
   color: keyof typeof KPI_COLOR;
   active: boolean;
-  onClick: () => void;
+  // jul 2026 — onClick opcional: en modo historial el KPI Completado
+  // es puramente informativo (no hay nada que filtrar — el request ya
+  // va forzado a status=Completado), así que el botón no es interactivo.
+  onClick?: () => void;
 }) {
   const palette = KPI_COLOR[color];
 
@@ -1051,6 +1157,7 @@ function StatusKpiCard({
     <button
       type="button"
       onClick={onClick}
+      disabled={!onClick}
       aria-pressed={active}
       className={`group relative flex flex-col gap-2 rounded-xl border px-4 py-3.5 text-left transition-colors ${
         active

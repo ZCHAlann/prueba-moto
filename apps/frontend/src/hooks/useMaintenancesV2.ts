@@ -92,6 +92,7 @@ export interface MaintenanceItem {
   subtotal:     number;
   // jul 2026 v4-c — IMPORTE del descuento (no porcentaje). Migración 0042.
   discountValue:  number;
+  discountType:   "amount" | "percent";
   ivaPercent:     number;
   ivaAmount:      number;
   total:          number;
@@ -125,6 +126,7 @@ export interface MaintenanceItemInput {
   attachmentKey?:  string | null;
   /** jul 2026 v4 — clasificación contable del item. */
   financeClassification?: string | null;
+  discountType?: "amount" | "percent";
 }
 
 export interface Maintenance {
@@ -227,6 +229,12 @@ export interface ListFilters {
   q?:          string;
   mine?:       'me' | 'all';
   scope?:      'mine' | 'all';
+  // jul 2026 — Excluir un status del resultado. Usado por la lista
+  // principal (excludeStatus="Completado" por default — los cerrados
+  // viven en el tab Historial) y por el calendario (mismo filtro).
+  // Si se pasan ambos `status` y `excludeStatus`, gana `status`
+  // (filtro más específico). El backend resuelve esto en el WHERE.
+  excludeStatus?: MaintenanceStatus;
   /** Track A: paginación server-side. */
   page?:       number;
   pageSize?:   number;

@@ -84,6 +84,99 @@ export type PettyCashMovement = {
   relatedVoucherId: number | null;
 };
 
+// jul 2026 — Tipos para el reporte de cajas chicas CERRADAS.
+// Una cuenta cerrada = aquella con isActive=false. Aparece en Reportes
+// (módulo Caja Chica) como "histórico" y al hacer click muestra el flow
+// completo (movements + vouchers + requests en orden cronológico).
+
+export type PettyCashClosedAccountRow = {
+  id: number;
+  siteId: number;
+  siteName: string;
+  siteCode: string | null;
+  mode: AccountMode;
+  periodKind: PeriodKind;
+  initialAmount: number;
+  limitAmount: number;
+  finalBalance: number;
+  periodStartedAt: string | Date;
+  closedAt: string | Date;
+  createdBy: number | null;
+  createdByName: string | null;
+  movementCount: number;
+  voucherCount: number;
+  requestCount: number;
+};
+
+/** Tipos de eventos que pueblan el timeline de una cuenta. */
+export type PettyCashFlowEvent =
+  | {
+      kind: "movement";
+      id: number;
+      type: string;             // initial_assignment, replenishment, period_reset_in/out, etc.
+      amount: number;
+      balanceAfter: number;
+      note: string | null;
+      occurredAt: string | Date;
+      actorName: string | null;
+      relatedRequestId: number | null;
+      relatedVoucherId: number | null;
+    }
+  | {
+      kind: "voucher";
+      id: number;
+      requestId: number;
+      assignedToUserId: number;
+      assignedToName: string;
+      issuedAmount: number;
+      status: string;
+      closedAt: string | Date | null;
+      closedActualAmount: number | null;
+      closedInvoiceId: number | null;
+      closedInvoiceNumber: string | null;
+      closedNotes: string | null;
+      refundAmount: number;
+      purpose: string | null;
+      createdAt: string | Date;
+      occurredAt: string | Date;
+    }
+  | {
+      kind: "request";
+      id: number;
+      requesterUserId: number;
+      requesterName: string;
+      approverUserId: number | null;
+      approverName: string | null;
+      amount: number;
+      reason: string;
+      justificationNotes: string | null;
+      origin: string;
+      classification: string;
+      status: string;
+      rejectionReason: string | null;
+      reviewedAt: string | Date | null;
+      createdAt: string | Date;
+      occurredAt: string | Date;
+    };
+
+export type PettyCashAccountFlow = {
+  account: {
+    id: number;
+    siteId: number;
+    siteName: string;
+    siteCode: string | null;
+    mode: AccountMode;
+    periodKind: PeriodKind;
+    initialAmount: number;
+    limitAmount: number;
+    currentBalance: number;
+    isActive: boolean;
+    periodStartedAt: string | Date;
+    closedAt: string | Date;
+  };
+  timeline: PettyCashFlowEvent[];
+};
+
 export type FinanceRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 export type FinanceRequestClassification = "pending" | "petty_cash" | "annual_expense";
 export type FinanceRequestOrigin = "maintenance" | "maintenance_item" | "standalone";
@@ -242,6 +335,52 @@ export function useFinance() {
       }
       const data = await res.json();
       return { ok: true, data };
+    };
+
+    // jul 2026 — Listado de cuentas CERRADAS (isActive=false). Se usa en
+    // el módulo Caja Chica del Centro de Reportes para mostrar el histórico
+    // por sede, con conteos de movements/vouchers/requests por cuenta.
+    const fetchClosedAccounts = async (filters: {
+      siteId?: number;
+      from?: string;
+      to?: string;
+      mode?: "period" | "balance" | "all";
+      page?: number;
+      pageSize?: number;
+    } = {}): Promise<{
+      rows: PettyCashClosedAccountRow[];
+      total: number;
+      page: number;
+      pageSize: number;
+    }> => {
+      if (!companyId) return { rows: [], total: 0, page: 1, pageSize: 20 };
+      const params = new URLSearchParams();
+      if (filters.siteId)    params.set("siteId", String(filters.siteId));
+      if (filters.from)      params.set("from", filters.from);
+      if (filters.to)        params.set("to", filters.to);
+      if (filters.mode && filters.mode !== "all") params.set("mode", filters.mode);
+      if (filters.page)      params.set("page", String(filters.page));
+      if (filters.pageSize)  params.set("pageSize", String(filters.pageSize));
+      const qs = params.toString();
+      const res = await fetch(
+        `/api/company/${companyId}/finance/petty-cash/closed${qs ? `?${qs}` : ""}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => "")}`);
+      return res.json();
+    };
+
+    // jul 2026 — Flujo completo (timeline) de una cuenta. Mezcla movements,
+    // vouchers cerrados y requests en orden cronológico. Se usa para el
+    // drawer del módulo Caja Chica en Reportes.
+    const fetchAccountFlow = async (accountId: number): Promise<PettyCashAccountFlow> => {
+      if (!companyId) throw new Error("Sesión inválida");
+      const res = await fetch(
+        `/api/company/${companyId}/finance/petty-cash/accounts/${accountId}/flow`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => "")}`);
+      return res.json();
     };
 
     // ════════════════════════════════════════════════════════════════════
@@ -634,6 +773,9 @@ export function useFinance() {
         fetchAccount,
         upsertAccount,
         replenishAccount,
+        // jul 2026 — Para el módulo Caja Chica histórica de Reportes:
+        fetchClosedAccounts,
+        fetchAccountFlow,
       },
       requests: {
         fetch: fetchRequests,

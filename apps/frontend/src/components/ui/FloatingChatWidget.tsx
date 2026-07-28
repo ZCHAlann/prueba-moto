@@ -1,14 +1,6 @@
 // components/ui/FloatingChatWidget.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // Widget flotante UNIFICADO del chat ApliSmart Motors (jul 2026 v8.2).
-//
-// Cambios v8.2:
-//   ✅ Fix: comparaciones remitente_id === myUserId ahora usan Number(...)
-//      de ambos lados (evita mismatch string vs number).
-//   ✅ Fix: showHeader calculado por mensaje (agrupa racha del mismo
-//      remitente, evita avatar+nombre repetido en cada línea).
-//   ✅ Fix: conversacionesRef para que la notificación del navegador no
-//      use un closure viejo de `conversaciones` dentro del handler WS.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -259,6 +251,23 @@ export function FloatingChatWidget() {
       setActiveTab("messages");
     }
   }, [activeTab, canUseAssistant]);
+
+  // jul 2026 v8.4 — Wake word global: el JarvisWakeWordController
+  // dispatcha este evento cuando detecta "Jarvis". Acá abrimos el
+  // chat en el tab "Asistente" para que el user vea la grabación.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    // jul 2026 v8.6 — Wake word flow nuevo. Ya NO abrimos el chat
+    // cuando se detecta "jarvis". El handler del evento vive en
+    // JarvisVoiceOverlay (que muestra el Siri-style overlay). El chat
+    // sigue funcionando con el botón tradicional (FAB), pero el wake
+    // word es 100% voz-first sin abrir el panel.
+    //
+    // Si en el futuro queremos que "jarvis" abra también el chat (ej.
+    // para mostrar el thread de la conversación), reactivamos esto.
+    // Por ahora: NO.
+    void canUseAssistant; // keep the dep estable para que el linter no se queje
+  }, [canUseAssistant]);
 
   // ── FAB draggable ────────────────────────────────────────────────────
   const constrainFabPos = (x: number, y: number): { x: number; y: number } => {
@@ -590,9 +599,6 @@ export function FloatingChatWidget() {
         attempt++;
         const delay = Math.min(1000 * Math.pow(2, attempt - 1), MAX_RECONNECT_DELAY);
         setWsReconnecting(true);
-        if (attempt === 1 || attempt % 4 === 0) {
-          console.log(`[chat-ws] disconnected, reconnecting in ${Math.round(delay/1000)}s (attempt ${attempt})`);
-        }
         reconnectTimer = setTimeout(connect, delay);
       };
 
@@ -736,10 +742,6 @@ export function FloatingChatWidget() {
           break;
         }
 
-        case "error":
-          console.warn("[chat] ws error:", msg.data);
-          break;
-
         default:
           break;
       }
@@ -772,7 +774,6 @@ export function FloatingChatWidget() {
     ws.send(JSON.stringify({ type: "conversacion:unirse", conversacion_id: activeConvId }));
     if (wasDisconnectedRef.current) {
       wasDisconnectedRef.current = false;
-      console.log('[chat] WS reconnected, refetching active conv messages');
       void loadMensajes(activeConvId, null);
     }
   }, [wsConnected, activeConvId, loadMensajes]);
@@ -1021,18 +1022,12 @@ export function FloatingChatWidget() {
   const mensajesLeidosRef = useRef<Set<number>>(new Set());
   useEffect(() => {
     if (!activeConvId || mensajes.length === 0) return;
-    let sent = 0;
     for (const m of mensajes) {
       // Solo mensajes del OTRO user, y que no hayamos marcado ya.
       if (Number(m.remitente_id) !== Number(myUserId) && !mensajesLeidosRef.current.has(m.id)) {
         mensajesLeidosRef.current.add(m.id);
         sendWS({ type: "mensaje:leido", mensaje_id: m.id });
-        sent++;
       }
-    }
-    // Si no mandamos nada en este render, no logueamos.
-    if (sent > 0) {
-      console.debug(`[chat] marcados ${sent} mensajes como leídos en conv ${activeConvId}`);
     }
   }, [activeConvId, mensajes, myUserId, sendWS]);
 
@@ -1093,18 +1088,6 @@ export function FloatingChatWidget() {
       void loadMensajes(activeConvId, oldestId);
     }
   }, [loadingMore, hasMore, activeConvId, loadMensajes]);
-
-  useEffect(() => {
-    console.log("=== DEBUG CHAT ===");
-    console.log("session.id:", session?.id, typeof session?.id);
-    console.log("myUserId calculado:", myUserId, typeof myUserId);
-    console.log("mensajes crudos:", mensajes.map(m => ({
-      id: m.id,
-      remitente_id: m.remitente_id,
-      tipo_remitente_id: typeof m.remitente_id,
-      remitente_nombre: m.remitente_nombre,
-    })));
-  }, [mensajes, myUserId, session]);
 
   // ── Detección mobile ─────────────────────────────────────────────────
   const [isMobile, setIsMobile] = useState(false);
@@ -1174,10 +1157,15 @@ export function FloatingChatWidget() {
         )}
       </div>
 
-      {/* Panel */}
-      {phase !== "closed" && (
-        <div
-          ref={panelRef}
+      {/* Panel — SIEMPRE montado, solo se oculta con display:none cuando
+          está cerrado. Esto es crítico para que el <FloatingAiAssistant
+          embedded /> de adentro registre su listener de
+          `jarvis:wake-detected` apenas carga la app. Si lo
+          montáramos/desmontáramos con el phase, el primer "jarvis"
+          del user se perdería porque el listener no existía cuando
+          el Controller disparó el evento. (jul 2026 v8.6 bug) */}
+      <div
+        ref={panelRef}
           className={[
             "fixed z-50 bg-white dark:bg-[#0F172A]",
             "border border-gray-200 dark:border-white/[0.06]",
@@ -1186,20 +1174,22 @@ export function FloatingChatWidget() {
             isMobile ? "inset-0 rounded-none" : "rounded-2xl",
           ].join(" ")}
           style={
-            isMobile
-              ? undefined
-              : {
-                  width: `min(${PANEL_DESKTOP_W}px, calc(100vw - 2rem))`,
-                  height: `${PANEL_DESKTOP_H_RATIO * 100}vh`,
-                  maxHeight: `${PANEL_DESKTOP_H_MAX_PX}px`,
-                  bottom: fabPos.y + FAB_SIZE + 8,
-                  right:  fabPos.x,
-                  animation:
-                    phase === "closing"
-                      ? "chatPanelOut 0.2s ease-in forwards"
-                      : "chatPanelIn 0.3s cubic-bezier(0.175,0.885,0.32,1.275) forwards",
-                  transformOrigin: "bottom right",
-                }
+            phase === "closed"
+              ? { display: "none" }
+              : isMobile
+                ? undefined
+                : {
+                    width: `min(${PANEL_DESKTOP_W}px, calc(100vw - 2rem))`,
+                    height: `${PANEL_DESKTOP_H_RATIO * 100}vh`,
+                    maxHeight: `${PANEL_DESKTOP_H_MAX_PX}px`,
+                    bottom: fabPos.y + FAB_SIZE + 8,
+                    right:  fabPos.x,
+                    animation:
+                      phase === "closing"
+                        ? "chatPanelOut 0.2s ease-in forwards"
+                        : "chatPanelIn 0.3s cubic-bezier(0.175,0.885,0.32,1.275) forwards",
+                    transformOrigin: "bottom right",
+                  }
           }
         >
           {/* Tabs */}
@@ -1573,7 +1563,6 @@ export function FloatingChatWidget() {
             )}
           </div>
         </div>
-      )}
     </>
   );
 }

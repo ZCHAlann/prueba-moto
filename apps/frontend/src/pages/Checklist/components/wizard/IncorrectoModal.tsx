@@ -83,7 +83,6 @@ export default function IncorrectoModal({ open, itemName, onClose, onSave }: Pro
       }
       onSave({ observation: sanitizeString(observation).slice(0, 2000), photoUrl });
     } catch (err) {
-      console.error(err);
       toast.error(err instanceof Error ? err.message : "No se pudo guardar la observación");
     } finally {
       setUploading(false);

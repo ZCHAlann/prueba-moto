@@ -27,6 +27,7 @@ import {
   Truck,
   Users,
   Wallet,
+  Wallet2,
   ClipboardList,
   Fuel,
   Bell,
@@ -48,6 +49,8 @@ import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import { EstadisticasTab } from "./EstadisticasTab";
 import { ReportDetailDrawer } from "./ReportDetailDrawer";
 import { useAuth } from "../../context/AuthContext";
+import { useFinance } from "../../hooks/useFinance";
+import type { PettyCashClosedAccountRow } from "../../hooks/useFinance";
 import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -129,6 +132,11 @@ const REPORT_MODULES: ModuleDef[] = [
   { id: "rep-006", label: "Alertas",         icon: Bell,        palette: "rose",    short: "Severidad y estado",                 requiresModule: "alertas"        },
   { id: "rep-008", label: "Autorizaciones",  icon: ShieldCheck, palette: "teal",    short: "Salidas de vehículos",               requiresModule: "autorizaciones" },
   { id: "rep-009", label: "Mantenimiento",   icon: Wrench,      palette: "fuchsia", short: "Órdenes de trabajo",                 requiresModule: "mantenimiento"  },
+  // jul 2026 — Histórico de cajas chicas CERRADAS. Cada fila = una cuenta con
+  // isActive=false (modo period cerrado por cron, o modo balance reemplazado
+  // al reconfigurar). Al click abre un drawer con el flow completo
+  // (movements + vouchers + requests) en formato línea de tiempo.
+  { id: "rep-010", label: "Caja chica",      icon: Wallet2,     palette: "violet",  short: "Histórico de cajas chicas cerradas", requiresModule: "finanzas"       },
 ];
 
 const ADMIN_ROLES = new Set(["owner_empresa", "admin_empresa", "superadmin"]);
@@ -264,7 +272,49 @@ const PALETTE: Record<ModuleDef["palette"], {
 // tabla plana. Cada módulo tiene su propio campo de agrupación y su propio
 // set de columnas numéricas a sumar como subtotal/gran total.
 
-const GROUPED_MODULES = new Set(["rep-003", "rep-004", "rep-005", "rep-008", "rep-009"]);
+const GROUPED_MODULES = new Set(["rep-003", "rep-004", "rep-005", "rep-008", "rep-009", "rep-010"]);
+
+// jul 2026 — Pill de categoría para la columna "Categoría" del reporte
+// de mantenimientos (rep-009). El dot usa el color de la categoría; las
+// custom pueden traer un color hex arbitrario que se aplica via inline
+// style. `dot` es la clase Tailwind del dot (reservada para built-in);
+// `cls` es el estilo completo del pill (texto + fondo tinted).
+const CATEGORY_PILL: Record<string, { dot: string; cls: string }> = {
+  "Primordial:Bombas":   { dot: "bg-amber-500",   cls: "text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 ring-1 ring-amber-200/60 dark:ring-amber-500/20" },
+  "Primordial:Motores":  { dot: "bg-cyan-500",    cls: "text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-500/10 ring-1 ring-cyan-200/60 dark:ring-cyan-500/20" },
+  "Aceite:Cambio":       { dot: "bg-yellow-500",  cls: "text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-500/10 ring-1 ring-yellow-200/60 dark:ring-yellow-500/20" },
+  "Aceite:Inventario":   { dot: "bg-emerald-500", cls: "text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 ring-1 ring-emerald-200/60 dark:ring-emerald-500/20" },
+  "Lavada":              { dot: "bg-sky-500",     cls: "text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/10 ring-1 ring-sky-200/60 dark:ring-sky-500/20" },
+  "Otro":                { dot: "bg-gray-400",    cls: "text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-white/[0.04] ring-1 ring-gray-200/60 dark:ring-white/[0.08]" },
+};
+const CATEGORY_PILL_FALLBACK = CATEGORY_PILL["Otro"];
+
+/** Resuelve la config visual del pill para una categoría. */
+function resolveCategoryPill(
+  key: string | null | undefined,
+  builtinCats: { key: string; label: string }[],
+  customCats: { key: string; label: string; color: string }[],
+): { key: string; label: string; dot: string; cls: string; customColor: string | null } {
+  const k = key || "Otro";
+  // Built-in primero (mismo color/cls que MaintenanceListTab).
+  const builtin = builtinCats.find((c) => c.key === k);
+  if (builtin && CATEGORY_PILL[k]) {
+    return { key: k, label: builtin.label, dot: CATEGORY_PILL[k].dot, cls: CATEGORY_PILL[k].cls, customColor: null };
+  }
+  // Custom — el color hex viene del backend.
+  const custom = customCats.find((c) => c.key === k);
+  if (custom) {
+    return {
+      key: k,
+      label: custom.label,
+      dot: "",  // no usamos className; el color se aplica via style
+      cls: "text-gray-700 dark:text-gray-200 bg-white dark:bg-white/[0.04] ring-1 ring-gray-200 dark:ring-white/[0.08]",
+      customColor: custom.color || null,
+    };
+  }
+  // Fallback a "Otro".
+  return { key: "Otro", label: "Otro", dot: CATEGORY_PILL_FALLBACK.dot, cls: CATEGORY_PILL_FALLBACK.cls, customColor: null };
+}
 
 /** Campo de ReportRow que actúa como clave de agrupación (placa / equipo). */
 const GROUP_KEY: Record<string, string> = {
@@ -273,6 +323,7 @@ const GROUP_KEY: Record<string, string> = {
   "rep-005": "plate",
   "rep-008": "assetPlate",
   "rep-009": "assetPlate",
+  "rep-010": "site",
 };
 
 /**
@@ -286,6 +337,7 @@ const NUMERIC_COLS: Record<string, string[]> = {
   "rep-005": ["total"],                 // Combustible
   "rep-008": [],                         // Autorizaciones no tiene columna de dinero
   "rep-009": ["labor", "parts", "cost"], // Mantenimiento
+  "rep-010": ["initial", "final", "movements", "vouchers", "requests"], // Caja chica
 };
 
 /** Parsea un valor numérico, ya sea number o string con formato moneda. */
@@ -1046,7 +1098,11 @@ export function ReportsPage() {
   // lo que hacía que Reportes mostrara $0.00 y "Preventivo" por defecto
   // aunque el mantenimiento real (visto en el módulo de Mantenimientos)
   // tuviera datos correctos.
-  const { data: maintenancesPage, isLoading: loadingMaintenances } = useMaintenancesList({ pageSize: 100 });
+  // jul 2026 — Reportes muestra SOLO mantenimientos CERRADOS (los del
+  // módulo principal están en el tab Historial, no en Reportes). El
+  // `status="Completado"` es server-side (más rápido y consistente con
+  // los totales del header).
+  const { data: maintenancesPage, isLoading: loadingMaintenances } = useMaintenancesList({ status: "Completado", pageSize: 100 });
   const maintenances = maintenancesPage?.data ?? [];
   const { checklists,   loading: loadingChecklists }   = useChecklists();
   const { alerts,       loading: loadingAlerts }       = useAlerts();
@@ -1082,10 +1138,15 @@ export function ReportsPage() {
     void fetchExitAuths();
   }, [fetchExitAuths]);
 
-  const loading =
-    loadingAssets || loadingDrivers || loadingAssignments ||
-    loadingMaintenances || loadingChecklists || loadingAlerts ||
-    loadingFuel || loadingExitAuths;
+  // jul 2026 — Hook de finanzas para el módulo Caja Chica histórica (rep-010).
+  // Lo dejamos aquí arriba (junto a los demás hooks de datos) y movemos los
+  // useState/useEffect del módulo a MÁS ABAJO, después de declarar `activeId`
+  // y `applied` — TDZ bug clásico: declarar un useEffect que referencia
+  // `activeId` ANTES del useState que lo crea tira `ReferenceError: Cannot
+  // access 'activeId' before initialization` en runtime (TS no lo cacha).
+  // Igual con el `loading` const: depende de `activeId` y `loadingClosedAccounts`,
+  // por eso se declara ABAJO de ambos useState.
+  const finance = useFinance();
 
   const [activeId, setActiveId] = useState(() => visibleReportModules[0]?.id ?? "rep-001");
   const [search, setSearch]     = useState("");
@@ -1120,6 +1181,54 @@ export function ReportsPage() {
   // drawer específico delegar según `__raw`.
   const [selectedRow, setSelectedRow] = useState<ReportRow | null>(null);
 
+  // jul 2026 — Estado del módulo Caja Chica histórica (rep-010).
+  // Declarado DESPUÉS de `activeId` y `applied` (TDZ: useEffect que los
+  // referencia debe estar abajo de su declaración).
+  const [closedAccounts, setClosedAccounts] = useState<PettyCashClosedAccountRow[]>([]);
+  const [closedAccountsTotal, setClosedAccountsTotal] = useState(0);
+  const [loadingClosedAccounts, setLoadingClosedAccounts] = useState(false);
+  // Filtro de modo (period | balance | all) — vive en el módulo.
+  const [pettyCashModeFilter, setPettyCashModeFilter] = useState<"all" | "period" | "balance">("all");
+
+  useEffect(() => {
+    if (activeId !== "rep-010") return;
+    if (!session?.companyId) return;
+    let cancelled = false;
+    setLoadingClosedAccounts(true);
+    void (async () => {
+      try {
+        const res = await finance.pettyCash.fetchClosedAccounts({
+          from: applied.from || undefined,
+          to:   applied.to   || undefined,
+          mode: pettyCashModeFilter,
+          page: 1,
+          pageSize: 100,
+        });
+        if (cancelled) return;
+        setClosedAccounts(res.rows);
+        setClosedAccountsTotal(res.total);
+      } catch (err) {
+        if (cancelled) return;
+        setClosedAccounts([]);
+        setClosedAccountsTotal(0);
+      } finally {
+        if (!cancelled) setLoadingClosedAccounts(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  // Re-fetch cuando cambia el rango aplicado o el filtro de modo.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, applied.from, applied.to, pettyCashModeFilter, session?.companyId]);
+
+  // jul 2026 — Loading combinado. Movido ABAJO del useState de `activeId`
+  // y de `loadingClosedAccounts` para evitar el bug de TDZ (este const
+  // referencia ambos, declararlos antes garantiza que la lectura dentro
+  // del render no falle con "Cannot access 'activeId' before initialization").
+  const loading =
+    loadingAssets || loadingDrivers || loadingAssignments ||
+    loadingMaintenances || loadingChecklists || loadingAlerts ||
+    loadingFuel || loadingExitAuths || (activeId === "rep-010" && loadingClosedAccounts);
+
   // jul 2026 v6 — Si el activeId quedó apuntando a un módulo que la
   // empresa no tiene habilitado (ej. porque cambió el plan o el owner
   // desactivó el módulo), caemos al primer módulo visible. Mismo
@@ -1139,6 +1248,9 @@ export function ReportsPage() {
       setMaintCategory("all");
       setMaintWorkshopId(null);
       setMaintSupplierId(null);
+    }
+    if (id !== "rep-010") {
+      setPettyCashModeFilter("all");
     }
   }
 
@@ -1431,9 +1543,13 @@ export function ReportsPage() {
     }
 
     if (activeId === "rep-009") {
+      // jul 2026 — Reemplazamos la columna "Estado" por "Categoría" (pill
+      // coloreado). El estado del mantenimiento ya vive en los filtros
+      // del sub-tab (Programado / En proceso / Completado / Atrasado) y
+      // se sigue exponiendo vía `__status` para que el filtrado funcione.
       const columns: ReportColumn[] = [
         { key: "kind",          label: "Tipo"        },
-        { key: "status",        label: "Estado"      },
+        { key: "category",      label: "Categoría"   },
         { key: "scheduledDate", label: "Programado"  },
         { key: "completedDate", label: "Completado"  },
         { key: "technician",    label: "Técnico"     },
@@ -1453,9 +1569,15 @@ export function ReportsPage() {
                    || m.assetName
                    || (m as any).__raw?.asset?.plate
                    || "—";
+        // Config visual del pill (color + label) para esta fila.
+        const catKey = m.category ?? "Otro";
+        const catPill = resolveCategoryPill(catKey, maintCategories, customMaintCategories);
         return {
           kind:          m.type ?? "—",
-          status:        m.status,
+          // String para que filterRows() (search box) matchee por label.
+          category:      catPill.label,
+          // Pill config para el cell renderer especial.
+          categoryConfig: catPill,
           scheduledDate: m.scheduledFor ? m.scheduledFor.slice(0, 10) : "—",
           completedDate: m.completedAt  ? m.completedAt.slice(0, 10)  : "—",
           technician:    m.assignedUserName || "—",
@@ -1468,13 +1590,12 @@ export function ReportsPage() {
           // Clave de categoría cruda del backend ("Primordial:Bombas",
           // "Aceite:Cambio", custom, "Otro", etc.). No es columna visible;
           // solo se usa para el dropdown de filtro por carpetita.
-          categoryKey:   m.category ?? "Otro",
+          categoryKey:   catKey,
           // jul 2026 v5 — Label legible de la categoría. Resuelve tanto
           // built-in como custom (vía `maintCategories` ya armado arriba).
           // Si la categoría se borró mientras el mantenimiento existía, cae
           // a "Otro" para no mostrar la key cruda al usuario.
-          categoryName:  (maintCategories.find((c) => c.key === m.category)?.label)
-                          ?? (m.category ?? "Otro"),
+          categoryName:  catPill.label,
           __status:      m.status,
           __date:        m.scheduledFor,
           __workshopId:  m.workshopId ?? null,
@@ -1486,7 +1607,7 @@ export function ReportsPage() {
       });
       return {
         title: "Reporte de mantenimientos",
-        description: "Órdenes de trabajo con estado, costo y tipo. Use los filtros para acotar por taller o proveedor y ver el desglose.",
+        description: "Órdenes de trabajo agrupadas por categoría, costo y tipo. Use los filtros para acotar por taller o proveedor y ver el desglose.",
         columns,
         rows,
         summary: [
@@ -1498,9 +1619,76 @@ export function ReportsPage() {
       };
     }
 
+    if (activeId === "rep-010") {
+      // jul 2026 — Caja Chica histórica. Cada fila = una cuenta cerrada.
+      // La tabla se agrupa por sede (acordeón), con los totales del periodo
+      // a la vista. El drawer (vía __raw.kind === "closed-petty-cash")
+      // muestra el flow completo (timeline) de la cuenta seleccionada.
+      const columns: ReportColumn[] = [
+        { key: "site",        label: "Sede"        },
+        { key: "period",      label: "Periodo"     },
+        { key: "mode",        label: "Modo"        },
+        { key: "initial",     label: "Inicial"     },
+        { key: "final",       label: "Saldo final" },
+        { key: "movements",   label: "Movimientos" },
+        { key: "vouchers",    label: "Vales"       },
+        { key: "requests",    label: "Solicitudes" },
+        { key: "creator",     label: "Creada por"  },
+      ];
+      const rows: ReportRow[] = closedAccounts.map((a) => {
+        const periodKindLabel = a.periodKind === "monthly" ? "Mensual"
+                              : a.periodKind === "weekly"  ? "Semanal"
+                              : "—";
+        const modeLabel = a.mode === "period"  ? `Periodo · ${periodKindLabel}`
+                        : a.mode === "balance" ? "Saldo (umbral)"
+                        : "—";
+        const periodStartStr = a.periodStartedAt instanceof Date
+          ? a.periodStartedAt.toISOString().slice(0, 10)
+          : String(a.periodStartedAt).slice(0, 10);
+        const periodEndStr = a.closedAt instanceof Date
+          ? a.closedAt.toISOString().slice(0, 10)
+          : String(a.closedAt).slice(0, 10);
+        return {
+          site:      a.siteName,
+          period:    `${periodStartStr} → ${periodEndStr}`,
+          mode:      modeLabel,
+          initial:   formatCurrency(a.initialAmount),
+          final:     formatCurrency(a.finalBalance),
+          movements: a.movementCount.toString(),
+          vouchers:  a.voucherCount.toString(),
+          requests:  a.requestCount.toString(),
+          creator:   a.createdByName ?? "—",
+          // Para el agrupado por sede (acordeón). Usamos el ID de la cuenta
+          // (que es único por periodo) pero la UI muestra la "carpetita"
+          // con el nombre de la sede.
+          __siteId:  a.siteId,
+          __date:    a.periodStartedAt,
+          // Discriminante para que ReportDetailDispatcher sepa qué drawer
+          // especializado abrir.
+          __raw:     { kind: "closed-petty-cash", closedAccount: a },
+        };
+      });
+      return {
+        title: "Cajas chicas cerradas",
+        description: "Histórico de cuentas de caja chica cerradas (por mes o por reconfiguración). Click en una fila para ver el flujo completo (movimientos, vales, solicitudes).",
+        columns,
+        rows,
+        summary: [
+          { label: "Cuentas cerradas", value: closedAccountsTotal.toString(),                              detail: "Periodos históricos",  tone: "info"    },
+          { label: "Periodo (mensual)", value: closedAccounts.filter(a => a.mode === "period").length.toString(),  detail: "Cerradas por fin de mes",     tone: "success" },
+          { label: "Periodo (saldo)",   value: closedAccounts.filter(a => a.mode === "balance").length.toString(), detail: "Reemplazadas manual",   tone: "warning" },
+        ],
+      };
+    }
+
     return { title: "", description: "", columns: [], rows: [], summary: [] };
 
-  }, [activeId, assets, drivers, assignments, maintenances, checklists, alerts, fuelEntries, exitAuths, workshops]);
+  }, [
+    activeId,
+    assets, drivers, assignments, maintenances, checklists, alerts, fuelEntries, exitAuths, workshops,
+    // jul 2026 — deps del módulo Caja Chica histórica (rep-010):
+    closedAccounts, closedAccountsTotal,
+  ]);
 
   // ─── Filtered rows ─────────────────────────────────────────────────────────
 
@@ -1726,6 +1914,35 @@ export function ReportsPage() {
                     </div>
                   )}
 
+                  {/* Sub-filtros del tab Caja Chica histórica (rep-010) */}
+                  {activeId === "rep-010" && (
+                    <div className="flex flex-col gap-2.5 border-b border-gray-100 px-4 py-3 dark:border-white/[0.06] sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {([
+                          { id: "all",     label: "Todas"                          },
+                          { id: "period",  label: "Periodo (mensual/semanal)"      },
+                          { id: "balance", label: "Saldo (reconfiguración manual)" },
+                        ] as const).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => { setPettyCashModeFilter(opt.id); setPage(1); }}
+                            className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                              pettyCashModeFilter === opt.id
+                                ? `${activePalette.bgActive} text-white shadow-sm`
+                                : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-gray-400 dark:text-gray-500">
+                        {closedAccountsTotal} {closedAccountsTotal === 1 ? "cuenta cerrada" : "cuentas cerradas"} en el rango seleccionado
+                      </p>
+                    </div>
+                  )}
+
                   {/* Date filter */}
                   <div className={`flex flex-col gap-2.5 border-b border-gray-100 px-4 py-2.5 dark:border-white/[0.06] sm:flex-row sm:items-center sm:justify-between ${activePalette.bg}`}>
                     <div className="flex flex-wrap items-center gap-2">
@@ -1888,7 +2105,37 @@ export function ReportsPage() {
                                     key={col.key}
                                     className="px-4 py-2.5 text-gray-600 dark:text-gray-300"
                                   >
-                                    {String(row[col.key] ?? "—")}
+                                    {/* jul 2026 — Special case para la columna
+                                        "category" del rep-009: renderiza un pill
+                                        coloreado con dot + label. El cell renderer
+                                        genérico usa String() lo que destruiría el JSX.
+                                        NO usar whitespace-nowrap: cuando la columna
+                                        queda angosta, el browser recorta con ellipsis
+                                        ("Aceite · Cam..."). El label puede envolver
+                                        a 2 líneas si hace falta — el fondo del pill
+                                        se expande y el texto queda siempre completo. */}
+                                    {col.key === "category" && row.categoryConfig ? (
+                                      (() => {
+                                        const cfg = row.categoryConfig as {
+                                          key: string;
+                                          label: string;
+                                          dot: string;
+                                          cls: string;
+                                          customColor: string | null;
+                                        };
+                                        return (
+                                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${cfg.cls}`}>
+                                            <span
+                                              className={`h-1.5 w-1.5 rounded-full shrink-0 ${cfg.dot}`}
+                                              style={cfg.customColor ? { backgroundColor: cfg.customColor } : undefined}
+                                            />
+                                            <span className="whitespace-normal">{cfg.label}</span>
+                                          </span>
+                                        );
+                                      })()
+                                    ) : (
+                                      String(row[col.key] ?? "—")
+                                    )}
                                   </td>
                                 ))}
                               </motion.tr>

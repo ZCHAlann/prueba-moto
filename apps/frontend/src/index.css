@@ -1134,3 +1134,11 @@ span.flatpickr-weekday,
 .dark .chat-scroll *::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.3);
 }
+
+/* jul 2026 v8.6 — animación de la onda del JarvisVoiceOverlay.
+   Cada barra se anima con duración random (configurada inline) y
+   delay random, dando un efecto orgánico de audio. */
+@keyframes voice-bar {
+  0%   { transform: scaleY(0.3); }
+  100% { transform: scaleY(1.4); }
+}

@@ -100,10 +100,8 @@ export function nativeNotify(detail: Detail): void {
         n.close();
       } catch {}
     }, 8000);
-  } catch (err) {
+  } catch {
     // Si falla la creación (raro: políticas, foco perdido, etc.), silencioso.
-    // eslint-disable-next-line no-console
-    console.warn('[nativeNotify] create falló:', err);
   }
 }
 

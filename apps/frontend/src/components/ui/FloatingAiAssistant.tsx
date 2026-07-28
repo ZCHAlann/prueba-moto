@@ -1,12 +1,15 @@
 // components/ui/FloatingAiAssistant.tsx
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useLocation } from "react-router";
 import {
   Bot, Send, X, Loader2, MessageSquarePlus, History, Trash2, Pencil,
   Check, Search, AlertCircle, Mic, MicOff, Volume2, Download, FileText,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { ConfirmModal } from "./ConfirmModal";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 // ─── Tipos ────────────────────────────────────────────────────────────
 
@@ -39,6 +42,74 @@ function BotAvatar() {
   return (
     <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-gradient-to-br from-blue-600 to-blue-700 shadow-sm">
       <Bot className="h-3.5 w-3.5 text-white" />
+    </div>
+  );
+}
+
+// ─── Render de markdown para mensajes del assistant ───────────────────
+function MarkdownMessage({ content }: { content: string }) {
+  return (
+    <div className="jarvis-markdown text-sm leading-relaxed">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+          strong: ({ children }) => (
+            <strong className="font-semibold text-gray-900 dark:text-white">{children}</strong>
+          ),
+          em: ({ children }) => <em className="italic">{children}</em>,
+          ul: ({ children }) => <ul className="mb-2 ml-4 list-disc space-y-0.5 last:mb-0">{children}</ul>,
+          ol: ({ children }) => <ol className="mb-2 ml-4 list-decimal space-y-0.5 last:mb-0">{children}</ol>,
+          li: ({ children }) => <li className="pl-0.5">{children}</li>,
+          h1: ({ children }) => <h3 className="mb-1.5 mt-2 text-sm font-bold first:mt-0">{children}</h3>,
+          h2: ({ children }) => <h3 className="mb-1.5 mt-2 text-sm font-bold first:mt-0">{children}</h3>,
+          h3: ({ children }) => <h4 className="mb-1 mt-2 text-[13px] font-semibold first:mt-0">{children}</h4>,
+          h4: ({ children }) => <h4 className="mb-1 mt-2 text-[13px] font-semibold first:mt-0">{children}</h4>,
+          a: ({ children, href }) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 underline hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+            >
+              {children}
+            </a>
+          ),
+          code: ({ children }) => (
+            <code className="rounded bg-black/[0.06] px-1 py-0.5 font-mono text-[12px] dark:bg-white/[0.10]">
+              {children}
+            </code>
+          ),
+          // Tablas: wrapper con scroll horizontal para no romper el
+          // ancho del panel (720px máx en desktop). Estilo compacto.
+          table: ({ children }) => (
+            <div className="mb-2 -mx-1 overflow-x-auto last:mb-0">
+              <table className="min-w-full border-collapse text-[12px]">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => (
+            <thead className="bg-black/[0.04] dark:bg-white/[0.06]">{children}</thead>
+          ),
+          th: ({ children }) => (
+            <th className="whitespace-nowrap border-b border-black/10 px-2 py-1 text-left font-semibold text-gray-700 dark:border-white/10 dark:text-white/80">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="whitespace-nowrap border-b border-black/[0.06] px-2 py-1 text-gray-700 dark:border-white/[0.06] dark:text-white/70">
+              {children}
+            </td>
+          ),
+          hr: () => <hr className="my-2 border-black/10 dark:border-white/10" />,
+          blockquote: ({ children }) => (
+            <blockquote className="my-1.5 border-l-2 border-black/15 pl-2 italic text-gray-600 dark:border-white/15 dark:text-white/60">
+              {children}
+            </blockquote>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -121,6 +192,9 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
   const [messages, setMessages]     = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [sending, setSending]       = useState(false);
+  // jul 2026 v8.5 — Stats del stream en vivo (chunks recibidos, chars).
+  const [streamStats, setStreamStats] = useState<{ chunks: number; chars: number }>({ chunks: 0, chars: 0 });
+  const streamAbortRef = useRef<AbortController | null>(null);
   const [error, setError]           = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loadingConvs, setLoadingConvs]   = useState(false);
@@ -149,6 +223,23 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
     return stored == null ? true : stored === "1";
   });
   const [speaking, setSpeaking] = useState(false);
+  // jul 2026 v8.4 — El wake word se gestiona en JarvisWakeWordController
+  // (montado en AppLayout). Acá solo leemos el estado para mostrar el
+  // toggle visualmente, y escuchamos el CustomEvent para grabar.
+  const [wakeWordActive, setWakeWordActive] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return localStorage.getItem("jarvis.wakeword.active") !== "0";
+  });
+  const [wakeWordTrigger] = useState<string>(() => {
+    if (typeof window === "undefined") return "jarvis";
+    return localStorage.getItem("jarvis.wakeword.trigger") || "jarvis";
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem("jarvis.wakeword.active", wakeWordActive ? "1" : "0");
+    } catch {}
+  }, [wakeWordActive]);
   const [convToDelete, setConvToDelete] = useState<Conversation | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<any>(null);
@@ -285,8 +376,8 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const body = (await res.json()) as { data: Conversation[] };
       setConversations(body.data ?? []);
-    } catch (err) {
-      console.warn("No pude cargar conversaciones:", err);
+    } catch {
+      // silent
     } finally {
       setLoadingConvs(false);
       setSearching(false);
@@ -345,11 +436,15 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
     setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "", ts: Date.now() }]);
 
     try {
+      // jul 2026 v8.5 — AbortController para permitir Stop.
+      const abortController = new AbortController();
+      streamAbortRef.current = abortController;
       const res = await fetch(`/api/company/${companyId}/ai/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         credentials: "include",
         body: JSON.stringify({ message: text, conversationId }),
+        signal: abortController.signal,
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
@@ -361,6 +456,8 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
       const decoder = new TextDecoder("utf-8");
       let buffer = "";
       let streamedText = "";
+      // Resetear stats al empezar un nuevo stream.
+      setStreamStats({ chunks: 0, chars: 0 });
 
       while (true) {
         const { value, done } = await reader.read();
@@ -383,6 +480,8 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
 
           if (evType === "chunk" && typeof payload.text === "string") {
             streamedText += payload.text;
+            // jul 2026 v8.5 — Acumular stats en vivo.
+            setStreamStats((prev) => ({ chunks: prev.chunks + 1, chars: prev.chars + payload.text.length }));
             setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: streamedText } : m));
           } else if (evType === "done") {
             if (payload.conversationId) setConversationId(payload.conversationId);
@@ -407,6 +506,19 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
         return prev;
       });
     } finally {
+      setSending(false);
+      streamAbortRef.current = null;
+      // Mantener streamStats unos segundos antes de resetear, para que
+      // el user alcance a ver el total.
+      setTimeout(() => setStreamStats({ chunks: 0, chars: 0 }), 3000);
+    }
+  }
+
+  // ── Stop stream (jul 2026 v8.5) ────────────────────────────────────
+  function stopStream() {
+    if (streamAbortRef.current) {
+      streamAbortRef.current.abort();
+      streamAbortRef.current = null;
       setSending(false);
     }
   }
@@ -555,15 +667,38 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
       });
       streamRef.current = stream;
 
-      // Analizador de volumen (RMS) para la animación de la bolita.
+      // Analizador de volumen (RMS) para la animación de la bolita
+      // Y PARA SILENCE DETECTION. (jul 2026 v8.6 — wake word flow).
+      //
+      // Cómo funciona el silence detection:
+      //   - Cada frame calculamos el RMS del audio.
+      //   - Si RMS > SILENCE_THRESHOLD, hay habla → reseteamos el timer
+      //     de silencio.
+      //   - Si RMS <= SILENCE_THRESHOLD por más de SILENCE_TIMEOUT_MS,
+      //     paramos la grabación y mandamos el audio a Whisper.
+      //   - También hay un MAX_RECORDING_MS como safety net por si el
+      //     user habla mucho rato sin pausas (e.g. dictando).
       try {
         const AC: typeof AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
         const ctx = new AC();
         const src = ctx.createMediaStreamSource(stream);
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.4; // suavizar un poco el RMS
         src.connect(analyser);
         const buf = new Uint8Array(analyser.fftSize);
+
+        const SILENCE_THRESHOLD    = 0.015; // RMS por debajo de esto = silencio
+        const SILENCE_TIMEOUT_MS   = 1500;  // 1.5s de silencio → stop
+        const MAX_RECORDING_MS     = 30_000; // 30s como safety net
+        const STARTUP_GRACE_MS     = 600;   // ignorar el primer frame de
+                                             // ruido (sirena del wake word,
+                                             // pop del mic) para no auto-stop
+                                             // antes que el user hable.
+
+        let lastVoiceAt = Date.now();
+        const startedAt = Date.now();
+
         const tick = () => {
           analyser.getByteTimeDomainData(buf);
           let sum = 0;
@@ -573,6 +708,26 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
           }
           const rms = Math.sqrt(sum / buf.length);
           setVoiceLevel(Math.min(1, rms * 2.5));
+
+          // (jul 2026 v8.6) silence detection.
+          const elapsed = Date.now() - startedAt;
+          if (rms > SILENCE_THRESHOLD) {
+            lastVoiceAt = Date.now();
+          } else if (
+            elapsed > STARTUP_GRACE_MS &&
+            Date.now() - lastVoiceAt > SILENCE_TIMEOUT_MS
+          ) {
+            // El user dejó de hablar hace más de 1.5s. Stop.
+            stopVoiceRecording();
+            return;
+          }
+
+          // Safety net: si la grabación pasa de MAX_RECORDING_MS, stop.
+          if (elapsed > MAX_RECORDING_MS) {
+            stopVoiceRecording();
+            return;
+          }
+
           voiceAnalyserRef.current!.raf = requestAnimationFrame(tick);
         };
         voiceAnalyserRef.current = { analyser, raf: 0 };
@@ -589,9 +744,7 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
       rec.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
-      rec.onerror = (e: any) => {
-        // eslint-disable-next-line no-console
-        console.warn("[jarvis] MediaRecorder error:", e);
+      rec.onerror = () => {
         setError("Error durante la grabación.");
         cleanupVoiceRecording();
       };
@@ -638,6 +791,124 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
       // Nunca llegó a empezar — limpiar igual.
       cleanupVoiceRecording();
     }
+  }
+
+  // ─── Wake word listener — DESACTIVADO en v8.6 ──────────────────────────
+  // A partir de v8.6 el wake word dispara el JarvisVoiceOverlay
+  // (esquina inferior derecha, estilo Siri). El chat normal sigue
+  // funcionando con el botón violeta del FloatingChatWidget (FAB) o
+  // con el atajo de teclado Space. NO se mezcla con el wake word.
+  //
+  // Si en el futuro queremos que el chat también reaccione al wake
+  // word (ej. abrir el thread con la conversación), reactivamos el
+  // handler acá. Por ahora: nada.
+  void sending; void listening; void isOpen; void embedded;
+
+  // (jul 2026 v8.6) Reproduce el saludo TTS y, cuando termina, arranca
+  // la grabación.
+  //
+  // Estrategia: ElevenLabs (voz natural) con fallback automático a
+  // Web Speech API (voz nativa del browser).
+  //
+  // Por qué el fallback existe:
+  //   - El wake word se dispara SIN un user gesture nuevo (solo el user
+  //     habló, no hubo click inmediato). Chrome aplica la autoplay
+  //     policy y BLOQUEA <audio>.play() sin un user gesture válido.
+  //   - El click del "Activar escucha" cuenta como gesture reciente,
+  //     pero Chrome lo "olvida" al cabo de unos segundos.
+  //   - Si ElevenLabs es bloqueado por autoplay (NotAllowedError),
+  //     caemos a Web Speech — que NO está bloqueado por autopolicy.
+  //
+  // Por qué NO esperamos al `onend` del TTS:
+  //   - Chrome tiene un bug conocido donde utterances cortos o cuando
+  //     hay utterances previos en cola, NO disparan `onend`. Quedás
+  //     colgado sin grabar nunca. (visto jul 2026 con "Hola, en qué
+  //     te puedo ayudar" que dura ~2s).
+  //   - Solución: arrancar el TTS en paralelo + un timer fijo de
+  //     GREETING_DURATION_MS. Cuando el timer se cumple, arrancamos
+  //     la grabación. Si el TTS termina antes, el `onend` mata el
+  //     timer; si termina después, el timer ya disparó y el user
+  //     está grabando (con noiseSuppression para atenuar el TTS).
+  const GREETING_DURATION_MS = 2500; // "Hola, en qué te puedo ayudar" dura ~2.3s
+
+  function playGreetingThenRecord(text: string): Promise<void> {
+    return new Promise((resolve) => {
+      if (!text.trim()) { resolve(); return; }
+
+      let started = false;
+      const startRecording = () => {
+        if (started) return;
+        started = true;
+        setSpeaking(false);
+        // Pequeño delay para asegurar que el AudioContext / mic del
+        // wake word se liberó completamente antes de pedir el nuestro.
+        setTimeout(() => {
+          void startVoiceRecording();
+          resolve();
+        }, 150);
+      };
+
+      // Safety net: a los GREETING_DURATION_MS arrancamos la grabación
+      // pase lo que pase con el TTS. Esto protege contra el bug de
+      // Chrome donde utterances cortos no disparan `onend`.
+      const durationTimer = window.setTimeout(startRecording, GREETING_DURATION_MS);
+
+      // 1) Intentar ElevenLabs (voz natural del backend).
+      const tryElevenLabs = async () => {
+        if (!companyId) { tryWebSpeech(); return; }
+        try {
+          const res = await fetch(`/api/company/${companyId}/ai/tts`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ text, voice }),
+          });
+          if (!res.ok) throw new Error(`TTS backend ${res.status}`);
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            window.clearTimeout(durationTimer);
+            startRecording();
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            tryWebSpeech();
+          };
+          setSpeaking(true);
+          // Si Chrome bloquea esto por autoplay policy, va a tirar
+          // NotAllowedError → cae al catch → fallback a Web Speech.
+          await audio.play();
+        } catch {
+          tryWebSpeech();
+        }
+      };
+
+      // 2) Fallback: Web Speech API. Nativo del browser, no requiere
+      //    backend ni API key. No bloqueado por autoplay policy.
+      const tryWebSpeech = () => {
+        if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+          startRecording();
+          return;
+        }
+        try {
+          window.speechSynthesis.cancel();
+          const u = new SpeechSynthesisUtterance(text);
+          u.lang = voiceLang;
+          u.rate = 1.0;
+          u.volume = 1.0;
+          u.onend   = () => { window.clearTimeout(durationTimer); startRecording(); };
+          u.onerror = () => { window.clearTimeout(durationTimer); startRecording(); };
+          setSpeaking(true);
+          window.speechSynthesis.speak(u);
+        } catch {
+          startRecording();
+        }
+      };
+
+      void tryElevenLabs();
+    });
   }
 
   async function sendVoiceBlob(blob: Blob) {
@@ -708,9 +979,7 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
           await audio.play();
           setSpeaking(true);
           setVoiceEnabled(true);
-        } catch (playErr) {
-          // eslint-disable-next-line no-console
-          console.warn("[jarvis/voice] no pude reproducir MP3, fallback WebSpeech:", playErr);
+        } catch {
           if (answer.trim()) speakText(answer);
         }
       } else if (autoPlay && answer.trim()) {
@@ -773,9 +1042,7 @@ function speakLastResponse() {
         body: JSON.stringify({ text, voice }),
       });
       if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        // eslint-disable-next-line no-console
-        console.warn("[jarvis] TTS backend falló, fallback a Web Speech:", res.status, errBody);
+        await res.json().catch(() => ({}));
         speakWithWebSpeech(text, voiceLang);
         setSpeaking(false);
         return;
@@ -795,9 +1062,7 @@ function speakLastResponse() {
       audio.volume = 1;
       await audio.play();
       setVoiceEnabled(true);
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn("[jarvis] TTS exception, fallback a Web Speech:", err);
+    } catch {
       speakWithWebSpeech(text, voiceLang);
       setSpeaking(false);
     }
@@ -812,14 +1077,27 @@ function speakLastResponse() {
     setSpeaking(false);
   }
 
-  // Cargar voces disponibles del backend al montar.
+  // Cargar voces disponibles del backend al montar (o cuando se abre el chat).
+  // jul 2026 v8.6 — guard con `isOpen` para no hacer este fetch apenas
+  // carga la app (el componente ahora está siempre montado por el fix
+  // del wake word listener).
   useEffect(() => {
     if (!companyId) return;
     let cancelled = false;
     fetch(`/api/company/${companyId}/ai/tts/voices`, { credentials: "include" })
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => {
+        if (!r.ok) {
+          console.warn("[jarvis-voice] /ai/tts/voices status=", r.status);
+          return null;
+        }
+        return r.json();
+      })
       .then((body) => {
-        if (cancelled || !body?.voices) return;
+        if (cancelled || !body?.voices) {
+          console.warn("[jarvis-voice] /ai/tts/voices body vacío:", body);
+          return;
+        }
+        console.log("[jarvis-voice] voces cargadas:", body.voices.length);
         setVoices(body.voices);
         // Si la voz guardada en localStorage ya no existe, usar default.
         if (!body.voices.some((v: any) => v.id === voice) && body.default) {
@@ -827,7 +1105,9 @@ function speakLastResponse() {
           localStorage.setItem("jarvis.voice.id", body.default);
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.warn("[jarvis-voice] /ai/tts/voices error:", err);
+      });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
@@ -958,12 +1238,79 @@ function speakLastResponse() {
     return new Date(iso).toLocaleDateString();
   }
 
-  const SUGGESTIONS = [
+  // ─── Sugerencias contextuales (jul 2026 v8.5) ──────────────────────
+  // Chips rápidos arriba del input. Si el user está en una ruta
+  // específica, mostramos sugerencias contextuales al módulo. Si no,
+  // sugerencias genéricas.
+  const location = useLocation();
+  const SUGGESTIONS_DEFAULT = [
     "¿Cuántos mantenimientos hubo este mes?",
     "Vehículos con seguros por vencer",
     "¿Qué checklists están pendientes?",
     "Gasto en peajes este mes",
   ];
+  // Mapa ruta → sugerencias. Cuando el user está en una de estas rutas,
+  // se sugieren preguntas relevantes al módulo.
+  const SUGGESTIONS_BY_PATH: Record<string, string[]> = {
+    "/mantenimiento": [
+      "Mantenimientos atrasados ahora",
+      "Cuánto llevamos gastado este mes",
+      "Qué vehículo tiene más mantenimientos",
+    ],
+    "/combustible": [
+      "Consumo de combustible este mes",
+      "Vehículos con mayor consumo por km",
+      "Cargas de combustible de la última semana",
+    ],
+    "/peajes": [
+      "Gasto en peajes este mes",
+      "Ruta con más peajes",
+      "Comparar peajes vs combustible",
+    ],
+    "/finanzas/caja-chica": [
+      "Saldo actual de caja chica",
+      "Solicitudes pendientes de aprobación",
+      "Top gastos del mes",
+    ],
+    "/finanzas/facturas": [
+      "Facturas pendientes de revisión",
+      "Top proveedores por gasto",
+      "Facturas con observaciones",
+    ],
+    "/alertas": [
+      "Alertas activas sin atender",
+      "Alertas de la última semana",
+      "Resumen de alertas por tipo",
+    ],
+    "/checklist": [
+      "Checklists pendientes",
+      "Checklists con observaciones",
+      "Cumplimiento de checklist por vehículo",
+    ],
+    "/flotas": [
+      "Cuántos vehículos operativos hay",
+      "Distribución de flota por sede",
+      "Vehículos sin mantenimiento reciente",
+    ],
+    "/operaciones/conductores": [
+      "Conductores con asignaciones activas",
+      "Conductores sin licencia vigente",
+      "Resumen de conductores por estado",
+    ],
+    "/operaciones/asignaciones": [
+      "Asignaciones activas",
+      "Asignaciones finalizadas este mes",
+      "Vehículos sin asignar",
+    ],
+  };
+  // Match por prefix (la ruta puede tener sub-rutas como
+  // /finanzas/caja-chica/123).
+  const matchedPrefix = Object.keys(SUGGESTIONS_BY_PATH)
+    .sort((a, b) => b.length - a.length) // match más largo primero
+    .find((p) => location.pathname === p || location.pathname.startsWith(p + "/"));
+  const SUGGESTIONS = matchedPrefix
+    ? SUGGESTIONS_BY_PATH[matchedPrefix]
+    : SUGGESTIONS_DEFAULT;
 
   // Guard: si no hay empresa, no es admin/owner, o la empresa tiene
   // el módulo "jarvis" desactivado, no renderizamos el FAB. Va
@@ -1187,14 +1534,37 @@ function speakLastResponse() {
           <div className="flex-1 min-w-0 flex flex-col">
 
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 shrink-0 border-b border-gray-100 dark:border-white/[0.06]">
-              <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-between gap-2 px-4 py-3 shrink-0 border-b border-gray-100 dark:border-white/[0.06]">
+              <div className="flex items-center gap-2.5 min-w-0">
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
                 </span>
                 <span className="text-sm font-semibold text-gray-800 dark:text-white/90">Jarvis</span>
                 <span className="text-xs text-gray-400 dark:text-white/30">· Asistente IA</span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {/* jul 2026 v8.5 — Indicador de streaming en vivo. */}
+                {sending && streamStats.chunks > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    </span>
+                    {streamStats.chunks} chunks · {streamStats.chars} chars
+                  </span>
+                )}
+                {sending && (
+                  <button
+                    type="button"
+                    onClick={stopStream}
+                    className="inline-flex items-center gap-1 rounded-md bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-600 hover:bg-red-100 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20"
+                    title="Detener la respuesta del asistente"
+                  >
+                    <X className="h-3 w-3" />
+                    Stop
+                  </button>
+                )}
               </div>
               <div className="flex items-center gap-1">
                 {/* Voz TTS (ElevenLabs) */}
@@ -1320,18 +1690,20 @@ function speakLastResponse() {
                   {m.role === "assistant" && <BotAvatar />}
                   <div className="flex flex-col gap-1.5 max-w-[85%]">
                     <div className={[
-                      "rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap",
+                      "rounded-2xl px-3.5 py-2.5",
                       m.role === "user"
-                        ? "bg-blue-600 text-white rounded-br-sm"
+                        ? "bg-blue-600 text-white text-sm leading-relaxed whitespace-pre-wrap rounded-br-sm"
                         : "bg-gray-100 text-gray-800 rounded-bl-sm dark:bg-white/[0.06] dark:text-white/85",
                     ].join(" ")}>
-                      {m.content}
+                      {m.role === "assistant" ? (
+                        <MarkdownMessage content={m.content} />
+                      ) : (
+                        m.content
+                      )}
                     </div>
-                    {/* Tool badges — oculto, no queremos exponer qué herramienta usó. */}
                   </div>
                 </div>
               ))}
-
               {/* Typing indicator (solo el gusanito — sin mostrar herramientas ni args) */}
               {sending && (
                 <div className="flex items-end gap-2 justify-start">
@@ -1358,6 +1730,24 @@ function speakLastResponse() {
 
             {/* Input */}
             <div className="px-3 pb-3 pt-2.5 shrink-0 border-t border-gray-100 dark:border-white/[0.06]">
+              {/* jul 2026 v8.5 — Chips de sugerencias arriba del input.
+                  Visibles siempre (no solo en empty state) para que el
+                  user pueda explorar preguntas relacionadas. */}
+              {SUGGESTIONS.length > 0 && !sending && !listening && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {SUGGESTIONS.slice(0, 3).map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => setMessage(q)}
+                      className="rounded-full px-2.5 py-1 text-[10.5px] font-medium border transition-colors bg-white/80 border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50 dark:bg-white/[0.03] dark:border-white/[0.08] dark:text-white/50 dark:hover:border-blue-500/40 dark:hover:text-blue-300 dark:hover:bg-blue-500/10"
+                      title={q}
+                    >
+                      {q.length > 40 ? q.slice(0, 40) + "…" : q}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="flex items-end gap-2">
                 <div className="flex-1 relative">
                   {listening ? (

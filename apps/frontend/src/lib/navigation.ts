@@ -117,7 +117,7 @@ export const navigationSections: NavigationSection[] = [
         icon: "PV",
         description: "Proveedores de repuestos e insumos",
         accent: "sky",
-      }
+      },
     ],
   },
   {

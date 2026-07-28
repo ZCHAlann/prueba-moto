@@ -107,8 +107,8 @@ export function useMarkRead() {
       qc.invalidateQueries({ queryKey: ['notifications'] });
       qc.invalidateQueries({ queryKey: ['notifications-unread'] });
     },
-    onError: (err) => {
-      console.error('[useMarkRead] falló:', err);
+    onError: () => {
+      // silent
     },
   });
 }
@@ -124,8 +124,8 @@ export function useMarkAllRead() {
       qc.invalidateQueries({ queryKey: ['notifications'] });
       qc.invalidateQueries({ queryKey: ['notifications-unread'] });
     },
-    onError: (err) => {
-      console.error('[useMarkAllRead] falló:', err);
+    onError: () => {
+      // silent
     },
   });
 }
@@ -144,8 +144,8 @@ export function useDeleteNotification() {
       qc.invalidateQueries({ queryKey: ['notifications'] });
       qc.invalidateQueries({ queryKey: ['notifications-unread'] });
     },
-    onError: (err) => {
-      console.error('[useDeleteNotification] falló:', err);
+    onError: () => {
+      // silent
     },
   });
 }

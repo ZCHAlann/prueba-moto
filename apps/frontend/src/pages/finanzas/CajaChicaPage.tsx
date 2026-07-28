@@ -26,7 +26,7 @@ import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import {
   Wallet, Plus, Loader2, X, Check, XCircle, FileDown, Eye,
-  Receipt, AlertCircle, ChevronRight, Lock, Banknote,
+  Receipt, AlertCircle, AlertTriangle, ChevronRight, Lock, Banknote,
   Calendar, CalendarDays, Building2, User, Hash, FileText, Send, Tag,
   TrendingUp, TrendingDown, RefreshCw, ExternalLink,
   Settings, Save, Edit2, Trash2, MapPin, PowerOff, PlusCircle, Wallet2, CircleDollarSign,
@@ -228,7 +228,14 @@ function TabBodyRouter(props: {
   }, [tab, canTabSolicitudes, canTabVales, canTabHistorial, canTabConfig, canTabFacturas, canTabCorrecciones, setTab]);
 
   if (tab === "solicitudes" && canTabSolicitudes) {
-    return <RequestsTab canApprove={canApprove} canCreate={canCreate} canSeeAll={canSeeAllRequests} />;
+    return (
+      <RequestsTab
+        canApprove={canApprove}
+        canCreate={canCreate}
+        canSeeAll={canSeeAllRequests}
+        accounts={accounts}
+      />
+    );
   }
   if (tab === "vales" && canTabVales) {
     return <VouchersTab canSeeAll={canSeeAllVouchers} />;
@@ -413,8 +420,8 @@ function Header({
         if (result && "accounts" in result) {
           setAccounts(result.accounts);
         }
-      } catch (err) {
-        console.error("Error loading accounts:", err);
+      } catch {
+        // silent
       } finally {
         if (!cancelled) setLoadingAccount(false);
       }
@@ -571,7 +578,19 @@ function Header({
 
 // ─── Tab: Solicitudes ────────────────────────────────────────────────────────
 
-function RequestsTab({ canApprove, canCreate }: { canApprove: boolean; canCreate: boolean }) {
+function RequestsTab({
+  canApprove,
+  canCreate,
+  accounts,
+}: {
+  canApprove: boolean;
+  canCreate: boolean;
+  // jul 2026 — Para que el modal de detalle pueda mostrar el saldo
+  // disponible de la sede y bloquear la aprobación como "Caja chica" si
+  // dejaría la caja en negativo. Coincide con la validación del PL/pgSQL
+  // `fn_apply_finance_request_approval` del backend.
+  accounts: PettyCashAccountWithSite[];
+}) {
   const finance = useFinance();
   const [filter, setFilter] = useState<"all" | "pending" | "approved" | "rejected" | "cancelled">("pending");
   const [requests, setRequests] = useState<FinanceRequest[]>([]);
@@ -716,6 +735,7 @@ function RequestsTab({ canApprove, canCreate }: { canApprove: boolean; canCreate
         <RequestDetailModal
           request={selected}
           canApprove={canApprove}
+          accounts={accounts}
           onClose={() => { setSelected(null); void load(page); }}
         />
       )}
@@ -761,18 +781,6 @@ function VouchersTab({ canSeeAll }: { canSeeAll: boolean }) {
       setPageSize(result.pageSize);
       setTotalPages(result.totalPages);
       setPage(result.page);
-      // jul 2026 v4-b — Debug temporal: confirmar que userId y
-      // assignedToUserId están bien. Se puede quitar cuando validemos
-      // el flujo en producción.
-      if (typeof window !== "undefined") {
-        // eslint-disable-next-line no-console
-        console.log("[CajaChica VouchersTab]", {
-          sessionSub: session?.sub,
-          userId,
-          rowsCount: rows.length,
-          rows: rows.map(r => ({ id: r.numericId, assignedToUserId: r.assignedToUserId, status: r.status })),
-        });
-      }
       setVouchers(rows);
     } catch (err) {
       toast.error("Error al cargar vales");
@@ -1416,10 +1424,16 @@ function ReplenishModal({
 // ─── Modal: Detalle Solicitud + Aprobar/Rechazar ────────────────────────────
 
 function RequestDetailModal({
-  request, canApprove, onClose,
+  request, canApprove, accounts, onClose,
 }: {
   request: FinanceRequest;
   canApprove: boolean;
+  // jul 2026 — Saldos actuales de las cajas chicas de la empresa. Lo
+  // usamos para calcular el saldo resultante de aprobar esta solicitud
+  // como "Caja chica" y bloquear el botón si quedaría negativo. La
+  // validación real también la hace el backend en el PL/pgSQL, esto es
+  // solo UX (el aprobador ve el aviso antes de intentar).
+  accounts: PettyCashAccountWithSite[];
   onClose: () => void;
 }) {
   const finance = useFinance();
@@ -1430,7 +1444,30 @@ function RequestDetailModal({
 
   const isOwner = request.requesterUserId === Number(String(session?.sub ?? "").replace(/\D/g, ""));
 
+  // jul 2026 — Guard de presupuesto en el cliente. Mismo criterio que
+  // el PL/pgSQL `fn_apply_finance_request_approval` del backend: si
+  // aprobar como "Caja chica" dejaría el saldo de la sede en negativo,
+  // bloqueamos el botón con un mensaje claro. La validación final
+  // siempre la hace el backend; esto es solo UX para que el aprobador
+  // vea el problema antes de mandar el request.
+  const accountForSite = accounts.find((a) => a.siteId === request.siteId);
+  const currentBalance = accountForSite?.currentBalance ?? 0;
+  const resultingBalance = currentBalance - Number(request.amount ?? 0);
+  const wouldOverdraw = resultingBalance < 0;
+  // `annual_expense` NO descuenta de la caja, así que ese botón siempre
+  // está habilitado independientemente del saldo.
+  const canApproveAsPettyCash = !wouldOverdraw;
+
   const approve = async (classification: "petty_cash" | "annual_expense") => {
+    // Doble check: si el botón se renderizó deshabilitado, el click no
+    // debería llegar acá, pero por las dudas cortamos en seco.
+    if (classification === "petty_cash" && wouldOverdraw) {
+      toast.error(
+        `Saldo insuficiente en caja chica. Saldo actual: ${fmtMoney(currentBalance)}. ` +
+        `Monto solicitado: ${fmtMoney(request.amount)}. Saldo resultante: ${fmtMoney(resultingBalance)}.`,
+      );
+      return;
+    }
     setSubmitting(true);
     const result = await finance.requests.review({
       requestId: request.numericId,
@@ -1518,6 +1555,48 @@ function RequestDetailModal({
           </div>
         )}
 
+        {/* jul 2026 — Banner de presupuesto. Muestra el saldo actual de
+            la caja de la sede y el saldo que quedaría si se aprueba
+            esta solicitud como "Caja chica". Si quedaría negativo, lo
+            marca en rojo y bloquea el botón. */}
+        {request.status === "pending" && accountForSite && (
+          <div
+            className={`rounded-xl border p-3 text-sm ${
+              wouldOverdraw
+                ? "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200"
+                : "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
+            }`}
+          >
+            <div className="flex items-start gap-2">
+              {wouldOverdraw
+                ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                : <Wallet className="mt-0.5 h-4 w-4 shrink-0" />}
+              <div className="flex-1">
+                <p className="font-semibold">
+                  {wouldOverdraw
+                    ? "No se puede aprobar como Caja chica — saldo insuficiente"
+                    : "Saldo de la caja de la sede"}
+                </p>
+                <p className="mt-0.5 text-xs">
+                  Saldo actual: <strong>{fmtMoney(currentBalance)}</strong>
+                  {" · "}Monto solicitado: <strong>{fmtMoney(request.amount)}</strong>
+                  {" · "}Saldo resultante:{" "}
+                  <strong className={wouldOverdraw ? "text-rose-700 dark:text-rose-300" : ""}>
+                    {fmtMoney(resultingBalance)}
+                  </strong>
+                </p>
+                {wouldOverdraw && (
+                  <p className="mt-1 text-xs">
+                    Para aprobar esta solicitud como Caja chica primero hay que{" "}
+                    <strong>rellenar la caja</strong> (botón "Rellenar caja" arriba) o
+                    aprobarla como <strong>Gasto anual</strong>.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Acciones */}
         <div className="border-t border-gray-100 pt-3 dark:border-white/[0.06]">
           {request.status === "pending" && canApprove && (
@@ -1526,9 +1605,15 @@ function RequestDetailModal({
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  disabled={submitting}
+                  disabled={submitting || !canApproveAsPettyCash}
                   onClick={() => void approve("petty_cash")}
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                  title={
+                    wouldOverdraw
+                      ? `Saldo insuficiente. Saldo actual ${fmtMoney(currentBalance)}, ` +
+                        `resultante ${fmtMoney(resultingBalance)}.`
+                      : `Aprobar como Caja chica (saldo resultante ${fmtMoney(resultingBalance)})`
+                  }
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <Check className="h-4 w-4" />
                   Caja chica

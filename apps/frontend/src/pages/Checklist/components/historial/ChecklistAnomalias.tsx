@@ -158,7 +158,6 @@ export function ChecklistAnomalias({ onOpenChecklist, pageSize = 7 }: Props) {
     try {
       const companyId = session?.companyId;
       if (!companyId) {
-        console.warn("[Anomalias] sin companyId en session");
         return;
       }
 
@@ -170,7 +169,6 @@ export function ChecklistAnomalias({ onOpenChecklist, pageSize = 7 }: Props) {
         credentials: "include",
       });
       if (!res.ok) {
-        console.error("[Anomalias] fetch falló:", res.status, res.statusText);
         throw new Error("HTTP " + res.status);
       }
       const json = await res.json();
@@ -222,8 +220,8 @@ export function ChecklistAnomalias({ onOpenChecklist, pageSize = 7 }: Props) {
       } else {
         setSelectModal({ anomaly: a, checklists: filtered });
       }
-    } catch (err) {
-      console.error("[Anomalias] error:", err);
+    } catch {
+      // silent
     } finally {
       setLoadingKey(null);
     }

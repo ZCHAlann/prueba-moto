@@ -8,6 +8,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useSettingsFormOptions } from "../../hooks/useFormOptions";
 import type { CompanySettings } from "@/types/fleet";
 import { AISettingsPanel } from "./AISettingsPanel";
+import { WhatsappSettingsPanel } from "./WhatsappSettingsPanel";
 
 // ─── Iconos inline ────────────────────────────────────────────────────────────
 
@@ -37,6 +38,14 @@ function IconBell({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
       <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />
+    </svg>
+  );
+}
+function IconWhatsapp({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+      <path d="M3 21l1.65-3.8a9 9 0 1110.4 0L17 21" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9 10a.5.5 0 01.5-.5h1a.5.5 0 01.5.5v1a.5.5 0 01-.5.5h-.5a3 3 0 003 3v-.5a.5.5 0 01.5-.5h1a.5.5 0 01.5.5v1a.5.5 0 01-.5.5h-1A4 4 0 019 11v-1z" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -545,6 +554,19 @@ export function SettingsPage() {
           </div>
         </SectionCard>
       )}
+
+      {/* ── Notificaciones WhatsApp (jul 2026 v8.6) ───────────────────────── */}
+      {/* jul 2026 v8.6 — Multi-tenant: cada empresa configura sus números
+          destinatarios y plantillas. Si no configura nada, se usan los
+          defaults globales. */}
+      <SectionCard
+        icon={<IconWhatsapp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
+        title="Notificaciones WhatsApp"
+        description="Avisos automáticos al agendar o finalizar mantenimientos. Solo visible para admin/owner."
+        delay={0.3}
+      >
+        <WhatsappSettingsPanel />
+      </SectionCard>
 
     </div>
   );

@@ -172,7 +172,6 @@ export default function ChecklistWizard({
       onSaved();
       onClose();
     } catch (err) {
-      console.error("[checklist] error al guardar:", err);
       toast.error(err instanceof Error ? err.message : "No se pudo registrar el checklist");
     } finally {
       setSubmitting(false);

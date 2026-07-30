@@ -498,7 +498,41 @@ export function MaintenanceDetailDrawer({
   const isMine = meIdNum != null && assignedNum === meIdNum;
 
   const currentAssignedId = item?.assignedUserId || "";
-  const partsCost = (item?.totalCost || 0) - (item?.laborCost || 0);
+  // jul 2026 v8.7 — Cálculo en vivo de los repuestos desde los items
+  // (subtotal con descuentos + IVA). Se usa para el KPI "Repuestos / Extras"
+  // Y para el KPI "Total" del cuadro de arriba del drawer, para que ambos
+  // reflejen cambios en vivo de los items y NO dependan del campo
+  // `item.totalCost` que viene de la BD (puede estar desactualizado si
+  // la última edición del item no disparó el recalc del backend, o si
+  // el valor persistido difiere del cálculo teórico por redondeos o
+  // ajustes manuales del comprobante real).
+  //
+  // Mezclamos `editingItems` (drafts en vivo) con los items crudos para
+  // reflejar lo que el usuario está tipeando. Usamos el mismo
+  // `aggregateTotals` que el resumen de abajo — el KPI de arriba y el
+  // resumen SIEMPRE coinciden.
+  //
+  // useMemo: si el drawer re-renderiza por cosas que no tienen que ver
+  // (typing en notas, scroll, abrir/cerrar dropdowns), recalcular todo
+  // sería trabajo gratis. Solo recalcula cuando items o drafts cambian.
+  const partsAgg = useMemo(() => {
+    const itemsForAgg = (item?.items ?? []).map((it) => {
+      const d = editingItems[it.id];
+      return d ?? {
+        quantity:      it.quantity,
+        unitCost:      it.unitCost,
+        discountValue: it.discountValue ?? 0,
+        discountType:  it.discountType  ?? "amount",
+        ivaPercent:    it.ivaPercent    ?? 15,
+      };
+    });
+    return aggregateTotals(itemsForAgg);
+  }, [item?.items, editingItems]);
+  const partsCost = partsAgg.grandTotal;
+  // Total = mano de obra + total de repuestos (con descuento + IVA).
+  // SIEMPRE en vivo, NO `item.totalCost` (que puede tener desfase con
+  // la realidad de los items).
+  const liveTotalCost = (item?.laborCost || 0) + partsCost;
   // Para lavada: el "Total"  del servicio = carwashTotal. Los "Repuestos /
   // Extras" no aplican como tal — lo que sí hay son los adicionales que el
   // operador agregó al servicio (carwashExtras).
@@ -1077,7 +1111,7 @@ export function MaintenanceDetailDrawer({
                       ) : (
                         <Kpi label="Repuestos / Extras" value={fmtMoney(partsCost)} accent="sky" />
                       )}
-                      <Kpi label="Total"  value={fmtMoney(item.totalCost)} accent="emerald" />
+                      <Kpi label="Total"  value={fmtMoney(liveTotalCost)} accent="emerald" />
                     </div>
                   </Section>
 
@@ -1675,19 +1709,13 @@ export function MaintenanceDetailDrawer({
                           v2: usa `aggregateTotals` con los drafts actuales (no con los
                           valores del backend) para que refleje los cambios en vivo.
                           `aggregateTotals` SIEMPRE está en sync con los Subtotal/IVA/
-                          Total de cada fila porque cada fila usa la misma lib. */}
+                          Total de cada fila porque cada fila usa la misma lib.
+                          jul 2026 v8.7 — reusamos `partsAgg` (calculado arriba para
+                          el Kpi "Repuestos / Extras") en vez de recalcular. Así el
+                          KPI de arriba y este resumen SIEMPRE muestran el mismo
+                          total, sin posibilidad de drift por re-cálculo. */}
                       {item.items && item.items.length > 0 && (() => {
-                        // Mezclar: para los items con draft, usar el draft. Para los
-                        // items sin draft (recién hidratándose), usar el item crudo.
-                        const itemsForAgg = item.items.map((it) => {
-                          const d = editingItems[it.id];
-                          return d ?? {
-                            quantity: it.quantity, unitCost: it.unitCost,
-                            discountValue: it.discountValue ?? 0, discountType: it.discountType ?? "amount",
-                            ivaPercent: it.ivaPercent ?? 15,
-                          };
-                        });
-                        const agg = aggregateTotals(itemsForAgg);
+                        const agg = partsAgg;
                         const itemsTot = agg.grandTotal;
                         return (
                           <div className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] px-4 py-3 space-y-1.5">

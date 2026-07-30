@@ -324,6 +324,133 @@ router.put(
   }
 );
 
+// ─── PUT /company/:id/assets/:assetId/status ──────────────────────────────────
+// jul 2026 — Setter explícito de status. Usado por la tool de Jarvis
+// `changeVehicleStatus` (que recibe un status explícito del LLM, no
+// un toggle). Body: { status: 'Operativo'|'En mantenimiento'|'Fuera
+// de servicio', reason?: string }.
+
+const changeStatusSchema = z.object({
+  status: z.enum(['Operativo', 'En mantenimiento', 'Fuera de servicio']),
+  reason: z.string().max(500).optional().nullable(),
+});
+
+router.put(
+  '/:assetId/status',
+  requireModule('gestion', 'flotas'),
+  requireAdmin,
+  validate(changeStatusSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const assetId = parseId('asset', req.params.assetId);
+      const body = req.body as z.infer<typeof changeStatusSchema>;
+
+      const existing = await db
+        .select()
+        .from(companyAssets)
+        .where(and(eq(companyAssets.id, assetId), eq(companyAssets.companyId, companyId)))
+        .limit(1);
+
+      if (!existing.length) throw new NotFoundError('Activo', req.params.assetId);
+
+      const previousStatus = existing[0].status;
+      const [updated] = await db
+        .update(companyAssets)
+        .set({ status: body.status, updatedAt: new Date() })
+        .where(and(eq(companyAssets.id, assetId), eq(companyAssets.companyId, companyId)))
+        .returning();
+
+      await logAudit(db, companyId, {
+        entity: 'assets',
+        entityId: toId('asset', updated.id),
+        action: 'update',
+        actorId: req.user!.sub,
+        actorName: req.user!.name,
+        description: `Activo "${updated.name}" cambió de "${previousStatus}" a "${body.status}"${body.reason ? ` (motivo: ${body.reason})` : ''}.`,
+        metadata: { previousStatus, newStatus: body.status, reason: body.reason ?? null, kind: 'status_change' },
+      });
+
+      try {
+        await notifyEntityCrud({
+          companyId, actorSub: req.user!.sub, actorName: req.user!.name,
+          crudKind: 'entity_updated', entityKey: updated.type ?? 'Activo',
+          entityId: updated.id, entityLabel: `${updated.name}${updated.plate ? ` (${updated.plate})` : ''}`,
+          extra: {
+            newStatus: body.status,
+            previousStatus,
+            reason: body.reason ?? null,
+          },
+        });
+      } catch (err) {
+        console.warn('[assets] notify status-change falló (no crítico):', (err as Error).message);
+      }
+
+      res.json(serializeAsset(updated));
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ─── POST /company/:id/assets/:assetId/notes ─────────────────────────────────
+// jul 2026 — Notas libres sobre un vehículo. Usado por la tool de Jarvis
+// `addVehicleNote`. No requiere schema nuevo: persiste en
+// `companyAuditEntries` con `action='update'` y metadata.kind='note_added'.
+// Devuelve el id del audit entry.
+
+const addNoteSchema = z.object({
+  text: z.string().min(1, 'La nota no puede estar vacía').max(2_000),
+});
+
+router.post(
+  '/:assetId/notes',
+  requireModule('gestion', 'flotas'),
+  requireAdmin,
+  validate(addNoteSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const assetId = parseId('asset', req.params.assetId);
+      const body = req.body as z.infer<typeof addNoteSchema>;
+
+      const existing = await db
+        .select()
+        .from(companyAssets)
+        .where(and(eq(companyAssets.id, assetId), eq(companyAssets.companyId, companyId)))
+        .limit(1);
+
+      if (!existing.length) throw new NotFoundError('Activo', req.params.assetId);
+
+      const inserted = await db
+        .insert(companyAuditEntries)
+        .values({
+          companyId,
+          entity: 'assets',
+          entityId: toId('asset', assetId),
+          action: 'update',
+          actorId: (() => {
+            const m = String(req.user!.sub).match(/(\d+)$/);
+            return m ? BigInt(m[1]) : null;
+          })(),
+          actorName: req.user!.name,
+          description: body.text,
+          metadata: { kind: 'note_added', text: body.text },
+        })
+        .returning({ id: companyAuditEntries.id });
+
+      res.json({
+        ok: true,
+        noteId: String(inserted[0]?.id ?? ''),
+        assetId: toId('asset', assetId),
+        text: body.text,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // ─── PATCH /company/:id/assets/:assetId/toggle ────────────────────────────────
 
 router.patch(

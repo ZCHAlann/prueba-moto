@@ -193,7 +193,7 @@ export const scheduleMaintenanceTool: ToolDefinition<z.infer<typeof argsSchedule
     if (!resolved.ok) {
       return { data: [], total: 0, note: resolved.error };
     }
-    const res = await postToBackend(actx, `/api/company/${actx.empresaId}/maintenances`, {
+    const res = await postToBackend(actx, `/company/${actx.empresaId}/maintenances`, {
       assetId:      `asset-${resolved.id}`, // formato que espera el backend.
       title:        args.title,
       type:         args.type,
@@ -220,20 +220,27 @@ export const scheduleMaintenanceTool: ToolDefinition<z.infer<typeof argsSchedule
 // 2. createAlert — crear una alerta
 // ──────────────────────────────────────────────────────────────────────
 
+// jul 2026 — Mapeo al schema real del endpoint `POST /company/:id/alerts`:
+//   - severity: el endpoint acepta ['Alta', 'Media', 'Baja'] (Title case).
+//     Antes la tool mandaba lowercase ('baja'/'media'/'alta'/'critica') y
+//     el backend tiraba 400.
+//   - type (no 'category'): el endpoint espera un enum ALERT_TYPES
+//     ('Vencimiento'/'Mantenimiento'/'Documento'/'Manual').
+//   - notes (no 'description'): el endpoint guarda el campo 'notes'.
+//   - driverId: el endpoint NO acepta. Se quita.
 const argsCreateAlert = z.object({
   title:       tolerantString({ minLength: 3, maxLength: 200 }),
-  description: tolerantString().optional(),
-  severity:    z.enum(['baja', 'media', 'alta', 'critica']).default('media'),
-  category:    z.enum(['mantenimiento', 'combustible', 'conductor', 'vehiculo', 'seguridad', 'otro']).default('otro'),
+  notes:       tolerantString().optional(),
+  severity:    z.enum(['Alta', 'Media', 'Baja']).default('Media'),
+  type:        z.enum(['Vencimiento', 'Mantenimiento', 'Documento', 'Manual']).default('Manual'),
   assetId:     flexibleAssetId,
   plate:       tolerantString().optional(),
-  driverId:    tolerantNumber().int().positive().optional(),
 });
 
 export const createAlertTool: ToolDefinition<z.infer<typeof argsCreateAlert>> = {
   name:        'createAlert',
   description:
-    'Crea una alerta operativa. Parámetros: title (requerido), description, severity (baja/media/alta/critica), category (mantenimiento/combustible/conductor/vehiculo/seguridad/otro), assetId o plate (opcional, linkea la alerta a un vehículo), driverId (opcional). Devuelve el ID de la alerta creada.',
+    'Crea una alerta operativa. Parámetros: title (requerido, 3-200 chars), notes (opcional), severity (Alta/Media/Baja, default Media), type (Vencimiento/Mantenimiento/Documento/Manual, default Manual), assetId o plate (opcional, linkea la alerta a un vehículo). Devuelve el ID de la alerta creada.',
   category:    'alertas-escritura',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
   schema:      argsCreateAlert,
@@ -251,13 +258,12 @@ export const createAlertTool: ToolDefinition<z.infer<typeof argsCreateAlert>> = 
       }
       resolvedAsset = { id: r.id, plate: r.plate };
     }
-    const res = await postToBackend(actx, `/api/company/${actx.empresaId}/alerts`, {
-      title:       args.title,
-      description: args.description,
-      severity:    args.severity,
-      category:    args.category,
-      assetId:     resolvedAsset ? `asset-${resolvedAsset.id}` : undefined,
-      driverId:    args.driverId ? `driver-${args.driverId}` : undefined,
+    const res = await postToBackend(actx, `/company/${actx.empresaId}/alerts`, {
+      title:    args.title,
+      notes:    args.notes,
+      severity: args.severity,
+      type:     args.type,
+      assetId:  resolvedAsset ? `asset-${resolvedAsset.id}` : undefined,
     });
     if (!res.ok) {
       return { data: [], total: 0, note: `Error creando alerta: ${res.error}` };
@@ -266,7 +272,7 @@ export const createAlertTool: ToolDefinition<z.infer<typeof argsCreateAlert>> = 
     return {
       data: [a],
       total: 1,
-      note: `Alerta #${a?.id ?? '?'} creada (severidad ${args.severity})${resolvedAsset ? ' para vehículo ' + resolvedAsset.plate : ''}.`,
+      note: `Alerta #${a?.id ?? '?'} creada (severidad ${args.severity}, tipo ${args.type})${resolvedAsset ? ' para vehículo ' + resolvedAsset.plate : ''}.`,
     };
   },
 };
@@ -299,7 +305,7 @@ export const changeVehicleStatusTool: ToolDefinition<z.infer<typeof argsChangeVe
     if (!resolved.ok) {
       return { data: [], total: 0, note: resolved.error };
     }
-    const res = await postToBackend(actx, `/api/company/${actx.empresaId}/assets/${resolved.id}/status`, {
+    const res = await postToBackend(actx, `/company/${actx.empresaId}/assets/${resolved.id}/status`, {
       status: args.newStatus,
       reason: args.reason,
     });
@@ -340,7 +346,7 @@ export const addVehicleNoteTool: ToolDefinition<z.infer<typeof argsAddVehicleNot
     if (!resolved.ok) {
       return { data: [], total: 0, note: resolved.error };
     }
-    const res = await postToBackend(actx, `/api/company/${actx.empresaId}/vehicles/${resolved.id}/notes`, {
+    const res = await postToBackend(actx, `/company/${actx.empresaId}/vehicles/${resolved.id}/notes`, {
       text: args.text,
     });
     if (!res.ok) {
@@ -387,10 +393,13 @@ export const registerFuelEntryTool: ToolDefinition<z.infer<typeof argsRegisterFu
     if (!resolved.ok) {
       return { data: [], total: 0, note: resolved.error };
     }
-    const res = await postToBackend(actx, `/api/company/${actx.empresaId}/fuel`, {
+    const res = await postToBackend(actx, `/company/${actx.empresaId}/fuel`, {
       assetId:  `asset-${resolved.id}`,
       date:     args.date,
-      liters:   args.liters,
+      // jul 2026 — El endpoint espera GALONES (no litros). Convertimos.
+      // 1 galón US = 3.78541 litros. Sin la conversión, el backend tira 400
+      // con "expected number, received undefined" sobre `gallons`.
+      gallons:  Math.round((args.liters / 3.78541) * 10000) / 10000,
       cost:     args.cost,
       odometer: args.odometer,
       station:  args.station,
@@ -412,6 +421,10 @@ export const registerFuelEntryTool: ToolDefinition<z.infer<typeof argsRegisterFu
 // 6. flagVehicleForMaintenance — marcar vehículo para revisión
 // ──────────────────────────────────────────────────────────────────────
 
+// jul 2026 — Mapeo al schema del endpoint `POST /alerts`:
+//   - 'reason' se mapea al campo 'notes' (que el endpoint SÍ acepta).
+//   - 'severity' en Title case ('Media' en vez de 'media').
+//   - 'type' en vez de 'category' (no existe en el endpoint).
 const argsFlagVehicleForMaintenance = z.object({
   assetId: flexibleAssetId,
   plate:   tolerantString().optional(),
@@ -421,7 +434,7 @@ const argsFlagVehicleForMaintenance = z.object({
 export const flagVehicleForMaintenanceTool: ToolDefinition<z.infer<typeof argsFlagVehicleForMaintenance>> = {
   name:        'flagVehicleForMaintenance',
   description:
-    'Marca un vehículo para revisión. Crea una alerta de severidad media con la categoría "mantenimiento" y un link al vehículo. Útil para recordatorios automáticos.',
+    'Marca un vehículo para revisión. Crea una alerta de severidad Media con tipo Mantenimiento y un link al vehículo. Útil para recordatorios automáticos.',
   category:    'vehiculos-escritura',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
   schema:      argsFlagVehicleForMaintenance,
@@ -435,12 +448,12 @@ export const flagVehicleForMaintenanceTool: ToolDefinition<z.infer<typeof argsFl
     if (!resolved.ok) {
       return { data: [], total: 0, note: resolved.error };
     }
-    const res = await postToBackend(actx, `/api/company/${actx.empresaId}/alerts`, {
-      title:       `Vehículo ${resolved.plate} marcado para revisión`,
-      description: args.reason,
-      severity:    'media',
-      category:    'mantenimiento',
-      assetId:     `asset-${resolved.id}`,
+    const res = await postToBackend(actx, `/company/${actx.empresaId}/alerts`, {
+      title:    `Vehículo ${resolved.plate} marcado para revisión`,
+      notes:    args.reason,
+      severity: 'Media',
+      type:     'Mantenimiento',
+      assetId:  `asset-${resolved.id}`,
     });
     if (!res.ok) {
       return { data: [], total: 0, note: `Error marcando vehículo: ${res.error}` };

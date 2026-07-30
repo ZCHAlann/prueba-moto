@@ -101,6 +101,13 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
     const text = await res.text().catch(() => '');
     throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
   }
+  // 204 No Content (o cualquier 2xx sin body) → devolver undefined en vez
+  // de llamar a res.json() sobre un body vacío. Sin esto, fetch tira
+  // "SyntaxError: Unexpected end of JSON input" en el cliente.
+  // jul 2026 — afecta a todos los DELETE del módulo.
+  if (res.status === 204 || res.headers.get('content-length') === '0') {
+    return undefined as T;
+  }
   return res.json() as Promise<T>;
 }
 

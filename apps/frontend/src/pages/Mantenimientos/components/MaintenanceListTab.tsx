@@ -28,6 +28,13 @@ import {
 } from "../../../hooks/useMaintenancesV2";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
+// jul 2026 v8.7 — para calcular el costo en vivo desde los items de cada
+// mantenimiento (mano de obra + total de repuestos con descuento + IVA).
+// Antes la columna "Costo" leía `m.totalCost` (campo persistido en BD)
+// que podía tener desfase con los items actuales si la última edición
+// no disparó el recalc del backend, o si el valor persistido difiere
+// del cálculo teórico por redondeos/ajustes del comprobante real.
+import { aggregateTotals } from "../../../lib/maintenance-totals";
 import { MaintenanceFormModal } from "./MaintenanceFormModal";
 import { MaintenanceDetailDrawer } from "./MaintenanceDetailDrawer";
 import { ReprogramDialog } from "./ReprogramDialog";
@@ -912,7 +919,28 @@ export function MaintenanceListTab({ title, onReauthorize, mode = "active" }: Pr
                             );
                           })()}
                         </td>
-                        <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-200 font-medium">{fmtMoney(m.totalCost)}</td>
+                        <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-200 font-medium">
+                          {(() => {
+                            // jul 2026 v8.7 — Costo en vivo = mano de obra +
+                            // suma de los totales de cada item (subtotal -
+                            // descuento + IVA). Calculamos acá en vez de
+                            // leer `m.totalCost` (que puede estar desfasado
+                            // de los items reales). Usamos la misma
+                            // función `aggregateTotals` que el resumen del
+                            // drawer, así tabla y drawer SIEMPRE coinciden.
+                            const itemsAgg = aggregateTotals(
+                              (m.items ?? []).map((it) => ({
+                                quantity:      it.quantity,
+                                unitCost:      it.unitCost,
+                                discountValue: it.discountValue ?? 0,
+                                discountType:  it.discountType  ?? "amount",
+                                ivaPercent:    it.ivaPercent    ?? 15,
+                              }))
+                            );
+                            const liveCosto = (m.laborCost ?? 0) + itemsAgg.grandTotal;
+                            return fmtMoney(liveCosto);
+                          })()}
+                        </td>
                         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                           <div className="flex justify-end gap-1">
                             {/* jul 2026 — Reautorizar (solo Atrasado + Programado):

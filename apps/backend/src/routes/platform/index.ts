@@ -23,6 +23,7 @@ import platformUsersRouter from './platform-users';
 import fleetHealthRouter from './fleet-health';
 import ticketRouter from './ticket'
 import companiesAiRouter from './companies-ai';
+import aiApiKeysRouter from './ai-api-keys';
 
 const router = Router();
 
@@ -132,6 +133,10 @@ router.use('/companies', companiesRouter);
 // ai-usage, ai-disable, ai-enable. Se monta en /platform/companies/:id/ai-*
 // y NO pisa a companiesRouter (las rutas son distintas).
 router.use('/companies', companiesAiRouter);
+// jul 2026 v7 — gestión de API Keys de /api/ai/* por empresa.
+// El path final es /platform/companies/:id/ai-api-keys/* (el `:id` lo trae
+// companiesRouter). mergeParams:true en ai-api-keys.ts permite accederlo.
+router.use('/companies/:id/ai-api-keys', aiApiKeysRouter);
 router.use('/users',     usersRouter);
 router.use('/plans',     plansRouter);
 router.use('/modules',   modulesRouter);

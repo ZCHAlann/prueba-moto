@@ -68,10 +68,12 @@ import CompanyAIPage from "./pages/Platform/Companies/AISettings/page";
 import { GeolocationPage } from "./pages/Geolocalizacion/GeolocationPage";
 
 //Landing
-import PublicLayout from "./layout/PublicLayout";                          
-import LandingPage from "./pages/Landing/page";                          
-import SolicitarDemoPage from "./pages/SolicitarDemo/page";             
+import PublicLayout from "./layout/PublicLayout";
+import LandingPage from "./pages/Landing/page";
+import SolicitarDemoPage from "./pages/SolicitarDemo/page";
 import PoliticaPrivacidadPage from "./pages/PoliticaPrivacidad/page";
+// jul 2026 — validación pública de QR de carnets del personal
+import VerifyStaffPage from "./pages/VerifyStaff/page";
 
 
 
@@ -231,6 +233,10 @@ export default function App() {
             }
           />
           <Route path="/politica-privacidad" element={<PoliticaPrivacidadPage />} />
+          {/* jul 2026 — ruta pública de validación de QR de carnets. Un
+              supervisor escanea el QR con su celu y abre esta URL; el
+              backend verifica el token y devuelve datos mínimos. */}
+          <Route path="/verify/:token" element={<VerifyStaffPage />} />
         </Route>
 
         {/* ── Operacion ── */}

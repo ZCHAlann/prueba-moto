@@ -15,6 +15,7 @@ import { isBypassRole, hasAnyPermission } from "@/lib/permissions";
 import { PermissionEditor } from "@/components/users/PermissionEditor";
 import { RowActionMenu } from "@/components/ui/table/RowActionMenu";
 import { ChevronLeft, ChevronRight, AlertCircle } from "lucide-react";
+import { IDCardModal } from "./components/IDCardModal";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -580,6 +581,68 @@ function autoUsername(fullName: string, documentNumber: string) {
 const inputCls =
   "w-full rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.04] px-3 py-2 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-600 outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 dark:focus:border-blue-400 transition";
 
+// ─── Avatar de usuario (foto o iniciales) ─────────────────────────────────────
+// Componente LOCAL: se usa solo dentro de esta página. Si en el futuro otro
+// archivo lo necesita, mover a components/ui/avatar/UserAvatar.tsx con export
+// propio (regla del repo: un componente compartido no debe importarse del
+// archivo de una página — Vite rompe en runtime con
+// "does not provide an export named 'X'").
+function UserAvatar({
+  photoUrl,
+  name,
+  size = "sm",
+}: {
+  photoUrl: string | null | undefined;
+  name: string;
+  size?: "sm" | "md";
+}) {
+  const initials = name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+
+  const dim =
+    size === "md"
+      ? "h-11 w-11 text-sm"
+      : "h-10 w-10 text-xs";
+
+  if (photoUrl) {
+    return (
+      <img
+        src={photoUrl}
+        alt={name}
+        className={`${dim} rounded-xl object-cover ring-2 ring-white/20 dark:ring-white/10 shrink-0`}
+        onError={(e) => {
+          // Si la imagen falla, ocultamos el <img> y dejamos que el
+          // fallback de iniciales (el <div> de abajo) tome el lugar
+          // mediante el flag data-fallback del contenedor padre.
+          const img = e.currentTarget;
+          img.style.display = "none";
+          const wrap = img.parentElement;
+          if (wrap) wrap.dataset.fallback = "show";
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      data-fallback="show"
+      className={`${dim} rounded-xl bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center font-bold text-white ring-2 ring-white/20 dark:ring-white/10 shrink-0`}
+    >
+      {initials || (
+        <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 opacity-80">
+          <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" />
+        </svg>
+      )}
+    </div>
+  );
+}
+
 function FormField({
   label,
   error,
@@ -761,6 +824,7 @@ function UserFormModal({
   onClose,
   onCreate,
   onUpdate,
+  onOpenCard,
 }: {
   open: boolean;
   user: CompanyUser | null;
@@ -797,6 +861,11 @@ function UserFormModal({
   onClose: () => void;
   onCreate: (input: CreateCompanyUserInput) => Promise<void>;
   onUpdate: (id: string, input: UpdateCompanyUserInput) => Promise<void>;
+  /**
+   * jul 2026 — handler para abrir el carnet (IDCardModal) cuando el admin
+   * hace click en la foto del modal de edición. Solo en modo edición.
+   */
+  onOpenCard?: () => void;
 }) {
   const { session } = useAuth();
   // Solo admin_empresa/owner_empresa pueden cambiar la foto de un usuario
@@ -937,11 +1006,25 @@ function UserFormModal({
                     <div>
                       <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Foto</p>
                       <div className="flex items-center gap-4">
-                        <div className="h-20 w-20 overflow-hidden rounded-2xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.05]">
-                          {form.photoUrl ? (
-                            <img src={form.photoUrl} alt="Foto" className="h-full w-full object-cover" />
+                        <div className="relative">
+                          {user && form.photoUrl && onOpenCard ? (
+                            <button
+                              type="button"
+                              onClick={onOpenCard}
+                              title="Ver carnet"
+                              aria-label="Ver carnet"
+                              className="block h-20 w-20 cursor-pointer overflow-hidden rounded-2xl border border-gray-200 bg-gray-100 outline-none transition hover:ring-2 hover:ring-blue-500/50 focus:ring-2 focus:ring-blue-500/60 dark:border-white/[0.08] dark:bg-white/[0.05]"
+                            >
+                              <img src={form.photoUrl} alt="Foto" className="h-full w-full object-cover" />
+                            </button>
                           ) : (
-                            <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">Sin foto</div>
+                            <div className="h-20 w-20 overflow-hidden rounded-2xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.05]">
+                              {form.photoUrl ? (
+                                <img src={form.photoUrl} alt="Foto" className="h-full w-full object-cover" />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">Sin foto</div>
+                              )}
+                            </div>
                           )}
                         </div>
                         <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3.5 py-2.5 text-sm font-semibold text-gray-600 transition hover:border-brand-400 hover:text-brand-600 dark:border-white/[0.12] dark:bg-white/[0.04] dark:text-gray-300">
@@ -1320,6 +1403,9 @@ export function UsersPage() {
   const [modalOpen, setModalOpen]       = useState(false);
   const [editingUser, setEditingUser]   = useState<CompanyUser | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CompanyUser | null>(null);
+  // jul 2026 — modal de carnet (ID card) con QR. Se abre desde el avatar
+  // de la tabla o desde la foto del modal de edición.
+  const [cardUser, setCardUser]         = useState<CompanyUser | null>(null);
   // Snapshot de los permisos del user al abrir el modal de edición.
   // Se usa para el botón "Volver a originales" del editor.
   const [originalPermissionsSnapshot, setOriginalPermissionsSnapshot] = useState<PermissionMap | undefined>(undefined);
@@ -1506,7 +1592,7 @@ export function UsersPage() {
                 <table className="w-full min-w-[760px]">
                   <thead>
                     <tr className="border-b border-gray-200 dark:border-white/[0.06]">
-                      {["Colaborador", "Credenciales", "Laboral", "Rol", "Módulos", "Estado", ""].map((h, i, arr) => {
+                      {["", "Colaborador", "Credenciales", "Rol", "Módulos", "Estado", ""].map((h, i, arr) => {
                         const isLast = i === arr.length - 1;
                         return (
                           <th key={h} className={isLast ? "" : "px-5 py-3 text-left text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide"}>
@@ -1524,11 +1610,20 @@ export function UsersPage() {
                         [String(p.firstName ?? ""), String(p.lastName ?? "")].filter(Boolean).join(" ") ||
                         "—";
                       const documentNumber = String(p.documentNumber ?? "");
-                      const site = String(p.site ?? "Operativo");
-                      const area = String(p.area ?? "");
 
                       return (
                         <tr key={u.id} className="group hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors">
+                          <td className="pl-5 pr-2 py-3.5">
+                            <button
+                              type="button"
+                              onClick={() => setCardUser(u)}
+                              title="Ver carnet"
+                              aria-label={`Ver carnet de ${fullName}`}
+                              className="cursor-pointer rounded-xl outline-none transition hover:ring-2 hover:ring-blue-500/50 focus:ring-2 focus:ring-blue-500/60"
+                            >
+                              <UserAvatar photoUrl={u.photoUrl} name={fullName} size="sm" />
+                            </button>
+                          </td>
                           <td className="px-5 py-3.5">
                             <p className="font-semibold text-sm text-gray-800 dark:text-white">{fullName}</p>
                             {documentNumber && <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{documentNumber}</p>}
@@ -1536,10 +1631,6 @@ export function UsersPage() {
                           <td className="px-5 py-3.5">
                             <p className="text-sm font-medium text-gray-800 dark:text-white">@{u.username}</p>
                             <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{u.email}</p>
-                          </td>
-                          <td className="px-5 py-3.5">
-                            <p className="text-sm text-gray-700 dark:text-gray-300">{site}</p>
-                            {area && <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{area}</p>}
                           </td>
                           <td className="px-5 py-3.5">
                             <RoleBadge role={u.role} />
@@ -1561,7 +1652,41 @@ export function UsersPage() {
                                 )}
                               </td>
                               <td className="px-5 py-3.5">
-                                <StatusBadge status={u.status} />
+                                {canEdit ? (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      const nextStatus: "active" | "inactive" =
+                                        u.status === "active" ? "inactive" : "active";
+                                      const ok = await updateUser(u.id, {
+                                        email:    u.email,
+                                        username: u.username,
+                                        role:     u.role as PlatformRole,
+                                        status:   nextStatus,
+                                        dni:      u.dni ?? null,
+                                        modulePermissions: u.modulePermissions,
+                                        profileData:       u.profileData,
+                                        photoUrl:          u.photoUrl ?? null,
+                                      });
+                                      if (ok) {
+                                        toast.success(
+                                          nextStatus === "active"
+                                            ? "Usuario activado"
+                                            : "Usuario desactivado",
+                                          { description: `@${u.username}` }
+                                        );
+                                      } else {
+                                        toast.error("No se pudo cambiar el estado");
+                                      }
+                                    }}
+                                    title="Click para cambiar el estado"
+                                    className="cursor-pointer rounded-full outline-none focus:ring-2 focus:ring-blue-500/40 transition hover:opacity-80"
+                                  >
+                                    <StatusBadge status={u.status} />
+                                  </button>
+                                ) : (
+                                  <StatusBadge status={u.status} />
+                                )}
                               </td>
                               <td className="group-hover:bg-gray-50 dark:group-hover:bg-white/[0.02] px-5 py-3.5">
                                 {(canEdit || canDeleteUsers) && (
@@ -1643,6 +1768,7 @@ export function UsersPage() {
         onClose={() => setModalOpen(false)}
         onCreate={async (input) => { await createUser(input); }}
         onUpdate={async (id, input) => { await updateUser(id, input); }}
+        onOpenCard={editingUser ? () => setCardUser(editingUser) : undefined}
       />
 
       <DeleteConfirmModal
@@ -1651,6 +1777,15 @@ export function UsersPage() {
         email={deleteTarget?.email ?? ""}
         onCancel={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
+      />
+
+      {/* jul 2026 — Modal de carnet (ID card) con QR. Se abre desde el
+          avatar de la tabla o desde la foto del modal de edición. */}
+      <IDCardModal
+        open={Boolean(cardUser)}
+        user={cardUser}
+        companyId={session?.companyId ?? 0}
+        onClose={() => setCardUser(null)}
       />
     </>
   );

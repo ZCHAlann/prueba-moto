@@ -73,7 +73,10 @@ const copySchema = z.object({
 });
 
 const idParamSchema = z.object({
-  id: z.string().regex(/^\d+$/, 'id inválido'),
+  // Acepta `dto-13` (formato serializado) o `13` puro. parseId('dto', ...) maneja ambos.
+  // jul 2026 — antes era `/^\d+$/` que rechazaba `dto-13` con 500 porque
+  // Zod tiraba ANTES de que el handler pudiera usar parseId().
+  id: z.string().regex(/^(dto-)?\d+$/, 'id inválido'),
 });
 
 // jul 2026 — Bulk insert para el Patrón de trabajo/descanso.
@@ -385,9 +388,10 @@ router.delete(
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
-      // Validar id como número positivo.
+      // Acepta `dto-13` o `13`. parseId('dto', ...) maneja ambos.
+      // jul 2026 — antes era Number(id) que daba NaN con "dto-13".
       const { id } = idParamSchema.parse(req.params);
-      const idNum = Number(id);
+      const idNum = parseId('dto', id);
 
       const existing = await db
         .select({

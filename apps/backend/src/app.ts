@@ -9,9 +9,10 @@ import companyRouter from './routes/company/index';
 import uploadRouter from './routes/upload';
 import oilCheckRouter from './routes/oil-check';
 import publicRouter from './routes/public';
+import aiApiRouter from './routes/ai-api';
 import { errorHandler } from './middlewares/errorHandler';
 import { sanitizeRequest } from './middlewares/sanitize';
-import { rateLimitDefault } from './middlewares/rateLimit';
+import { rateLimitDefault, rateLimitAiApi } from './middlewares/rateLimit';
 import cookieParser from "cookie-parser";
 import { join } from 'path';
 
@@ -69,6 +70,21 @@ app.use('/platform', platformRouter);
 app.use('/company/:id', companyRouter);
 app.use('/upload', uploadRouter);
 app.use('/oil-check', oilCheckRouter);
+
+// ─── /api/ai/* — API dedicada para Custom GPT de OpenAI (jul 2026) ────────────
+//
+// IMPORTANTE: el rate limit se monta ANTES del router pero DESPUÉS de los
+// middlewares globales (json, cookie, sanitize). NO se monta `authAiApiKey`
+// acá — se aplica por endpoint adentro del router, así un 429 puede distinguir
+// entre "key inválida" (401) y "excediste el límite" (429).
+//
+// Si el rate-limit aplica también a 401 (cuando la key no se puede parsear),
+// el keyGenerator hace fallback a IP. Eso está OK — un atacante con keys
+// inválidas sigue siendo limitado por IP, y un cliente legítimo con key
+// válida es limitado por keyPrefix.
+//
+// El auth (`authAiApiKey`) corre adentro de cada endpoint.
+app.use('/api/ai', rateLimitAiApi, aiApiRouter);
 
 // Health check
 app.get('/health', (_req, res) => {

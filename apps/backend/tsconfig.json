@@ -17,5 +17,5 @@
     "ignoreDeprecations": "6.0",
   },
   "include": ["src", "scripts"],
-  "exclude": ["node_modules", "dist", "scripts/test-userStatus.ts"]
+  "exclude": ["node_modules", "dist", "scripts/test-userStatus.ts", "scripts/generate-ai-api-key.ts"]
 }

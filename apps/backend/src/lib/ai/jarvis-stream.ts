@@ -314,6 +314,12 @@ async function runJarvisStream(
     empresaId: input.empresaId,
     userId: input.userId,
     rol: input.rol,
+    // jul 2026 v8.5 — propagar cookieHeader y baseUrl a las tools.
+    // Las tools de acción (scheduleMaintenance, createAlert, etc.)
+    // hacen fetch al backend reusando la sesión del usuario. Si no
+    // se propagan, el fetch llega sin auth y falla con 401.
+    cookieHeader: input.cookieHeader,
+    baseUrl: input.baseUrl,
   };
 
   // 5) Tool-calling loop con streaming nativo de Groq.

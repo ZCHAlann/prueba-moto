@@ -18,6 +18,7 @@ import { hashPassword } from '../../services/auth.service';
 import { validators } from '../../lib/validators';
 import { syncDriverWithUser, onUserDelete } from '../../services/driver-sync.service';
 import { parsePageParams, buildPageResponse } from '../../lib/pagination';
+import { signStaffQrToken } from '../../lib/qr-token';
 import {
   notify,
   notifyAdminsExceptActor,
@@ -1072,6 +1073,259 @@ router.delete(
         cause:   (err as any)?.cause?.message ?? (err as any)?.cause,
         stack:   (err as Error)?.stack?.split('\n').slice(0, 5).join('\n'),
       });
+      next(err);
+    }
+  }
+);
+
+// ─── POST /company/:id/users/:userId/qr-token ───────────────────────────────
+//
+// Emite un token JWT firmado (TTL 1 año) que codifica el QR del carnet del
+// usuario. El frontend lo mete en un QR con qrcode.react y lo imprime/muestra
+// en el modal de carnet. La validación es pública (ver /public/staff/verify/:token
+// en routes/public.ts).
+//
+// Permisos:
+//   - admin/owner/superadmin_empresa: pueden emitir el QR de cualquier user.
+//   - cualquier user autenticado: puede emitir SU PROPIO QR (carnet propio).
+//
+// Por qué existe este endpoint separado en vez de generar el QR client-side:
+//   - El secreto de firmado está SOLO en el server. Si se generara client-side,
+//     un user con devtools podría falsificar un QR "válido" para un userId
+//     arbitrario.
+//   - Auditoría: logueamos quién pidió el QR y cuándo.
+
+router.post(
+  '/:userId/qr-token',
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const userId    = parseId('company-user', req.params.userId as string);
+      const caller    = req.user!;
+      const scope     = resolveUsersScope(caller);
+
+      const isAdmin = scope === 'full';
+      const callerUserId = parseId('company-user', caller.sub);
+      const isSelf = callerUserId === userId;
+
+      if (!isAdmin && !isSelf) {
+        throw new ForbiddenError(
+          'Solo puedes emitir el QR de tu propio carnet, o ser admin/owner.'
+        );
+      }
+
+      // Verificar que el user existe y pertenece a la empresa.
+      const [existing] = await db
+        .select({
+          id:     companyUsers.id,
+          status: companyUsers.status,
+        })
+        .from(companyUsers)
+        .where(
+          and(
+            eq(companyUsers.id, userId),
+            eq(companyUsers.companyId, companyId),
+          )
+        )
+        .limit(1);
+
+      if (!existing) throw new NotFoundError('Usuario', String(userId));
+
+      // Si el user está inactivo, no emitimos QR nuevo (el viejo seguirá
+      // funcionando hasta su exp — 1 año — pero el endpoint público
+      // devolverá `valid: false`).
+      // Si el admin quiere "regenerar" un QR (rotación por despido, etc.),
+      // debe reactivar al user primero.
+      if (existing.status !== 'active' && isAdmin) {
+        throw new AppError(
+          409,
+          'No se puede emitir un QR para un usuario inactivo. Reactivá al usuario primero.'
+        );
+      }
+      if (existing.status !== 'active' && isSelf) {
+        // El propio user pidió su QR pero está inactivo: le decimos igual
+        // (no es un error del cliente, es su estado real).
+        throw new AppError(
+          403,
+          'Tu usuario está inactivo. Pedí a un admin que lo reactive para emitir un nuevo QR.'
+        );
+      }
+
+      const token = signStaffQrToken(userId, companyId);
+
+      // Audit
+      await logAudit(db, companyId, {
+        entity:      'company_users',
+        entityId:    toId('company-user', userId),
+        action:      'qr_token_issued',
+        actorId:     caller.sub,
+        actorName:   caller.name,
+        description: isSelf
+          ? `${caller.name} emitió su propio QR de carnet.`
+          : `${caller.name} emitió el QR de carnet del usuario id=${userId}.`,
+      });
+
+      res.json({ token, ttlSeconds: 60 * 60 * 24 * 365 });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ─── GET /company/:id/users/:userId/card.pdf ───────────────────────────────
+//
+// Devuelve el PDF del carnet digital (54×85.6mm, formato credencial ID-1)
+// listo para imprimir. El PDF incluye la foto del usuario, datos
+// personales, datos de licencia (si es conductor) y un QR real que
+// codifica la URL pública /verify/<token>.
+//
+// Mismas reglas de permiso que qr-token: admin/owner o el propio user.
+// Si el user está inactivo, no se emite (el endpoint público /verify
+// rechazaría el token de todas formas, pero cortamos acá para ser
+// explícitos y evitar audit-log noise).
+//
+// jul 2026 v8.7 — Reemplaza el approach anterior basado en html2canvas
+// (que rompía gradientes y dark mode). Server-side PDF, 100% pixel-perfect.
+
+router.get(
+  '/:userId/card.pdf',
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const userId    = parseId('company-user', req.params.userId as string);
+      const caller    = req.user!;
+      const scope     = resolveUsersScope(caller);
+
+      const isAdmin = scope === 'full';
+      const callerUserId = parseId('company-user', caller.sub);
+      const isSelf = callerUserId === userId;
+
+      if (!isAdmin && !isSelf) {
+        throw new ForbiddenError(
+          'Solo puedes descargar el carnet de tu propio usuario, o ser admin/owner.'
+        );
+      }
+
+      // Traer datos del user + company. Hacemos un solo JOIN para no
+      // hacer 2 queries.
+      const [row] = await db
+        .select({
+          user: companyUsers,
+          company: {
+            id:   companies.id,
+            name: companies.name,
+          },
+        })
+        .from(companyUsers)
+        .innerJoin(companies, eq(companies.id, companyId))
+        .where(
+          and(
+            eq(companyUsers.id, userId),
+            eq(companyUsers.companyId, companyId),
+          ),
+        )
+        .limit(1);
+
+      if (!row) throw new NotFoundError('Usuario', String(userId));
+      if (row.user.status !== 'active') {
+        throw new AppError(
+          403,
+          'El usuario está inactivo. No se puede generar el carnet.'
+        );
+      }
+
+      // ── Hidratar campos del PDF ────────────────────────────────────
+      const p = (row.user.profileData as Record<string, unknown> | null) ?? {};
+      const firstName = typeof p.firstName === 'string' ? p.firstName : '';
+      const lastName  = typeof p.lastName  === 'string' ? p.lastName  : '';
+      const fullName =
+        (typeof p.fullName === 'string' ? p.fullName : '').trim()
+        || [firstName, lastName].filter(Boolean).join(' ')
+        || row.user.username
+        || row.user.email;
+
+      const ROLE_LABELS: Record<string, string> = {
+        owner_empresa:  'Dueño / Propietario',
+        admin_empresa:  'Administrador',
+        supervisor:     'Supervisor',
+        operador:       'Operador',
+        conductor:      'Conductor',
+      };
+      const roleLabel = ROLE_LABELS[row.user.role] ?? row.user.role;
+
+      // DNI: prioriza la columna dedicada, fallback a profileData
+      const dni = (row.user.dni && String(row.user.dni).trim())
+        || (typeof p.documentNumber === 'string' ? p.documentNumber.trim() : '')
+        || null;
+
+      // Licencia: solo si el rol es conductor
+      let license: {
+        number: string; type: string; expiry: string | null; points: number;
+      } | null = null;
+      if (row.user.role === 'conductor') {
+        const ln = typeof p.licenseNumber === 'string' ? p.licenseNumber : '';
+        const lt = typeof p.licenseType   === 'string' ? p.licenseType   : '';
+        const le = typeof p.licenseExpiry === 'string' ? p.licenseExpiry : null;
+        const lp = typeof p.licensePoints === 'number' ? p.licensePoints : 0;
+        if (ln || lt) {
+          license = { number: ln, type: lt, expiry: le, points: lp };
+        }
+      }
+
+      // ── Generar el PDF ─────────────────────────────────────────────
+      const { buildStaffCardPDF } = await import('../../lib/staff-card-pdf');
+      // Pasamos el host del request actual para que la lib pueda
+      // resolver URLs relativas de foto (`/uploads/...`) contra el
+      // backend correcto. En prod con PUBLIC_API_HOST en .env esto
+      // no es necesario (la lib usa eso como fallback), pero pasar
+      // el host del request es más robusto para dev / múltiples envs.
+      const reqProto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+      const reqHost = req.headers['host'] ? `${reqProto}://${req.headers['host']}` : undefined;
+      const pdfBuffer = await buildStaffCardPDF(
+        {
+          user: {
+            id:        row.user.id,
+            fullName,
+            roleLabel,
+            roleKey:   row.user.role,
+            username:  row.user.username,
+            email:     row.user.email,
+            dni,
+            photoUrl:  row.user.photoUrl ?? null,
+          },
+          company: {
+            id:   row.company.id,
+            name: row.company.name,
+          },
+          license,
+        },
+        { apiHost: reqHost },
+      );
+
+      // Audit
+      await logAudit(db, companyId, {
+        entity:      'company_users',
+        entityId:    toId('company-user', userId),
+        action:      'qr_token_issued',
+        actorId:     caller.sub,
+        actorName:   caller.name,
+        description: isSelf
+          ? `${caller.name} descargó su propio carnet PDF.`
+          : `${caller.name} descargó el carnet PDF del usuario id=${userId}.`,
+      });
+
+      // Headers de respuesta para que el browser lo descargue
+      // directamente con nombre de archivo. inline=false fuerza
+      // download en vez de preview.
+      const filename = `carnet-${row.user.username || userId}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      );
+      res.setHeader('Content-Length', String(pdfBuffer.length));
+      res.send(pdfBuffer);
+    } catch (err) {
       next(err);
     }
   }

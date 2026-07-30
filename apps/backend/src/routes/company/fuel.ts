@@ -42,10 +42,11 @@ const createFuelSchema = z.object({
   station: safeString({ max: 120, fieldLabel: 'Estación', allowEmpty: true }).nullable().optional(),
   fuelType: z.enum(['Diesel', 'Gasolina', 'Electrico', 'Hibrido']).optional().nullable(),
   notes: validators.longTextOptional,
-  // jul 2026 v4-b — Foto de la factura OBLIGATORIA al registrar combustible.
-  // Sin foto, no se puede crear la entrada. El endpoint /upload/fuel-photos
-  // es el que genera la URL. Si se omite, el POST retorna 400.
-  photoUrl: z.string().min(1, 'La foto de la factura es obligatoria').max(2_000_000),
+  // jul 2026 v4-b — Foto de la factura era OBLIGATORIA al registrar
+  // combustible. Lo dejamos OPCIONAL para permitir el registro desde
+  // el chat de Jarvis (donde el LLM no puede subir fotos). El operador
+  // puede agregar la foto después desde la UI de Mantenimientos.
+  photoUrl: z.string().min(1).max(2_000_000).nullable().optional(),
   odometerPhotoUrl: z.string().min(1).max(2_000_000).nullable().optional(),
 });
 

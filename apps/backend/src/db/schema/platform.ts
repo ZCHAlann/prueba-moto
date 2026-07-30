@@ -532,3 +532,58 @@ export const companyAiUsage = pgTable('company_ai_usage', {
   periodDay:   date('period_day').notNull().defaultNow(),
   createdAt:   timestamp('created_at').notNull().defaultNow(),
 });
+
+// ============================================================================
+// jul 2026 — API dedicada para Custom GPT de OpenAI
+// ============================================================================
+//
+// DIFERENCIA con `companyAiApiKeys` (arriba): esa tabla guarda fingerprints
+// de keys de PROVIDERS que usa Jarvis internamente (OpenAI, Anthropic, etc.).
+// Esta tabla guarda keys que NOSOTROS emitimos a clientes externos
+// (Custom GPT de OpenAI, integraciones de partners, etc.).
+//
+// Spec: /api/ai/* — Bearer auth, scopes read|write, rate limit 60/min.
+// companyId sale del registro de la key, no del request → un cliente no puede
+// preguntar por datos de otra empresa aunque pase IDs ajenos.
+// ============================================================================
+
+export const aiApiKeys = pgTable('ai_api_keys', {
+  id:           serial('id').primaryKey(),
+  companyId:    integer('company_id').notNull()
+                   .references(() => companies.id, { onDelete: 'cascade' }),
+  name:         varchar('name', { length: 100 }).notNull(),
+  // SHA-256 hex (64 chars) del key original más el salt fijo de la app.
+  // UNIQUE — no se puede repetir. Para revocación usar `active=false`.
+  keyHash:      varchar('key_hash', { length: 64 }).notNull().unique(),
+  // Primeros 16 chars del key original ("aik_live_a1b2c3d4") para
+  // identificar la key en una lista sin exponer el resto.
+  keyPrefix:    varchar('key_prefix', { length: 16 }).notNull(),
+  // ['read'] para solo lectura, ['read','write'] para lectura + creación.
+  // jsonb para extender sin migración si se agregan más scopes.
+  scopes:       jsonb('scopes').notNull().$type<string[]>().default(['read']),
+  active:       boolean('active').notNull().default(true),
+  lastUsedAt:   timestamp('last_used_at'),
+  // NULL = no expira. Si pasa la fecha, el middleware rechaza con 401.
+  expiresAt:    timestamp('expires_at'),
+  // superadmin que la creó (auditoría)
+  createdBy:    integer('created_by')
+                   .references(() => companyUsers.id, { onDelete: 'set null' }),
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+  updatedAt:    timestamp('updated_at').notNull().defaultNow(),
+});
+
+// Auditoría append-only de cada request a /api/ai/*.
+// No FK a ai_apiKeys → si la key se borra, el log sobrevive para forensics.
+export const aiApiLogs = pgTable('ai_api_logs', {
+  id:            bigserial('id', { mode: 'number' }).primaryKey(),
+  keyId:         integer('key_id'),
+  companyId:     integer('company_id'),
+  endpoint:      varchar('endpoint', { length: 200 }).notNull(),
+  method:        varchar('method', { length: 10 }).notNull(),
+  statusCode:    integer('status_code').notNull(),
+  durationMs:    integer('duration_ms'),
+  errorMessage:  text('error_message'),
+  ip:            varchar('ip', { length: 64 }),
+  userAgent:     varchar('user_agent', { length: 500 }),
+  createdAt:     timestamp('created_at').notNull().defaultNow(),
+});

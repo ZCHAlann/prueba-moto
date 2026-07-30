@@ -57,6 +57,21 @@ export type ApiDriver = {
   site: string;
   notes: string;
   photoUrl: string | null;
+  // jul 2026 — User asociado en shape compatible con CompanyUser,
+  // para que la tabla de Conductores pueda abrir el IDCardModal
+  // (carnet QR) sin re-fetch. null si el conductor no tiene user atado.
+  // La cédula/DNI está en `dni` (no acá) porque la fuente de verdad
+  // es `company_drivers.dni` con fallback al user.
+  user: {
+    id: string;
+    email: string | null;
+    username: string | null;
+    role: string | null;
+    status: string | null;
+    photoUrl: string | null;
+    dni: string | null;
+    profileData: unknown;
+  } | null;
   // jun 2026 — cédula/DNI (migración 0040). El backend lo devuelve priorizando
   // `company_drivers.dni` con fallback a `profileData.documentNumber` del user
   // asociado. Antes no estaba en este tipo → era descartado por tipado y el
@@ -138,6 +153,20 @@ function mapApi(raw: Record<string, unknown>): ApiDriver {
     photoUrl: (raw.photoUrl as string | null) ?? null,
     createdAt: (raw.createdAt as string) ?? "",
     updatedAt: (raw.updatedAt as string) ?? "",
+    // jul 2026 — User asociado (si el driver está atado a un company_user).
+    // El backend ya lo trae inline en el response del listado.
+    user: raw.user && typeof raw.user === "object"
+      ? {
+          id:          String((raw.user as Record<string, unknown>).id ?? ""),
+          email:       ((raw.user as Record<string, unknown>).email       as string | null) ?? null,
+          username:    ((raw.user as Record<string, unknown>).username    as string | null) ?? null,
+          role:        ((raw.user as Record<string, unknown>).role        as string | null) ?? null,
+          status:      ((raw.user as Record<string, unknown>).status      as string | null) ?? null,
+          photoUrl:    ((raw.user as Record<string, unknown>).photoUrl    as string | null) ?? null,
+          dni:         ((raw.user as Record<string, unknown>).dni         as string | null) ?? null,
+          profileData: (raw.user as Record<string, unknown>).profileData ?? {},
+        }
+      : null,
     // ── Backend enrichment ──────────────────────────────────────────────────────
     siteName: (raw.siteName as string | null) ?? null,
     currentAssignment: (raw.currentAssignment as AssignmentActa | null) ?? null,

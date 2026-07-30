@@ -351,7 +351,17 @@ export function isCompanyEntryPath(pathname: string) {
 }
 
 export function isPublicPath(pathname: string) {
-  return PUBLIC_PATHS.includes(pathname as (typeof PUBLIC_PATHS)[number]);
+  // Match exacto de PUBLIC_PATHS + match de prefijo para rutas dinámicas
+  // públicas (/verify/:token del QR de carnets, etc.). Cualquier path
+  // que arranque con uno de estos prefijos se considera público.
+  if (PUBLIC_PATHS.includes(pathname as (typeof PUBLIC_PATHS)[number])) {
+    return true;
+  }
+  // jul 2026 — ruta pública de validación de QR de carnets
+  if (pathname === "/verify" || pathname.startsWith("/verify/")) {
+    return true;
+  }
+  return false;
 }
 
 export function isSuperadminPath(pathname: string) {

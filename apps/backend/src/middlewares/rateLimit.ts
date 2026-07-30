@@ -212,3 +212,37 @@ export function readOnly(limiter: RateLimitRequestHandler): RequestHandler {
     return next();
   };
 }
+
+// ============================================================================
+// jul 2026 — Rate limit para /api/ai/* (Custom GPT de OpenAI)
+// ============================================================================
+//
+// 60 req/min por API Key. Es MENOS permisivo que el read interno (300/min)
+// porque:
+//   1) El Custom GPT es externo — no podemos confiar 100% en el cliente.
+//   2) Un key filtrado no debe poder tumbar el backend.
+//   3) 60 req/min es suficiente para uso interactivo por voz (un turno
+//      de conversación usa 3-5 requests tops).
+//
+// Key: `aik:<keyPrefix>` (NO la key completa, solo el prefix de 16 chars
+// que ya guardamos en la DB). Si la key no se pudo parsear (caso
+// pre-auth), fallback a IP.
+// ============================================================================
+
+/** Key generator: por API key si se pudo parsear, sino por IP. */
+function aiApiKeyKey(req: Request): string {
+  const ctx = req.aiContext;
+  if (ctx?.keyPrefix) return `aik:${ctx.keyPrefix}`;
+  // Pre-auth: si el middleware de rate-limit corre ANTES de authAiApiKey,
+  // todavía no hay ctx. Fallback a IP para no romper pero con la misma
+  // ventana chica (60/min).
+  return `ip:${clientIp(req)}`;
+}
+
+/** /api/ai/* — 60 req/min por API Key. */
+export const rateLimitAiApi = build({
+  name: 'ai-api',
+  windowMs: 60 * 1000,
+  limit: 60,
+  keyGenerator: aiApiKeyKey,
+});

@@ -169,6 +169,11 @@ router.get('/', requireModule('gestion', 'conductores'), async (req, res, next) 
             // Se usa como fallback para `d.dni` cuando el conductor no
             // tiene la columna dedicada poblada.
             dni:         companyUsers.dni,
+            // jul 2026 — necesarios para el carnet/QR del conductor
+            // (el frontend reusa el IDCardModal de Accesos/Usuarios
+            // y necesita role + username del user asociado).
+            role:        companyUsers.role,
+            username:    companyUsers.username,
           },
           // JOIN a companySites para poder calcular el estado efectivo
           // (status del conductor + status de la sede).
@@ -247,6 +252,11 @@ router.get('/:driverId', requireModule('gestion', 'conductores'), async (req, re
           photoUrl:    companyUsers.photoUrl,
           status:      companyUsers.status,
           profileData: companyUsers.profileData,
+          // jul 2026 — para el carnet QR. Si no los traemos acá, el
+          // shape no matchea el `UserEnrichment` extendido y TS tira
+          // error (y en runtime el carnet mostraría role/username vacíos).
+          role:        companyUsers.role,
+          username:    companyUsers.username,
         },
         siteStatus: companySites.status,
       })
@@ -287,7 +297,7 @@ router.get('/:driverId', requireModule('gestion', 'conductores'), async (req, re
       phone:     driver.phone,
     });
 
-    res.json(serializeDriver(driver, siteName, user, currentAssignment, siteStatus ?? null));
+    res.json(serializeDriver(driver, siteName, user as UserEnrichment, currentAssignment, siteStatus ?? null));
   } catch (err) {
     next(err);
   }
@@ -543,6 +553,9 @@ requireModule('gestion', 'conductores'),
             // jun 2026 — cédula/DNI del user. Fallback para el campo
             // `dni` del response cuando `company_drivers.dni` es null.
             dni:         companyUsers.dni,
+            // jul 2026 — para el carnet/QR
+            role:        companyUsers.role,
+            username:    companyUsers.username,
           })
           .from(companyUsers)
           .where(and(eq(companyUsers.id, updated.userId), eq(companyUsers.companyId, companyId)))
@@ -619,6 +632,12 @@ type UserEnrichment = {
   // fallback antes que `profileData.documentNumber` (que sólo tiene valor
   // en usuarios creados por primera vez vía el form de Accesos).
   dni: string | null;
+  // jul 2026 — para el carnet QR. Reusamos el IDCardModal de
+  // Accesos/Usuarios y necesitamos los mismos campos que un CompanyUser.
+  // `role` y `username` son NOT NULL en `company_users`, por eso acá
+  // son `string` (Drizzle devuelve no-null cuando la columna es NOT NULL).
+  role: string;
+  username: string;
 } | null;
 
 function serializeDriver(
@@ -710,6 +729,22 @@ function serializeDriver(
     // ── Enrichment: acta de asignación (null si el conductor no tiene
     //    asignación activa y nunca tuvo una cerrada).
     currentAssignment: currentAssignment ?? null,
+    // jul 2026 — User asociado en shape compatible con `CompanyUser` del
+    // frontend, para que la tabla de Conductores pueda abrir el mismo
+    // IDCardModal que Accesos/Usuarios sin re-fetch. `null` si el
+    // conductor no tiene user atado (caso legacy o import).
+    user: user
+      ? {
+          id:        toId('company-user', user.id),
+          email:     user.email,
+          username:  user.username,
+          role:      user.role,
+          status:    user.status,
+          photoUrl:  user.photoUrl,
+          dni:       user.dni,
+          profileData: user.profileData,
+        }
+      : null,
   };
 }
 

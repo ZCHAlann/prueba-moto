@@ -5,7 +5,17 @@ import { scrubSecrets } from './crypto';
 interface LogAuditParams {
   entity: string;
   entityId?: string;
-  action: 'create' | 'update' | 'delete' | 'complete';
+  // `action` queda ABIERTO a string a propósito. La columna
+  // `company_audit_entries.action` es varchar(40) y a lo largo del
+  // proyecto se usan muchas acciones específicas de dominio
+  // (`'status_change'`, `'activate'`, `'finalize'`, `'handover'`,
+  // `'approve'`, `'reject'`, `'qr_token_issued'`, etc.) que
+  // históricamente coexistieron con `create/update/delete/complete`.
+  // Cerrar el tipo a una whitelist chica rompía ~30 call-sites sin
+  // aportar seguridad de runtime (la BD acepta cualquier string).
+  // Si en el futuro querés una whitelist, hacerlo en runtime con
+  // un Set + throw — no en tipos.
+  action: string;
   actorId?: string;
   actorName?: string;
   description?: string;

@@ -26,6 +26,9 @@ import { useDriverReports, type ApiDriverReport, type DriverReportInvoice } from
 import { fmtDateShortEc, fmtDateTimeEc, fmtTimeEc } from "@/lib/datetime";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../../../lib/mediaCompress";
 import { EffectiveStatusBadge } from "../../../components/features/drivers/EffectiveStatusBadge";
+// jul 2026 — carnet digital (ID card) reusado desde Accesos/Usuarios.
+// El barrel components/ui/id-card re-exporta el componente original.
+import { IDCardModal } from "../../../components/ui/id-card";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1037,16 +1040,38 @@ function DeleteConfirm({ driver, onConfirm, onCancel }: { driver: ApiDriver; onC
 
 // ─── Table Row ────────────────────────────────────────────────────────────────
 
-function DriverRow({ driver, index, canEdit, canDelete, onView, onEdit, onReport, onAssign, onDelete }: {
+function DriverRow({ driver, index, canEdit, canDelete, onView, onEdit, onReport, onAssign, onDelete, onViewCard }: {
   driver: ApiDriver; index: number; canEdit: boolean; canDelete: boolean;
   onView: () => void; onEdit: () => void; onReport: () => void; onAssign: () => void; onDelete: () => void;
+  // jul 2026 — abre el carnet digital del conductor. No-op si el driver
+  // no tiene company_user atado (caso legacy sin QR posible).
+  onViewCard: () => void;
 }) {
+  // Solo tiene carnet si hay user atado — el backend lo manda en
+  // `driver.user` (jul 2026). Si no hay, el avatar no es clickeable.
+  const hasCard = Boolean(driver.user?.id);
   return (
     <tr className="group cursor-pointer border-b border-gray-100 transition-colors hover:bg-gray-50/80 dark:border-white/[0.04] dark:hover:bg-white/[0.02]" onClick={onView}>
       <td className="px-4 py-3.5 text-xs font-semibold text-gray-400">{index + 1}</td>
       <td className="px-4 py-3.5">
         <div className="flex items-center gap-2.5">
-          {driver.photoUrl ? (
+          {hasCard ? (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onViewCard(); }}
+              title="Ver carnet"
+              aria-label={`Ver carnet de ${driver.firstName} ${driver.lastName}`}
+              className="block shrink-0 cursor-pointer rounded-lg outline-none transition hover:ring-2 hover:ring-blue-500/50 focus:ring-2 focus:ring-blue-500/60"
+            >
+              {driver.photoUrl ? (
+                <img src={driver.photoUrl} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
+              ) : (
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-cyan-50 dark:bg-cyan-500/10 text-xs font-black text-cyan-600 dark:text-cyan-400">
+                  {driver.firstName[0]}{driver.lastName[0]}
+                </div>
+              )}
+            </button>
+          ) : driver.photoUrl ? (
             <img src={driver.photoUrl} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
           ) : (
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-cyan-50 dark:bg-cyan-500/10 text-xs font-black text-cyan-600 dark:text-cyan-400">
@@ -1295,6 +1320,13 @@ function ReportDrawer({ report, onClose, onDeleted }: {
 export default function DriversPage() {
   const { drivers, total, totalPages, pageSize, loading, fetchPage, createDriver, updateDriver, deleteDriver } = useDrivers();
   const { can } = usePermissions();
+  // jul 2026 — necesario para el companyId del IDCardModal. Antes el
+  // carnet en esta página reventaba con "session is not defined" porque
+  // `useAuth` se importaba pero nunca se invocaba en DriversPage (los
+  // sub-componentes como DetailDrawer/DriverFormModal tienen su propio
+  // `useAuth` local, pero acá arriba NO estaba). Gotcha típico: helper
+  // top-level vs scope del componente.
+  const { session } = useAuth();
   const navigate = useNavigate();
 
   const canCreate = can("gestion", "conductores", "crear");
@@ -1341,6 +1373,10 @@ export default function DriversPage() {
   const [driverModalTarget, setDriverModalTarget] = useState<ApiDriver | null>(null);
   const [reportDrawer, setReportDrawer]           = useState<ApiDriverReport | null>(null);
   const [reportSearch, setReportSearch]           = useState("");
+  // jul 2026 — driver cuyo carnet estamos viendo. Se setea al click
+  // en el avatar de la fila. Si el driver no tiene user atado
+  // (driver.user === null), el IDCardModal no se renderiza.
+  const [cardDriver, setCardDriver]               = useState<ApiDriver | null>(null);
 
   const { allReports, loadingAll, fetchAll } = useDriverReports(null);
   useEffect(() => { fetchAll(); }, [fetchAll]);
@@ -1483,7 +1519,8 @@ const paginated = drivers;
                           onEdit={() => openEditModal(driver)}
                           onReport={() => openReport(driver)}
                           onAssign={() => setAssignDriver(driver)}
-                          onDelete={() => setDeleteTarget(driver)} />
+                          onDelete={() => setDeleteTarget(driver)}
+                          onViewCard={() => setCardDriver(driver)} />
                       ))}
                     </tbody>
                   </table>
@@ -1554,6 +1591,29 @@ const paginated = drivers;
 
       {deleteTarget && (
         <DeleteConfirm driver={deleteTarget} onConfirm={handleDelete} onCancel={() => setDeleteTarget(null)} />
+      )}
+
+      {/* jul 2026 — Modal de carnet (ID card) con QR. Se abre desde el
+          avatar de la fila de la tabla. Solo se renderiza si el driver
+          tiene un company_user atado (driver.user !== null). El shape
+          de `driver.user` es compatible con el subset `UserCardData`
+          que espera el IDCardModal (ver el export de tipo en
+          components/ui/id-card/IDCardModal.tsx). */}
+      {cardDriver?.user && (
+        <IDCardModal
+          open={Boolean(cardDriver)}
+          user={{
+            id:          cardDriver.user.id,
+            username:    cardDriver.user.username ?? "",
+            email:       cardDriver.user.email ?? "",
+            role:        cardDriver.user.role ?? "conductor",
+            photoUrl:    cardDriver.user.photoUrl,
+            dni:         cardDriver.user.dni,
+            profileData: (cardDriver.user.profileData as Record<string, unknown>) ?? {},
+          }}
+          companyId={Number(session?.companyId ?? 0)}
+          onClose={() => setCardDriver(null)}
+        />
       )}
     </div>
   );

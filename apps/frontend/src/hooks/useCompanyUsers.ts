@@ -79,8 +79,8 @@ function mapApiToUser(data: Record<string, unknown>): CompanyUser {
 export async function uploadUserPhoto(file: File, companyId: number): Promise<string> {
   const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
   const fd = new FormData();
-  fd.append("photos", toUpload); 
-  const res = await fetch(`/api/upload/user-photos?companyId=${companyId}`, { 
+  fd.append("photos", toUpload);
+  const res = await fetch(`/api/upload/user-photos?companyId=${companyId}`, {
     method: "POST",
     body: fd,
     credentials: "include",
@@ -90,6 +90,36 @@ export async function uploadUserPhoto(file: File, companyId: number): Promise<st
   const url = Array.isArray(json.urls) ? json.urls[0] : json.url;
   if (!url) throw new Error("Upload user: respuesta sin URL");
   return url;
+}
+
+/**
+ * jul 2026 — pide al backend un JWT firmado para el QR del carnet de un
+ * usuario. Se codifica en el QR con qrcode.react. La verificación es
+ * pública (ver /public/staff/verify/:token).
+ *
+ * Errores:
+ *   - 401/403: el caller no tiene permiso (no es admin y no es él mismo).
+ *   - 404: el user no existe.
+ *   - 409: el user está inactivo y solo un admin podría reemitir.
+ *
+ * El helper NO es parte del hook (no necesita estado React) — se llama
+ * desde el IDCardModal cuando se abre.
+ */
+export async function requestStaffQrToken(
+  companyId: number,
+  userId: string,
+): Promise<{ token: string; ttlSeconds: number }> {
+  const res = await fetch(`/api/company/${companyId}/users/${userId}/qr-token`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+  }
+  const json = (await res.json()) as { token: string; ttlSeconds: number };
+  if (!json.token) throw new Error("Backend no devolvió token");
+  return json;
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────

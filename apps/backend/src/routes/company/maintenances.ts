@@ -7,11 +7,11 @@ import { alias } from 'drizzle-orm/pg-core';
 import { db, client } from '../../db/client';
 import {
   companyMaintenanceRecords,
-  companyMaintenanceAssets,
   companyMaintenanceEvents,
   companyMaintenanceReauthorizations,
   companyAssets,
   companyMaintenanceCategories,
+  companyMaintenanceSubcategories,
   companyMaintenanceItems,
   companyMaintenanceCarwashExtras,
   companyMaintenanceCarwashPhotos,
@@ -21,6 +21,10 @@ import {
 import { companyUsers } from '../../db/schema/platform'
 
 const companyUsersAsigned = alias(companyUsers, 'company_users_asigned');
+// jul 2026 v9 — Alias top-level para sub-categoría. Lo usan todos
+// los selects que llaman a `serializeMaintenance` para traer el
+// `key` y `label` de la sub-categoría del mantenimiento (si tiene).
+const maintSubcatAlias = alias(companyMaintenanceSubcategories, 'maint_subcat');
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requirePermission } from '../../middlewares/requirePermission';
@@ -81,10 +85,17 @@ function maintTitle(action: string, title?: string | null): string {
 //     debería existir).
 //   - categoryCustomId ausente → key = body.category ?? 'Otro', id = null
 //     (back-compat para todos los clientes que ya mandan `category`).
+// jul 2026 v9 — Helper que valida la categoría custom Y la
+// sub-categoría opcional. Devuelve `category`, `categoryId`,
+// `subcategoryId` listos para insertar. Si viene `subcategoryCustomId`,
+// validamos que pertenezca a la misma categoría padre. Si la
+// categoría no tiene sub-categorías definidas y el user mandó una,
+// rechazamos con 400 (el cliente debe saber que la categoría no
+// tiene sub-categorías).
 async function resolveCategory(
   companyId: number,
-  body: { category?: string; categoryCustomId?: string | null },
-): Promise<{ category: string; categoryId: number | null }> {
+  body: { category?: string; categoryCustomId?: string | null; subcategoryCustomId?: string | null },
+): Promise<{ category: string; categoryId: number | null; subcategoryId: number | null }> {
   if (body.categoryCustomId) {
     const id = parseId('maint-cat', body.categoryCustomId);
     const [cat] = await db
@@ -95,9 +106,49 @@ async function resolveCategory(
     if (!cat) {
       throw new AppError(400, `La categoría custom "${body.categoryCustomId}" no existe o no pertenece a esta empresa.`);
     }
-    return { category: cat.key, categoryId: cat.id };
+    // jul 2026 v9 — Si vino subcategoríaCustomId, validamos que
+    // pertenezca a esta misma categoría.
+    if (body.subcategoryCustomId) {
+      const subId = parseId('maint-subcat', body.subcategoryCustomId);
+      const [sub] = await db
+        .select()
+        .from(companyMaintenanceSubcategories)
+        .where(and(
+          eq(companyMaintenanceSubcategories.id, subId),
+          eq(companyMaintenanceSubcategories.companyId, companyId),
+          eq(companyMaintenanceSubcategories.categoryId, cat.id),
+        ))
+        .limit(1);
+      if (!sub) {
+        throw new AppError(400, `La sub-categoría "${body.subcategoryCustomId}" no pertenece a la categoría "${cat.label}".`);
+      }
+      return { category: cat.key, categoryId: cat.id, subcategoryId: sub.id };
+    }
+    return { category: cat.key, categoryId: cat.id, subcategoryId: null };
   }
-  return { category: body.category ?? 'Otro', categoryId: null };
+  // jul 2026 v9 — Si NO viene `categoryCustomId`, asumimos built-in
+  // o string libre. ANTES dejábamos `categoryId = null` (la fila
+  // quedaba huérfana). Ahora buscamos en el catálogo de la
+  // empresa por (companyId, key) — la migración 0071 sembró las
+  // built-in (Primordial:Bombas, ..., Lavada, Otro) para todas
+  // las empresas, así que el match debería existir siempre.
+  // Si el match no existe (key legacy "re", "pru1" o un string
+  // libre), lo dejamos huérfano y el Filtrado lo maneja como
+  // tal. La cascada del Filtrado ya filtra por FK O string.
+  const key = body.category ?? 'Otro';
+  const [match] = await db
+    .select({ id: companyMaintenanceCategories.id })
+    .from(companyMaintenanceCategories)
+    .where(and(
+      eq(companyMaintenanceCategories.companyId, companyId),
+      eq(companyMaintenanceCategories.key, key),
+    ))
+    .limit(1);
+  return {
+    category: key,
+    categoryId: match?.id ?? null,
+    subcategoryId: null,
+  };
 }
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -184,6 +235,11 @@ const createMaintenanceSchema = z.object({
   // ID serializado de la categoría custom (formato 'maint-cat-N'). Si viene,
   // se valida que pertenezca a la empresa y se prefiere sobre `category`.
   categoryCustomId: z.string().min(1).optional().nullable(),
+  // jul 2026 v9 — ID serializado de la sub-categoría (formato
+  // 'maint-subcat-N'). Se valida que pertenezca a la misma
+  // categoría padre. Si la categoría no tiene sub-categorías, el
+  // user no debería mandarla, pero si la manda, se rechaza.
+  subcategoryCustomId: z.union([z.string().min(1), z.null()]).optional(),
   title:          safeString({ min: 3, max: 200, fieldLabel: 'Título', allowEmpty: false }),
   description:    validators.longTextOptional,
   odometerKm:     z.number().int().nonnegative().max(10_000_000).optional().nullable(),
@@ -217,6 +273,12 @@ const updateMaintenanceSchema = z.object({
   status:         z.enum(MAINT_STATUSES).optional(),
   category:       z.string().min(1).max(60).optional(),
   categoryCustomId: z.string().min(1).optional().nullable(),
+  // jul 2026 v9 — sub-categoría (de la categoría custom actualmente
+  // asignada al mantenimiento). `null` la limpia. Si se manda junto
+  // con `categoryCustomId`, el backend la respeta al resolver la
+  // nueva categoría; si se manda solo, se valida contra la categoría
+  // ACTUAL del mantenimiento.
+  subcategoryCustomId: z.string().min(1).optional().nullable(),
   title:          safeString({ min: 3, max: 200, fieldLabel: 'Título', allowEmpty: false }).optional(),
   description:    validators.longTextOptional,
   odometerKm:     z.number().int().nonnegative().max(10_000_000).optional().nullable(),
@@ -518,16 +580,48 @@ async function loadItemsMap(maintenanceIds: number[]): Promise<Map<number, any[]
   const map = new Map<number, any[]>();
   for (const i of items) {
     if (!map.has(i.maintenanceId)) map.set(i.maintenanceId, []);
+    // jul 2026 v9 — Recalculamos subtotal/iva/total a partir de los
+    // datos crudos (quantity, unitCost, discountValue, ivaPercent)
+    // en vez de confiar en los valores guardados en la DB.
+    //
+    // ¿Por qué? En algunos mantenimientos los subtotales quedaron
+    // guardados como 0 (probablemente porque el POST inicial mandó
+    // quantity o unitCost = 0, y computeItemTotals clampeó todo a
+    // 0). Al forzar el recálculo en lectura, garantizamos que el
+    // PDF y el frontend SIEMPRE vean el cálculo correcto basado en
+    // los datos actuales. Si la fórmula del backend cambió, también
+    // se aplica retroactivamente.
+    const quantity      = Number(i.quantity);
+    const unitCost      = Number(i.unitCost);
+    const discountType  = (i.discountType === 'percent' ? 'percent' : 'amount') as 'amount' | 'percent';
+    const discountValue = Number(i.discountValue ?? 0);
+    const ivaPercent    = Number(i.ivaPercent ?? 15);
+    const totals = computeItemTotals({
+      quantity,
+      unitCost,
+      discountValue,
+      discountType,
+      ivaPercent,
+    });
     map.get(i.maintenanceId)!.push({
       id:             toId('maintenance-item', i.id),
       maintenanceId:  toId('maintenance', i.maintenanceId),
       supplierId:     i.supplierId ? toId('supplier', i.supplierId) : null,
       supplierName:   i.supplierName,
       name:           i.name,
-      quantity:       Number(i.quantity),
-      discountType:  i.discountType ?? 'amount',
-      unitCost:       Number(i.unitCost),
-      subtotal:       Number(i.subtotal),
+      quantity,
+      // jul 2026 v9 — antes faltaban `discountValue`, `ivaPercent`,
+      // `ivaAmount` y `total` en este mapeo: el SELECT los traía de
+      // la DB pero no los exponíamos en la respuesta al frontend.
+      // Ahora los serializamos Y los recalculamos para que no haya
+      // datos viejos con subtotal=0 persistidos en la DB.
+      discountType,
+      discountValue,
+      ivaPercent,
+      ivaAmount:      totals.ivaAmount,
+      total:          totals.total,
+      unitCost,
+      subtotal:       totals.subtotal,
       photoUrl:       i.photoUrl ?? null,
       attachmentKey:  i.attachmentKey ?? null, // jul 2026
     });
@@ -627,6 +721,13 @@ function serializeMaintenance(m: any, items: any[], events: any[] = []) {
     // El frontend lo usa para decidir si el `category` que viene
     // en `m.category` se mapea a una built-in o a una custom.
     categoryId:    m.categoryId != null ? toId('maint-cat', m.categoryId) : null,
+    // jul 2026 v9 — Sub-categoría opcional del mantenimiento. Si la
+    // categoría del mantenimiento tiene sub-categorías definidas,
+    // el user eligió una. NULL si la categoría no tiene sub-categorías
+    // o el user no eligió ninguna.
+    subcategoryId: m.subcategoryId != null ? toId('maint-subcat', m.subcategoryId) : null,
+    subcategoryKey:   m.subcategoryKey ?? null,
+    subcategoryLabel: m.subcategoryLabel ?? null,
     title:         m.title,
     description:   m.description,
     odometerKm:    m.odometerKm,
@@ -822,6 +923,15 @@ router.get(
       }
       if (type)      conditions.push(eq(companyMaintenanceRecords.type, type as any));
       if (category)  conditions.push(eq(companyMaintenanceRecords.category, category));
+      // jul 2026 v9 — Filtrar por sub-categoría. Si viene id válido,
+      // filtramos por FK; si viene negativo (huérfano, no debería
+      // llegar acá pero por las dudas) lo ignoramos.
+      if (req.query.subcategoryId !== undefined && req.query.subcategoryId !== '') {
+        const subId = Number(req.query.subcategoryId);
+        if (Number.isFinite(subId) && subId > 0) {
+          conditions.push(eq(companyMaintenanceRecords.subcategoryId, subId));
+        }
+      }
       if (workshopId) conditions.push(eq(companyMaintenanceRecords.workshopId, parseId('workshop', workshopId)));
       if (assetId)   conditions.push(eq(companyMaintenanceRecords.assetId, parseId('asset', assetId)));
       // Numérico para usar en _filterAsset (la response). Try/catch porque
@@ -855,6 +965,12 @@ router.get(
       }
       const where = and(...conditions);
 
+      // jul 2026 v9 — JOIN a sub-categoría. Se aplica a TODOS los
+      // selects que llaman a `serializeMaintenance`. Traemos key
+      // y label de la sub-categoría para exponer en el response.
+      // Enriquecemos el `m` con `subcategoryKey`/`subcategoryLabel`
+      // al mergear (línea 901-907 abajo).
+
       // SELECT paginado + COUNT(*) en paralelo, ambos con el MISMO `where`.
       // El count se castea a int (Postgres devuelve bigint → rompe JSON.stringify).
       const baseSelect = db
@@ -864,11 +980,14 @@ router.get(
           assetPlate: companyAssets.plate,
           workshopName: companyWorkshops.name,
           assignedUserName: companyUsersAsigned.username,
+          subcategoryKey:   maintSubcatAlias.key,
+          subcategoryLabel: maintSubcatAlias.label,
         })
         .from(companyMaintenanceRecords)
         .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
         .leftJoin(companyWorkshops, eq(companyWorkshops.id, companyMaintenanceRecords.workshopId))
-        .leftJoin(companyUsersAsigned, eq(companyUsersAsigned.id, companyMaintenanceRecords.assignedUserId));
+        .leftJoin(companyUsersAsigned, eq(companyUsersAsigned.id, companyMaintenanceRecords.assignedUserId))
+        .leftJoin(maintSubcatAlias, eq(maintSubcatAlias.id, companyMaintenanceRecords.subcategoryId));
 
       const [rows, [countRow]] = await Promise.all([
         baseSelect
@@ -882,6 +1001,7 @@ router.get(
           .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
           .leftJoin(companyWorkshops, eq(companyWorkshops.id, companyMaintenanceRecords.workshopId))
           .leftJoin(companyUsersAsigned, eq(companyUsersAsigned.id, companyMaintenanceRecords.assignedUserId))
+          .leftJoin(maintSubcatAlias, eq(maintSubcatAlias.id, companyMaintenanceRecords.subcategoryId))
           .where(where),
       ]);
 
@@ -1027,10 +1147,13 @@ router.get(
           assetName:  companyAssets.name,
           assetPlate: companyAssets.plate,
           workshopName: companyWorkshops.name,
+          subcategoryKey:   maintSubcatAlias.key,
+          subcategoryLabel: maintSubcatAlias.label,
         })
         .from(companyMaintenanceRecords)
         .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
         .leftJoin(companyWorkshops, eq(companyWorkshops.id, companyMaintenanceRecords.workshopId))
+        .leftJoin(maintSubcatAlias, eq(maintSubcatAlias.id, companyMaintenanceRecords.subcategoryId))
         .where(and(...whereParts))
         .orderBy(asc(companyMaintenanceRecords.scheduledFor));
 
@@ -1053,22 +1176,48 @@ router.get(
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
-      const rows = await db
-        .select()
-        .from(companyMaintenanceCategories)
-        .where(eq(companyMaintenanceCategories.companyId, companyId))
-        .orderBy(companyMaintenanceCategories.label);
+      const [rows, subs] = await Promise.all([
+        db
+          .select()
+          .from(companyMaintenanceCategories)
+          .where(eq(companyMaintenanceCategories.companyId, companyId))
+          .orderBy(companyMaintenanceCategories.label),
+        // jul 2026 — Traemos todas las sub-categorías de la empresa
+        // y las agrupamos por `categoryId` para anidarlas.
+        db
+          .select()
+          .from(companyMaintenanceSubcategories)
+          .where(eq(companyMaintenanceSubcategories.companyId, companyId))
+          .orderBy(asc(companyMaintenanceSubcategories.order)),
+      ]);
+      const subsByCat = new Map<number, typeof subs>();
+      for (const s of subs) {
+        if (!subsByCat.has(s.categoryId)) subsByCat.set(s.categoryId, []);
+        subsByCat.get(s.categoryId)!.push(s);
+      }
       res.json({
-        data: rows.map((c) => ({
-          id:        toId('maint-cat', c.id),
-          companyId: toId('company', c.companyId),
-          key:       c.key,
-          label:     c.label,
-          shortLabel: c.shortLabel,
-          color:     c.color,
-          icon:      c.icon,
-          isSystem:  c.isSystem,
-        })),
+        data: rows.map((c) => {
+          const list = subsByCat.get(c.id) ?? [];
+          return {
+            id:        toId('maint-cat', c.id),
+            companyId: toId('company', c.companyId),
+            key:       c.key,
+            label:     c.label,
+            shortLabel: c.shortLabel,
+            color:     c.color,
+            icon:      c.icon,
+            isSystem:  c.isSystem,
+            subcategories: list.map((s) => ({
+              id: toId('maint-subcat', s.id),
+              key: s.key,
+              label: s.label,
+              shortLabel: s.shortLabel,
+              color: s.color,
+              icon: s.icon,
+              order: s.order,
+            })),
+          };
+        }),
       });
     } catch (err) {
       next(err);
@@ -1461,11 +1610,14 @@ router.get(
           assetPlate: companyAssets.plate,
           workshopName: companyWorkshops.name,
           assignedUserName: companyUsersAsigned.username,
+          subcategoryKey:   maintSubcatAlias.key,
+          subcategoryLabel: maintSubcatAlias.label,
         })
         .from(companyMaintenanceRecords)
         .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
         .leftJoin(companyWorkshops, eq(companyWorkshops.id, companyMaintenanceRecords.workshopId))
         .leftJoin(companyUsersAsigned, eq(companyUsersAsigned.id, companyMaintenanceRecords.assignedUserId))
+        .leftJoin(maintSubcatAlias, eq(maintSubcatAlias.id, companyMaintenanceRecords.subcategoryId))
         .where(and(eq(companyMaintenanceRecords.id, id), eq(companyMaintenanceRecords.companyId, companyId)))
         .limit(1);
       if (!row) throw new NotFoundError('Mantenimiento', req.params.id);
@@ -1549,6 +1701,10 @@ router.post(
           status:         finalStatus,
           category:       resolvedCategory.category,
           categoryId:     resolvedCategory.categoryId,
+          // jul 2026 v9 — Sub-categoría opcional. Validada arriba
+          // por `resolveCategory` (verifica que pertenezca a la
+          // misma categoría padre).
+          subcategoryId:  resolvedCategory.subcategoryId,
           title:          body.title,
           description:    body.description ?? null,
           odometerKm:     body.odometerKm ?? null,
@@ -1630,11 +1786,14 @@ router.post(
           assetPlate: companyAssets.plate,
           workshopName: companyWorkshops.name,
           assignedUserName: companyUsersAsigned.username,
+          subcategoryKey:   maintSubcatAlias.key,
+          subcategoryLabel: maintSubcatAlias.label,
         })
         .from(companyMaintenanceRecords)
         .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
         .leftJoin(companyWorkshops, eq(companyWorkshops.id, companyMaintenanceRecords.workshopId))
         .leftJoin(companyUsersAsigned, eq(companyUsersAsigned.id, companyMaintenanceRecords.assignedUserId))
+        .leftJoin(maintSubcatAlias, eq(maintSubcatAlias.id, companyMaintenanceRecords.subcategoryId))
         .where(eq(companyMaintenanceRecords.id, created.id))
         .limit(1);
       const itemsMap  = await loadItemsMap([created.id]);
@@ -1802,9 +1961,54 @@ router.put(
         const resolved = await resolveCategory(companyId, body);
         updateData.category   = resolved.category;
         updateData.categoryId = resolved.categoryId;
+        // jul 2026 v9 — Si el user mandó una subcategoría y la
+        // categoría custom se eligió en este mismo PATCH, se
+        // respeta la subcategoría. Si NO mandó subcategoría pero
+        // la categoría SÍ tiene, se resetea a null (el user la
+        // está cambiando, no la conserva).
+        updateData.subcategoryId = resolved.subcategoryId;
       } else if (body.category !== undefined) {
         updateData.category   = body.category;
         updateData.categoryId = null; // vuelve a built-in / string libre
+        // jul 2026 v9 — Cambió la categoría a built-in / libre, no
+        // hay sub-categoría que aplique.
+        updateData.subcategoryId = null;
+      }
+      // jul 2026 v9 — Si el user SOLO mandó `subcategoryCustomId`
+      // (sin tocar la categoría), validamos y actualizamos. Esto
+      // es útil cuando el user quiere asignar/cambiar la
+      // sub-categoría sin tocar la categoría padre.
+      if (body.subcategoryCustomId !== undefined && body.categoryCustomId === undefined) {
+        // Necesitamos la categoría ACTUAL del mantenimiento para
+        // validar que la sub-categoría le pertenece.
+        const [current] = await db
+          .select({ categoryId: companyMaintenanceRecords.categoryId })
+          .from(companyMaintenanceRecords)
+          .where(eq(companyMaintenanceRecords.id, id))
+          .limit(1);
+        if (!current) {
+          throw new NotFoundError('Mantenimiento', req.params.id);
+        }
+        if (body.subcategoryCustomId === null) {
+          updateData.subcategoryId = null;
+        } else {
+          const subId = parseId('maint-subcat', body.subcategoryCustomId);
+          const [sub] = await db
+            .select()
+            .from(companyMaintenanceSubcategories)
+            .where(and(
+              eq(companyMaintenanceSubcategories.id, subId),
+              eq(companyMaintenanceSubcategories.companyId, companyId),
+              current.categoryId != null
+                ? eq(companyMaintenanceSubcategories.categoryId, current.categoryId)
+                : sql`false`,
+            ))
+            .limit(1);
+          if (!sub) {
+            throw new AppError(400, `La sub-categoría no pertenece a la categoría actual del mantenimiento.`);
+          }
+          updateData.subcategoryId = sub.id;
+        }
       }
       if (body.title !== undefined) updateData.title = body.title;
       if (body.description !== undefined) updateData.description = body.description;
@@ -1847,6 +2051,20 @@ router.put(
         }
       }
 
+      // jul 2026 v9 — FIX: el bug "could not determine data type
+      // of parameter $13 42P18" salía cuando un valor del
+      // updateData era `undefined` o `null` (postgres.js lo manda
+      // como `null` sin tipo OID, y Postgres no puede inferir).
+      // El `if (body.X !== undefined) updateData.X = ...` YA filtra
+      // el `undefined` (incluido el que el form ya no manda), y
+      // el frontend ahora OMITE los campos opcionales vacíos
+      // (`cadenceValue`, `nextTriggerKm`) en lugar de mandar
+      // `null`. Limpiamos los `undefined` que pudieran haber
+      // quedado antes del `.set(updateData)`.
+      for (const k of Object.keys(updateData)) {
+        if (updateData[k] === undefined) delete updateData[k];
+      }
+
       const [updated] = await db
         .update(companyMaintenanceRecords)
         .set(updateData)
@@ -1876,25 +2094,25 @@ router.put(
           for (const r of rows) {
             await client.unsafe(
               `INSERT INTO company_maintenance_items
-                 (maintenance_id, supplier_id, name, photo_url,
+                (maintenance_id, supplier_id, name, photo_url,
                   quantity, unit_cost, subtotal,
-                  discount_value, iva_percent, iva_amount, total,
+                  discount_type, discount_value, iva_percent, iva_amount, total,
                   attachment_key)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
               [
                 r.maintenanceId,
-                r.supplierId,                 // null | number
-                r.name,                       // string
-                r.photoUrl,                   // null | string
-                r.quantity,                   // string numeric
-                r.unitCost,                   // string numeric
-                r.subtotal,                   // string numeric
+                r.supplierId,
+                r.name,
+                r.photoUrl,
+                r.quantity,
+                r.unitCost,
+                r.subtotal,
                 r.discountType,
-                r.discountValue,              // string numeric
-                r.ivaPercent,                 // string numeric
-                r.ivaAmount,                  // string numeric
-                r.total,                      // string numeric
-                r.attachmentKey,              // null | string
+                r.discountValue,
+                r.ivaPercent,
+                r.ivaAmount,
+                r.total,
+                r.attachmentKey,
               ],
             );
           }
@@ -2004,11 +2222,14 @@ router.put(
           assetPlate: companyAssets.plate,
           workshopName: companyWorkshops.name,
           assignedUserName: companyUsersAsigned.username,
+          subcategoryKey:   maintSubcatAlias.key,
+          subcategoryLabel: maintSubcatAlias.label,
         })
         .from(companyMaintenanceRecords)
         .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
         .leftJoin(companyWorkshops, eq(companyWorkshops.id, companyMaintenanceRecords.workshopId))
         .leftJoin(companyUsersAsigned, eq(companyUsersAsigned.id, companyMaintenanceRecords.assignedUserId))
+        .leftJoin(maintSubcatAlias, eq(maintSubcatAlias.id, companyMaintenanceRecords.subcategoryId))
         .where(and(
           eq(companyMaintenanceRecords.id, id),
           eq(companyMaintenanceRecords.companyId, companyId),
@@ -2035,24 +2256,66 @@ router.post(
     shortLabel: z.string().min(1).max(40).optional().nullable(),
     color:      z.string().min(2).max(20).default('sky'),
     icon:       z.string().min(2).max(40).default('wrench'),
+    // jul 2026 — Sub-categorías opcionales. Cada una con su propio
+    // key/label/color/icon. La key debe ser única DENTRO de la
+    // categoría (constraint de la DB).
+    subcategories: z.array(z.object({
+      key:        z.string().min(2).max(60).regex(/^[A-Za-z0-9_\-:]+$/),
+      label:      z.string().min(2).max(120),
+      shortLabel: z.string().min(1).max(40).optional().nullable(),
+      color:      z.string().min(2).max(20).default('sky'),
+      icon:       z.string().min(2).max(40).default('wrench'),
+    })).optional().default([]),
   })),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
-      const body = req.body as { key: string; label: string; shortLabel?: string | null; color?: string; icon?: string };
+      const body = req.body as {
+        key: string; label: string; shortLabel?: string | null; color?: string; icon?: string;
+        subcategories?: Array<{ key: string; label: string; shortLabel?: string | null; color?: string; icon?: string }>;
+      };
       try {
-        const [created] = await db
-          .insert(companyMaintenanceCategories)
-          .values({
-            companyId,
-            key:        body.key,
-            label:      body.label,
-            shortLabel: body.shortLabel ?? null,
-            color:      body.color ?? 'sky',
-            icon:       body.icon ?? 'wrench',
-            isSystem:   false,
-          })
-          .returning();
+        // jul 2026 — Creamos categoría + sub-categorías en una
+        // transacción. Si la categoría falla, las sub-categorías no
+        // se crean; si las sub-categorías fallan, hacemos rollback
+        // de la categoría.
+        const created = await db.transaction(async (tx) => {
+          const [cat] = await tx
+            .insert(companyMaintenanceCategories)
+            .values({
+              companyId,
+              key:        body.key,
+              label:      body.label,
+              shortLabel: body.shortLabel ?? null,
+              color:      body.color ?? 'sky',
+              icon:       body.icon ?? 'wrench',
+              isSystem:   false,
+            })
+            .returning();
+          const subs = body.subcategories ?? [];
+          if (subs.length > 0) {
+            await tx.insert(companyMaintenanceSubcategories).values(
+              subs.map((s, i) => ({
+                companyId,
+                categoryId: cat.id,
+                key:        s.key,
+                label:      s.label,
+                shortLabel: s.shortLabel ?? null,
+                color:      s.color ?? 'sky',
+                icon:       s.icon ?? 'wrench',
+                order:      i,
+                isSystem:   false,
+              })),
+            );
+          }
+          return cat;
+        });
+        // Re-fetch con sub-categorías para devolver al cliente
+        const subs = await db
+          .select()
+          .from(companyMaintenanceSubcategories)
+          .where(eq(companyMaintenanceSubcategories.categoryId, created.id))
+          .orderBy(asc(companyMaintenanceSubcategories.order));
         res.status(201).json({
           id: toId('maint-cat', created.id),
           companyId: toId('company', created.companyId),
@@ -2062,10 +2325,19 @@ router.post(
           color: created.color,
           icon: created.icon,
           isSystem: created.isSystem,
+          subcategories: subs.map((s) => ({
+            id: toId('maint-subcat', s.id),
+            key: s.key,
+            label: s.label,
+            shortLabel: s.shortLabel,
+            color: s.color,
+            icon: s.icon,
+            order: s.order,
+          })),
         });
       } catch (e: any) {
         if (e?.code === '23505') {
-          throw new AppError(409, `Ya existe una categoría con la clave "${body.key}".`);
+          throw new AppError(409, `Ya existe una categoría (o sub-categoría) con esa clave.`);
         }
         throw e;
       }
@@ -2079,6 +2351,14 @@ router.post(
 // jul 2026 v5 — Editar una categoría custom (label, shortLabel, color, icon).
 // NO se permite tocar la `key` después de creada (rompería los filtros
 // de los mantenimientos existentes que la usen como value en `category`).
+//
+// jul 2026 v9 — Si el body incluye `subcategories`, se REEMPLAZA
+// la lista completa de sub-categorías de esta categoría. Las
+// sub-categorías viejas se borran (CASCADE → los mantenimientos
+// que apuntaban a ellas quedan con `subcategoryId = NULL` pero
+// siguen vivos). Las nuevas se crean en el orden del array.
+// Esto simplifica el UX del form: el admin edita la lista
+// completa, no una por una.
 router.put(
   '/categories/:catId',
   requireModule('mantenimiento'),
@@ -2088,12 +2368,22 @@ router.put(
     shortLabel: z.string().min(1).max(40).optional().nullable(),
     color:      z.string().min(2).max(20).optional(),
     icon:       z.string().min(2).max(40).optional(),
+    subcategories: z.array(z.object({
+      key:        z.string().min(2).max(60).regex(/^[A-Za-z0-9_\-:]+$/),
+      label:      z.string().min(2).max(120),
+      shortLabel: z.string().min(1).max(40).optional().nullable(),
+      color:      z.string().min(2).max(20).default('sky'),
+      icon:       z.string().min(2).max(40).default('wrench'),
+    })).optional(),
   })),
   async (req, res, next) => {
     try {
       const companyId = req.companyId!;
       const catId = parseId('maint-cat', req.params.catId);
-      const body = req.body as { label?: string; shortLabel?: string | null; color?: string; icon?: string };
+      const body = req.body as {
+        label?: string; shortLabel?: string | null; color?: string; icon?: string;
+        subcategories?: Array<{ key: string; label: string; shortLabel?: string | null; color?: string; icon?: string }>;
+      };
       const [cat] = await db
         .select()
         .from(companyMaintenanceCategories)
@@ -2108,12 +2398,44 @@ router.put(
       if (body.color !== undefined)      updateData.color      = body.color;
       if (body.icon !== undefined)       updateData.icon       = body.icon;
 
-      const [updated] = await db
-        .update(companyMaintenanceCategories)
-        .set(updateData)
-        .where(and(eq(companyMaintenanceCategories.id, catId), eq(companyMaintenanceCategories.companyId, companyId)))
-        .returning();
+      const updated = await db.transaction(async (tx) => {
+        const [u] = await tx
+          .update(companyMaintenanceCategories)
+          .set(updateData)
+          .where(and(eq(companyMaintenanceCategories.id, catId), eq(companyMaintenanceCategories.companyId, companyId)))
+          .returning();
+        if (body.subcategories !== undefined) {
+          // Reemplazamos la lista completa. ON DELETE CASCADE borra
+          // los registros hijos (mantenimientos con subcategoryId
+          // apuntando acá quedan con NULL por la FK SET NULL).
+          await tx
+            .delete(companyMaintenanceSubcategories)
+            .where(eq(companyMaintenanceSubcategories.categoryId, catId));
+          if (body.subcategories.length > 0) {
+            await tx.insert(companyMaintenanceSubcategories).values(
+              body.subcategories.map((s, i) => ({
+                companyId,
+                categoryId: catId,
+                key:        s.key,
+                label:      s.label,
+                shortLabel: s.shortLabel ?? null,
+                color:      s.color ?? 'sky',
+                icon:       s.icon ?? 'wrench',
+                order:      i,
+                isSystem:   false,
+              })),
+            );
+          }
+        }
+        return u;
+      });
 
+      // Re-leemos las sub-categorías finales para devolver al cliente
+      const subs = await db
+        .select()
+        .from(companyMaintenanceSubcategories)
+        .where(eq(companyMaintenanceSubcategories.categoryId, catId))
+        .orderBy(asc(companyMaintenanceSubcategories.order));
       res.json({
         id: toId('maint-cat', updated.id),
         companyId: toId('company', updated.companyId),
@@ -2123,6 +2445,15 @@ router.put(
         color: updated.color,
         icon: updated.icon,
         isSystem: updated.isSystem,
+        subcategories: subs.map((s) => ({
+          id: toId('maint-subcat', s.id),
+          key: s.key,
+          label: s.label,
+          shortLabel: s.shortLabel,
+          color: s.color,
+          icon: s.icon,
+          order: s.order,
+        })),
       });
     } catch (err) {
       next(err);
@@ -3276,6 +3607,87 @@ router.post(
   },
 );
 
+// ─── PATCH /:id/items/:itemId ─────────────────────────────────────────────────
+// jul 2026 v9 — Edita un item existente IN-PLACE. Antes el frontend
+// usaba DELETE + POST para "actualizar" un item, lo que causaba
+// duplicaciones si el DELETE no se completaba antes del refetch
+// (race condition entre el invalidateQueries doble y el refetch
+// manual). Ahora hay UPDATE real: 1 sola operación, 1 solo refetch,
+// imposible duplicar.
+router.patch(
+  '/:id/items/:itemId',
+  requireModule('mantenimiento'),
+  requirePermission('mantenimiento', 'execution', 'editar'),
+  validate(itemSchema),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const maintenanceId = parseId('maintenance', req.params.id);
+      const itemIdRaw = String(req.params.itemId);
+      const itemIdMatch = /^(?:maintenance[-_]?item-)?(\d+)$/i.exec(itemIdRaw)
+                       || /^(\d+)$/.exec(itemIdRaw);
+      if (!itemIdMatch) {
+        throw new AppError(400, `ID de item inválido: ${req.params.itemId}`);
+      }
+      const itemId = Number(itemIdMatch[1]);
+      const body = req.body as z.infer<typeof itemSchema>;
+      const meId = getUserIdFromSub(req.user!.sub);
+
+      // Verificar que el item pertenece a este mantenimiento.
+      const [existing] = await db
+        .select({ id: companyMaintenanceItems.id })
+        .from(companyMaintenanceItems)
+        .where(
+          and(
+            eq(companyMaintenanceItems.id, itemId),
+            eq(companyMaintenanceItems.maintenanceId, maintenanceId),
+          ),
+        )
+        .limit(1);
+      if (!existing) {
+        throw new AppError(404, 'Item no encontrado en este mantenimiento.');
+      }
+
+      // Recalcular subtotal/iva/total con los datos nuevos.
+      const totals = computeItemTotals({
+        quantity:      body.quantity,
+        unitCost:      body.unitCost,
+        discountValue: body.discountValue,
+        discountType:  body.discountType,
+        ivaPercent:    body.ivaPercent,
+      });
+
+      await db
+        .update(companyMaintenanceItems)
+        .set({
+          supplierId:    body.supplierId ? parseId('supplier', body.supplierId) : null,
+          name:          body.name,
+          quantity:      body.quantity.toFixed(2),
+          unitCost:      body.unitCost.toFixed(2),
+          subtotal:      totals.subtotal.toFixed(2),
+          discountType:  body.discountType ?? 'amount',
+          discountValue: (body.discountValue ?? 0).toFixed(2),
+          ivaPercent:    (body.ivaPercent ?? 15).toFixed(2),
+          ivaAmount:     totals.ivaAmount.toFixed(2),
+          total:         totals.total.toFixed(2),
+          photoUrl:      body.photoUrl ?? null,
+        })
+        .where(eq(companyMaintenanceItems.id, itemId));
+
+      const total = await recalcMaintenanceTotal(maintenanceId, companyId);
+
+      await recordEvent(companyId, maintenanceId, 'item_updated', {
+        userId: meId,
+        name:   req.user!.name ?? null,
+      }, { itemId, totalAfter: total });
+
+      res.json({ ok: true, totalCost: total });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // ─── DELETE /:id/items/:itemId ────────────────────────────────────────────────
 // jul 2026 v3 — borrar un item del mantenimiento. Si el item tiene
 // `attachment_key`, recalcula la factura del ledger (subtotal/total/items)
@@ -3288,7 +3700,21 @@ router.delete(
     try {
       const companyId = req.companyId!;
       const maintenanceId = parseId('maintenance', req.params.id);
-      const itemId        = parseId('maintenanceItem', req.params.itemId);
+      // jul 2026 — FIX: el toId() del backend usa el prefijo `maintenance-item`
+      // (con guión, lowercase) en TODAS las rutas que devuelven items. Aceptamos:
+      //   - `maintenance-item-81`   (formato generado por toId)
+      //   - `maintenanceItem-81`   (formato alternativo)
+      //   - `81`                    (ID numérico puro)
+      // El parseIdFlexible estándar NO matchea `maintenance-item-81` (su regex
+      // `^item-(\d+)$` no lo captura), así que usamos uno propio que agarra
+      // el último segmento numérico del ID.
+      const itemIdRaw = String(req.params.itemId);
+      const itemIdMatch = /^(?:maintenance[-_]?item-)?(\d+)$/i.exec(itemIdRaw)
+                       || /^(\d+)$/.exec(itemIdRaw);
+      if (!itemIdMatch) {
+        throw new AppError(400, `ID inválido: ${req.params.itemId}`);
+      }
+      const itemId = Number(itemIdMatch[1]);
 
       // 1) Cargar el item antes de borrar (necesitamos el attachmentKey
       //    para el recalc de la factura dueña).

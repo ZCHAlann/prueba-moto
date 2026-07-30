@@ -33,6 +33,8 @@ import {
 } from '../../lib/ai/jarvis';
 import { jarvisChatStream } from '../../lib/ai/jarvis-stream';
 import { getCacheStats, invalidateCache } from '../../lib/ai/tools/registry';
+import { CATALOG_V3_TOOLS, countByLayer, countByKind } from '../../lib/ai/tools/catalog';
+import { getClassifierCacheStats } from '../../lib/ai/tools/intent-classifier';
 import { getModelConfig } from '../../lib/ai/model-config';
 import {
   synthesizeSpeech,
@@ -88,6 +90,10 @@ router.post(
   validate(ttsSchema),
   async (req, res, next) => {
     try {
+      // ⚠️ CRÍTICO: la empresa SIEMPRE sale del JWT (req.companyId del
+      // middleware de auth), NUNCA del body. Si no, cualquiera podría
+      // mandar empresaId=99 y obtener TTS de otra empresa.
+      const empresaId = req.companyId!;
       const { text, voice: reqVoice } = req.body as z.infer<typeof ttsSchema>;
       const voice: VoiceId =
         reqVoice && isValidVoice(reqVoice) ? reqVoice : DEFAULT_VOICE;
@@ -410,6 +416,20 @@ router.delete(
 
 // ─── GET /conversations/:cid/export?format=csv|pdf ─────────────────
 // Exporta una conversación completa. CSV y PDF.
+//
+// jul 2026 v9 — Rediseño total del PDF (el layout anterior con tablas
+// de colores y `doc.text` mezclando tamaños de fuente dentro de la
+// misma línea (heading + inline bold) generaba un bug de kerning en
+// algunos viewers de PDF: el texto se veía con espacio extra entre
+// CADA letra ("A C B 1 2 3") cuando el visor no encontraba el ancho
+// correcto de glyph por el cambio de fuente a mitad de render. Ahora
+// TODO el documento usa una sola fuente (helvetica) con un único
+// tamaño por bloque, nunca mezclado dentro de una misma línea de
+// `doc.text`, y el markdown crudo (**bold**, tablas, etc.) se limpia
+// ANTES de decidir cómo se dibuja, no se intenta re-renderizar celda
+// por celda. Resultado: documento formal, blanco y negro, con
+// espaciado generoso y el flujo de la conversación bien diferenciado
+// (Tú / Jarvis) como una carta, no como un dashboard.
 
 router.get(
   '/conversations/:cid/export',
@@ -478,45 +498,316 @@ router.get(
 
       // PDF: usamos jspdf + jspdf-autotable.
       const { jsPDF } = await import('jspdf');
-      // jspdf-autotable extiende el prototipo; import side-effect.
-      await import('jspdf-autotable');
+      // jspdf-autotable puede venir con `default` o como named
+      // export según el bundler/loader. Tomamos la función
+      // explícitamente y la llamamos como `autoTable(doc, {...})`,
+      // NO como `doc.autoTable({...})` (ver lib/finance-pdf.ts).
+      const autoTableMod = await import('jspdf-autotable');
+      const autoTable = (autoTableMod as any).default ?? autoTableMod;
 
       const doc = new jsPDF({ unit: 'mm', format: 'a4' });
       const pageW = doc.internal.pageSize.getWidth();
-      const margin = 15;
-      const colW = pageW - margin * 2;
+      const pageH = doc.internal.pageSize.getHeight();
+      const margin = 24;          // margen amplio de carta formal
+      const contentW = pageW - margin * 2;
 
-      // Header.
-      doc.setFontSize(16);
-      doc.text('Jarvis — Conversación', margin, 18);
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(`Título: ${conv.title || '(sin título)'}`, margin, 25);
-      doc.text(`Exportado: ${new Date().toISOString()}`, margin, 30);
-      doc.text(`Mensajes: ${messages.length}`, margin, 35);
-      doc.setTextColor(0);
+      // Paleta estrictamente en escala de grises. Nada de color.
+      const INK       = 20;   // texto principal (casi negro)
+      const INK_SOFT  = 90;   // metadatos
+      const INK_FAINT = 150;  // timestamps / footer
+      const RULE      = 210;  // líneas separadoras
 
-      // Tabla.
-      const body = messages.map((m) => [
-        m.role,
-        new Date(m.createdAt).toLocaleString('es-EC'),
-        m.content.length > 200 ? m.content.slice(0, 200) + '…' : m.content,
-      ]);
+      const FONT = 'helvetica';
+      const SIZE_TITLE = 16;
+      const SIZE_META  = 9;
+      const SIZE_LABEL = 9;
+      const SIZE_BODY  = 10.5;
+      const SIZE_HEAD  = 12;
 
-      // @ts-ignore — autotable inyecta este método en el prototype.
-      doc.autoTable({
-        startY: 42,
-        head: [['Rol', 'Fecha', 'Contenido']],
-        body,
-        margin: { left: margin, right: margin },
-        styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
-        headStyles: { fillColor: [99, 102, 241] },
-        columnStyles: {
-          0: { cellWidth: 20, fontStyle: 'bold' },
-          1: { cellWidth: 35 },
-          2: { cellWidth: 'auto' },
-        },
+      // Interlineado generoso — este era el problema principal del
+      // diseño anterior: todo estaba apretado. 1.6x el tamaño de
+      // fuente da un renglón cómodo de leer.
+      const bodyLineH = 6;
+      const paraGap   = 4;
+      const blockGap  = 10;   // espacio entre mensajes (Tú → Jarvis)
+
+      let cursorY = margin;
+
+      const newPageIfNeeded = (needed: number) => {
+        if (cursorY + needed > pageH - margin - 8) {
+          doc.addPage();
+          cursorY = margin;
+        }
+      };
+
+      const setStyle = (size: number, style: 'normal' | 'bold', gray: number) => {
+        doc.setFont(FONT, style);
+        doc.setFontSize(size);
+        doc.setTextColor(gray, gray, gray);
+      };
+
+      const drawHeader = () => {
+        cursorY = margin;
+        setStyle(SIZE_TITLE, 'normal', INK);
+        doc.text('Conversación con Jarvis', margin, cursorY);
+        cursorY += 9;
+
+        setStyle(SIZE_META, 'normal', INK_SOFT);
+        doc.text(conv.title || '(sin título)', margin, cursorY);
+        cursorY += 6;
+
+        setStyle(8, 'normal', INK_FAINT);
+        doc.text(
+          `Exportado el ${new Date().toLocaleString('es-EC')} · ${messages.length} mensajes`,
+          margin, cursorY,
+        );
+        cursorY += 8;
+
+        doc.setDrawColor(RULE, RULE, RULE);
+        doc.setLineWidth(0.3);
+        doc.line(margin, cursorY, pageW - margin, cursorY);
+        cursorY += blockGap;
+      };
+
+      // ── Limpieza de markdown a texto plano ───────────────────
+      //
+      // No intentamos "renderizar" markdown con tamaños mezclados en
+      // la misma línea (esa mezcla fue la causa del bug de espaciado
+      // entre letras). En vez de eso: los headings se muestran como
+      // una línea en negrita con su propio bloque de texto (fuente
+      // única, tamaño único), las listas se aplanan a guiones simples
+      // con sangría, y el **bold** inline se elimina, dejando texto
+      // plano legible. Las tablas SÍ usan autoTable, pero con una
+      // paleta gris — sin fondos de color.
+
+      type Block =
+        | { kind: 'heading'; level: number; text: string }
+        | { kind: 'paragraph'; text: string }
+        | { kind: 'listitem'; text: string; indent: number }
+        | { kind: 'table'; rows: string[][] }
+        | { kind: 'code'; lines: string[] }
+        | { kind: 'space' };
+
+      const stripInlineMd = (s: string) =>
+        s
+          .replace(/\*\*([^*]+)\*\*/g, '$1')
+          .replace(/\*([^*]+)\*/g, '$1')
+          .replace(/`([^`]+)`/g, '$1');
+
+      const parseBlocks = (raw: string): Block[] => {
+        const text = (raw ?? '').replace(/\r\n/g, '\n');
+        const lines = text.split('\n');
+        const blocks: Block[] = [];
+        let i = 0;
+
+        while (i < lines.length) {
+          const line = lines[i];
+
+          if (/^```/.test(line)) {
+            const codeLines: string[] = [];
+            i++;
+            while (i < lines.length && !/^```/.test(lines[i])) {
+              codeLines.push(lines[i]);
+              i++;
+            }
+            i++;
+            blocks.push({ kind: 'code', lines: codeLines });
+            continue;
+          }
+
+          if (/\|/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1])) {
+            const parseRow = (l: string) =>
+              l.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((c) => stripInlineMd(c.trim()));
+            const rows: string[][] = [parseRow(line)];
+            i += 2;
+            while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim() !== '') {
+              rows.push(parseRow(lines[i]));
+              i++;
+            }
+            blocks.push({ kind: 'table', rows });
+            continue;
+          }
+
+          const h = /^(#{1,3})\s+(.*)$/.exec(line);
+          if (h) {
+            blocks.push({ kind: 'heading', level: h[1].length, text: stripInlineMd(h[2]) });
+            i++;
+            continue;
+          }
+
+          const listMatch = /^(\s*)([-*]|\d+\.)\s+(.*)$/.exec(line);
+          if (listMatch) {
+            const indent = listMatch[1].length;
+            const isOrdered = /^\d+\./.test(listMatch[2]);
+            const bullet = isOrdered ? listMatch[2] + ' ' : '— ';
+            blocks.push({ kind: 'listitem', text: bullet + stripInlineMd(listMatch[3]), indent });
+            i++;
+            continue;
+          }
+
+          if (line.trim() === '') {
+            blocks.push({ kind: 'space' });
+            i++;
+            continue;
+          }
+
+          blocks.push({ kind: 'paragraph', text: stripInlineMd(line) });
+          i++;
+        }
+
+        return blocks;
+      };
+
+      const renderBlocks = (raw: string) => {
+        const blocks = parseBlocks(raw);
+
+        for (const block of blocks) {
+          if (block.kind === 'space') {
+            cursorY += paraGap;
+            continue;
+          }
+
+          if (block.kind === 'code') {
+            setStyle(9, 'normal', INK);
+            doc.setFont('courier', 'normal');
+            for (const cl of block.lines) {
+              const wrapped = doc.splitTextToSize(cl || ' ', contentW - 6);
+              for (const w of wrapped) {
+                newPageIfNeeded(bodyLineH);
+                doc.text(w, margin + 3, cursorY);
+                cursorY += bodyLineH;
+              }
+            }
+            cursorY += paraGap;
+            continue;
+          }
+
+          if (block.kind === 'table') {
+            newPageIfNeeded(20);
+            autoTable(doc, {
+              startY: cursorY,
+              head: [block.rows[0]],
+              body: block.rows.slice(1),
+              margin: { left: margin, right: margin },
+              theme: 'grid',
+              styles: {
+                font: FONT,
+                fontSize: 9.5,
+                cellPadding: 3,
+                overflow: 'linebreak',
+                lineColor: [RULE, RULE, RULE],
+                lineWidth: 0.2,
+                textColor: [INK, INK, INK],
+                fillColor: [255, 255, 255],
+              },
+              headStyles: {
+                fillColor: [255, 255, 255],
+                textColor: [INK, INK, INK],
+                fontStyle: 'bold',
+                lineWidth: 0.3,
+                lineColor: [INK, INK, INK],
+              },
+              alternateRowStyles: { fillColor: [255, 255, 255] },
+            });
+            // @ts-ignore
+            cursorY = (doc as any).lastAutoTable.finalY + blockGap;
+            continue;
+          }
+
+          if (block.kind === 'heading') {
+            const size = block.level === 1 ? SIZE_HEAD + 2 : block.level === 2 ? SIZE_HEAD : SIZE_HEAD - 1;
+            newPageIfNeeded(bodyLineH + 6);
+            setStyle(size, 'bold', INK);
+            const wrapped = doc.splitTextToSize(block.text, contentW);
+            for (const w of wrapped) {
+              doc.text(w, margin, cursorY);
+              cursorY += bodyLineH + 1;
+            }
+            cursorY += paraGap;
+            continue;
+          }
+
+          if (block.kind === 'listitem') {
+            setStyle(SIZE_BODY, 'normal', INK);
+            const indentX = margin + block.indent * 3;
+            const wrapped = doc.splitTextToSize(block.text, contentW - block.indent * 3);
+            for (const w of wrapped) {
+              newPageIfNeeded(bodyLineH);
+              doc.text(w, indentX, cursorY);
+              cursorY += bodyLineH;
+            }
+            continue;
+          }
+
+          // paragraph
+          setStyle(SIZE_BODY, 'normal', INK);
+          const wrapped = doc.splitTextToSize(block.text, contentW);
+          for (const w of wrapped) {
+            newPageIfNeeded(bodyLineH);
+            doc.text(w, margin, cursorY);
+            cursorY += bodyLineH;
+          }
+          cursorY += paraGap;
+        }
+      };
+
+      const ROLE_LABEL: Record<string, string> = {
+        user: 'TÚ',
+        assistant: 'JARVIS',
+        system: 'SISTEMA',
+        tool: 'HERRAMIENTA',
+      };
+
+      // ── Render del documento: carta formal, turno por turno ──
+      drawHeader();
+
+      messages.forEach((m, idx) => {
+        const role = m.role || 'user';
+        const label = ROLE_LABEL[role] ?? role.toUpperCase();
+
+        newPageIfNeeded(24);
+
+        // Encabezado de turno: etiqueta en negrita a la izquierda,
+        // timestamp fino a la derecha. Misma fuente, mismo tamaño en
+        // toda la línea — nunca mezclamos tamaños dentro de un
+        // mismo doc.text().
+        setStyle(SIZE_LABEL, 'bold', INK);
+        doc.text(label, margin, cursorY);
+
+        setStyle(8, 'normal', INK_FAINT);
+        const ts = new Date(m.createdAt).toLocaleString('es-EC', {
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit',
+        });
+        doc.text(ts, pageW - margin, cursorY, { align: 'right' });
+
+        cursorY += 8;
+
+        renderBlocks(m.content);
+
+        cursorY += blockGap - paraGap;
+
+        if (idx < messages.length - 1) {
+          newPageIfNeeded(6);
+          doc.setDrawColor(RULE, RULE, RULE);
+          doc.setLineWidth(0.2);
+          doc.line(margin, cursorY, pageW - margin, cursorY);
+          cursorY += blockGap;
+        }
       });
+
+      // Footer por página.
+      const totalPages = doc.getNumberOfPages();
+      for (let p = 1; p <= totalPages; p++) {
+        doc.setPage(p);
+        setStyle(8, 'normal', INK_FAINT);
+        doc.text(
+          `Jarvis · página ${p} de ${totalPages}`,
+          pageW / 2,
+          pageH - 12,
+          { align: 'center' },
+        );
+      }
 
       const pdfBuf = Buffer.from(doc.output('arraybuffer'));
       res.setHeader('Content-Type', 'application/pdf');
@@ -559,6 +850,21 @@ router.get(
         cache:    getCacheStats(),
         rateLimit: getRateLimitStats(),
         model:    getModelConfig(),
+        // jul 2026 v3 — Métricas del clasificador de tools.
+        // Permite al panel de admin ver cuántas veces el clasificador
+        // evitó enviar el schema completo (ahorro de tokens).
+        classifier: {
+          catalog: {
+            total: CATALOG_V3_TOOLS.length,
+            byLayer: countByLayer(CATALOG_V3_TOOLS),
+            byKind: countByKind(CATALOG_V3_TOOLS),
+          },
+          cache: getClassifierCacheStats(),
+          // Métricas Prometheus:
+          // - jarvis_classifier_calls_total
+          // - jarvis_classifier_errors_total
+          // - jarvis_classifier_needs_write_total
+        },
         // El frontend puede mostrar estos números en un panel de debug.
       });
     } catch (err) {
@@ -577,6 +883,17 @@ const streamSchema = z.object({
   // Transformamos a string para mantener consistencia en el orquestador.
   conversationId:  z.union([z.string(), z.number()]).optional().nullable()
                     .transform((v) => v == null ? v : String(v)),
+  // jul 2026 v3 — modo voz: el frontend lo manda true cuando la
+  // pregunta viene del wake word / STT. El orquestador pasa este flag
+  // al shared-prompt, que cambia las reglas de formato (sin markdown,
+  // sin tablas, sin bullets) para que la respuesta sea leíble por TTS.
+  voiceMode:       z.boolean().optional().default(false),
+  // jul 2026 v3 — currentModule: ruta actual del user (ej.
+  // "/mantenimiento", "/reportes"). Se pasa como PISTA al
+  // clasificador, NO como override. El LLM sigue decidiendo qué
+  // tools cargar — el user puede preguntar sobre otro módulo
+  // estando en otra ruta.
+  currentModule:   z.string().optional().nullable(),
 });
 
 router.post(
@@ -631,6 +948,8 @@ router.post(
             empresaNombre: req.user!.companyName ?? 'Tu empresa',
             message:   body.message,
             conversationId: body.conversationId ?? null,
+            voiceMode: body.voiceMode ?? false,
+            currentModule: body.currentModule ?? null,
             // jul 2026 v8.5 — cookieHeader y baseUrl para tools de acción.
             cookieHeader: req.headers.cookie,
             baseUrl:      process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`,

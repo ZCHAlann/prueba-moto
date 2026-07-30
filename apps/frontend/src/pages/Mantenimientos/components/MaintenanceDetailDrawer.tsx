@@ -19,15 +19,16 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Truck, Calendar, Hash, Download, RefreshCw, CheckCircle2, Play,
   User as UserIcon, Clock, AlertCircle, Package, Wrench, MapPin,
-  Store, Plus, Image as ImageIcon, Camera, DollarSign, FileText,
+  Store, Plus, Image as ImageIcon, ImagePlus, XCircle, Camera, DollarSign, FileText,
   CalendarDays, TruckIcon, ClipboardList, History, Receipt, Loader2,
-  Trash2,
+  Trash2, Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   useMaintenance,
   useAddMaintenanceNote,
   useAddMaintenanceItems,
+  useUpdateMaintenanceItem,
   useDeleteMaintenanceItem,
   useAssignMaintenance,
   useUpdateMaintenance,
@@ -46,6 +47,7 @@ import {
 import { useMaintenanceFormOptions } from "../../../hooks/useFormOptions";
 import { useSuppliers } from "../../../hooks/useSuppliers";
 import { useAuth } from "../../../context/AuthContext";
+import { computeItemTotals, aggregateTotals } from "../../../lib/maintenance-totals";
 import { EditDatesInline } from "../../../components/features/maintenances/EditDatesInline";
 import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../../../lib/mediaCompress";
@@ -54,6 +56,7 @@ import {
   type AttachmentFacturaResult,
 } from "./AttachmentFacturaModal";
 import { FinancePanel } from "./FinancePanel";
+import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -254,29 +257,19 @@ export function MaintenanceDetailDrawer({
     quantity: string;
     unitCost: string;
     discountValue: string;          // jul 2026 v4-c — IMPORTE (no %).
+    // jul 2026 v3 — Tipo de descuento. "amount" = $ directos.
+    // "percent" = % sobre el subtotal pre-descuento. El backend
+    // (computeDiscountAmount) lo respeta. Si es null/undefined, se
+    // interpreta como "amount" (importe).
+    discountType: "amount" | "percent";
     ivaPercent: string;
     photoUrl: string | null;
     uploading: boolean;
     supplierId: string | null;
-    // jul 2026 — Opcion A: vinculo lógico a un attachment del array
-    // `attachments[]`. NULL = sin factura asignada (solo evidencia).
-    attachmentKey: string | null;
   }>({
-    name: "", quantity: "1", unitCost: "", discountValue: "", ivaPercent: "15",
-    photoUrl: null, uploading: false, supplierId: null, attachmentKey: null,
+    name: "", quantity: "1", unitCost: "", discountValue: "", discountType: "amount", ivaPercent: "15",
+    photoUrl: null, uploading: false, supplierId: null,
   });
-  // Batch de repuestos pendientes por agregar
-  const [pendingItems, setPendingItems] = useState<{
-    name: string;
-    quantity: string;
-    unitCost: string;
-    discountValue: string;   // jul 2026 v4-c — IMPORTE (no %).
-    ivaPercent: string;
-    photoUrl: string | null;
-    uploading: boolean;
-    supplierId: string | null;
-    attachmentKey: string | null;
-  }[]>([]);
   // IVA% editable (default 15 para Ecuador)
   const [ivaPercentDraft, setIvaPercentDraft] = useState<number>(15);
   const { suppliers } = useSuppliers();
@@ -296,6 +289,36 @@ export function MaintenanceDetailDrawer({
   // Ref al input file de lavada (usado para resetear el control tras subir).
   const carwashPhotoInputRef = useRef<HTMLInputElement | null>(null);
 
+  // jul 2026 v2 — Drafts de edición por item guardado. Key = itemId.
+  // Cada fila de la tabla tiene su propio set de inputs (igual al modal
+  // de edición) que escribe acá. "Guardar" hace DELETE del viejo +
+  // POST del nuevo con los valores actualizados.
+  type ItemDraft = {
+    name: string;
+    quantity: string;
+    unitCost: string;
+    discountValue: string;
+    discountType: "amount" | "percent";
+    ivaPercent: string;
+    photoUrl: string | null;
+    uploading: boolean;
+    supplierId: string | null;
+  };
+  const [editingItems, setEditingItems] = useState<Record<string, ItemDraft>>({});
+  const itemRowRef = useRef<HTMLInputElement | null>(null);
+  // jul 2026 v3 — Autoguardado con debounce 800ms. Por cada itemId
+  // guardamos:
+  //   - el `timeoutId` del setTimeout activo (para cancelarlo si el
+  //     user sigue editando)
+  //   - el `requestSeq` (para descartar respuestas viejas si la edición
+  //     cambió mientras el fetch estaba en vuelo)
+  //   - el estado visual `saving: "pending" | "saving" | "saved" | "error"`
+  //     que se muestra al lado de la papelera.
+  type SaveStatus = "pending" | "saving" | "saved" | "error";
+  const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const requestSeq = useRef<Record<string, number>>({});
+  const [saveStatus, setSaveStatus] = useState<Record<string, SaveStatus>>({});
+
   // Mano de obra (edición en línea, solo Programado/Correctivo en proceso)
   const [laborCostDraft, setLaborCostDraft] = useState<number>(0);
   const [savingLabor, setSavingLabor] = useState(false);
@@ -307,8 +330,23 @@ export function MaintenanceDetailDrawer({
   const [pendingAttachment, setPendingAttachment] = useState<{ url: string; file: File } | null>(null);
   const attachmentFileRef = useRef<HTMLInputElement | null>(null);
 
+  // jul 2026 v3 — modales de confirmación (reemplazan a window.confirm).
+  // Borrar item del mantenimiento: el modal guarda el itemId a borrar
+  // y un flag si era una factura (para el texto).
+  const [confirmDeleteItem, setConfirmDeleteItem] = useState<{
+    itemId: string;
+    name: string;
+    attachmentKey: string | null | undefined;
+  } | null>(null);
+  // Borrar factura (attachment del mantenimiento).
+  const [confirmDeleteAttachment, setConfirmDeleteAttachment] = useState<{
+    a: MaintenanceAttachment & { key?: string };
+    isInvoice: boolean;
+  } | null>(null);
+
   const addNoteMut = useAddMaintenanceNote();
   const addItemsMut = useAddMaintenanceItems();
+  const updateItemMut = useUpdateMaintenanceItem();
   const deleteItemMut = useDeleteMaintenanceItem();
   const assignMut = useAssignMaintenance();
   const updateMut = useUpdateMaintenance();
@@ -359,13 +397,17 @@ export function MaintenanceDetailDrawer({
 
   useEffect(() => {
     setNewNote("");
-    setNewItem({ name: "", quantity: "1", unitCost: "", discountValue: "", ivaPercent: "15", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
-    setPendingItems([]);
+    setNewItem({ name: "", quantity: "1", unitCost: "", discountValue: "", discountType: "amount", ivaPercent: "15", photoUrl: null, uploading: false, supplierId: null });
     setIvaPercentDraft(m?.ivaPercent || 15);
     setNewExtra({ name: "", quantity: 1, unitCost: 0, photoUrl: "" });
     setNewPhotoCaption("");
     setAssignTo("");
     setLaborCostDraft(0);
+    setEditingItems({});
+    setSaveStatus({});
+    // Cancelar debounces pendientes de mantenimientos anteriores
+    Object.values(debounceTimers.current).forEach(clearTimeout);
+    debounceTimers.current = {};
   }, [id]);
 
   // Sincroniza el draft de mano de obra cuando llegan/cambian los datos
@@ -374,6 +416,35 @@ export function MaintenanceDetailDrawer({
   useEffect(() => {
     if (m) setLaborCostDraft(m.laborCost || 0);
   }, [m?.id, m?.laborCost]);
+
+  // jul 2026 v2 — Hidratar los drafts de edición de items guardados. Se
+  // inicializan UNA vez por cada itemId nuevo (no pisamos lo que el user
+  // está escribiendo). Así el operador puede tipear tranquilo sin que el
+  // refetch le borre lo que escribió.
+  useEffect(() => {
+    if (!m?.items) return;
+    setEditingItems((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const it of m.items) {
+        if (!next[it.id]) {
+          next[it.id] = {
+            name:            it.name,
+            quantity:        String(it.quantity),
+            unitCost:        String(it.unitCost),
+            discountValue:   String(it.discountValue ?? 0),
+            discountType:    (it.discountType as "amount" | "percent") ?? "amount",
+            ivaPercent:      String(it.ivaPercent ?? 15),
+            photoUrl:        it.photoUrl ?? null,
+            uploading:       false,
+            supplierId:      it.supplierId ?? null,
+          };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [m?.items]);
 
   const item: Maintenance | null = m || null;
   const events = (item?.events || []) as EventNode[];
@@ -457,6 +528,89 @@ export function MaintenanceDetailDrawer({
     }
   };
 
+  // jul 2026 v9 — Autoguardado de un item. Ahora usamos PATCH (UPDATE
+  // in-place) en vez del viejo flujo DELETE+POST, que duplicaba
+  // items cuando el invalidateQueries traía la lista antes de que
+  // el DELETE se committeara. PATCH es 1 sola operación, imposible
+  // duplicar. Si el user sigue editando, el debounce timer se resetea
+  // y este guardado nunca se dispara (lo cancela el próximo keystroke).
+  // `seq` evita pisar el resultado de un guardado más reciente.
+  const persistItem = async (itemId: string, draft: ItemDraft) => {
+    if (!item) return;
+    const seq = (requestSeq.current[itemId] ?? 0) + 1;
+    requestSeq.current[itemId] = seq;
+    setSaveStatus((p) => ({ ...p, [itemId]: "saving" }));
+    try {
+      await updateItemMut.mutateAsync({
+        id: item.id,
+        itemId,
+        item: {
+          name: draft.name,
+          quantity: Number(draft.quantity) || 0,
+          unitCost: Number(draft.unitCost) || 0,
+          discountValue: Number(draft.discountValue) || 0,
+          discountType:  draft.discountType,
+          ivaPercent:    Number(draft.ivaPercent) || 15,
+          photoUrl: draft.photoUrl,
+          supplierId: draft.supplierId,
+        },
+      });
+      // Si en el medio el user editó más, no pisamos el draft ni el status.
+      if (requestSeq.current[itemId] === seq) {
+        setSaveStatus((p) => ({ ...p, [itemId]: "saved" }));
+        // Limpiar el draft (el item mantiene su mismo id, no se recrea).
+        setEditingItems((p) => {
+          const next = { ...p };
+          delete next[itemId];
+          return next;
+        });
+        refetch();
+        // Después de 2s, limpiar el check verde (si la fila sigue visible)
+        setTimeout(() => {
+          setSaveStatus((p) => {
+            if (p[itemId] === "saved") {
+              const next = { ...p };
+              delete next[itemId];
+              return next;
+            }
+            return p;
+          });
+        }, 2000);
+      }
+    } catch (err) {
+      if (requestSeq.current[itemId] === seq) {
+        setSaveStatus((p) => ({ ...p, [itemId]: "error" }));
+        toast.error((err as Error).message);
+      }
+    }
+  };
+
+  // jul 2026 v3 — Handler de edición. Se llama desde cada onChange de
+  // los inputs de un item existente. Marca el item como "pending"
+  // (mostrando un dot ámbar), resetea el debounce timer y agenda el
+  // guardado en 800ms. Si el user sigue editando, el timer se cancela
+  // y se vuelve a agendar.
+  const handleItemEdit = (itemId: string, patch: Partial<ItemDraft>) => {
+    setEditingItems((p) => {
+      const cur = p[itemId];
+      if (!cur) return p;
+      return { ...p, [itemId]: { ...cur, ...patch } };
+    });
+    setSaveStatus((p) => ({ ...p, [itemId]: "pending" }));
+    const existing = debounceTimers.current[itemId];
+    if (existing) clearTimeout(existing);
+    debounceTimers.current[itemId] = setTimeout(() => {
+      delete debounceTimers.current[itemId];
+      // Releer el draft actual del state (puede haber cambiado
+      // múltiples veces durante el debounce).
+      setEditingItems((p) => {
+        const cur = p[itemId];
+        if (cur) persistItem(itemId, cur);
+        return p;
+      });
+    }, 800);
+  };
+
   // Facturas y evidencias: subir habilitado mientras está "En proceso" y
   // el usuario puede operar. La sección igual se muestra (solo lectura)
   // si ya hay adjuntos cargados, sin importar el estado.
@@ -464,13 +618,6 @@ export function MaintenanceDetailDrawer({
   // fotos de evidencia en "En proceso" (antes solo Programado/Correctivo).
   const canUploadAttachment = isProceso && canOperate;
   const attachments = item?.attachments || [];
-  // jul 2026 — Opcion A: solo los attachments que tienen invoiceNumber
-  // son candidatos a recibir items "agregados después" desde el form de
-  // repuestos. Los demás quedan como evidencia visual.
-  const attachmentsWithInvoice = useMemo(
-    () => attachments.filter((a) => a.invoiceNumber && String(a.invoiceNumber).trim().length > 0),
-    [attachments],
-  );
 
   const handleAttachmentUpload = async (file: File) => {
     if (!item) return;
@@ -620,6 +767,79 @@ export function MaintenanceDetailDrawer({
           onSubmit={handleAttachmentModalSubmit}
         />
       )}
+
+      {/* jul 2026 v3 — modales de confirmación (reemplazan a window.confirm). */}
+      <ConfirmModal
+        open={!!confirmDeleteItem}
+        title={`Borrar "${confirmDeleteItem?.name ?? ""}"`}
+        description={
+          confirmDeleteItem?.attachmentKey
+            ? "Esto también lo quita de la factura asociada y recalcula el total."
+            : "Esta acción no se puede deshacer."
+        }
+        confirmLabel="Borrar"
+        tone="danger"
+        onConfirm={async () => {
+          if (!item || !confirmDeleteItem) return;
+          try {
+            await deleteItemMut.mutateAsync({ id: item.id, itemId: confirmDeleteItem.itemId });
+            setEditingItems((p) => {
+              const next = { ...p };
+              delete next[confirmDeleteItem.itemId];
+              return next;
+            });
+            toast.success("Item borrado.");
+            refetch();
+          } catch (err) {
+            toast.error((err as Error).message);
+          } finally {
+            setConfirmDeleteItem(null);
+          }
+        }}
+        onClose={() => setConfirmDeleteItem(null)}
+      />
+
+      <ConfirmModal
+        open={!!confirmDeleteAttachment}
+        title={confirmDeleteAttachment?.isInvoice ? `Borrar la factura ${confirmDeleteAttachment?.a.invoiceNumber ?? ""}?` : "Quitar este adjunto?"}
+        description={
+          confirmDeleteAttachment?.isInvoice
+            ? "Esto elimina sus items del mantenimiento y la fila del ledger Finanzas."
+            : "Sus items asociados tambien se borraran del mantenimiento."
+        }
+        confirmLabel="Borrar"
+        tone="danger"
+        onConfirm={async () => {
+          if (!item || !confirmDeleteAttachment) return;
+          const a = confirmDeleteAttachment.a;
+          const isInvoice = confirmDeleteAttachment.isInvoice;
+          try {
+            const targetKey = (a as any).key ?? null;
+            const nextAtt = attachments.filter((x: any) => (x as any).key !== targetKey);
+            const itemsToKeep = (item.items || [])
+              .filter((it: any) => it.attachmentKey !== targetKey)
+              .map((it: any) => ({
+                name: it.name,
+                quantity: Number(it.quantity) || 0,
+                unitCost: Number(it.unitCost) || 0,
+                photoUrl: it.photoUrl ?? null,
+                supplierId: it.supplierId ?? null,
+                attachmentKey: it.attachmentKey ?? null,
+              }));
+            await updateMut.mutateAsync({
+              id: item.id,
+              body: { attachments: nextAtt, items: itemsToKeep },
+            });
+            toast.success(isInvoice ? "Factura y sus items borrados." : "Adjunto y sus items borrados.");
+            refetch();
+          } catch (e) {
+            toast.error((e as Error).message);
+          } finally {
+            setConfirmDeleteAttachment(null);
+          }
+        }}
+        onClose={() => setConfirmDeleteAttachment(null)}
+      />
 
       <AnimatePresence>
         {id && (
@@ -940,41 +1160,12 @@ export function MaintenanceDetailDrawer({
                                 {(a as any).key && canOperate && (
                                   <button
                                     type="button"
-                                    onClick={async () => {
+                                    onClick={() => {
                                       if (!item) return;
-                                      const msg = isInvoice
-                                        ? `Borrar la factura ${a.invoiceNumber}? Esto elimina sus items del mantenimiento y la fila del ledger Finanzas.`
-                                        : `Quitar este adjunto? Sus items asociados tambien se borraran del mantenimiento.`;
-                                      if (!confirm(msg)) return;
-                                      try {
-                                        const targetKey = (a as any).key ?? null;
-                                        const nextAtt = attachments.filter((x: any) => (x as any).key !== targetKey);
-                                        // jul 2026 v3 — REEMPLAZO ATÓMICO via PATCH: el backend
-                                        // borra todos los items del mantenimiento y re-inserta
-                                        // solo los que queremos mantener. Un solo request,
-                                        // una sola transacción en backend, recalcula la factura.
-                                        const itemsToKeep = (item.items || [])
-                                          .filter((it: any) => it.attachmentKey !== targetKey)
-                                          .map((it: any) => ({
-                                            name: it.name,
-                                            quantity: Number(it.quantity) || 0,
-                                            unitCost: Number(it.unitCost) || 0,
-                                            photoUrl: it.photoUrl ?? null,
-                                            supplierId: it.supplierId ?? null,
-                                            attachmentKey: it.attachmentKey ?? null,
-                                          }));
-                                        await updateMut.mutateAsync({
-                                          id: item.id,
-                                          body: {
-                                            attachments: nextAtt,
-                                            items: itemsToKeep,
-                                          },
-                                        });
-                                        toast.success(isInvoice ? "Factura y sus items borrados." : "Adjunto y sus items borrados.");
-                                        refetch();
-                                      } catch (e) {
-                                        toast.error((e as Error).message);
-                                      }
+                                      setConfirmDeleteAttachment({
+                                        a: a as MaintenanceAttachment & { key?: string },
+                                        isInvoice,
+                                      });
                                     }}
                                     className="rounded p-1 text-gray-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 shrink-0"
                                     title={isInvoice ? "Borrar factura" : "Quitar adjunto"}
@@ -1003,455 +1194,557 @@ export function MaintenanceDetailDrawer({
                     </Section>
                   )}
 
-                  {/* ── Repuestos / avance — Programado/Correctivo en proceso o ya completado ── */}
+                  {/* ── Repuestos / avance — Programado/Correctivo en proceso o ya completado ──
+                       v2: replica del modal de edición. Misma tabla estilo
+                       factura, mismo header "Repuestos / Insumos" + control
+                       IVA% + botón "+ Agregar" arriba a la derecha, sin
+                       columna "Factura", sin bloque "Acciones", sin preview
+                       de pendientes (el modal tampoco tiene batch: agrega
+                       de a uno y se va guardando). El toggle $/% está
+                       DENTRO de la celda Desc. de la fila de inputs. */}
                   {!isLavada && (isProceso || isCompleto) && canOperate && (
-                    <Section icon={<Package size={11} />} title="Repuestos y avance">
-                      {item.items && item.items.length > 0 && (
-                        <>
-                          {/* jul 2026 — Resumen agrupado por factura (Opcion A).
-                              Solo si hay al menos 1 attachment con invoiceNumber.
-                              Items con attachmentKey NULL quedan abajo en el
-                              listado plano. */}
-                          {attachmentsWithInvoice.length > 0 && (
-                            <div className="px-3 pb-3 pt-1">
-                              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-2">
-                                Items por factura
-                              </p>
-                              <div className="space-y-2">
-                                {attachmentsWithInvoice.map((att, idx) => {
-                                  const attKey = att.key || `att-${idx}`;
-                                  const itemsInThis = (item.items || []).filter(
-                                    (it) => it.attachmentKey === attKey,
-                                  );
-                                  const subtotal = itemsInThis.reduce(
-                                    (acc, it) => acc + Number(it.subtotal || 0),
-                                    0,
-                                  );
-                                  if (itemsInThis.length === 0) return null;
-                                  return (
-                                    <div
-                                      key={attKey}
-                                      className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-gray-50/60 dark:bg-white/[0.03] px-2.5 py-2"
-                                    >
-                                      <div className="flex items-center justify-between mb-1.5">
-                                        <p className="text-[11px] font-semibold text-gray-700 dark:text-gray-200 truncate">
-                                          {att.label}
-                                          {att.invoiceNumber ? (
-                                            <span className="ml-1 font-mono text-[10px] text-gray-500 dark:text-gray-400">
-                                              · {att.invoiceNumber}
-                                            </span>
-                                          ) : null}
-                                        </p>
-                                        <span className="text-[11px] font-bold tabular-nums text-gray-700 dark:text-gray-200">
-                                          {fmtMoney(subtotal)}
-                                        </span>
-                                      </div>
-                                      <ul className="space-y-1">
-                                        {itemsInThis.map((it) => (
-                                          <li key={it.id} className="flex items-center justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
-                                            <span className="truncate flex-1">
-                                              <span className="font-medium">{it.quantity}</span>
-                                              <span className="text-gray-400 mx-1">×</span>
-                                              <span className="truncate">{it.name}</span>
-                                            </span>
-                                            <span className="font-mono tabular-nums text-gray-500 dark:text-gray-400">
-                                              ${(Number(it.subtotal) || 0).toFixed(2)}
-                                            </span>
-                                          </li>
-                                        ))}
-                                      </ul>
-                                    </div>
-                                  );
-                                })}
-                                {/* Items sin factura asignada */}
-                                {(item.items || []).some((it) => !it.attachmentKey) && (
-                                  <p className="text-[10px] text-rose-600 dark:text-rose-300 italic">
-                                    Hay items sin factura asignada (mirá el listado plano).
-                                  </p>
-                                )}
-                              </div>
+                    <div className="rounded-xl border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.02] p-4 space-y-3">
+                      {/* Header: título a la izquierda, control IVA% + Agregar a la derecha */}
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <Package size={14} className="text-violet-600 dark:text-violet-400" />
+                          <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 uppercase tracking-wider">
+                            Repuestos / Insumos
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {isProceso && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                                % IVA
+                              </span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step="0.01"
+                                value={ivaPercentDraft}
+                                disabled={false}
+                                onChange={(e) => setIvaPercentDraft(e.target.value === "" ? 0 : Number(e.target.value))}
+                                onBlur={() => {
+                                  // Persistir el IVA% global en el mantenimiento
+                                  // al salir del input, igual que el modal.
+                                  if (item && ivaPercentDraft !== (item.ivaPercent || 15)) {
+                                    updateMut.mutateAsync({ id: item.id, body: { ivaPercent: ivaPercentDraft } })
+                                      .then(() => refetch())
+                                      .catch((e) => toast.error((e as Error).message));
+                                  }
+                                }}
+                                className="w-16 rounded-md border border-violet-200 dark:border-violet-500/30 bg-white dark:bg-[#0f1320] px-2 py-1 text-xs text-right tabular-nums text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-400/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
                             </div>
                           )}
+                          {isProceso && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!newItem.name.trim()) { toast.error("Nombre requerido"); return; }
+                                try {
+                                  // Guardar IVA% si cambió
+                                  if (item && ivaPercentDraft !== (item.ivaPercent || 15)) {
+                                    await updateMut.mutateAsync({ id: item.id, body: { ivaPercent: ivaPercentDraft } });
+                                  }
+                                  // Guardar el repuesto
+                                  await addItemsMut.mutateAsync({
+                                    id: item.id,
+                                    items: [{
+                                      name: newItem.name,
+                                      quantity: Number(newItem.quantity) || 0,
+                                      unitCost: Number(newItem.unitCost) || 0,
+                                      discountValue: Number(newItem.discountValue) || 0,
+                                      discountType:  newItem.discountType || "amount",
+                                      ivaPercent:    ivaPercentDraft,
+                                      photoUrl: newItem.photoUrl,
+                                      supplierId: newItem.supplierId,
+                                    }],
+                                  });
+                                  setNewItem({ name: "", quantity: "1", unitCost: "", discountValue: "", discountType: "amount", ivaPercent: String(ivaPercentDraft), photoUrl: null, uploading: false, supplierId: null });
+                                  toast.success("Repuesto agregado");
+                                  refetch();
+                                } catch (e) { toast.error((e as Error).message); }
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md border border-violet-200 dark:border-violet-500/40 px-2.5 py-1 text-xs font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-500/10 transition"
+                            >
+                              <Plus size={12} /> Agregar
+                            </button>
+                          )}
+                        </div>
+                      </div>
 
-                          {/* Listado plano (siempre, complementario al resumen). */}
-                          <ul className="divide-y divide-gray-100 dark:divide-white/[0.05] border-t border-gray-100 dark:border-white/[0.05]">
-                            {item.items.map((it) => (
-                              <li key={it.id} className="flex items-start gap-3 px-3 py-2.5 text-xs">
-                                {it.photoUrl ? (
-                                  <img src={it.photoUrl} alt={it.name} className="h-10 w-10 rounded-md object-cover" />
-                                ) : (
-                                  <div className="flex h-10 w-10 items-center justify-center rounded-md bg-gray-100 text-gray-400 dark:bg-white/[0.04]">
-                                    <Package size={14} />
-                                  </div>
-                                )}
-                                <div className="flex-1 min-w-0">
-                                  <p className="font-medium text-gray-800 dark:text-white truncate">{it.name}</p>
-                                  <p className="text-[11px] text-gray-400 dark:text-gray-500">
-                                    {it.supplierName ? `${it.supplierName} · ` : ""}{it.attachmentKey ? `factura · ${attachments.find((a) => (a.key || "main") === it.attachmentKey)?.invoiceNumber || ""} · ` : ""}{it.quantity} × {fmtMoney(it.unitCost)}
-                                  </p>
-                                  {/* jul 2026 v4 — badge si este item disparó una solicitud de caja chica. */}
-                                  {(it as any).financeRequestId && (
-                                    <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/30" title={`Solicitud #${(it as any).financeRequestId} enviada a finanzas`}>
-                                      💰 Solicitud #{(it as any).financeRequestId}
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-xs font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap">{fmtMoney(it.subtotal)}</p>
-                                {/* jul 2026 v3 — papelera por item. Si tiene attachmentKey, el backend
-                                    recalcula la factura dueña (la marca 'anulada' si no quedan items). */}
-                                {canOperate && (
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      if (!item) return;
-                                      if (!confirm(`Borrar "${it.name}"?${it.attachmentKey ? " Esto también lo quita de la factura asociada y recalcula el total." : ""}`)) return;
-                                      try {
-                                        await deleteItemMut.mutateAsync({ id: item.id, itemId: it.id });
-                                        toast.success("Item borrado.");
-                                        refetch();
-                                      } catch (err) {
-                                        toast.error((err as Error).message);
-                                      }
-                                    }}
-                                    className="rounded p-1 text-gray-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 shrink-0"
-                                    title="Borrar item"
+                      {/* Tabla estilo factura — mismo markup visual que el modal */}
+                      {(isProceso || (item.items && item.items.length > 0)) && (
+                        <div className="overflow-x-auto rounded-lg border border-gray-300 dark:border-white/[0.1]">
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr className="bg-gray-100 dark:bg-white/[0.05] text-[10px] font-bold uppercase tracking-wide text-gray-600 dark:text-gray-300">
+                                <th className="px-2.5 py-2 text-left border border-gray-300 dark:border-white/[0.1]">Repuesto</th>
+                                <th className="px-2.5 py-2 text-left border border-gray-300 dark:border-white/[0.1] hidden md:table-cell">Proveedor</th>
+                                <th className="px-2.5 py-2 text-right border border-gray-300 dark:border-white/[0.1]">Cant.</th>
+                                <th className="px-2.5 py-2 text-right border border-gray-300 dark:border-white/[0.1]">Precio unit.</th>
+                                <th className="px-2.5 py-2 text-right border border-gray-300 dark:border-white/[0.1]">Desc.</th>
+                                <th className="px-2.5 py-2 text-right border border-gray-300 dark:border-white/[0.1]">Subtotal</th>
+                                <th className="px-2.5 py-2 text-right border border-gray-300 dark:border-white/[0.1]">IVA</th>
+                                <th className="px-2.5 py-2 text-right border border-gray-300 dark:border-white/[0.1]">Total</th>
+                                {isProceso && <th className="px-2 py-2 border border-gray-300 dark:border-white/[0.1] w-8" />}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {/* Filas guardadas — v2: ahora EDITABLES.
+                                  Cada item tiene su propio set de inputs
+                                  (calcados al modal de edición). El cálculo
+                                  en vivo usa `computeItemTotals` para que
+                                  Subtotal/IVA/Total reflejen los cambios
+                                  aunque el backend no haya recalculado.
+                                  El botón "Guardar" hace DELETE del viejo +
+                                  POST del nuevo con los valores nuevos. */}
+                              {item.items && item.items.map((it) => {
+                                const draft: ItemDraft = editingItems[it.id] ?? {
+                                  name: it.name, quantity: String(it.quantity), unitCost: String(it.unitCost),
+                                  discountValue: String(it.discountValue ?? 0), discountType: (it.discountType as "amount" | "percent") ?? "amount",
+                                  ivaPercent: String(it.ivaPercent ?? 15), photoUrl: it.photoUrl ?? null,
+                                  uploading: false, supplierId: it.supplierId ?? null,
+                                };
+                                const totals = computeItemTotals(draft);
+                                return (
+                                  <tr
+                                    key={it.id}
+                                    className="align-middle bg-white dark:bg-transparent"
                                   >
-                                    <Trash2 size={11} />
-                                  </button>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
-                        </>
-                      )}
+                                    {/* Repuesto + foto — input editable */}
+                                    <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] min-w-[160px]">
+                                      {isProceso ? (
+                                        <>
+                                          <input
+                                            placeholder="Nombre del repuesto"
+                                            value={draft.name}
+                                            onChange={(e) => handleItemEdit(it.id, { name: e.target.value })}
+                                            className="w-full min-w-0 bg-transparent border-0 px-0 py-0.5 text-xs text-gray-800 dark:text-white placeholder:text-gray-300 focus:outline-none focus:ring-1 focus:ring-violet-400/50 focus:rounded-sm"
+                                          />
+                                          <div className="mt-1">
+                                            {draft.photoUrl ? (
+                                              <div className="relative inline-block h-7 w-7 rounded overflow-hidden border border-gray-200 dark:border-white/[0.08]">
+                                                <img src={draft.photoUrl} alt="" className="h-full w-full object-cover" />
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleItemEdit(it.id, { photoUrl: null })}
+                                                  className="absolute top-0 right-0 bg-black/60 text-white p-0.5"
+                                                  title="Quitar foto"
+                                                >
+                                                  <XCircle size={9} />
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <label className="inline-flex items-center gap-1 cursor-pointer rounded border border-dashed border-gray-300 dark:border-white/[0.08] px-1.5 py-0.5 text-[9px] text-gray-400 dark:text-gray-500 hover:border-violet-400 dark:hover:border-violet-500/50 transition">
+                                                <ImagePlus size={9} /> {draft.uploading ? "Subiendo…" : "Foto"}
+                                                <input
+                                                  type="file"
+                                                  accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,application/pdf"
+                                                  disabled={draft.uploading}
+                                                  className="hidden"
+                                                  onChange={async (e) => {
+                                                    const f = e.target.files?.[0];
+                                                    if (!f) return;
+                                                    handleItemEdit(it.id, { uploading: true });
+                                                    try {
+                                                      const url = await uploadPartPhoto(f, session.companyId || undefined);
+                                                      handleItemEdit(it.id, { uploading: false, photoUrl: url });
+                                                      toast.success("Foto subida");
+                                                    } catch (err) {
+                                                      toast.error((err as Error).message);
+                                                      handleItemEdit(it.id, { uploading: false });
+                                                    }
+                                                  }}
+                                                />
+                                              </label>
+                                            )}
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <div className="flex items-center gap-1.5">
+                                            {draft.photoUrl ? (
+                                              <img src={draft.photoUrl} alt="" className="h-7 w-7 rounded object-cover border border-gray-200 dark:border-white/[0.08] shrink-0" />
+                                            ) : (
+                                              <div className="h-7 w-7 rounded bg-gray-100 dark:bg-white/[0.05] flex items-center justify-center shrink-0">
+                                                <Package size={10} className="text-gray-400" />
+                                              </div>
+                                            )}
+                                            <span className="truncate text-gray-800 dark:text-white">{draft.name}</span>
+                                          </div>
+                                        </>
+                                      )}
+                                      {(it as any).financeRequestId && (
+                                        <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/30" title={`Solicitud #${(it as any).financeRequestId} enviada a finanzas`}>
+                                          💰 Solicitud #{(it as any).financeRequestId}
+                                        </span>
+                                      )}
+                                    </td>
+                                    {/* Proveedor */}
+                                    <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] hidden md:table-cell min-w-[130px]">
+                                      {isProceso ? (
+                                        <select
+                                          value={draft.supplierId || ""}
+                                          onChange={(e) => handleItemEdit(it.id, { supplierId: e.target.value || null })}
+                                          className="w-full min-w-0 bg-transparent border-0 px-0 py-0.5 text-xs text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-violet-400/50 focus:rounded-sm"
+                                        >
+                                          <option value="">Sin proveedor</option>
+                                          {suppliers.map((s) => (
+                                            <option key={s.id} value={s.id}>{s.name}</option>
+                                          ))}
+                                        </select>
+                                      ) : (
+                                        <span className="text-gray-700 dark:text-gray-200">{it.supplierName || <span className="text-gray-400">—</span>}</span>
+                                      )}
+                                    </td>
+                                    {/* Cantidad */}
+                                    <td className="px-2 py-1.5 border border-gray-200 dark:border-white/[0.07] w-14">
+                                      {isProceso ? (
+                                        <input
+                                          type="number" min={0} step="0.01"
+                                          value={draft.quantity}
+                                          onChange={(e) => handleItemEdit(it.id, { quantity: e.target.value })}
+                                          className="w-full min-w-0 bg-transparent border-0 px-0 py-0.5 text-xs text-right tabular-nums text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-violet-400/50 focus:rounded-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                        />
+                                      ) : (
+                                        <span className="block text-right tabular-nums text-gray-800 dark:text-white">{Number(draft.quantity) || 0}</span>
+                                      )}
+                                    </td>
+                                    {/* Precio unitario */}
+                                    <td className="px-2 py-1.5 border border-gray-200 dark:border-white/[0.07] w-20">
+                                      {isProceso ? (
+                                        <input
+                                          type="number" min={0} step="0.01"
+                                          value={draft.unitCost}
+                                          onChange={(e) => handleItemEdit(it.id, { unitCost: e.target.value })}
+                                          className="w-full min-w-0 bg-transparent border-0 px-0 py-0.5 text-xs text-right tabular-nums text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-violet-400/50 focus:rounded-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                        />
+                                      ) : (
+                                        <span className="block text-right tabular-nums text-gray-800 dark:text-white">{fmtMoney(Number(draft.unitCost) || 0)}</span>
+                                      )}
+                                    </td>
+                                    {/* Desc. con toggle $/%, igual al modal */}
+                                    <td className="px-2 py-1.5 border border-gray-200 dark:border-white/[0.07] w-24">
+                                      {isProceso ? (
+                                        <div className="flex items-center gap-1">
+                                          <input
+                                            type="number" min={0}
+                                            max={draft.discountType === "percent" ? 100 : undefined}
+                                            step="0.01" placeholder="0"
+                                            value={draft.discountValue}
+                                            onChange={(e) => handleItemEdit(it.id, { discountValue: e.target.value })}
+                                            className="w-full min-w-0 bg-transparent border-0 px-0 py-0.5 text-xs text-right tabular-nums text-gray-800 dark:text-white placeholder:text-gray-300 focus:outline-none focus:ring-1 focus:ring-violet-400/50 focus:rounded-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => handleItemEdit(it.id, { discountType: draft.discountType === "amount" ? "percent" : "amount" })}
+                                            className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-500/20 dark:text-fuchsia-300 hover:bg-fuchsia-200 dark:hover:bg-fuchsia-500/30 transition shrink-0"
+                                            title={draft.discountType === "percent" ? "Cambiar a descuento en $" : "Cambiar a descuento en %"}
+                                          >
+                                            {draft.discountType === "percent" ? "%" : "$"}
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <span className="block text-right tabular-nums text-gray-700 dark:text-gray-300">
+                                          {Number(draft.discountValue) > 0 ? (
+                                            <>
+                                              <span className="inline-block mr-1 px-1 py-0.5 text-[9px] font-bold rounded bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-500/20 dark:text-fuchsia-300 align-middle">
+                                                {draft.discountType === "percent" ? "%" : "$"}
+                                              </span>
+                                              {fmtMoney(Number(draft.discountValue))}
+                                            </>
+                                          ) : (
+                                            <span className="text-gray-400">—</span>
+                                          )}
+                                        </span>
+                                      )}
+                                    </td>
+                                    {/* Subtotal (calculado en vivo con computeItemTotals) */}
+                                    <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] text-right tabular-nums text-gray-700 dark:text-gray-300">
+                                      {fmtMoney(totals.subtotal)}
+                                    </td>
+                                    {/* IVA (calculado) */}
+                                    <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] text-right tabular-nums text-gray-700 dark:text-gray-300">
+                                      {fmtMoney(totals.ivaAmount)}
+                                    </td>
+                                    {/* Total (calculado) */}
+                                    <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] text-right tabular-nums font-bold text-violet-700 dark:text-violet-300">
+                                      {fmtMoney(totals.total)}
+                                    </td>
+                                    {/* Acciones: indicador de autoguardado + papelera (modal) */}
+                                    {isProceso && (
+                                      <td className="px-1.5 py-1.5 border border-gray-200 dark:border-white/[0.07]">
+                                        <div className="flex items-center gap-1">
+                                          {/* Indicador de autoguardado (pending/saving/saved/error) */}
+                                          {saveStatus[it.id] === "pending" && (
+                                            <span title="Cambios sin guardar (se guardan automáticamente)" className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
+                                          )}
+                                          {saveStatus[it.id] === "saving" && (
+                                            <Loader2 size={11} className="animate-spin text-violet-500 shrink-0" title="Guardando…" />
+                                          )}
+                                          {saveStatus[it.id] === "saved" && (
+                                            <span title="Guardado" className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-emerald-100 dark:bg-emerald-500/20 shrink-0">
+                                              <Check size={10} className="text-emerald-600 dark:text-emerald-300" />
+                                            </span>
+                                          )}
+                                          {saveStatus[it.id] === "error" && (
+                                            <AlertCircle size={11} className="text-rose-500 shrink-0" title="Error al guardar" />
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              if (!item) return;
+                                              setConfirmDeleteItem({
+                                                itemId: it.id,
+                                                name: it.name,
+                                                attachmentKey: it.attachmentKey ?? null,
+                                              });
+                                            }}
+                                            className="rounded p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 shrink-0"
+                                            title="Borrar item"
+                                          >
+                                            <Trash2 size={11} />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    )}
+                                  </tr>
+                                );
+                              })}
 
-                      {isProceso && (
-                        <div className="space-y-2 px-3 py-2.5">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">Acciones</p>
-
-                          {/* ── Batch: lista de repuestos pendientes + formulario de nuevo repuesto ── */}
-                          <div className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] overflow-hidden">
-
-                            {/* Encabezado con botón guardar (visible solo si hay pendientes) */}
-                            {pendingItems.length > 0 && (
-                              <div className="flex items-center justify-between gap-3 border-b border-gray-100 dark:border-white/[0.06] bg-sky-50 dark:bg-sky-500/10 px-3 py-2">
-                                <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-700 dark:text-sky-300">
-                                  <Package size={12} />
-                                  <span>{pendingItems.length} repuesto{pendingItems.length !== 1 ? "s" : ""} pendiente{pendingItems.length !== 1 ? "s" : ""}</span>
-                                </div>
-                                <button
-                                  onClick={async () => {
-                                    try {
-                                      // Guardar IVA% primero (si cambió)
-                                      if (ivaPercentDraft !== (item.ivaPercent || 15)) {
-                                        await updateMut.mutateAsync({ id: item.id, body: { ivaPercent: ivaPercentDraft } });
-                                      }
-                                      // Guardar los repuestos
-                                      await addItemsMut.mutateAsync({
-                                        id: item.id,
-                                        items: pendingItems.map((it) => ({
-                                          name: it.name,
-                                          quantity: Number(it.quantity) || 0,
-                                          unitCost: Number(it.unitCost) || 0,
-                                          // jul 2026 v4-c — IMPORTE del descuento (no %).
-                                          discountValue: Number(it.discountValue) || 0,
-                                          ivaPercent:    Number(it.ivaPercent) || 15,
-                                          photoUrl: it.photoUrl,
-                                          supplierId: it.supplierId,
-                                          // jul 2026 — Opcion A: vinculo lógico a
-                                          // la factura (attachment con invoiceNumber).
-                                          // Null si no hay factura asignada.
-                                          attachmentKey: it.attachmentKey,
-                                        })),
-                                      });
-                                      setPendingItems([]);
-                                      setNewItem({ name: "", quantity: "1", unitCost: "", discountValue: "", ivaPercent: "15", photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
-                                      toast.success(`${pendingItems.length} repuesto${pendingItems.length !== 1 ? "s" : ""} agregado${pendingItems.length !== 1 ? "s" : ""}`);
-                                      refetch();
-                                    } catch (e) { toast.error((e as Error).message); }
-                                  }}
-                                  className="inline-flex items-center gap-1.5 rounded-md bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-semibold text-white transition shadow-sm"
-                                >
-                                  <CheckCircle2 size={12} />
-                                  Guardar todos
-                                </button>
-                              </div>
-                            )}
-
-                            {/* Formulario: agregar nuevo repuesto */}
-                            <div className="px-3 py-2.5 space-y-2.5">
-                              <div className="flex items-center justify-between gap-3">
-                                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
-                                  {pendingItems.length === 0 ? "Agregar repuestos" : "Agregar más"}
-                                </p>
-                                {/* jul 2026 v5 — IVA% GLOBAL: ya no se repite por cada
-                                    item. Un único cuadrito arriba a la derecha aplica
-                                    a TODOS los repuestos que se agreguen. Al apretar
-                                    "Agregar" se snapshotea en el item pendiente. */}
-                                <div className="flex items-center gap-2">
-                                  <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                                    IVA %
-                                  </label>
-                                  <input
-                                    type="text"
-                                    inputMode="decimal"
-                                    value={String(ivaPercentDraft)}
-                                    onChange={(e) => {
-                                      const raw = e.target.value.replace(/[^0-9.]/g, "");
-                                      setIvaPercentDraft(Number(raw) || 0);
-                                    }}
-                                    className="w-16 rounded-md border border-sky-300 dark:border-sky-500/40 bg-white dark:bg-gray-800 px-2 py-1 text-[11px] font-semibold text-sky-700 dark:text-sky-300 text-center focus:outline-none focus:ring-1 focus:ring-sky-400/40 tabular-nums"
-                                    title="Este % se aplica a todos los repuestos que agregues"
-                                  />
-                                </div>
-                              </div>
-
-                              {/* Línea única: foto · nombre · proveedor · factura · cant · precio · desc · + Agregar.
-                                  jul 2026 v5 — mismo layout que MaintenanceFormModal. Sin
-                                  input de IVA por item (ya está arriba como global). */}
-                              <div className="grid grid-cols-12 gap-2 text-xs">
-                                {/* Foto */}
-                                <div className="col-span-1 shrink-0">
-                                  {newItem.photoUrl ? (
-                                    <div className="relative h-9 w-9 rounded-md overflow-hidden border border-gray-200 dark:border-white/[0.08]">
-                                      <img src={newItem.photoUrl} alt="" className="h-full w-full object-cover" />
+                              {/* Fila de inputs (solo en proceso) — calcada al modal */}
+                              {isProceso && (
+                                <tr className="align-middle bg-violet-50/40 dark:bg-violet-500/[0.04]">
+                                  {/* Repuesto + foto */}
+                                  <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] min-w-[160px]">
+                                    <input
+                                      placeholder="Nombre del repuesto"
+                                      value={newItem.name}
+                                      onChange={(e) => setNewItem((p) => ({ ...p, name: e.target.value }))}
+                                      className="w-full min-w-0 bg-transparent border-0 px-0 py-0.5 text-xs text-gray-800 dark:text-white placeholder:text-gray-300 dark:placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-violet-400/50 focus:rounded-sm"
+                                    />
+                                    <div className="mt-1">
+                                      {newItem.photoUrl ? (
+                                        <div className="relative inline-block h-7 w-7 rounded overflow-hidden border border-gray-200 dark:border-white/[0.08]">
+                                          <img src={newItem.photoUrl} alt="" className="h-full w-full object-cover" />
+                                          <button
+                                            type="button"
+                                            onClick={() => setNewItem((p) => ({ ...p, photoUrl: null }))}
+                                            className="absolute top-0 right-0 bg-black/60 text-white p-0.5"
+                                            title="Quitar foto"
+                                          >
+                                            <XCircle size={9} />
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <label className="inline-flex items-center gap-1 cursor-pointer rounded border border-dashed border-gray-300 dark:border-white/[0.08] px-1.5 py-0.5 text-[9px] text-gray-400 dark:text-gray-500 hover:border-violet-400 dark:hover:border-violet-500/50 transition">
+                                          <ImagePlus size={9} /> {newItem.uploading ? "Subiendo…" : "Foto"}
+                                          <input
+                                            type="file"
+                                            accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,application/pdf"
+                                            disabled={newItem.uploading}
+                                            className="hidden"
+                                            onChange={async (e) => {
+                                              const f = e.target.files?.[0];
+                                              if (!f) return;
+                                              setNewItem((p) => ({ ...p, uploading: true }));
+                                              try {
+                                                const url = await uploadPartPhoto(f, session.companyId || undefined);
+                                                setNewItem((p) => ({ ...p, photoUrl: url }));
+                                                toast.success("Foto subida");
+                                              } catch (err) {
+                                                toast.error((err as Error).message);
+                                              } finally {
+                                                setNewItem((p) => ({ ...p, uploading: false }));
+                                              }
+                                            }}
+                                          />
+                                        </label>
+                                      )}
+                                    </div>
+                                  </td>
+                                  {/* Proveedor */}
+                                  <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] hidden md:table-cell min-w-[130px]">
+                                    <select
+                                      value={newItem.supplierId || ""}
+                                      onChange={(e) => setNewItem((p) => ({ ...p, supplierId: e.target.value || null }))}
+                                      className="w-full min-w-0 bg-transparent border-0 px-0 py-0.5 text-xs text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-violet-400/50 focus:rounded-sm"
+                                    >
+                                      <option value="">Sin proveedor</option>
+                                      {suppliers.map((s) => (
+                                        <option key={s.id} value={s.id}>{s.name}</option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                  {/* Cantidad */}
+                                  <td className="px-2 py-1.5 border border-gray-200 dark:border-white/[0.07] w-14">
+                                    <input
+                                      type="number" min={0} step="0.01" placeholder="1"
+                                      value={newItem.quantity}
+                                      onChange={(e) => setNewItem((p) => ({ ...p, quantity: e.target.value }))}
+                                      className="w-full min-w-0 bg-transparent border-0 px-0 py-0.5 text-xs text-right tabular-nums text-gray-800 dark:text-white placeholder:text-gray-300 focus:outline-none focus:ring-1 focus:ring-violet-400/50 focus:rounded-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                    />
+                                  </td>
+                                  {/* Precio unitario */}
+                                  <td className="px-2 py-1.5 border border-gray-200 dark:border-white/[0.07] w-20">
+                                    <input
+                                      type="number" min={0} step="0.01" placeholder="0.00"
+                                      value={newItem.unitCost}
+                                      onChange={(e) => setNewItem((p) => ({ ...p, unitCost: e.target.value }))}
+                                      className="w-full min-w-0 bg-transparent border-0 px-0 py-0.5 text-xs text-right tabular-nums text-gray-800 dark:text-white placeholder:text-gray-300 focus:outline-none focus:ring-1 focus:ring-violet-400/50 focus:rounded-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                    />
+                                  </td>
+                                  {/* Desc. con toggle $/%, igual al modal */}
+                                  <td className="px-2 py-1.5 border border-gray-200 dark:border-white/[0.07] w-24">
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        type="number" min={0}
+                                        max={newItem.discountType === "percent" ? 100 : undefined}
+                                        step="0.01" placeholder="0"
+                                        value={newItem.discountValue}
+                                        onChange={(e) => setNewItem((p) => ({ ...p, discountValue: e.target.value }))}
+                                        className="w-full min-w-0 bg-transparent border-0 px-0 py-0.5 text-xs text-right tabular-nums text-gray-800 dark:text-white placeholder:text-gray-300 focus:outline-none focus:ring-1 focus:ring-violet-400/50 focus:rounded-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                      />
                                       <button
                                         type="button"
-                                        onClick={() => setNewItem((p) => ({ ...p, photoUrl: null }))}
-                                        className="absolute top-0 right-0 bg-black/60 text-white p-0.5"
-                                        title="Quitar foto"
+                                        onClick={() => setNewItem((p) => ({ ...p, discountType: p.discountType === "amount" ? "percent" : "amount" }))}
+                                        className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-500/20 dark:text-fuchsia-300 hover:bg-fuchsia-200 dark:hover:bg-fuchsia-500/30 transition shrink-0"
+                                        title={newItem.discountType === "percent" ? "Cambiar a descuento en $" : "Cambiar a descuento en %"}
                                       >
-                                        <X size={9} />
+                                        {newItem.discountType === "percent" ? "%" : "$"}
                                       </button>
                                     </div>
-                                  ) : (
-                                    <label className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-dashed border-gray-300 dark:border-white/[0.08] text-gray-400 hover:border-sky-400 hover:text-sky-500 transition">
-                                      {newItem.uploading ? (
-                                        <Loader2 size={13} className="animate-spin" />
-                                      ) : (
-                                        <Camera size={13} />
-                                      )}
-                                      <input
-                                        type="file"
-                                        accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif"
-                                        disabled={newItem.uploading}
-                                        className="hidden"
-                                        onChange={async (e) => {
-                                          const f = e.target.files?.[0];
-                                          if (!f) return;
-                                          setNewItem((p) => ({ ...p, uploading: true }));
-                                          try {
-                                            const url = await uploadPartPhoto(f, session.companyId || undefined);
-                                            setNewItem((p) => ({ ...p, photoUrl: url }));
-                                            toast.success("Foto subida");
-                                          } catch (err) {
-                                            toast.error((err as Error).message);
-                                          } finally {
-                                            setNewItem((p) => ({ ...p, uploading: false }));
-                                          }
-                                        }}
-                                      />
-                                    </label>
-                                  )}
-                                </div>
-
-                                {/* Nombre */}
-                                <input
-                                  placeholder="Nombre del repuesto"
-                                  value={newItem.name}
-                                  onChange={(e) => setNewItem((p) => ({ ...p, name: e.target.value }))}
-                                  className="col-span-3 min-w-0 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
-                                />
-
-                                {/* Proveedor */}
-                                <select
-                                  value={newItem.supplierId || ""}
-                                  onChange={(e) => setNewItem((p) => ({ ...p, supplierId: e.target.value || null }))}
-                                  className="col-span-2 min-w-0 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-2 text-sm text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
-                                >
-                                  <option value="">Sin proveedor</option>
-                                  {suppliers.map((s) => (
-                                    <option key={s.id} value={s.id}>{s.name}</option>
-                                  ))}
-                                </select>
-
-                                {/* Factura (Opcion A) */}
-                                <select
-                                  value={newItem.attachmentKey || ""}
-                                  onChange={(e) => setNewItem((p) => ({ ...p, attachmentKey: e.target.value || null }))}
-                                  disabled={attachmentsWithInvoice.length === 0}
-                                  title={
-                                    attachmentsWithInvoice.length === 0
-                                      ? "Subí una factura con número en 'Facturas y evidencias' para poder asignar este repuesto."
-                                      : "A qué factura pertenece este repuesto"
-                                  }
-                                  className="col-span-2 min-w-0 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-2 text-sm text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-400/40 disabled:opacity-50"
-                                >
-                                  <option value="">Sin factura</option>
-                                  {attachmentsWithInvoice.map((a, idx) => (
-                                    <option key={a.key || a.url || idx} value={a.key || `att-${idx}`}>
-                                      {a.label}
-                                      {a.invoiceNumber ? ` · ${a.invoiceNumber}` : ""}
-                                    </option>
-                                  ))}
-                                </select>
-
-                                {/* Cantidad */}
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  placeholder="Cant."
-                                  value={newItem.quantity}
-                                  onChange={(e) => setNewItem((p) => ({ ...p, quantity: e.target.value }))}
-                                  className="col-span-1 min-w-0 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-2 text-sm text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-sky-400/40 tabular-nums text-right"
-                                  title="Cantidad"
-                                />
-
-                                {/* Precio unitario (USD) */}
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  placeholder="Precio"
-                                  value={newItem.unitCost}
-                                  onChange={(e) => setNewItem((p) => ({ ...p, unitCost: e.target.value }))}
-                                  className="col-span-1 min-w-0 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-2 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40 tabular-nums text-right"
-                                  title="Precio unitario (USD)"
-                                />
-
-                                {/* jul 2026 v4-c — Descuento (importe monetario) */}
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  placeholder="$ Desc."
-                                  value={newItem.discountValue}
-                                  // jul 2026 v5 — normalización de coma/punto. Antes
-                                  // se guardaba el string crudo y "0,50" → NaN al
-                                  // hacer Number() → 0, lo que hacía que el
-                                  // descuento pareciera "no guardarse".
-                                  onChange={(e) => {
-                                    const v = e.target.value.replace(/[^0-9.,]/g, "").replace(",", ".");
-                                    setNewItem((p) => ({ ...p, discountValue: v }));
-                                  }}
-                                  className="col-span-1 min-w-0 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-800 px-2.5 py-2 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40 tabular-nums text-right"
-                                  title="Descuento (importe monetario, ej: 0.50)"
-                                />
-
-                                {/* Agregar a la lista */}
-                                <button
-                                  onClick={() => {
-                                    if (!newItem.name.trim()) { toast.error("Nombre requerido"); return; }
-                                    // jul 2026 v5 — al pushear, snapshot del IVA global.
-                                    // (Antes se guardaba el del input por item, pero como
-                                    // ahora NO hay input por item, usamos el global.)
-                                    // También normalizamos qty/unitCost/desc.
-                                    const toNum = (s: string) => {
-                                      const v = Number(String(s).replace(",", "."));
-                                      return Number.isFinite(v) ? v : 0;
-                                    };
-                                    const pending = {
-                                      ...newItem,
-                                      quantity:      String(toNum(newItem.quantity) || 1),
-                                      unitCost:      String(toNum(newItem.unitCost)),
-                                      discountValue: String(toNum(newItem.discountValue)),
-                                      ivaPercent:    String(ivaPercentDraft),
-                                    };
-                                    setPendingItems((prev) => [...prev, pending]);
-                                    setNewItem({ name: "", quantity: "1", unitCost: "", discountValue: "", ivaPercent: String(ivaPercentDraft), photoUrl: null, uploading: false, supplierId: null, attachmentKey: null });
-                                    toast.success("Repuesto agregado a la lista");
-                                  }}
-                                  className="col-span-1 inline-flex items-center justify-center gap-1 rounded-md border border-sky-200 dark:border-sky-500/40 bg-sky-50 dark:bg-sky-500/10 hover:bg-sky-100 dark:hover:bg-sky-500/20 px-2.5 py-2 text-xs font-semibold text-sky-700 dark:text-sky-300 transition whitespace-nowrap"
-                                >
-                                  <Plus size={11} /> Agregar
-                                </button>
-                              </div>
-
-                              {/* Preview de pendientes */}
-                              {pendingItems.length > 0 && (
-                                <ul className="mt-1 divide-y divide-gray-100 dark:divide-white/[0.05] rounded-md border border-gray-100 dark:border-white/[0.05] overflow-hidden">
-                                  {pendingItems.map((it, idx) => (
-                                    <li key={idx} className="flex items-center gap-2 bg-white dark:bg-white/[0.02] px-2.5 py-2 text-xs">
-                                      {it.photoUrl ? (
-                                        <img src={it.photoUrl} alt="" className="h-7 w-7 rounded object-cover shrink-0" />
-                                      ) : (
-                                        <div className="h-7 w-7 rounded bg-gray-100 dark:bg-white/[0.05] flex items-center justify-center shrink-0">
-                                          <Package size={10} className="text-gray-400" />
-                                        </div>
-                                      )}
-                                      <span className="flex-1 truncate font-medium text-gray-700 dark:text-gray-200">{it.name}</span>
-                                      {it.supplierId && (
-                                        <span className="text-[10px] text-gray-400">{suppliers.find(s => s.id === it.supplierId)?.name}</span>
-                                      )}
-                                      <span className="text-[10px] text-gray-500 tabular-nums">
-                                        {it.quantity} × {fmtMoney(Number(it.unitCost) || 0)}
-                                        {Number(it.discountValue) > 0 && (
-                                          <span className="ml-1 text-rose-600 dark:text-rose-400">- {fmtMoney(Number(it.discountValue))}</span>
-                                        )}
-                                        {Number(it.ivaPercent) > 0 && (
-                                          <span className="ml-1 text-blue-600 dark:text-blue-400">+ {it.ivaPercent}% IVA</span>
-                                        )}
-                                      </span>
-                                      {/* jul 2026 v4-c — Total: subtotal (post descuento)
-                                          + IVA. Subtotal = quantity * unitCost - discountValue. */}
-                                      {(() => {
-                                        const qty   = Number(it.quantity) || 0;
-                                        const cost  = Number(it.unitCost) || 0;
-                                        const disc  = Math.max(0, Math.min(qty * cost, Number(it.discountValue) || 0));
-                                        const sub   = Math.max(0, qty * cost - disc);
-                                        const iva   = (Number(it.ivaPercent) || 0) / 100;
-                                        const total = sub + sub * iva;
-                                        return (
-                                          <span className="font-semibold text-gray-700 dark:text-gray-200 tabular-nums">
-                                            {fmtMoney(total)}
-                                          </span>
-                                        );
-                                      })()}
-                                      <button
-                                        type="button"
-                                        onClick={() => setPendingItems((prev) => prev.filter((_, i) => i !== idx))}
-                                        className="shrink-0 rounded p-0.5 text-gray-400 hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-500/10 transition"
-                                        title="Quitar"
-                                      >
-                                        <X size={11} />
-                                      </button>
-                                    </li>
-                                  ))}
-                                </ul>
+                                  </td>
+                                  {/* Subtotal (calculado) */}
+                                  <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] text-right tabular-nums text-gray-700 dark:text-gray-300">
+                                    {(() => {
+                                      const qty = Number(newItem.quantity) || 0;
+                                      const unit = Number(newItem.unitCost) || 0;
+                                      const pre = qty * unit;
+                                      const dVal = Number(newItem.discountValue) || 0;
+                                      const dAmt = newItem.discountType === "percent"
+                                        ? pre * Math.min(100, Math.max(0, dVal)) / 100
+                                        : Math.min(pre, Math.max(0, dVal));
+                                      return fmtMoney(pre - dAmt);
+                                    })()}
+                                  </td>
+                                  {/* IVA (calculado) */}
+                                  <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] text-right tabular-nums text-gray-700 dark:text-gray-300">
+                                    {(() => {
+                                      const qty = Number(newItem.quantity) || 0;
+                                      const unit = Number(newItem.unitCost) || 0;
+                                      const pre = qty * unit;
+                                      const dVal = Number(newItem.discountValue) || 0;
+                                      const dAmt = newItem.discountType === "percent"
+                                        ? pre * Math.min(100, Math.max(0, dVal)) / 100
+                                        : Math.min(pre, Math.max(0, dVal));
+                                      const sub = pre - dAmt;
+                                      const iva = sub * ivaPercentDraft / 100;
+                                      return fmtMoney(iva);
+                                    })()}
+                                  </td>
+                                  {/* Total (calculado) */}
+                                  <td className="px-2.5 py-1.5 border border-gray-200 dark:border-white/[0.07] text-right tabular-nums font-bold text-violet-700 dark:text-violet-300">
+                                    {(() => {
+                                      const qty = Number(newItem.quantity) || 0;
+                                      const unit = Number(newItem.unitCost) || 0;
+                                      const pre = qty * unit;
+                                      const dVal = Number(newItem.discountValue) || 0;
+                                      const dAmt = newItem.discountType === "percent"
+                                        ? pre * Math.min(100, Math.max(0, dVal)) / 100
+                                        : Math.min(pre, Math.max(0, dVal));
+                                      const sub = pre - dAmt;
+                                      const iva = sub * ivaPercentDraft / 100;
+                                      return fmtMoney(sub + iva);
+                                    })()}
+                                  </td>
+                                  {/* (botón Agregar está arriba en el header) */}
+                                  {isProceso && <td className="px-1.5 py-1.5 border border-gray-200 dark:border-white/[0.07]" />}
+                                </tr>
                               )}
-                            </div>
-                          </div>
-
-                          {/* Agregar nota */}
-                          <details className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-2.5">
-                            <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300 inline-flex items-center gap-1.5">
-                              <Plus size={12} /> Agregar nota
-                            </summary>
-                            <div className="mt-2 flex flex-col sm:flex-row sm:items-end gap-2">
-                              <textarea
-                                rows={2}
-                                placeholder="Escribí una nota…"
-                                value={newNote}
-                                onChange={(e) => setNewNote(e.target.value)}
-                                className="flex-1 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5 text-xs resize-none"
-                              />
-                              <button
-                                onClick={async () => {
-                                  if (!newNote.trim()) { toast.error("Nota requerida"); return; }
-                                  try {
-                                    await addNoteMut.mutateAsync({ id: item.id, text: newNote });
-                                    setNewNote("");
-                                    toast.success("Nota agregada");
-                                    refetch();
-                                  } catch (e) { toast.error((e as Error).message); }
-                                }}
-                                className="rounded-md bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-medium text-white transition shrink-0"
-                              >
-                                Guardar nota
-                              </button>
-                            </div>
-                          </details>
+                            </tbody>
+                          </table>
                         </div>
                       )}
-                    </Section>
+
+                      {/* Subtotal / Descuento / IVA / Total — igual al modal, debajo de la tabla.
+                          v2: usa `aggregateTotals` con los drafts actuales (no con los
+                          valores del backend) para que refleje los cambios en vivo.
+                          `aggregateTotals` SIEMPRE está en sync con los Subtotal/IVA/
+                          Total de cada fila porque cada fila usa la misma lib. */}
+                      {item.items && item.items.length > 0 && (() => {
+                        // Mezclar: para los items con draft, usar el draft. Para los
+                        // items sin draft (recién hidratándose), usar el item crudo.
+                        const itemsForAgg = item.items.map((it) => {
+                          const d = editingItems[it.id];
+                          return d ?? {
+                            quantity: it.quantity, unitCost: it.unitCost,
+                            discountValue: it.discountValue ?? 0, discountType: it.discountType ?? "amount",
+                            ivaPercent: it.ivaPercent ?? 15,
+                          };
+                        });
+                        const agg = aggregateTotals(itemsForAgg);
+                        const itemsTot = agg.grandTotal;
+                        return (
+                          <div className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] px-4 py-3 space-y-1.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-gray-500 dark:text-gray-400">Subtotal</span>
+                              <span className="tabular-nums text-gray-800 dark:text-white">{fmtMoney(agg.grandSubtotal)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-gray-500 dark:text-gray-400">Descuento</span>
+                              <span className="tabular-nums text-rose-600 dark:text-rose-400">
+                                - {fmtMoney(agg.totalDiscount)}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-gray-500 dark:text-gray-400">IVA ({ivaPercentDraft}%)</span>
+                              <span className="tabular-nums text-gray-800 dark:text-white">{fmtMoney(agg.grandIva)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-t border-gray-200 dark:border-white/[0.06] pt-1.5 mt-1.5">
+                              <span className="text-sm font-bold text-gray-800 dark:text-white">Total</span>
+                              <span className="text-base font-bold tabular-nums text-violet-700 dark:text-violet-300">{fmtMoney(itemsTot)}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Agregar nota */}
+                      {isProceso && (
+                        <details className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-2.5">
+                          <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300 inline-flex items-center gap-1.5">
+                            <Plus size={12} /> Agregar nota
+                          </summary>
+                          <div className="mt-2 flex flex-col sm:flex-row sm:items-end gap-2">
+                            <textarea
+                              rows={2}
+                              placeholder="Escribí una nota…"
+                              value={newNote}
+                              onChange={(e) => setNewNote(e.target.value)}
+                              className="flex-1 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1.5 text-xs resize-none"
+                            />
+                            <button
+                              onClick={async () => {
+                                if (!newNote.trim()) { toast.error("Nota requerida"); return; }
+                                try {
+                                  await addNoteMut.mutateAsync({ id: item.id, text: newNote });
+                                  setNewNote("");
+                                  toast.success("Nota agregada");
+                                  refetch();
+                                } catch (e) { toast.error((e as Error).message); }
+                              }}
+                              className="rounded-md bg-sky-600 hover:bg-sky-700 px-3 py-1.5 text-xs font-medium text-white transition shrink-0"
+                            >
+                              Guardar nota
+                            </button>
+                          </div>
+                        </details>
+                      )}
+                    </div>
                   )}
 
                   {/* ── Lavada: adicionales y fotos ── */}

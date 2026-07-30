@@ -6,9 +6,17 @@ import { useAssets } from "../../hooks/useAssets";
 // item, así que el match con `assets.find()` es redundante.
 import { Search, Loader2, Wrench, Zap, Clock, AlertTriangle, RotateCcw, ChevronLeft, ChevronRight } from "lucide-react";
 
-// Lazy-load del modal real de mantenimiento
-const MaintenanceFormModal = lazy(() =>
-  import("../../pages/Mantenimientos/components/MaintenanceFormModal").then((m) => ({ default: m.MaintenanceFormModal ?? m.default }))
+// jul 2026 v3 — Usamos el MaintenanceDetailDrawer (drawer de detalle)
+// en vez del MaintenanceFormModal (modal de edición). El drawer:
+//   - Muestra el detalle del mantenimiento (PDF, costo, asignación, etc).
+//   - Tiene botones "Reprogramar" y "Finalizar" abajo.
+//   - Cuando el mantenimiento está "En proceso" / "En curso", "Finalizar"
+//     lo cierra. Cuando está "Programado", el drawer sirve para
+//     "Iniciar" el mantenimiento.
+// El MISMO drawer se usa en /mantenimientos, así que el comportamiento
+// es consistente entre el listado y el dashboard.
+const MaintenanceDetailDrawer = lazy(() =>
+  import("../../pages/Mantenimientos/components/MaintenanceDetailDrawer").then((m) => ({ default: m.MaintenanceDetailDrawer ?? m.default }))
 );
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
@@ -143,8 +151,9 @@ export function MaintenanceTable() {
 
   const [search, setSearch]       = useState("");
   const [tab, setTab]             = useState<TabKey>("todos");
-  // Mantenimiento seleccionado para abrir el modal completo
-  const [editing, setEditing]     = useState<typeof maintenances[0] | null>(null);
+  // ID del mantenimiento seleccionado (el drawer hace su propio fetch
+  // por id). Usamos string|null para matchear la firma del drawer.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const assetLabel = (assetId: string) => {
     const a = assets.find((x) => x.id === assetId);
@@ -345,7 +354,7 @@ export function MaintenanceTable() {
                     <td className="px-3 py-3">
                       <button
                         type="button"
-                        onClick={() => setEditing(m)}
+                        onClick={() => setSelectedId(m.id)}
                         className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 dark:border-violet-500/30 bg-violet-50 dark:bg-violet-500/10 px-2.5 py-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-500/20 transition"
                       >
                         <Wrench size={11} />
@@ -353,7 +362,7 @@ export function MaintenanceTable() {
                           ? "Finalizar"
                           : m.status === "Correccion" || m.status === "Corrección"
                           ? "Corregir"
-                          : "Ver / editar"}
+                          : "Iniciar"}
                       </button>
                     </td>
                   </tr>
@@ -425,13 +434,33 @@ export function MaintenanceTable() {
         )}
       </div>
 
-      {/* ── Modal real de mantenimiento ────────────────────────────────────── */}
-      {editing && (
+      {/* ── Drawer de detalle del mantenimiento ────────────────────────────── */}
+      {/* jul 2026 v3 — Usamos el MISMO drawer que el módulo de
+          /mantenimientos. Según el estado del mantenimiento:
+            - "En proceso" / "En curso" → muestra el botón "Finalizar".
+            - "Programado" → muestra el botón "Iniciar".
+            - "Correccion" / "Corrección" → muestra "Corregir".
+          El drawer se renderiza lazy (solo cuando se necesita).
+          Le pasamos callbacks vacíos para onEdit/onTake/onStart/
+          onFinalize/onReschedule/onRequestCorrection: el dashboard
+          no necesita manejar esas acciones, las hace el drawer
+          internamente con su propio flow. */}
+      {selectedId && (
         <Suspense fallback={null}>
-          <MaintenanceFormModal
-            open={!!editing}
-            maintenance={editing as any}
-            onClose={() => setEditing(null)}
+          <MaintenanceDetailDrawer
+            id={selectedId}
+            isFullAccess={true}
+            meId={null}
+            onClose={() => setSelectedId(null)}
+            onEdit={() => { /* noop */ }}
+            onTake={() => { /* noop */ }}
+            onStart={() => { /* noop */ }}
+            onFinalize={() => {
+              // Cuando finaliza, refrescar la lista del dashboard.
+              setSelectedId(null);
+            }}
+            onReschedule={() => { /* noop */ }}
+            onRequestCorrection={() => { /* noop */ }}
           />
         </Suspense>
       )}

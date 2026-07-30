@@ -206,6 +206,11 @@ function TabBodyRouter(props: {
   canReplenish: boolean;
   canSeeAllRequests: boolean;
   canSeeAllVouchers: boolean;
+  // jul 2026 v9 — Lista de cuentas activas. Se pasa a
+  // `RequestsTab` para que el modal de detalle pueda mostrar
+  // el saldo disponible de la sede y bloquear aprobación como
+  // "Caja chica" si no hay caja en la sede.
+  accounts: PettyCashAccountWithSite[];
 }) {
   const {
     tab, setTab,
@@ -233,7 +238,7 @@ function TabBodyRouter(props: {
         canApprove={canApprove}
         canCreate={canCreate}
         canSeeAll={canSeeAllRequests}
-        accounts={accounts}
+        accounts={props.accounts}
       />
     );
   }
@@ -265,6 +270,42 @@ export function CajaChicaPage() {
   const { session } = useAuth();
   const { can } = usePermissions();
   const [searchParams, setSearchParams] = useSearchParams();
+  // jul 2026 v9 — Lista de cuentas activas de la empresa. Se pasa
+  // a `TabBodyRouter` (y de ahí a `RequestsTab`) para que el modal
+  // de detalle pueda mostrar el saldo de la sede y bloquear la
+  // aprobación como "Caja chica" si no hay caja en la sede. La
+  // cuenta se carga UNA VEZ al montar el componente.
+  const [accounts, setAccounts] = useState<PettyCashAccountWithSite[]>([]);
+
+  // Cargamos las cuentas activas al montar (o cuando cambia la
+  // sesión). El endpoint `petty-cash` sin `siteId` devuelve la
+  // lista de cuentas + sitios disponibles. Si el user no tiene
+  // caja en ninguna sede, queda array vacío (no es error).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!session?.companyId) return;
+      try {
+        const res = await fetch(
+          `/api/company/${session.companyId}/finance/petty-cash`,
+          { credentials: "include" },
+        );
+        if (!res.ok) return;
+        const json = await res.json();
+        if (cancelled) return;
+        // La respuesta puede tener shape `{accounts, availableSites}`
+        // o `{account, movements, summary}` si solo hay una cuenta
+        // por sede. Cubrimos ambos.
+        if (Array.isArray(json?.accounts)) {
+          setAccounts(json.accounts as PettyCashAccountWithSite[]);
+        }
+      } catch {
+        // Silencioso: si falla el fetch, `accounts` queda en [] y
+        // la UI sigue funcionando.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [session?.companyId]);
 
   // jul 2026 v4-b — Permisos granulares por pestaña interna.
   // Las nuevas acciones "ver_solicitudes", "ver_vales", "ver_historial",
@@ -359,6 +400,7 @@ export function CajaChicaPage() {
         canReplenish={canReplenish}
         canSeeAllRequests={canSeeAllRequests}
         canSeeAllVouchers={canSeeAllVouchers}
+        accounts={accounts}
       />
     </div>
   );

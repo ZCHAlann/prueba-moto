@@ -235,8 +235,29 @@ export function useMotorFormOptions() {
 
 // ─── Asignaciones ─────────────────────────────────────────────────────────
 
-export interface AssignmentsOptionAsset  { id: string; plate: string | null; name: string; }
-export interface AssignmentsOptionDriver { id: string; firstName: string; lastName: string; }
+// jul 2026 — Tipos extendidos. El endpoint /assignments/form-options
+// devuelve los datos COMPLETOS del vehículo (marca, modelo, año,
+// color, placa, categoría) y la cédula del chofer, para que el wizard
+// pueda autollenar sin tener que hacer fetches extra a /assets/:id
+// o /drivers/:id.
+export interface AssignmentsOptionAsset  {
+  id:       string;
+  plate:    string | null;
+  name:     string;
+  brand:    string | null;
+  model:    string | null;
+  year:     string | null;
+  color:    string | null;
+  /** Categoría del activo (camioneta, sedan, etc). */
+  category: string | null;
+}
+export interface AssignmentsOptionDriver {
+  id:        string;
+  firstName: string;
+  lastName:  string;
+  /** Cédula del chofer (columna `dni` de company_drivers). */
+  dni:       string | null;
+}
 export interface AssignmentsFormOptions {
   assets:  AssignmentsOptionAsset[];
   drivers: AssignmentsOptionDriver[];

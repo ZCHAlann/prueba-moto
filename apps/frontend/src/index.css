@@ -325,6 +325,19 @@ layer(base);
 }
 
 @layer utilities {
+  /* jul 2026 v3 — Shimmer animation para los skeletons del submódulo
+     "Data" de Mantenimientos. Se usa en `pages/Mantenimientos/Data/`
+     (SkeletonDetail, SkeletonGrid, SkeletonModuleList). El bloque
+     `.animate-shimmer` mueve el gradient de izquierda a derecha en
+     1.4s lineal e infinito. */
+  @keyframes shimmer {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+  .animate-shimmer {
+    animation: shimmer 1.4s linear infinite;
+  }
+
   /* For Remove Date Icon */
   input[type="date"]::-webkit-inner-spin-button,
   input[type="time"]::-webkit-inner-spin-button,

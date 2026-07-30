@@ -109,6 +109,11 @@ export function MaintenanceListTab({ title, onReauthorize, mode = "active" }: Pr
     mode === "historial" ? "Completado" : "all",
   );
   const [catChip, setCatChip] = useState<"all" | string>("all");
+  // jul 2026 v9 — sub-categoría seleccionada en el filtro. Se
+  // resetea a "all" cada vez que cambia `catChip`. Si la cat no
+  // tiene subs, el dropdown no se renderiza (ver bloque de filtros
+  // más abajo). El id es el ID server-assigned (maint-subcat-N).
+  const [subChip, setSubChip] = useState<"all" | string>("all");
   const [typeChip, setTypeChip] = useState<"all" | "Correctivo" | "Programado">("all");
 
   // jul 2026 — Default del filtro de fecha: HOY (ambos extremos iguales).
@@ -128,6 +133,13 @@ export function MaintenanceListTab({ title, onReauthorize, mode = "active" }: Pr
   }, []);
   const [from, setFrom] = useState<string>(todayIso);
   const [to,   setTo]   = useState<string>(todayIso);
+
+  // jul 2026 v9 — Si cambia la categoría, limpiamos la sub-cat
+  // seleccionada. Si la cat nueva no tiene subs (o es "all"),
+  // subChip queda en "all" y el FilterDropdown se oculta solo.
+  useEffect(() => {
+    setSubChip("all");
+  }, [catChip]);
 
   // jul 2026 — El scope (Todos vs Míos) NO se manda al backend ni se
   // expone en la UI. La razón: el backend ya filtra por rol —
@@ -212,12 +224,13 @@ export function MaintenanceListTab({ title, onReauthorize, mode = "active" }: Pr
     }
     if (catChip !== "all")  f.category = catChip;
     if (typeChip !== "all") f.type     = typeChip;
+    if (subChip !== "all")  f.subcategoryId = subChip;
     if (search) f.q = search;
     if (from)   f.from = from;
     if (to)     f.to   = to;
     if (assetIdFromUrl) f.assetId = assetIdFromUrl;
     return f;
-  }, [mode, subTab, catChip, typeChip, search, from, to, assetIdFromUrl, page]);
+  }, [mode, subTab, catChip, typeChip, subChip, search, from, to, assetIdFromUrl, page]);
 
   const clearAssetFilter = () => {
     const next = new URLSearchParams(searchParams);
@@ -264,12 +277,13 @@ export function MaintenanceListTab({ title, onReauthorize, mode = "active" }: Pr
     const f: Record<string, string | number> = { pageSize: 100 };
     if (catChip !== "all")  f.category = catChip;
     if (typeChip !== "all") f.type     = typeChip;
+    if (subChip !== "all")  f.subcategoryId = subChip;
     if (search) f.q = search;
     if (from)   f.from = from;
     if (to)     f.to   = to;
     if (assetIdFromUrl) f.assetId = assetIdFromUrl;
     return f;
-  }, [catChip, typeChip, search, from, to, assetIdFromUrl]);
+  }, [catChip, typeChip, subChip, search, from, to, assetIdFromUrl]);
 
   const { data: kpiProgramado  } = useMaintenancesList({ ...kpiBaseFilters, status: "Programado"   });
   const { data: kpiEnProceso   } = useMaintenancesList({ ...kpiBaseFilters, status: "En proceso"  });
@@ -380,6 +394,23 @@ export function MaintenanceListTab({ title, onReauthorize, mode = "active" }: Pr
     }
     return base;
   }, [allCategories, customCats]);
+
+  // jul 2026 v9 — Subs disponibles para la cat seleccionada. Solo
+  // se renderiza el FilterDropdown si hay al menos una. Si la cat
+  // es built-in o "all", el array queda vacío.
+  const subOptions: Array<{ id: string; label: string; dot: React.ReactNode }> = useMemo(() => {
+    if (catChip === "all") return [];
+    const parent = customCats.find((c) => c.key === catChip);
+    if (!parent || !parent.subcategories || parent.subcategories.length === 0) return [];
+    return [
+      { id: "all", label: "Todas las sub-categorías", dot: <span className="h-1.5 w-1.5 rounded-full bg-gray-400" /> },
+      ...parent.subcategories.map((s) => ({
+        id: s.id,
+        label: `${parent.label} · ${s.label}`,
+        dot: <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: s.color }} />,
+      })),
+    ];
+  }, [catChip, customCats]);
 
   // Modals & drawer
   const [modalOpen, setModalOpen] = useState(false);
@@ -608,6 +639,19 @@ export function MaintenanceListTab({ title, onReauthorize, mode = "active" }: Pr
           options={categoryChips.map((c) => ({ id: c.id, label: c.label, dot: c.dot }))}
         />
 
+        {/* jul 2026 v9 — Sub-categoría. Solo se muestra si la cat
+            elegida tiene subs. El label "Subcategoría" sin sub en
+            mantenimiento activo; el dropdown muestra el formato
+            "Padre · Sub" para que se entienda la jerarquía. */}
+        {subOptions.length > 0 && (
+          <FilterDropdown
+            label="Subcategoría"
+            value={subChip}
+            onChange={(v) => { setSubChip(v); setPage(1); }}
+            options={subOptions}
+          />
+        )}
+
         {/* Tipo */}
         <FilterDropdown
           label="Tipo"
@@ -632,21 +676,23 @@ export function MaintenanceListTab({ title, onReauthorize, mode = "active" }: Pr
           </p>
         </div>
         <div className="flex flex-col sm:flex-row sm:items-end gap-2">
-          {/* jul 2026 — Picker único "Día" (from=to). El usuario quiere
-              la lista filtrada por día; un solo picker es más claro que
-              Desde/Hasta. Si necesitás un rango, editá la URL con
-              ?from=YYYY-MM-DD&to=YYYY-MM-DD. */}
+          {/* jul 2026 v3 — Rango de días (Desde / Hasta). El backend
+              acepta `?from=YYYY-MM-DD&to=YYYY-MM-DD` y los interpreta
+              como días calendario en zona EC. Si solo se setea uno,
+              el otro se computa solo (default: últimos 30 días). */}
           <DatePicker
             compact
-            label="Día"
+            label="Desde"
             value={from}
-            onChange={(v) => {
-              setFrom(v);
-              setTo(v);
-              setPage(1);
-            }}
+            onChange={(v) => { setFrom(v); setPage(1); }}
           />
-          {from !== todayIso && (
+          <DatePicker
+            compact
+            label="Hasta"
+            value={to}
+            onChange={(v) => { setTo(v); setPage(1); }}
+          />
+          {(from !== todayIso || to !== todayIso) && (
             <button
               type="button"
               onClick={() => { setFrom(todayIso); setTo(todayIso); setPage(1); }}
@@ -806,20 +852,63 @@ export function MaintenanceListTab({ title, onReauthorize, mode = "active" }: Pr
                             // valor libre legado), caemos al default gris.
                             // Si la key matchea con una custom, mostramos el
                             // color guardado en la categoría.
+                            //
+                            // jul 2026 v9 — Si el mantenimiento tiene
+                            // sub-categoría asignada, la mostramos a la
+                            // derecha separada por un middot, con su
+                            // propio dot. El color de la sub-cat pisa
+                            // al de la cat padre solo si tiene uno
+                            // custom (sino hereda el dot de la cat).
                             const customForThisRow = customCats.find((c) => c.key === m.category);
                             const dotStyle = customForThisRow
                               ? { backgroundColor: customForThisRow.color }
                               : undefined;
+                            // Buscamos la sub-cat por id O por key string
+                            // (depende de si el backend devolvió el id
+                            // numérico o la key legacy).
+                            const subForThisRow = m.subcategoryId
+                              ? (() => {
+                                  for (const c of customCats) {
+                                    const s = (c.subcategories ?? []).find((x) => x.id === m.subcategoryId);
+                                    if (s) return s;
+                                  }
+                                  return null;
+                                })()
+                              : (m.subcategory
+                                ? (() => {
+                                    for (const c of customCats) {
+                                      const s = (c.subcategories ?? []).find((x) => x.key === m.subcategory);
+                                      if (s) return s;
+                                    }
+                                    return null;
+                                  })()
+                                : null);
+                            const subDotStyle = subForThisRow
+                              ? { backgroundColor: subForThisRow.color }
+                              : null;
                             return (
-                              <span
-                                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium ${cat.cls}`}
-                              >
+                              <div className="inline-flex flex-col items-start gap-0.5">
                                 <span
-                                  className={`h-1.5 w-1.5 rounded-full ${customForThisRow ? "" : cat.dot}`}
-                                  style={dotStyle}
-                                />
-                                {cat.label}
-                              </span>
+                                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium ${cat.cls}`}
+                                >
+                                  <span
+                                    className={`h-1.5 w-1.5 rounded-full ${customForThisRow ? "" : cat.dot}`}
+                                    style={dotStyle}
+                                  />
+                                  {cat.label}
+                                </span>
+                                {subForThisRow && m.subcategoryLabel && (
+                                  <span className="inline-flex items-center gap-1 pl-1 text-[10px] text-gray-500 dark:text-gray-400">
+                                    <span
+                                      className="h-1 w-1 rounded-full"
+                                      style={subDotStyle ?? undefined}
+                                    />
+                                    <span className="truncate max-w-[180px]">
+                                      {cat.label} · {m.subcategoryLabel}
+                                    </span>
+                                  </span>
+                                )}
+                              </div>
                             );
                           })()}
                         </td>

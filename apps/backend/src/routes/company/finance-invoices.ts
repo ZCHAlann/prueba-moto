@@ -735,8 +735,19 @@ router.get(
           ? `%${req.query.supplier.trim()}%`
           : null;
 
-      const limit  = clampInt(req.query.limit,  50, 1, 200);
-      const offset = clampInt(req.query.offset,  0, 0, 1_000_000);
+      // jul 2026 v9 — Paginación canónica del proyecto
+      // (parsePageParams). Antes el endpoint usaba `limit`/`offset`
+      // hardcodeados (default 50) y el frontend mandaba `page`/
+      // `pageSize` — los dos sistemas NO se traducían, entonces
+      // la paginación del frontend era ignorada y siempre se
+      // veían las primeras 50 filas. Ahora alineamos con
+      // `/stats` y `/drill` que ya usan este parser.
+      // Default 10, cap 100, igual que en el resto del módulo.
+      const { page, pageSize, offset } = parsePageParams(
+        req.query as Record<string, unknown>,
+        { pageSize: 10, maxPageSize: 100 },
+      );
+      const limit = pageSize;
 
       // ── Búsqueda libre (jul 2026): jul 2026 v3 ─────────────────────────
       // Coincidencia case-insensitive en invoice_number, supplier_name,
@@ -954,23 +965,24 @@ router.get(
         if (format === 'pdf')  { await sendExportPdf(res, flatRows, filename, companyId); return; }
       }
 
-      res.json({
-        total,
-        rows: rows.map((r) => {
-          const t = r.invoiceTypeId != null ? typeMap.get(r.invoiceTypeId) : undefined;
-          const s = r.supplierId    != null ? supplierMap.get(r.supplierId) : undefined;
-          return serializeInvoice(
-            r,
-            refMap.get(`${r.sourceModule}:${r.sourceEntityId}`) ?? null,
-            {
-              invoiceTypeName:     t?.name ?? null,
-              invoiceTypeIsActive: t?.isActive ?? null,
-              supplierCanonicalName: s?.name ?? null,
-              supplierNit:         s?.nit ?? null,
-            },
-          );
-        }),
+      // jul 2026 v9 — Devolvemos la shape canónica de paginación
+      // (page, pageSize, total, totalPages) para que el frontend
+      // pueda calcular el paginador sin asumir nada.
+      const payload = rows.map((r) => {
+        const t = r.invoiceTypeId != null ? typeMap.get(r.invoiceTypeId) : undefined;
+        const s = r.supplierId    != null ? supplierMap.get(r.supplierId) : undefined;
+        return serializeInvoice(
+          r,
+          refMap.get(`${r.sourceModule}:${r.sourceEntityId}`) ?? null,
+          {
+            invoiceTypeName:     t?.name ?? null,
+            invoiceTypeIsActive: t?.isActive ?? null,
+            supplierCanonicalName: s?.name ?? null,
+            supplierNit:         s?.nit ?? null,
+          },
+        );
       });
+      res.json(buildPageResponse(payload, total, page, pageSize));
     } catch (err) {
       next(err);
     }

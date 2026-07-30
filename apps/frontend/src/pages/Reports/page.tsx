@@ -33,6 +33,7 @@ import {
   Bell,
   Package,
   ShieldCheck,
+  ListChecks,
   Wrench,
   BarChart3,
   Table2,
@@ -47,9 +48,11 @@ import { ExportToolbar } from "../../components/ui/export-toolbar/ExportToolbar"
 import { GroupedExportButton } from "./GroupedExportButton";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import { EstadisticasTab } from "./EstadisticasTab";
+import { FiltradoTab } from "./FiltradoTab";
 import { ReportDetailDrawer } from "./ReportDetailDrawer";
 import { useAuth } from "../../context/AuthContext";
 import { useFinance } from "../../hooks/useFinance";
+import { usePermissions } from "../../hooks/usePermissions";
 import type { PettyCashClosedAccountRow } from "../../hooks/useFinance";
 import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
 
@@ -152,6 +155,30 @@ function isInRange(value: string | undefined, range: DateRange) {
   const d = value.slice(0, 10);
   if (range.from && d < range.from) return false;
   if (range.to && d > range.to) return false;
+  return true;
+}
+
+// jul 2026 v9 — Para mantenimiento, el "rango del día" debe
+// matchear la fecha PROGRAMADA (scheduledFor) O la fecha REAL de
+// trabajo (completedAt). Un mantenimiento programado para mañana
+// pero completado HOY debe aparecer en la lista de HOY también.
+// Si `otherDate` está seteada, la fila entra si CUALQUIERA de
+// las dos fechas cae en el rango.
+function isInRangeDual(
+  primary:   string | undefined,
+  otherDate: string | undefined,
+  range:     DateRange,
+) {
+  if (!primary && !otherDate) return true;
+  const d1 = primary   ? String(primary).slice(0, 10)   : null;
+  const d2 = otherDate ? String(otherDate).slice(0, 10) : null;
+  // La fila entra si scheduledFor está en rango OR completedAt
+  // está en rango. Si alguno de los dos está vacío, usamos el
+  // otro como único criterio (cae al comportamiento legacy).
+  if (d1 && isInRange(d1, range)) return true;
+  if (d2 && isInRange(d2, range)) return true;
+  // Si los dos están seteados pero ninguno matchea, no entra.
+  if (d1 || d2) return false;
   return true;
 }
 
@@ -678,6 +705,8 @@ function GroupedReportTable({
   onRowClick,
   categories,
   enableCategoryFilter = false,
+  subcategories,
+  enableSubcategoryFilter = false,
   types,
   enableTypeFilter = false,
 }: {
@@ -695,6 +724,20 @@ function GroupedReportTable({
   categories?: { key: string; label: string }[];
   /** Si true, cada carpetita muestra su propio dropdown de categoría. */
   enableCategoryFilter?: boolean;
+  /** jul 2026 v9 — Sub-categorías disponibles para el dropdown
+   *  por carpetita. Se filtran por la categoría elegida
+   *  (groupCategoryFilter). */
+  subcategories?: Array<{
+    /** categoryKey (padre) → sub-key (hija). Usamos categoryKey
+     *  para agrupar las subs y mostrar solo las que
+     *  correspondan a la cat seleccionada. */
+    parentKey: string;
+    key: string;
+    label: string;
+  }>;
+  /** Si true, cada carpetita muestra su propio dropdown de
+   *  sub-categoría (filtrado por la categoría elegida). */
+  enableSubcategoryFilter?: boolean;
   /** Tipos disponibles (Programado / Correctivo / Lavada) para el dropdown por carpetita. */
   types?: { key: string; label: string }[];
   /** Si true, cada carpetita muestra su propio dropdown de tipo. */
@@ -706,6 +749,8 @@ function GroupedReportTable({
   const [groupCategoryFilter, setGroupCategoryFilter] = useState<Record<string, string>>({});
   // Filtro de tipo (Programado/Correctivo/Lavada) POR carpetita, misma mecánica.
   const [groupTypeFilter, setGroupTypeFilter] = useState<Record<string, string>>({});
+  // jul 2026 v9 — Filtro de sub-categoría POR carpetita.
+  const [groupSubcategoryFilter, setGroupSubcategoryFilter] = useState<Record<string, string>>({});
   const p = PALETTE[palette];
 
   const groups = useMemo(() => groupRowsByKey(rows, groupKey), [rows, groupKey]);
@@ -720,6 +765,7 @@ function GroupedReportTable({
     setOpenGroup(null);
     setGroupCategoryFilter({});
     setGroupTypeFilter({});
+    setGroupSubcategoryFilter({});
   }, [rows]);
 
   function toggle(g: string) {
@@ -728,10 +774,22 @@ function GroupedReportTable({
 
   function setCategoryFor(groupValue: string, catKey: string) {
     setGroupCategoryFilter((prev) => ({ ...prev, [groupValue]: catKey }));
+    // jul 2026 v9 — Al cambiar la categoría, reseteamos la
+    // sub-categoría del mismo grupo (la sub anterior ya no
+    // matchea con la nueva cat).
+    setGroupSubcategoryFilter((prev) => {
+      if (!(groupValue in prev)) return prev;
+      const { [groupValue]: _drop, ...rest } = prev;
+      return rest;
+    });
   }
 
   function setTypeFor(groupValue: string, typeKey: string) {
     setGroupTypeFilter((prev) => ({ ...prev, [groupValue]: typeKey }));
+  }
+
+  function setSubcategoryFor(groupValue: string, subKey: string) {
+    setGroupSubcategoryFilter((prev) => ({ ...prev, [groupValue]: subKey }));
   }
 
   // Exporta solo este grupo a PDF/Excel. Recibe las filas YA filtradas
@@ -815,16 +873,40 @@ function GroupedReportTable({
               const subtotals = sumNumericCols(groupRows, numericCols);
               const groupId = `group-${moduleId}-${groupValue.replace(/\s+/g, "_")}`;
 
-              // ── Filtros de categoría y tipo aplicados SOLO al contenido expandido ──
+              // ── Filtros de categoría, sub-categoría y tipo aplicados SOLO al contenido expandido ──
               const catFilter  = groupCategoryFilter[groupValue] ?? "all";
               const typeFilter = groupTypeFilter[groupValue] ?? "all";
+              // jul 2026 v9 — sub-categoría. Si hay cat elegida y
+              // subs definidas para esa cat, el dropdown muestra
+              // solo las subs de esa cat. Si no hay cat elegida,
+              // igual funciona: usamos el parentKey de cada sub
+              // para matchear con categoryKey de la fila.
+              const subFilter  = groupSubcategoryFilter[groupValue] ?? "all";
               const filteredGroupRows = groupRows.filter((r) => {
                 if (enableCategoryFilter && catFilter !== "all" && String(r.categoryKey ?? "") !== catFilter) return false;
                 if (enableTypeFilter && typeFilter !== "all" && String(r.kind ?? "") !== typeFilter) return false;
+                // jul 2026 v9 — filtro por sub. Si subFilter es
+                // "all", no filtramos. Si hay sub elegida, matchea
+                // por subcategoryKey. Si la fila no tiene sub y el
+                // user eligió una sub específica, queda fuera.
+                if (enableSubcategoryFilter && subFilter !== "all") {
+                  if (String(r.subcategoryKey ?? "") !== subFilter) return false;
+                }
                 return true;
               });
               const filteredSubtotals = sumNumericCols(filteredGroupRows, numericCols);
-              const anyFilterActive = (enableCategoryFilter && catFilter !== "all") || (enableTypeFilter && typeFilter !== "all");
+              // jul 2026 v9 — Subs disponibles para esta carpetita.
+              // Si hay cat elegida, filtramos por parentKey; si no,
+              // mostramos todas (caso sin filtro de cat).
+              const subsForGroup = enableSubcategoryFilter
+                ? (subcategories ?? []).filter((s) =>
+                    catFilter === "all" ? true : s.parentKey === catFilter,
+                  )
+                : [];
+              const anyFilterActive =
+                (enableCategoryFilter && catFilter !== "all") ||
+                (enableSubcategoryFilter && subFilter !== "all") ||
+                (enableTypeFilter && typeFilter !== "all");
 
               return (
                 <div
@@ -907,9 +989,10 @@ function GroupedReportTable({
                         transition={{ duration: 0.22, ease: "easeInOut" }}
                         className="overflow-hidden"
                       >
-                        {/* ── Dropdowns de Tipo y Categoría — solo si están habilitados ── */}
+                        {/* ── Dropdowns de Tipo, Categoría y Sub-categoría — solo si están habilitados ── */}
                         {((enableTypeFilter && types && types.length > 0) ||
-                          (enableCategoryFilter && categories && categories.length > 0)) && (
+                          (enableCategoryFilter && categories && categories.length > 0) ||
+                          (enableSubcategoryFilter && subcategories && subcategories.length > 0)) && (
                           <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 dark:border-white/[0.05] bg-gray-50/60 dark:bg-white/[0.02] px-4 py-2">
                             {enableTypeFilter && types && types.length > 0 && (
                               <div className="flex items-center gap-2">
@@ -953,6 +1036,35 @@ function GroupedReportTable({
                               </div>
                             )}
 
+                            {/* jul 2026 v9 — Sub-categoría. Solo se
+                                renderiza si `enableSubcategoryFilter`
+                                y hay subs. Si NO hay cat elegida,
+                                mostramos todas las subs de la
+                                empresa; si hay cat elegida, solo
+                                las de esa cat. */}
+                            {enableSubcategoryFilter && subcategories && subcategories.length > 0 && subsForGroup.length > 0 && (
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                                  Subcategoría
+                                </span>
+                                <select
+                                  value={subFilter}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => setSubcategoryFor(groupValue, e.target.value)}
+                                  className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/40 dark:border-white/[0.06] dark:bg-white/[0.04] dark:text-gray-200"
+                                >
+                                  <option value="all">
+                                    {catFilter === "all" ? "Todas las sub-categorías" : "Todas (de esta cat.)"}
+                                  </option>
+                                  {subsForGroup.map((s) => (
+                                    <option key={`${s.parentKey}::${s.key}`} value={s.key}>
+                                      {s.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+
                             {anyFilterActive && (
                               <span className="text-[11px] text-gray-400 dark:text-gray-500">
                                 {filteredGroupRows.length} de {groupRows.length}
@@ -983,7 +1095,48 @@ function GroupedReportTable({
                                       numericCols.includes(col.key) ? "text-right tabular-nums" : ""
                                     }`}
                                   >
-                                    {String(row[col.key] ?? "—")}
+                                    {col.key === "category" && row.categoryConfig ? (
+                                      (() => {
+                                        const cfg = row.categoryConfig as {
+                                          key: string;
+                                          label: string;
+                                          dot: string;
+                                          cls: string;
+                                          customColor: string | null;
+                                        };
+                                        // jul 2026 v9 — Si la fila tiene
+                                        // sub-categoría, la apilamos debajo
+                                        // del pill de categoría. Antes solo
+                                        // se mostraba el label de la cat
+                                        // padre, lo que ocultaba la jerarquía.
+                                        const sub = row.subcategory as string | null;
+                                        const subColor = row.subcategoryColor as string | null;
+                                        return (
+                                          <div className="flex flex-col items-start gap-0.5">
+                                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${cfg.cls}`}>
+                                              <span
+                                                className={`h-1.5 w-1.5 rounded-full shrink-0 ${cfg.dot}`}
+                                                style={cfg.customColor ? { backgroundColor: cfg.customColor } : undefined}
+                                              />
+                                              <span className="whitespace-normal">{cfg.label}</span>
+                                            </span>
+                                            {sub && (
+                                              <span className="inline-flex items-center gap-1 pl-1 text-[10px] text-gray-500 dark:text-gray-400">
+                                                <span
+                                                  className="h-1 w-1 rounded-full"
+                                                  style={subColor ? { backgroundColor: subColor } : undefined}
+                                                />
+                                                <span className="truncate max-w-[200px]">
+                                                  {cfg.label} · {sub}
+                                                </span>
+                                              </span>
+                                            )}
+                                          </div>
+                                        );
+                                      })()
+                                    ) : (
+                                      String(row[col.key] ?? "—")
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -1071,6 +1224,13 @@ function GroupedReportTable({
 export function ReportsPage() {
   const { session } = useAuth();
   const isAdmin = !!session && ADMIN_ROLES.has(session.role as string);
+  // jul 2026 v1 — `can` para el permiso granular del nuevo tab
+  // "Filtrado" (`reportes.filtrado.ver`). isAdmin bypasea el check
+  // (ver usePermissions), pero el botón se muestra dentro de un
+  // `isAdmin &&` wrapper para que solo admins/owners lo vean. Si en
+  // el futuro querés permitir a operadores ver este tab, sacá el
+  // `isAdmin &&` del wrapper y dejá solo `can(...)`.
+  const { can } = usePermissions();
   // jul 2026 v6 — Filtramos los módulos del sidebar interno de
   // /reportes según los módulos activos de la empresa. Si `enabledModules`
   // jul 2026 v9 — Filtrado por módulos de la empresa. Aplica SIEMPRE
@@ -1173,7 +1333,11 @@ export function ReportsPage() {
   const [maintCategory, setMaintCategory] = useState<"all" | "Correctivo" | "Programado" | "Lavada">("all");
   const [maintWorkshopId,  setMaintWorkshopId]  = useState<number | null>(null);
   const [maintSupplierId,  setMaintSupplierId]  = useState<number | null>(null);
-  const [view, setView] = useState<"tablas" | "estadisticas">("tablas");
+  // jul 2026 v1 — "filtrado" es el nuevo tab del Centro de Reportes.
+  // Cascada de 6 niveles (vehículo → módulo → categoría → año → mes →
+  // semana → día) con tabla de detalles al final. Permiso granular
+  // `reportes.filtrado.ver` lo activa/desactiva.
+  const [view, setView] = useState<"tablas" | "estadisticas" | "filtrado">("tablas");
 
   // Fila actualmente seleccionada en la tabla. `null` = drawer cerrado.
   // La fila viene del reporte (preview.rows), ya enriquecida con `__raw`
@@ -1572,12 +1736,40 @@ export function ReportsPage() {
         // Config visual del pill (color + label) para esta fila.
         const catKey = m.category ?? "Otro";
         const catPill = resolveCategoryPill(catKey, maintCategories, customMaintCategories);
+        // jul 2026 v9 — Sub-categoría. El backend ya devuelve
+        // `m.subcategoryId/subcategory/subcategoryLabel`. Buscamos
+        // el objeto Subcat dentro de la cat padre (customCats ya
+        // vienen con `subcategories` anidadas gracias al endpoint
+        // /categories). Si no se encuentra por id, caemos al label
+        // que devolvió el backend. Si NO tiene sub, queda null.
+        let subForRow: { id: string; key: string; label: string; color: string } | null = null;
+        if (m.subcategoryId) {
+          for (const c of customMaintCategories) {
+            const s = (c.subcategories ?? []).find((x) => x.id === m.subcategoryId);
+            if (s) { subForRow = { id: s.id, key: s.key, label: s.label, color: s.color }; break; }
+          }
+        } else if (m.subcategory) {
+          for (const c of customMaintCategories) {
+            const s = (c.subcategories ?? []).find((x) => x.key === m.subcategory);
+            if (s) { subForRow = { id: s.id, key: s.key, label: s.label, color: s.color }; break; }
+          }
+          // Si la sub-cat es huérfana (no está en customCats),
+          // igual la exponemos con el label que mandó el backend.
+          if (!subForRow && m.subcategoryLabel) {
+            subForRow = { id: "", key: m.subcategory, label: m.subcategoryLabel, color: "#94a3b8" };
+          }
+        }
         return {
           kind:          m.type ?? "—",
           // String para que filterRows() (search box) matchee por label.
           category:      catPill.label,
           // Pill config para el cell renderer especial.
           categoryConfig: catPill,
+          // jul 2026 v9 — Sub-categoría (para mostrar y filtrar).
+          subcategory:      subForRow?.label ?? null,
+          subcategoryKey:   subForRow?.key   ?? null,
+          subcategoryId:    subForRow?.id    ?? null,
+          subcategoryColor: subForRow?.color ?? null,
           scheduledDate: m.scheduledFor ? m.scheduledFor.slice(0, 10) : "—",
           completedDate: m.completedAt  ? m.completedAt.slice(0, 10)  : "—",
           technician:    m.assignedUserName || "—",
@@ -1598,6 +1790,11 @@ export function ReportsPage() {
           categoryName:  catPill.label,
           __status:      m.status,
           __date:        m.scheduledFor,
+          // jul 2026 v9 — fecha REAL de trabajo. La usamos en el
+          // rango de fecha para que un mantenimiento programado
+          // para otro día pero completado HOY aparezca también en
+          // el filtro de HOY.
+          __completedAt: m.completedAt ?? null,
           __workshopId:  m.workshopId ?? null,
           // __raw ya no incluye el objeto `workshop`: la columna visual se
           // eliminó. Mantenemos solo `maintenance` y `asset` (que el
@@ -1693,8 +1890,20 @@ export function ReportsPage() {
   // ─── Filtered rows ─────────────────────────────────────────────────────────
 
   const rangedRows = useMemo(
-    () => preview.rows.filter((r) => isInRange(String(r.__date ?? ""), applied)),
-    [applied, preview.rows]
+    // jul 2026 v9 — Para mantenimiento (rep-009), el rango matchea
+    // scheduledFor O completedAt. Para el resto, comportamiento
+    // legacy: solo __date.
+    () => preview.rows.filter((r) => {
+      if (activeId === "rep-009") {
+        return isInRangeDual(
+          String(r.__date ?? ""),
+          (r as { __completedAt?: string | null }).__completedAt ?? null,
+          applied,
+        );
+      }
+      return isInRange(String(r.__date ?? ""), applied);
+    }),
+    [applied, preview.rows, activeId]
   );
 
   const visibleRows = useMemo(() => {
@@ -1753,14 +1962,21 @@ export function ReportsPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-bold uppercase tracking-widest text-brand-600 dark:bg-brand-500/[0.12] dark:text-brand-400">
-            <Sparkles size={10} /> {view === "estadisticas" ? "Inteligencia de negocio" : "Reportes"}
+            <Sparkles size={10} />
+            {view === "estadisticas" ? "Inteligencia de negocio" :
+             view === "filtrado"     ? "Drill-down por día" :
+                                       "Reportes"}
           </span>
           <h1 className="mt-1.5 text-2xl font-bold text-gray-800 dark:text-white">
-            {view === "estadisticas" ? "Estadísticas" : "Centro de reportes"}
+            {view === "estadisticas" ? "Estadísticas" :
+             view === "filtrado"     ? "Filtrado" :
+                                       "Centro de reportes"}
           </h1>
           <p className="mt-1 max-w-xl text-sm text-gray-500 dark:text-gray-400">
             {view === "estadisticas"
               ? "Resumen inteligente, tendencias y desglose por módulo con análisis IA."
+              : view === "filtrado"
+              ? "Cascada de 6 niveles para encontrar el detalle de un día específico por vehículo y módulo."
               : "Consulta, filtra y revisa datos de la operación diaria por módulo."}
           </p>
         </div>
@@ -1774,37 +1990,84 @@ export function ReportsPage() {
               )}
             </span>
           )}
+          {view === "filtrado" && (
+            <span className="flex items-center gap-1.5 rounded-xl border border-fuchsia-200 bg-fuchsia-50/40 px-3 py-2 text-xs font-medium text-fuchsia-700 dark:border-fuchsia-500/30 dark:bg-fuchsia-500/[0.08] dark:text-fuchsia-300">
+              <ListChecks size={13} />
+              Cascada de 6 niveles
+            </span>
+          )}
 
           {isAdmin && (
-            <button
-              type="button"
-              onClick={() => setView((v) => (v === "tablas" ? "estadisticas" : "tablas"))}
-              className={`group relative inline-flex items-center gap-2 overflow-hidden rounded-xl border px-4 py-2 text-xs font-semibold transition ${
-                view === "estadisticas"
-                  ? "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/[0.12] dark:text-brand-300"
-                  : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-              }`}
-            >
-              {view === "estadisticas" ? (
-                <>
-                  <Table2 size={13} />
-                  <span>Volver a tablas</span>
-                </>
-              ) : (
-                <>
-                  <BarChart3 size={13} />
-                  <span>Estadísticas</span>
-                  <span className="pointer-events-none absolute -right-2 -top-2 h-2 w-2 rounded-full bg-brand-500 shadow-[0_0_0_3px_rgba(59,130,246,0.15)]" />
-                </>
+            <>
+              <button
+                type="button"
+                onClick={() => setView((v) => (v === "tablas" ? "estadisticas" : "tablas"))}
+                className={`group relative inline-flex items-center gap-2 overflow-hidden rounded-xl border px-4 py-2 text-xs font-semibold transition ${
+                  view === "estadisticas"
+                    ? "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/[0.12] dark:text-brand-300"
+                    : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300 dark:hover:bg-white/[0.06]"
+                }`}
+              >
+                {view === "estadisticas" ? (
+                  <>
+                    <Table2 size={13} />
+                    <span>Volver a tablas</span>
+                  </>
+                ) : (
+                  <>
+                    <BarChart3 size={13} />
+                    <span>Estadísticas</span>
+                    <span className="pointer-events-none absolute -right-2 -top-2 h-2 w-2 rounded-full bg-brand-500 shadow-[0_0_0_3px_rgba(59,130,246,0.15)]" />
+                  </>
+                )}
+              </button>
+              {/* jul 2026 v1 — Tab "Filtrado". Permiso granular
+                  `reportes.filtrado.ver`. Si el user no lo tiene, el
+                  botón no se muestra (igual que el de Estadísticas). */}
+              {can("reportes", "filtrado", "ver") && (
+                <button
+                  type="button"
+                  onClick={() => setView((v) => (v === "filtrado" ? "tablas" : "filtrado"))}
+                  className={`group relative inline-flex items-center gap-2 overflow-hidden rounded-xl border px-4 py-2 text-xs font-semibold transition ${
+                    view === "filtrado"
+                      ? "border-fuchsia-300 bg-fuchsia-50 text-fuchsia-700 dark:border-fuchsia-500/30 dark:bg-fuchsia-500/[0.12] dark:text-fuchsia-300"
+                      : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300 dark:hover:bg-white/[0.06]"
+                  }`}
+                >
+                  {view === "filtrado" ? (
+                    <>
+                      <Table2 size={13} />
+                      <span>Volver a tablas</span>
+                    </>
+                  ) : (
+                    <>
+                      <ListChecks size={13} />
+                      <span>Filtrado</span>
+                    </>
+                  )}
+                </button>
               )}
-            </button>
+            </>
           )}
         </div>
       </div>
 
-      {/* ── Vista condicional: Estadísticas o Tablas ── */}
+      {/* ── Vista condicional: Estadísticas / Filtrado / Tablas ── */}
       {view === "estadisticas" ? (
         session?.companyId && <EstadisticasTab companyId={session.companyId} />
+      ) : view === "filtrado" ? (
+        // jul 2026 v1 — El tab Filtrado vive en su propio slot del
+        // Centro de Reportes. No usa el sidebar de módulos ni los
+        // KPIs — su layout es completamente independiente.
+        <motion.div
+          key="filtrado"
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+        >
+          <FiltradoTab />
+        </motion.div>
       ) : (
         <div className="flex items-start gap-3">
 
@@ -2066,6 +2329,21 @@ export function ReportsPage() {
                       onRowClick={setSelectedRow}
                       categories={activeId === "rep-009" ? maintCategories : undefined}
                       enableCategoryFilter={activeId === "rep-009"}
+                      // jul 2026 v9 — Sub-categorías de cada
+                      // categoría custom. Las aplanamos con el
+                      // `parentKey` (la `key` de la cat padre)
+                      // para que el dropdown filtre por la
+                      // categoría seleccionada en la carpetita.
+                      subcategories={activeId === "rep-009"
+                        ? customMaintCategories.flatMap((c) =>
+                            (c.subcategories ?? []).map((s) => ({
+                              parentKey: c.key,
+                              key:       s.key,
+                              label:     s.label,
+                            })),
+                          )
+                        : undefined}
+                      enableSubcategoryFilter={activeId === "rep-009"}
                       types={activeId === "rep-009" ? [
                         { key: "Programado", label: "Programado" },
                         { key: "Correctivo", label: "Correctivo" },
@@ -2123,14 +2401,31 @@ export function ReportsPage() {
                                           cls: string;
                                           customColor: string | null;
                                         };
+                                        // jul 2026 v9 — sub-categoría
+                                        // apilada debajo del pill.
+                                        const sub = row.subcategory as string | null;
+                                        const subColor = row.subcategoryColor as string | null;
                                         return (
-                                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${cfg.cls}`}>
-                                            <span
-                                              className={`h-1.5 w-1.5 rounded-full shrink-0 ${cfg.dot}`}
-                                              style={cfg.customColor ? { backgroundColor: cfg.customColor } : undefined}
-                                            />
-                                            <span className="whitespace-normal">{cfg.label}</span>
-                                          </span>
+                                          <div className="flex flex-col items-start gap-0.5">
+                                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${cfg.cls}`}>
+                                              <span
+                                                className={`h-1.5 w-1.5 rounded-full shrink-0 ${cfg.dot}`}
+                                                style={cfg.customColor ? { backgroundColor: cfg.customColor } : undefined}
+                                              />
+                                              <span className="whitespace-normal">{cfg.label}</span>
+                                            </span>
+                                            {sub && (
+                                              <span className="inline-flex items-center gap-1 pl-1 text-[10px] text-gray-500 dark:text-gray-400">
+                                                <span
+                                                  className="h-1 w-1 rounded-full"
+                                                  style={subColor ? { backgroundColor: subColor } : undefined}
+                                                />
+                                                <span className="truncate max-w-[200px]">
+                                                  {cfg.label} · {sub}
+                                                </span>
+                                              </span>
+                                            )}
+                                          </div>
                                         );
                                       })()
                                     ) : (

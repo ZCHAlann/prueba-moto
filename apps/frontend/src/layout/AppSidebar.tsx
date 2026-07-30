@@ -11,7 +11,7 @@ import {
   LayoutGrid, User, List, Table2, MapPin, PieChart,
   FileText, Box, Plug, Calendar, Bell, BookOpen,
   ClipboardList, Folder, Package, Zap, Users, Wind, Truck,
-  Wallet,
+  Wallet, Database,
 } from "lucide-react";
 
 const ICON_MAP: Record<string, React.ElementType> = {
@@ -28,6 +28,8 @@ const ICON_MAP: Record<string, React.ElementType> = {
   GR: BookOpen,   RI: Table2,  LZ: LayoutGrid,
   // jul 2026 — modulo Finanzas (Facturas)
   FN: Wallet,
+  // jul 2026 v3 — Submódulo Data de Mantenimientos
+  DT: Database,
   // Platform icons
   EM: Users,      MD: Box,      PL: FileText, AU: Truck,
   CRM: Users,     LD: FileText, CL: Users,    FC: FileText,

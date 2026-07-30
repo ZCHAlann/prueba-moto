@@ -587,6 +587,15 @@ export const companyMaintenanceRecords = pgTable('company_maintenance_records', 
   // invoiceNumber no-vacío genera/actualiza una fila en company_invoices
   // (módulo Finanzas). El campo `kind` determina el invoice_kind_enum.
   attachments:     jsonb('attachments').notNull().default([]),
+  // jul 2026 — Sub-categoría del mantenimiento. FK opcional a
+  // `company_maintenance_subcategories.id`. Si la categoría del
+  // mantenimiento tiene sub-categorías definidas, el user elige
+  // una. Si la categoría NO tiene sub-categorías, este campo
+  // queda null y se asume que el mantenimiento es de la categoría
+  // "en general". ON DELETE SET NULL: si se borra la sub-categoría
+  // (porque se borró la categoría padre o se limpió la lista), el
+  // mantenimiento sigue existiendo pero sin sub-categoría.
+  subcategoryId:   integer('subcategory_id').references(() => companyMaintenanceSubcategories.id, { onDelete: 'set null' }),
   parentId:        integer('parent_id'),
   createdBy:       integer('created_by').references(() => companyUsers.id, { onDelete: 'set null' }),
   completedBy:     integer('completed_by').references(() => companyUsers.id, { onDelete: 'set null' }),
@@ -691,7 +700,48 @@ export const companyMaintenanceCategories = pgTable('company_maintenance_categor
   updatedAt:   timestamp('updated_at').notNull().defaultNow(),
 });
 
+// ── Sub-categorías de mantenimiento (jul 2026) ──────────────────────────────
+//
+// jul 2026 — Una categoría de mantenimiento puede tener 0..N
+// sub-categorías. Por ejemplo, la categoría "Corona" puede tener
+// "Cambio de aceite a la corona" y "Mantenimiento general". El
+// admin define las sub-categorías al crear/editar la categoría. Al
+// programar un mantenimiento, si la categoría tiene sub-categorías,
+// el user elige una.
+//
+// La sub-categoría es OPCIONAL en el mantenimiento (un
+// mantenimiento puede tener solo categoría sin sub-categoría).
+export const companyMaintenanceSubcategories = pgTable('company_maintenance_subcategories', {
+  id:          serial('id').primaryKey(),
+  companyId:   integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  categoryId:  integer('category_id').notNull().references(() => companyMaintenanceCategories.id, { onDelete: 'cascade' }),
+  key:         varchar('key', { length: 60 }).notNull(),
+  label:       varchar('label', { length: 120 }).notNull(),
+  shortLabel:  varchar('short_label', { length: 40 }),
+  color:       varchar('color', { length: 20 }).notNull().default('sky'),
+  icon:        varchar('icon', { length: 40 }).notNull().default('wrench'),
+  // jul 2026 — Orden de aparición dentro de la categoría padre
+  // (menor = primero). Default 0.
+  order:       integer('order').notNull().default(0),
+  isSystem:    boolean('is_system').notNull().default(false),
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
+  updatedAt:   timestamp('updated_at').notNull().defaultNow(),
+});
+
 // ── Items / repuestos ────────────────────────────────────────────────────────
+//
+// jul 2026 v9 — DRIFT FIX: la columna `created_at` estaba
+// declarada en el schema pero la DB real NO la tiene (la
+// migración 0006_maintenance_v2.sql nunca la creó y ninguna
+// migración posterior la agregó). Drizzle autogeneraba
+// `INSERT INTO company_maintenance_items (..., created_at)
+// VALUES (..., DEFAULT)` y Postgres tiraba
+// `column "created_at" does not exist` (error 42703) en cada
+// POST de un item. Solución: comentar la columna del schema
+// para que Drizzle NO la incluya en los INSERT. El resto de
+// las columnas (iva, total, attachment, finance) SÍ existen
+// en la DB (migraciones 0044/0046/0047/0050 aplicadas), se
+// mantienen declaradas.
 export const companyMaintenanceItems = pgTable('company_maintenance_items', {
   id:             serial('id').primaryKey(),
   maintenanceId:  integer('maintenance_id').notNull().references(() => companyMaintenanceRecords.id, { onDelete: 'cascade' }),
@@ -709,7 +759,8 @@ export const companyMaintenanceItems = pgTable('company_maintenance_items', {
   attachmentKey:  varchar('attachment_key', { length: 40 }),
   financeRequestId: integer('finance_request_id'),
   financeClassification: text('finance_classification'),
-  createdAt:      timestamp('created_at').notNull().defaultNow(),
+  // jul 2026 v9 — comentado, la DB no tiene esta columna.
+  // createdAt:      timestamp('created_at').notNull().defaultNow(),
 });
 
 // ── Adicionales de Lavada (items extra que el operador agrega al servicio) ───

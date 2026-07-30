@@ -170,6 +170,16 @@ export const navigationSections: NavigationSection[] = [
         description: "Agendar y dar seguimiento a mantenimientos",
         accent: "amber",
       },
+      // jul 2026 v3 — Submódulo Data. Wizard 4 pasos para consultar
+      // información por vehículo (mantenimiento, combustible, peajes,
+      // checklist, alertas). Permiso `mantenimiento.data.ver`.
+      {
+        label: "Data",
+        href: "/mantenimiento/data",
+        icon: "DT",
+        description: "Consulta rápida por vehículo: módulos, costos y detalles",
+        accent: "amber",
+      },
     ],
   },
   {

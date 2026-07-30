@@ -160,7 +160,14 @@ function VehicleCard({ asset, compact = false, onDragStarted, driverFreeToday }:
 function FloatingDragCard({ asset, dateLabel, pos }: {
   asset: AssetLite | null; dateLabel: string | null; pos: { x: number; y: number };
 }) {
-  if (!asset) return null;
+  // jul 2026 — antes se mostraba siempre que hubiera un asset
+  // activo, lo que duplicaba visualmente la card: la original
+  // del sidebar (atenuada con opacity-30) Y esta ghost siguiendo
+  // al cursor. Ahora solo mostramos la ghost cuando hay una
+  // celda destino detectada (hoveredDate). Si no hay destino,
+  // dejamos que el browser use la imagen default del drag (más
+  // limpio: solo se ve la card original atenuada).
+  if (!asset || !dateLabel) return null;
   return (
     <div
       style={{ position:"fixed", left:pos.x+16, top:pos.y-20, pointerEvents:"none", zIndex:9999 }}
@@ -175,12 +182,10 @@ function FloatingDragCard({ asset, dateLabel, pos }: {
           {asset.plate && <p className="text-[11px] text-gray-400 dark:text-gray-500 truncate">{asset.name}</p>}
         </div>
       </div>
-      {dateLabel && (
-        <div className="mt-2 pt-2 border-t border-violet-200 dark:border-violet-500/30 text-[11px]">
-          <span className="font-semibold uppercase tracking-wider text-violet-500 dark:text-violet-300/80">Agendar para</span>
-          <div className="font-semibold text-gray-800 dark:text-white mt-0.5">{dateLabel}</div>
-        </div>
-      )}
+      <div className="mt-2 pt-2 border-t border-violet-200 dark:border-violet-500/30 text-[11px]">
+        <span className="font-semibold uppercase tracking-wider text-violet-500 dark:text-violet-300/80">Agendar para</span>
+        <div className="font-semibold text-gray-800 dark:text-white mt-0.5">{dateLabel}</div>
+      </div>
     </div>
   );
 }
@@ -915,7 +920,17 @@ export function MantenimientosAgendar() {
       <div className="flex h-full gap-0 overflow-hidden rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-[#0b0f1a] relative">
 
         {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-        <div className={`flex flex-col shrink-0 min-h-0 border-r border-gray-200 dark:border-white/[0.06] transition-all duration-300 overflow-hidden bg-gray-50 dark:bg-transparent ${sidebarOpen ? "w-[260px]" : "w-[56px]"}`}>
+        <div
+          className={`flex flex-col shrink-0 min-h-0 border-r border-gray-200 dark:border-white/[0.06] transition-all duration-300 overflow-hidden bg-gray-50 dark:bg-transparent ${sidebarOpen ? "w-[260px]" : "w-[56px]"}`}
+          // jul 2026 — el sidebar tiene un alto MÁXIMO propio
+          // (viewport - offset del header) para que NO se estire
+          // junto con el calendario. Antes era `flex-1` y se
+          // expandía al mismo alto que el calendario, generando
+          // una lista de vehículos larguísima. Ahora el calendario
+          // ocupa su alto natural y el sidebar scrollea
+          // internamente con su propio límite.
+          style={{ maxHeight: "calc(100vh - 180px)" }}
+        >
 
           <div className="flex items-center justify-between px-3 py-3 border-b border-gray-200 dark:border-white/[0.06] min-h-[52px]">
             {sidebarOpen && (

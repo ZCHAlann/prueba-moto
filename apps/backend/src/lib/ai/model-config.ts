@@ -121,6 +121,11 @@ export function getModelConfig() {
  */
 let _currentClassifier: string = readClassifier();
 
+// jul 2026 v3 — log al boot para confirmar qué modelo quedó activo
+// desde el .env. Útil cuando se cambia GROQ_MODEL_CLASSIFIER y se
+// olvida reiniciar el backend.
+console.log(`[jarvis-config] classifier model: ${_currentClassifier}`);
+
 function readClassifier(): string {
   const v = process.env.GROQ_MODEL_CLASSIFIER?.trim();
   return v && v.length > 0 ? v : 'openai/gpt-oss-20b';

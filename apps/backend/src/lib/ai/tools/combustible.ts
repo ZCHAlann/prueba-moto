@@ -4,7 +4,7 @@
 // Lista entradas de combustible con filtros (rango de fecha, vehículo).
 
 import { z } from 'zod';
-import { and, eq, gte, lte, desc, ilike, sql, sum } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, desc, ilike, sql, sum } from 'drizzle-orm';
 import { db } from '../../../db/client';
 import { companyFuelEntries, companyAssets } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
@@ -26,6 +26,9 @@ export const combustibleTool: ToolDefinition<Args> = {
     'Lista entradas de carga de combustible. Filtros: rango de fechas (desde/hasta YYYY-MM-DD), vehículo (por assetId numérico o placa parcial). Devuelve fecha, galones US, costo, odómetro, estación y placa.',
   category:    'combustible',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 1,
+  cacheTtlMs: 60000,
   schema:      argsSchema,
 
   async execute(args, ctx): Promise<ToolResult> {
@@ -53,7 +56,7 @@ export const combustibleTool: ToolDefinition<Args> = {
     } else if (resolvedAssetIds && resolvedAssetIds.length === 1) {
       where.push(eq(companyFuelEntries.assetId, resolvedAssetIds[0]!));
     } else if (resolvedAssetIds && resolvedAssetIds.length > 1) {
-      where.push(sql`${companyFuelEntries.assetId} = ANY(${resolvedAssetIds})`);
+      where.push(inArray(companyFuelEntries.assetId, resolvedAssetIds));
     }
 
     const rows = await db

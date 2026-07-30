@@ -500,9 +500,15 @@ export function FacturasPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12">
-          {/* jul 2026 v4-b — Buscador único ancho + rango de fechas con
-              gap-4 (antes gap-3 + col-span-2 los dejaba pegados). */}
-          <div className="lg:col-span-5">
+          {/* jul 2026 v9 — Layout del filter bar:
+                - 4 cols: Buscar
+                - 3 cols: Desde
+                - 3 cols: Hasta
+                - 2 cols: Botón Limpiar (con justify-end)
+              Antes era 5+3+3+1 y el botón quedaba superpuesto al
+              DatePicker de "Hasta" porque ambos compartían el
+              mismo padding derecho del grid. */}
+          <div className="lg:col-span-4">
             <label className={labelCls}><Search size={10} className="inline mr-1" />Buscar</label>
             <input
               type="text"
@@ -513,7 +519,7 @@ export function FacturasPage() {
             />
           </div>
 
-          {/* Fechas — cada una con 2.5 cols para que tengan ancho cómodo
+          {/* Fechas — cada una con 3 cols para que tengan ancho cómodo
               y no se peguen entre sí. */}
           <div className="lg:col-span-3">
             <label className={labelCls}><Calendar size={10} className="inline mr-1" />Desde</label>
@@ -524,12 +530,17 @@ export function FacturasPage() {
             <DatePicker compact value={to} onChange={setTo} />
           </div>
 
-          {/* Acciones */}
-          <div className="lg:col-span-1 flex items-end justify-end">
+          {/* Acciones — 2 cols para que el botón "Limpiar" tenga
+              aire del DatePicker de "Hasta". `justify-end` lo
+              empuja al borde derecho. `whitespace-nowrap` evita
+              que el texto se rompa. NO usa `w-full` (es botón,
+              no input). En mobile/tablet (sm/md) ocupa la fila
+              entera para no chocar con los DatePickers. */}
+          <div className="sm:col-span-2 lg:col-span-2 flex items-end justify-end">
             <button
               type="button"
               onClick={onClearFilters}
-              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-gray-200 px-3 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.04]"
+              className="inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-gray-200 px-3 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.04]"
               title="Limpiar filtros"
             >
               <X size={13} /> Limpiar

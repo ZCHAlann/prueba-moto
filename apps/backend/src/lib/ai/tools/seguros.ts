@@ -66,7 +66,7 @@ export const segurosTool: ToolDefinition<Args> = {
     if (!args.assetId && resolvedAssetIds && resolvedAssetIds.length === 1) {
       where.push(eq(companyInsurancePolicies.assetId, resolvedAssetIds[0]!));
     } else if (!args.assetId && resolvedAssetIds && resolvedAssetIds.length > 1) {
-      where.push(sql`${companyInsurancePolicies.assetId} = ANY(${resolvedAssetIds})`);
+      where.push(inArray(companyInsurancePolicies.assetId, resolvedAssetIds));
     }
 
     // Por vencer: endDate BETWEEN hoy y hoy+N días, status='Vigente'.

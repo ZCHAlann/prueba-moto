@@ -1,77 +1,122 @@
 // lib/ai/tts.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// Text-to-Speech usando ElevenLabs (voces humanas multilingües).
+// ─────────────────────────────────────────────────────────────────────
+// jul 2026 v3 — TTS multi-provider: Piper local (primario) + ElevenLabs
+// (fallback).
 //
-// Antes: Groq Orpheus (solo inglés/árabe, voz robótica).
-// Ahora: ElevenLabs multilingual_v2 — voces humanas en español nativo.
+// ANTES: solo ElevenLabs (cloud, multilingual_v2). Funcionaba bien
+// pero consumía créditos y agregaba latencia de ~3-5s por request.
 //
-// API ElevenLabs:
-//   POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}
-//   Headers: xi-api-key: <API_KEY>
-//   Body:    { text, model_id, voice_settings }
-//   Audio:   audio/mpeg (MP3) por defecto con Accept: audio/mpeg
+// AHORA: Piper TTS local. Es un servidor HTTP en Python que carga
+// un modelo ONNX una vez y responde WAV casi instantáneo (<200ms
+// para textos cortos, ~1-2s para textos largos). Costo: $0, sin
+// rate limits, sin cloud, sin dependencia de internet.
 //
-// Caché en memoria con TTL 10 min, máximo 100 entradas.
-// Si ElevenLabs falla, el frontend hace fallback a Web Speech API.
-// ─────────────────────────────────────────────────────────────────────────────
+// Setup:
+//   1) pip install 'piper-tts[http]'
+//   2) bash scripts/setup-piper-voice.sh es_ES-davefx-medium
+//   3) bash scripts/start-piper.sh
+//   4) Configurar PIPER_URL en .env (default: http://127.0.0.1:5000)
+//
+// Si Piper NO está disponible (servidor caído, modelo no descargado),
+// hacemos fallback transparente a ElevenLabs. La API pública no
+// cambia, así que el frontend y el resto del sistema siguen igual.
+// ─────────────────────────────────────────────────────────────────────
 
+import { Buffer } from 'node:buffer';
+
+// ─── Config de providers ───────────────────────────────────────────
+
+const PIPER_URL_DEFAULT = 'http://127.0.0.1:5000';
 const ELEVENLABS_TTS_URL = (voiceId: string) =>
   `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
 
 const ELEVENLABS_MODEL = 'eleven_multilingual_v2';
 
 // ─── Voces ──────────────────────────────────────────────────────────
-// IDs reales de voces pre-construidas de la librería pública de
-// ElevenLabs, todas con buen rendimiento en español. Disponibles
-// en plan gratuito y superiores.
+// Mantenemos los IDs de ElevenLabs para no romper la API pública.
+// El campo `piperVoice` se usa cuando el provider es Piper (es_ES-*,
+// es_MX-*, etc.). Para ElevenLabs seguimos usando `id`.
 //
-// Si querés más voces, consultá https://elevenlabs.io/voice-library
-// (filtrar por "Spanish") o usa GET https://api.elevenlabs.io/v1/voices
-// con tu xi-api-key.
-export const TTS_VOICES = [
+// En la práctica: cuando PIPER_URL esté configurado, los IDs de
+// ElevenLabs se ignoran y se usa el `piperVoice` por default.
+// Pero el frontend sigue mandando IDs de ElevenLabs, así que
+// aceptamos ambos formatos en `isValidVoice`.
+
+interface PiperVoice {
+  /** ID ElevenLabs legacy (compat con frontend). */
+  id: string;
+  label: string;
+  gender: 'F' | 'M';
+  lang: 'es' | 'en' | 'ar';
+  description: string;
+  /** Nombre de la voz Piper (es_ES-*, es_MX-*, etc.). */
+  piperVoice: string;
+}
+
+export const TTS_VOICES: readonly PiperVoice[] = [
+  // jul 2026 v3 — Solo 3 voces activas (las que Piper soporta bien).
+  // El resto (Lily, Daniel) queda comentado por si querés sumar más adelante.
   {
     id:          'cgSgspJ2msm6clMCkdW9',
-    label:       'Jessica',
-    gender:      'F',
+    label:       'David',
+    gender:      'M',
     lang:        'es',
-    description: 'Mujer, cálida, español neutro, conversacional',
+    description: 'Hombre, cálido, español de España, conversacional',
+    piperVoice:  'es_ES-davefx-medium',
   },
   {
     id:          'EXAVITQu4vr4xnSDxMaL',
-    label:       'Sarah',
+    label:       'Sara',
     gender:      'F',
     lang:        'es',
-    description: 'Mujer, profesional, clara',
+    description: 'Mujer, profesional, clara, español de México',
+    piperVoice:  'es_MX-claude-high',
   },
   {
     id:          'TX3LPaxmHKxFdv7VOQHJ',
-    label:       'Liam',
+    label:       'Aldo',
     gender:      'M',
     lang:        'es',
-    description: 'Hombre, joven, amigable',
+    description: 'Hombre, joven, amigable, español de México',
+    piperVoice:  'es_MX-ald-medium',
   },
-  {
-    id:          'pFZP5JQG7iQjIQuC4Bku',
-    label:       'Lily',
-    gender:      'F',
-    lang:        'es',
-    description: 'Mujer, expresiva, cálida',
-  },
-  {
-    id:          'onwK4e9ZLuTAKqWW03F9',
-    label:       'Daniel',
-    gender:      'M',
-    lang:        'es',
-    description: 'Hombre, maduro, narrativo',
-  },
+  // {
+  //   id:          'pFZP5JQG7iQjIQuC4Bku',
+  //   label:       'Lily',
+  //   gender:      'F',
+  //   lang:        'es',
+  //   description: 'Mujer, expresiva, cálida',
+  //   piperVoice:  'es_ES-mls_9972-low',
+  // },
+  // {
+  //   id:          'onwK4e9ZLuTAKqWW03F9',
+  //   label:       'Daniel',
+  //   gender:      'M',
+  //   lang:        'es',
+  //   description: 'Hombre, maduro, narrativo',
+  //   piperVoice:  'es_ES-carlfm-x_low',
+  // },
 ] as const;
 
 export type VoiceId = typeof TTS_VOICES[number]['id'];
 
-export const DEFAULT_VOICE: VoiceId = 'cgSgspJ2msm6clMCkdW9'; // Jessica
+export const DEFAULT_VOICE: VoiceId = 'cgSgspJ2msm6clMCkdW9'; // David (default)
 
 export function isValidVoice(v: string): v is VoiceId {
   return TTS_VOICES.some((voice) => voice.id === v);
+}
+
+function getPiperVoiceForVoiceId(v: VoiceId): string {
+  const found = TTS_VOICES.find((voice) => voice.id === v);
+  return found?.piperVoice ?? process.env.PIPER_VOICE ?? 'es_ES-davefx-medium';
+}
+
+function getPiperUrl(): string {
+  return (process.env.PIPER_URL ?? PIPER_URL_DEFAULT).replace(/\/$/, '');
+}
+
+function isPiperEnabled(): boolean {
+  return !!process.env.PIPER_ENABLED && process.env.PIPER_ENABLED !== 'false' && process.env.PIPER_ENABLED !== '0';
 }
 
 // ─── Cache en memoria ───────────────────────────────────────────────
@@ -79,37 +124,38 @@ export function isValidVoice(v: string): v is VoiceId {
 interface TtsCacheEntry {
   buffer:    Buffer;
   expiresAt: number;
+  provider:  'piper' | 'elevenlabs';
 }
 
 const cache = new Map<string, TtsCacheEntry>();
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 100;
 
-function cacheKey(text: string, voice: VoiceId): string {
+function cacheKey(text: string, voice: VoiceId, provider: 'piper' | 'elevenlabs'): string {
   let h = 5381;
-  const combined = `${voice}:${text}`;
+  const combined = `${provider}:${voice}:${text}`;
   for (let i = 0; i < combined.length; i++) {
     h = ((h << 5) + h) ^ combined.charCodeAt(i);
   }
   return `${combined.length}:${h.toString(36)}`;
 }
 
-function getFromCache(text: string, voice: VoiceId): Buffer | null {
-  const entry = cache.get(cacheKey(text, voice));
+function getFromCache(text: string, voice: VoiceId, provider: 'piper' | 'elevenlabs'): Buffer | null {
+  const entry = cache.get(cacheKey(text, voice, provider));
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
-    cache.delete(cacheKey(text, voice));
+    cache.delete(cacheKey(text, voice, provider));
     return null;
   }
   return entry.buffer;
 }
 
-function putInCache(text: string, voice: VoiceId, buffer: Buffer): void {
+function putInCache(text: string, voice: VoiceId, buffer: Buffer, provider: 'piper' | 'elevenlabs'): void {
   if (cache.size >= CACHE_MAX_ENTRIES) {
     const first = cache.keys().next().value;
     if (first) cache.delete(first);
   }
-  cache.set(cacheKey(text, voice), { buffer, expiresAt: Date.now() + CACHE_TTL_MS });
+  cache.set(cacheKey(text, voice, provider), { buffer, expiresAt: Date.now() + CACHE_TTL_MS, provider });
 }
 
 // ─── Synth principal ───────────────────────────────────────────────
@@ -120,17 +166,12 @@ export interface TtsResult {
   model:  string;
   cached: boolean;
   bytes:  number;
-  /** Idioma del modelo. Con ElevenLabs multilingual_v2 es siempre 'es'. */
+  /** Idioma del modelo. Con Piper y ElevenLabs multilingual_v2 es siempre 'es'. */
   lang:   'es' | 'en' | 'ar';
+  /** Qué provider se usó (útil para debug). */
+  provider: 'piper' | 'elevenlabs';
 }
 
-/**
- * Sintetiza el texto a MP3 usando ElevenLabs.
- *
- * Devuelve el buffer + metadata. Si ElevenLabs no responde (sin API key,
- * sin créditos, timeout), lanza error y el frontend hace fallback a
- * Web Speech API.
- */
 export async function synthesizeSpeech(
   text: string,
   voice: VoiceId = DEFAULT_VOICE,
@@ -141,14 +182,6 @@ export async function synthesizeSpeech(
   return doSynthesize(text, voice);
 }
 
-/**
- * jul 2026 v7 — versión multi-tenant del TTS. Chequea kill-switch
- * y toggle `useTts` antes de gastar créditos de ElevenLabs.
- *
- * ElevenLabs todavía NO tiene override por empresa (la key es global),
- * pero la empresa puede apagarlo via `useTts = false` o el superadmin
- * puede kill-switchear la IA de la empresa.
- */
 export async function synthesizeSpeechForCompany(
   text: string,
   voice: VoiceId,
@@ -176,12 +209,89 @@ export async function synthesizeSpeechForCompany(
   return doSynthesize(text, voice);
 }
 
-async function doSynthesize(text: string, voice: VoiceId): Promise<TtsResult> {
-  // ElevenLabs tiene un límite de ~5000 caracteres por request.
+// ─── Síntesis con Piper ─────────────────────────────────────────────
+
+async function synthesizeWithPiper(text: string, voice: VoiceId): Promise<TtsResult> {
+  const piperVoice = getPiperVoiceForVoiceId(voice);
   const trimmed = text.length > 5000 ? text.slice(0, 5000) + '...' : text;
 
-  // Cache hit
-  const cached = getFromCache(trimmed, voice);
+  // Cache hit (Piper-specific key).
+  const cached = getFromCache(trimmed, voice, 'piper');
+  if (cached) {
+    return {
+      buffer: cached,
+      voice,
+      model:  `piper:${piperVoice}`,
+      cached: true,
+      bytes:  cached.length,
+      lang:   'es',
+      provider: 'piper',
+    };
+  }
+
+  const url = `${getPiperUrl()}/synthesize`;
+  const start = Date.now();
+
+  // jul 2026 v3 — Piper puede colgarse si el modelo está mal cargado.
+  // AbortController con timeout para no esperar infinito.
+  const controller = new AbortController();
+  const timeoutMs = 15_000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: trimmed,
+        voice: piperVoice,
+        // Acelera un toque (length_scale=1 es la velocidad normal;
+        // 0.95 es ~5% más rápido, lo que ayuda con respuestas largas
+        // sin sonar apurado).
+        length_scale: 0.95,
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[tts:piper] ${response.status} en ${Date.now() - start}ms — ` +
+      `fallback a ElevenLabs. Error: ${errText.slice(0, 200)}`,
+    );
+    throw new Error(`Piper TTS ${response.status}: ${errText.slice(0, 200) || response.statusText}`);
+  }
+
+  // Piper devuelve audio/wav (no MP3). Lo pasamos como WAV.
+  // Si el frontend lo necesita como audio/mpeg, lo convertimos
+  // fuera de acá. Por ahora mandamos WAV que Chrome/Firefox aceptan.
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  putInCache(trimmed, voice, buffer, 'piper');
+
+  return {
+    buffer,
+    voice,
+    model:  `piper:${piperVoice}`,
+    cached: false,
+    bytes:  buffer.length,
+    lang:   'es',
+    provider: 'piper',
+  };
+}
+
+// ─── Síntesis con ElevenLabs (fallback) ─────────────────────────────
+
+async function synthesizeWithElevenLabs(text: string, voice: VoiceId): Promise<TtsResult> {
+  const trimmed = text.length > 5000 ? text.slice(0, 5000) + '...' : text;
+
+  const cached = getFromCache(trimmed, voice, 'elevenlabs');
   if (cached) {
     return {
       buffer: cached,
@@ -190,12 +300,13 @@ async function doSynthesize(text: string, voice: VoiceId): Promise<TtsResult> {
       cached: true,
       bytes:  cached.length,
       lang:   'es',
+      provider: 'elevenlabs',
     };
   }
 
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey || apiKey.trim().length < 10) {
-    throw new Error('ELEVENLABS_API_KEY no configurada — TTS no disponible.');
+    throw new Error('ELEVENLABS_API_KEY no configurada y Piper no disponible.');
   }
 
   const response = await fetch(ELEVENLABS_TTS_URL(voice), {
@@ -220,15 +331,14 @@ async function doSynthesize(text: string, voice: VoiceId): Promise<TtsResult> {
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
     // eslint-disable-next-line no-console
-    console.error('[tts] ElevenLabs error:', response.status, errText.slice(0, 500));
+    console.error('[tts:elevenlabs] error:', response.status, errText.slice(0, 500));
     throw new Error(`ElevenLabs TTS ${response.status}: ${errText.slice(0, 200) || response.statusText}`);
   }
 
-  // ElevenLabs devuelve MP3 con Accept: audio/mpeg.
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  putInCache(trimmed, voice, buffer);
+  putInCache(trimmed, voice, buffer, 'elevenlabs');
 
   return {
     buffer,
@@ -237,16 +347,44 @@ async function doSynthesize(text: string, voice: VoiceId): Promise<TtsResult> {
     cached: false,
     bytes:  buffer.length,
     lang:   'es',
+    provider: 'elevenlabs',
   };
 }
 
-/** Stats para debug endpoint. */
+// ─── Síntesis con fallback automático ──────────────────────────────
+
+async function doSynthesize(text: string, voice: VoiceId): Promise<TtsResult> {
+  // jul 2026 v3 — Estrategia:
+  //   1) Si Piper está habilitado, intentar Piper primero.
+  //   2) Si Piper falla (timeout, modelo no cargado, red), fallback
+  //      transparente a ElevenLabs.
+  //   3) Si ElevenLabs también falla, lanzar error para que el
+  //      frontend use Web Speech API como último recurso.
+  if (isPiperEnabled()) {
+    try {
+      return await synthesizeWithPiper(text, voice);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[tts] Piper failed, falling back to ElevenLabs:', err instanceof Error ? err.message : err);
+      // Continue to ElevenLabs.
+    }
+  }
+  return synthesizeWithElevenLabs(text, voice);
+}
+
+// ─── Stats para debug ─────────────────────────────────────────────
+
 export function getTtsStats() {
+  const piperEnabled = isPiperEnabled();
   return {
-    cacheSize: cache.size,
-    cacheMax:  CACHE_MAX_ENTRIES,
-    voices:    TTS_VOICES.length,
-    model:     ELEVENLABS_MODEL,
-    provider:  'elevenlabs',
+    cacheSize:    cache.size,
+    cacheMax:     CACHE_MAX_ENTRIES,
+    voices:       TTS_VOICES.length,
+    piperEnabled,
+    piperUrl:     piperEnabled ? getPiperUrl() : null,
+    piperDefault: getPiperVoiceForVoiceId(DEFAULT_VOICE),
+    elevenlabsConfigured: !!process.env.ELEVENLABS_API_KEY,
+    // jul 2026 v3 — provider por defecto: piper si está habilitado.
+    provider:     piperEnabled ? 'piper' : 'elevenlabs',
   };
 }

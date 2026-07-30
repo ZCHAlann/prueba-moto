@@ -157,6 +157,10 @@ export function MaintenanceFormModal({
   // `categoryCustomId` queda en null.
   const [category, setCategory]               = useState<string>("Otro");
   const [categoryCustomId, setCategoryCustomId] = useState<string | null>(null);
+  // jul 2026 v9 — Sub-categoría opcional del mantenimiento. Si la
+  // categoría padre tiene sub-categorías, el user elige una. Si
+  // no, este campo queda en null y el backend ignora el filtro.
+  const [subcategoryCustomId, setSubcategoryCustomId] = useState<string | null>(null);
   const [title, setTitle]                     = useState<string>("");
   const [description, setDescription]         = useState<string>("");
   const [odometerKm, setOdometerKm]           = useState<number | null>(null);
@@ -212,6 +216,7 @@ export function MaintenanceFormModal({
       // built-in o un string libre.
       setCategory(maintenance.category);
       setCategoryCustomId(maintenance.categoryId ?? null);
+      setSubcategoryCustomId(maintenance.subcategoryId ?? null);
       setTitle(maintenance.title ?? "");
       setDescription(maintenance.description ?? "");
       setOdometerKm(maintenance.odometerKm);
@@ -245,6 +250,7 @@ export function MaintenanceFormModal({
       setWorkshopId("");
       setCategory("Otro");
       setCategoryCustomId(null);
+      setSubcategoryCustomId(null);
       setTitle("");
       setDescription("");
       setOdometerKm(null);
@@ -281,6 +287,7 @@ export function MaintenanceFormModal({
     } else if (category === "Lavada") {
       setCategory("Otro");
       setCategoryCustomId(null);
+      setSubcategoryCustomId(null);
     }
     // Auto-asignación del operador: si NO es full access y crea Correctivo/Lavada,
     // se auto-asigna (lo está haciendo él mismo).
@@ -417,13 +424,24 @@ export function MaintenanceFormModal({
       // resolver el `key`. Si la categoría es built-in, no mandamos el id
       // y el backend deja `category_id` en null.
       ...(categoryCustomId ? { categoryCustomId } : {}),
+      // jul 2026 v9 — Sub-categoría opcional. Si la categoría no
+      // tiene sub-categorías o el user no eligió una, mandamos null.
+      ...(subcategoryCustomId ? { subcategoryCustomId } : {}),
       workshopId: isLavada ? null : (workshopId || null),
       description: description || null,
       odometerKm: odometerKm ?? null,
       laborCost: laborCost || 0,
       cadenceKind,
-      cadenceValue: cadenceValue ?? null,
-      nextTriggerKm: nextTriggerKm ?? null,
+      // jul 2026 v9 — FIX: mandar `null` literal para campos
+      // opcionales nullable hace que postgres.js no pueda
+      // inferir el tipo (`could not determine data type of
+      // parameter $N 42P18`). Si el campo está vacío, mandamos
+      // `undefined` para que se OMITA del payload y el backend
+      // no intente setearlo (mantiene el valor actual). El
+      // backend ya tiene la lógica `if (body.X !== undefined)
+      // updateData.X = ...` que respeta esto.
+      ...(cadenceValue != null ? { cadenceValue } : {}),
+      ...(nextTriggerKm != null ? { nextTriggerKm } : {}),
       scheduledFor: new Date(scheduledFor).toISOString(),
       notes: notes || null,
       // Lavada: no items / no workshop / no cadencia
@@ -670,6 +688,11 @@ export function MaintenanceFormModal({
                       // custom, seteamos su id. Si no, es built-in → null.
                       const match = customCats.find((c) => c.key === v);
                       setCategoryCustomId(match ? match.id : null);
+                      // jul 2026 v9 — Si cambia la categoría, también
+                      // reseteamos la sub-categoría (no aplica a la
+                      // nueva). Si la nueva categoría no tiene
+                      // sub-categorías, el campo no se renderiza.
+                      setSubcategoryCustomId(null);
                     }}
                   >
                     {/* Built-in (no editables — vienen del sistema) */}
@@ -690,6 +713,37 @@ export function MaintenanceFormModal({
                     )}
                   </select>
                 </div>
+
+                {/* jul 2026 v9 — Sub-categoría. Aparece SOLO si la
+                    categoría custom elegida tiene sub-categorías
+                    definidas. Buscamos la custom en `customCats` por
+                    id (no por key, porque `categoryCustomId` es el
+                    id de la categoría padre). Si tiene sub-categorías,
+                    las mostramos en un select dependiente. */}
+                {(() => {
+                  const parentCat = customCats.find((c) => c.id === categoryCustomId);
+                  const subs = parentCat?.subcategories ?? [];
+                  if (subs.length === 0) return null;
+                  return (
+                    <div>
+                      <label className={labelCls}>
+                        Sub-categoría
+                        <span className="ml-1 text-[10px] text-gray-400">(opcional)</span>
+                      </label>
+                      <select
+                        className={inputCls}
+                        value={subcategoryCustomId ?? ""}
+                        disabled={isReadOnly}
+                        onChange={(e) => setSubcategoryCustomId(e.target.value === "" ? null : e.target.value)}
+                      >
+                        <option value="">— Sin sub-categoría —</option>
+                        {subs.map((s: any) => (
+                          <option key={s.id} value={s.id}>{s.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })()}
               </div>
             </>
           )}

@@ -1,70 +1,59 @@
 // components/jarvis/JarvisWakeWordController.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// Controlador INVISIBLE del wake word para el Asistente IA (Jarvis).
+// ─────────────────────────────────────────────────────────────────────
+// jul 2026 v10.0 — REESCRITO TOTALMENTE desde cero.
 //
-// Se monta UNA SOLA VEZ en el AppLayout (no en el FloatingChatWidget)
-// para que esté vivo independientemente de:
-//   - Si el chat está abierto o cerrado.
-//   - Si el user está en la tab "Mensajes" o "Asistente".
-//   - Si la empresa tiene el módulo `jarvis` activo (este controlador
-//     es el ÚNICO responsable de mantener el mic escuchando, así que
-//     debe poder correr sin depender del estado del chat).
+// El botón anterior (con drag, portal, pointer capture, etc.) tenía
+// un bug que el user no podía debuggear desde el browser: el click
+// no llegaba al handler en ciertos viewports. Después de muchos
+// intentos de fix sin acceso al browser, decidimos BORRAR TODO y
+// hacer un botón SIMPLE.
 //
-// Cuando el wake word se detecta, dispara un CustomEvent global
-// `jarvis:wake-detected` en `window`. El FloatingAiAssistant escucha
-// este evento y, si está montado, llama a `startVoiceRecording()`.
-// Si NO está montado (chat cerrado), el FloatingChatWidget lo abre
-// primero y recién después dispara la grabación.
+// v10.1 — Re-agregamos DRAG con la fix correcta:
+//   - En `pointerup`/`pointercancel` LIBERAMOS el `setPointerCapture`
+//     explícitamente, ANTES de que el click sintético se dispare.
+//   - Si no liberamos, el click va al `<div>` contenedor y NO al
+//     `<button>` hijo, y el `onClick` nunca corre.
+//   - Usamos un flag `wasDragRef` que se resetea apenas se lee en
+//     el onClick (no puede quedar "pegado" como antes).
+//   - Persistimos la posición en `localStorage`.
 //
-// jul 2026 v8.7 — Botón flotante DRAGGABLE: el user puede arrastrarlo
-// a cualquier posición de la pantalla y la posición persiste entre
-// recargas (localStorage). Mismo patrón que el FAB del chat.
+// v10.2 — Dark/light theme:
+//   - Usamos las clases `dark:` de Tailwind para que el botón se
+//     vea bien en ambos temas.
+//   - Estado OFF: fondo blanco (light) / gris-oscuro (dark).
+//   - Estado LISTENING: violeta fuerte en ambos.
+//   - Estado ERROR: rojo claro / rojo-oscuro translúcido.
 //
 // IMPORTANTE: el popup de permiso de mic del browser se dispara la
-// primera vez que el user carga la app. Eso es el comportamiento
-// deseado — el user concede UNA vez y queda armado para siempre.
-// ─────────────────────────────────────────────────────────────────────────────
+// primera vez que el user carga la app. El user concede UNA vez y
+// queda armado para siempre.
+// ─────────────────────────────────────────────────────────────────────
 
-import { useEffect, useRef, useState } from "react";
-import { Mic, MicOff } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Mic, MicOff, Loader2, AlertTriangle } from "lucide-react";
+import { getVoskManager } from "../../lib/voskManager";
 import { useAuth } from "../../context/AuthContext";
 import { useWakeWord } from "../../hooks/useWakeWord";
 
 const TRIGGER_DEFAULT = "jarvis";
-const PERMISSION_KEY = "jarvis.wakeword.granted";
-const ACTIVE_KEY     = "jarvis.wakeword.active";
-const TRIGGER_KEY    = "jarvis.wakeword.trigger";
-const POS_KEY        = "jarvis.wakeword.btn.pos";
+const POS_KEY         = "jarvis.wakeword.btn.pos.v10";
+
 const FAB_MARGIN     = 12;   // px de margen desde el borde
 const DRAG_THRESHOLD = 6;    // px de movimiento para diferenciar click de drag
-
-function isDebug(): boolean {
-  if (typeof window === "undefined") return false;
-  return (window as any).__jarvisDebugWake === true;
-}
-
-function dbg(...args: unknown[]) {
-  if (isDebug()) {
-    void args;
-  }
-}
+const BTN_W          = 200;  // ancho aproximado de la píldora
+const BTN_H          = 44;   // alto aproximado
 
 export interface JarvisWakeWordControllerProps {
-  /**
-   * Si está oculto (default true). El controlador no renderiza nada
-   * visible — solo corre el hook. Si lo ponés en false, muestra un
-   * indicador discreto en la esquina para confirmar que está vivo.
-   */
+  /** Si está oculto (default true). */
   silent?: boolean;
 }
 
 export function JarvisWakeWordController({
   silent = true,
 }: JarvisWakeWordControllerProps) {
+  void silent;
   const { session, companyId } = useAuth();
 
-  // ── Permisos: ¿puede este user usar el asistente? ─────────────────
-  // Mismas reglas que `canUseAssistant` en FloatingChatWidget.
   const canUseAssistant =
     !!session &&
     !!companyId &&
@@ -72,141 +61,42 @@ export function JarvisWakeWordController({
     (session.companyModules ?? []).includes("jarvis");
 
   // ── Estado del wake word ─────────────────────────────────────────
-  // El hook va a intentar `recognition.start()` desde un useEffect.
-  // Chrome puede abortar silenciosamente si no hay user gesture, así
-  // que el armado depende del permiso previo:
-  //   - Si `granted=1` (ya autorizó el mic antes), Chrome permite el
-  //     start desde useEffect. Armando en true automáticamente.
-  //   - Si nunca autorizó (`granted` no es "1"), arranco en false y
-  //     muestro el botón para que el user haga click (que es el
-  //     user gesture válido para arrancar).
-  const [wakeWordActive, setWakeWordActive] = useState<boolean>(() => {
-    // jul 2026 v8.6 — SIEMPRE arrancamos desarmados. El primer click
-    // del botón "Activar escucha" es OBLIGATORIO porque:
-    //   1. Chrome requiere un user gesture válido para que el
-    //      AudioContext pase de "suspended" a "running". Si el wake
-    //      word se arma automáticamente desde un useEffect, el mic
-    //      pide permiso pero el AudioContext queda suspended y
-    //      Vosk no procesa audio (wake word no matchea nunca).
-    //   2. getUserMedia también necesita un user gesture reciente
-    //      para no ser bloqueado.
-    // El user ya granted el permiso antes (en una sesión previa), el
-    // click de hoy cuenta como user gesture válido y Chrome lo acepta.
-    if (typeof window === "undefined") return false;
-    return false;
-  });
-  const [trigger] = useState<string>(() => {
-    if (typeof window === "undefined") return TRIGGER_DEFAULT;
-    return localStorage.getItem(TRIGGER_KEY) || TRIGGER_DEFAULT;
-  });
+  const [wakeWordActive, setWakeWordActive] = useState(false);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try { localStorage.setItem(ACTIVE_KEY, wakeWordActive ? "1" : "0"); } catch {}
-  }, [wakeWordActive]);
-
-  // ── Hook de wake word (Vosk-Browser via WASM) ──────────────────────
-  // Se monta SIEMPRE que el user tenga permisos. El callback dispatcha
-  // un CustomEvent global cuando detecta el wake word. Vosk hace STT
-  // continuo y matchea contra el keyword con variantes fonéticas
-  // específicas para español (ver useWakeWord.ts).
   const wakeWord = useWakeWord({
     keyword: "jarvis",
     threshold: 0.2,
     cooldownMs: 2000,
     onTrigger: () => {
-      dbg(">>> onTrigger: dispatching window event 'jarvis:wake-detected'");
-      const event = new CustomEvent("jarvis:wake-detected", {
-        detail: { ts: Date.now() },
-      });
-      window.dispatchEvent(event);
+      // eslint-disable-next-line no-console
+      console.log("[jarvis] wake word detected, dispatching event");
+      window.dispatchEvent(
+        new CustomEvent("jarvis:wake-detected", { detail: { ts: Date.now() } }),
+      );
     },
     armed: wakeWordActive && canUseAssistant,
   });
 
-  // ── Botón grande "Activar escucha" ────────────────────────────────
-  // El SpeechRecognition de Chrome exige un user gesture para arrancar.
-  // Mostramos un botón VISIBLE en la esquina inferior izquierda para
-  // que el user sepa que tiene que activarlo una vez. Después de la
-  // primera activación, queda armado y se re-arranca solo tras cada
-  // `onend`.
-  //
-  // El botón también funciona como "pausar" cuando ya está activo.
-  const handleActivate = () => {
-    dbg(">>> handleActivate click, next armed=", !wakeWordActive);
-    setWakeWordActive(!wakeWordActive);
-  };
-
-  // ── Render del botón flotante ────────────────────────────────────
-  // Cuatro estados visuales:
-  //   - OFF (gris): no armado.
-  //   - LOADING (ámbar): está cargando el modelo Vosk (~40MB la 1ra vez).
-  //   - LISTENING (violeta + dot): escuchando activamente.
-  //   - ERROR (rojo): algo falló (mic denied, modelo no carga, etc).
-  let btnClass = "";
-  let btnContent: React.ReactNode = null;
-  if (!wakeWord.supported) {
-    btnClass = "border-gray-300 bg-gray-100 text-gray-500";
-    btnContent = (
-      <>
-        <MicOff size={14} />
-        Wake word no soportado
-      </>
-    );
-  } else if (wakeWord.error) {
-    btnClass = "border-red-300 bg-red-50 text-red-700";
-    btnContent = (
-      <>
-        <MicOff size={14} />
-        Reintentar
-      </>
-    );
-  } else if (wakeWord.isLoading) {
-    btnClass = "border-amber-300 bg-amber-50 text-amber-800";
-    btnContent = (
-      <>
-        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse" />
-        Cargando modelos…
-      </>
-    );
-  } else if (wakeWord.isListening) {
-    btnClass = "border-violet-400 bg-violet-500 text-white shadow-violet-500/30 hover:bg-violet-600";
-    btnContent = (
-      <>
-        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" />
-        <Mic size={14} />
-        Di "Jarvis"
-      </>
-    );
-  } else {
-    btnClass = "border-violet-200 bg-white text-violet-700 hover:bg-violet-50 dark:border-violet-500/40 dark:bg-gray-900/95 dark:text-violet-200 dark:hover:bg-violet-500/20";
-    btnContent = (
-      <>
-        <MicOff size={14} />
-        Activar escucha
-      </>
-    );
-  }
-
-  // ── FAB draggable (jul 2026 v8.7) ───────────────────────────────────
-  // Posición persistida en localStorage. El user puede arrastrar el
-  // botón a cualquier posición y se queda ahí entre recargas.
-  const constrainFabPos = (x: number, y: number): { x: number; y: number } => {
+  // ── Posición del FAB (persistida en localStorage) ────────────────
+  const constrainFabPos = (x: number, y: number) => {
     if (typeof window === "undefined") return { x, y };
-    // El "size" lo aproximamos en 160px ancho × 60px alto (píldora con icono + texto).
-    const btnW = 200;
-    const btnH = 60;
-    const maxX = window.innerWidth  - btnW - FAB_MARGIN;
-    const maxY = window.innerHeight - btnH - FAB_MARGIN;
+    const maxX = window.innerWidth - BTN_W - FAB_MARGIN;
+    const maxY = window.innerHeight - BTN_H - FAB_MARGIN;
     return {
       x: Math.max(FAB_MARGIN, Math.min(maxX, x)),
       y: Math.max(FAB_MARGIN, Math.min(maxY, y)),
     };
   };
   const getInitialFabPos = (): { x: number; y: number } => {
-    // Default: esquina inferior izquierda, igual que antes.
-    const defaultX = FAB_MARGIN;
-    const defaultY = (typeof window !== "undefined" ? window.innerHeight : 600) - 60 - FAB_MARGIN;
+    // Default: esquina inferior DERECHA (bottom-4 right-4).
+    const defaultX =
+      typeof window !== "undefined"
+        ? window.innerWidth - BTN_W - FAB_MARGIN
+        : 100;
+    const defaultY =
+      typeof window !== "undefined"
+        ? window.innerHeight - BTN_H - FAB_MARGIN
+        : 100;
     if (typeof window === "undefined") return { x: defaultX, y: defaultY };
     try {
       const stored = localStorage.getItem(POS_KEY);
@@ -221,106 +111,205 @@ export function JarvisWakeWordController({
   };
   const [fabPos, setFabPos] = useState(getInitialFabPos);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Reajustar si la ventana cambia de tamaño.
+  useEffect(() => {
+    const onResize = () => setFabPos((p) => constrainFabPos(p.x, p.y));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Drag (jul 2026 v10.1) ─────────────────────────────────────────
+  // La fix del bug: `wasDragRef` se resetea apenas se lee en
+  // `onButtonClick`, así no puede quedar "pegado" entre clicks.
+  // Además, en `endDrag` (pointerup/pointercancel) NO seteamos
+  // `wasDragRef = false` — eso lo hace el onClick inmediatamente
+  // después (síncrono, en el mismo task del click).
   const dragRef = useRef<{
     pointerId: number;
-    pointerStartX: number;
-    pointerStartY: number;
+    startX: number;
+    startY: number;
     fabStartX: number;
     fabStartY: number;
-    moved: boolean;
   } | null>(null);
+  const wasDragRef = useRef(false);
 
-  function onBtnPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+  function onPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
     if (e.button !== 0 && e.pointerType === "mouse") return;
-    // No prevenimos default siempre: si solo fue un click (no drag), el
-    // botón necesita disparar onClick normal.
-    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+    // Capturamos el puntero. Esto es necesario para que pointermove
+    // nos siga llegando aunque el cursor salga del botón durante el
+    // drag. En endDrag() liberamos explícitamente ANTES de que el
+    // click sintético se dispare.
+    (e.currentTarget as HTMLButtonElement).setPointerCapture(e.pointerId);
     dragRef.current = {
-      pointerId:      e.pointerId,
-      pointerStartX:  e.clientX,
-      pointerStartY:  e.clientY,
-      fabStartX:      fabPos.x,
-      fabStartY:      fabPos.y,
-      moved:          false,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      fabStartX: fabPos.x,
+      fabStartY: fabPos.y,
     };
+    wasDragRef.current = false;
     setIsDragging(true);
   }
-  function onBtnPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+  function onPointerMove(e: React.PointerEvent<HTMLButtonElement>) {
     const d = dragRef.current;
     if (!d) return;
-    const dx = e.clientX - d.pointerStartX;
-    const dy = e.clientY - d.pointerStartY;
-    if (!d.moved && Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) return;
-    if (!d.moved) d.moved = true;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    if (!wasDragRef.current && Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) return;
+    wasDragRef.current = true;
     e.preventDefault();
-    // La posición se mide desde la esquina sup-izq, así que restamos
-    // el delta (movimiento del mouse = movimiento del botón en
-    // sentido contrario).
-    const next = constrainFabPos(d.fabStartX + dx, d.fabStartY + dy);
-    setFabPos(next);
+    setFabPos(constrainFabPos(d.fabStartX + dx, d.fabStartY + dy));
   }
-  function onBtnPointerUp(_e: React.PointerEvent<HTMLDivElement>) {
-    const d = dragRef.current;
-    if (!d) return;
-    setIsDragging(false);
-    // Persistir la posición final.
+  function endDrag(e: React.PointerEvent<HTMLButtonElement>) {
+    // Liberar la captura del puntero ANTES de que el navegador
+    // dispare el click sintético. Si no, el click va al <button>
+    // contenedor (el que capturó) y no se procesa el onClick.
     try {
-      if (typeof window !== "undefined") {
-        localStorage.setItem(POS_KEY, JSON.stringify(fabPos));
+      const el = e.currentTarget as HTMLButtonElement;
+      if (dragRef.current && el.hasPointerCapture?.(dragRef.current.pointerId)) {
+        el.releasePointerCapture(dragRef.current.pointerId);
       }
     } catch {}
+    setIsDragging(false);
+    if (wasDragRef.current) {
+      try { localStorage.setItem(POS_KEY, JSON.stringify(fabPos)); } catch {}
+    }
     dragRef.current = null;
+    // NO reseteamos wasDragRef acá. Lo lee el onClick (que se
+    // dispara inmediatamente después) y ahí se limpia.
+  }
+  function onPointerUp(e: React.PointerEvent<HTMLButtonElement>) { endDrag(e); }
+  function onPointerCancel(e: React.PointerEvent<HTMLButtonElement>) { endDrag(e); }
+
+  function onButtonClick(e: React.MouseEvent<HTMLButtonElement>) {
+    if (wasDragRef.current) {
+      // Fue un drag, no un click: consumimos el evento y limpiamos
+      // el flag. El reset acá es CLAVE para que el próximo click sí
+      // cuente (no quede "pegado" como pasaba en el bug original).
+      wasDragRef.current = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    // jul 2026 v10.3 — FIX: además de toggle el state, llamamos
+    // explícitamente al manager de Vosk para que apague el mic.
+    // `switchMode("idle")` solo cambia el modo interno del
+    // recognizer; el `MediaStream` y el `AudioContext` siguen
+    // abiertos. Necesitamos `stop()` para liberar el mic y que
+    // Chrome saque el dot rojo de la pestaña.
+    const willBeActive = !wakeWordActive;
+    if (!willBeActive) {
+      // Vamos a apagar.
+      const m = getVoskManager();
+      if (m.isMode("wake")) {
+        // eslint-disable-next-line no-console
+        console.log("[jarvis] click → apagando manager (stop completo)");
+        void m.stop();
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log("[jarvis] button click, wakeWordActive=", wakeWordActive, "->", willBeActive);
+    setWakeWordActive(willBeActive);
   }
 
+  if (!canUseAssistant) return null;
+  if (typeof document === "undefined") return null;
+
+  // ── Estado visual ────────────────────────────────────────────────
+  type Visual = "unsupported" | "error" | "loading" | "listening" | "off";
+  let visual: Visual = "off";
+  if (!wakeWord.supported) visual = "unsupported";
+  else if (wakeWord.error) visual = "error";
+  else if (wakeWord.isLoading) visual = "loading";
+  else if (wakeWord.isListening) visual = "listening";
+
+  // Clases de Tailwind por estado visual.
+  // Light theme: bordes y fondos claros. Dark theme: `dark:` prefix.
+  const VISUAL_CLASSES: Record<Visual, string> = {
+    unsupported:
+      "border-gray-300 bg-gray-100 text-gray-500 " +
+      "dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400",
+    error:
+      "border-red-300 bg-red-50 text-red-700 hover:bg-red-100 " +
+      "dark:border-red-500/50 dark:bg-red-900/40 dark:text-red-300 dark:hover:bg-red-900/60",
+    loading:
+      "border-amber-300 bg-amber-50 text-amber-800 " +
+      "dark:border-amber-500/50 dark:bg-amber-900/40 dark:text-amber-300",
+    listening:
+      // Violeta fuerte en ambos temas — indica "escuchando".
+      "border-violet-400 bg-violet-600 text-white shadow-violet-500/30 hover:bg-violet-700 " +
+      "dark:border-violet-400 dark:bg-violet-600 dark:hover:bg-violet-700",
+    off:
+      // Light: blanco con borde violeta claro. Dark: gris-oscuro con borde violeta.
+      "border-violet-300 bg-white text-violet-700 hover:bg-violet-50 " +
+      "dark:border-violet-500/50 dark:bg-gray-900/95 dark:text-violet-200 dark:hover:bg-violet-500/20",
+  };
+
+  const ICON: Record<Visual, React.ReactNode> = {
+    unsupported: <MicOff size={14} />,
+    error:       <AlertTriangle size={14} />,
+    loading:     <Loader2 size={14} className="animate-spin" />,
+    listening: (
+      <span className="relative flex h-2.5 w-2.5">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/70" />
+        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" />
+      </span>
+    ),
+    off:         <Mic size={14} />,
+  };
+
+  const LABEL: Record<Visual, string> = {
+    unsupported: "Wake word no soportado",
+    error:       `Reintentar${wakeWord.error ? ` (${wakeMem(wakeWord.error)})` : ""}`,
+    loading:     "Cargando modelo…",
+    listening:   `Di "${TRIGGER_DEFAULT}"`,
+    off:         "Activar escucha",
+  };
+
   return (
-    <div
-      className={`fixed z-50 flex flex-col items-start gap-2 ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+    <button
+      type="button"
+      data-visual={visual}
+      data-testid="jarvis-wakeword-btn"
+      // Estilos en línea solo para la posición (porque depende de fabPos
+      // y de los constraints del viewport).
       style={{
-        left:    `${fabPos.x}px`,
-        top:     `${fabPos.y}px`,
-        // Mientras arrastramos, evitamos que el browser haga text
-        // selection u otras cosas raras. Después del drag, vuelve a auto.
-        userSelect:    isDragging ? "none" : "auto",
-        touchAction:   "none", // pointer events, no scroll
+        position: "fixed",
+        left: `${fabPos.x}px`,
+        top: `${fabPos.y}px`,
+        zIndex: 50,
+        userSelect: isDragging ? "none" : "auto",
+        touchAction: "none",
       }}
-      onPointerDown={onBtnPointerDown}
-      onPointerMove={onBtnPointerMove}
-      onPointerUp={onBtnPointerUp}
-      onPointerCancel={onBtnPointerUp}
+      className={
+        `inline-flex items-center gap-2 rounded-full border-2 ` +
+        `px-4 py-2 text-sm font-bold shadow-lg backdrop-blur transition ` +
+        `${isDragging ? "cursor-grabbing scale-105 shadow-2xl " : "cursor-grab "}` +
+        VISUAL_CLASSES[visual]
+      }
+      onClick={onButtonClick}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      title={
+        wakeWord.error
+          ? `Error: ${wakeWord.error}`
+          : wakeWord.isListening
+            ? `Escuchando — decí "${TRIGGER_DEFAULT}" para invocarlo. Click para apagar, arrastrá para mover.`
+            : 'Click para activar el wake word. Arrastrá para mover.'
+      }
     >
-      <button
-        type="button"
-        // Solo actuamos como click si NO hubo drag. Si hubo drag, el click
-        // no hace nada (el user quería mover, no activar).
-        onClick={(e) => {
-          if (dragRef.current?.moved) {
-            e.preventDefault();
-            e.stopPropagation();
-            return;
-          }
-          handleActivate();
-        }}
-        className={
-          "inline-flex items-center gap-2 rounded-full border-2 px-4 py-2 text-sm font-bold shadow-lg backdrop-blur transition " +
-          btnClass +
-          (isDragging ? " scale-105 shadow-2xl" : "")
-        }
-        title={
-          wakeWord.error
-            ? `Error: ${wakeWord.error}`
-            : wakeWord.isListening
-              ? "Escuchando — Di 'Jarvis' para invocar a Jarvis"
-              : "Click para activar el wake word. Arrastrá para moverlo."
-        }
-      >
-        {btnContent}
-      </button>
-      {/* Debug: último score. */}
-      {wakeWord.isListening && wakeWord.lastScore > 0 && (
-        <div className="rounded-lg border border-violet-200 bg-white/90 px-2.5 py-1 text-[10px] text-violet-700 shadow-sm backdrop-blur dark:border-violet-500/40 dark:bg-gray-900/90 dark:text-violet-200">
-          score: {wakeWord.lastScore.toFixed(2)}
-        </div>
-      )}
-    </div>
+      {ICON[visual]}
+      {LABEL[visual]}
+    </button>
   );
+}
+
+// Truncar el mensaje de error a 30 chars para que no rompa el layout
+// del botón.
+function wakeMem(s: string): string {
+  return s.length > 30 ? s.slice(0, 27) + "..." : s;
 }

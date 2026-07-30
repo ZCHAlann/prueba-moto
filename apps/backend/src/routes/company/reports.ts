@@ -9,6 +9,7 @@ import { eq, and, gte, lte, desc, inArray } from 'drizzle-orm';
 import { db } from '../../db/client';
 import {
   companyMaintenanceRecords,
+  companyMaintenanceSubcategories,
   companyMaintenanceItems,
   companyMaintenanceReauthorizations,
   companyWorkshops,
@@ -18,8 +19,13 @@ import {
 import { requireModule } from '../../middlewares/requireModule';
 import { requirePermission } from '../../middlewares/requirePermission';
 import { parseId, toId } from '../../lib/ids';
+import { alias } from 'drizzle-orm/pg-core';
 
 const router = Router({ mergeParams: true });
+
+// jul 2026 v9 — Alias para sub-categoría. Lo usan los 3 selects
+// de mantenimiento del archivo.
+const maintSubcatAliasReports = alias(companyMaintenanceSubcategories, 'maint_subcat_reports');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -71,6 +77,10 @@ function serializeMaintenance(m: any, items: any[]) {
     type:          m.type,
     status:        m.status,
     category:      m.category,
+    // jul 2026 v9 — Sub-categoría expuesta en el reporte. Si el
+    // mantenimiento no tiene, ambos son null.
+    subcategoryId: m.subcategoryId != null ? toId('maint-subcat', m.subcategoryId) : null,
+    subcategory:   m.subcategoryKey ?? null,
     title:         m.title,
     description:   m.description,
     odometerKm:    m.odometerKm,
@@ -117,16 +127,18 @@ router.get(
           assetName:  companyAssets.name,
           assetPlate: companyAssets.plate,
           workshopName: companyWorkshops.name,
+          subcategoryKey: maintSubcatAliasReports.key,
         })
         .from(companyMaintenanceRecords)
         .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
         .leftJoin(companyWorkshops, eq(companyWorkshops.id, companyMaintenanceRecords.workshopId))
+        .leftJoin(maintSubcatAliasReports, eq(maintSubcatAliasReports.id, companyMaintenanceRecords.subcategoryId))
         .where(and(...where))
         .orderBy(desc(companyMaintenanceRecords.scheduledFor));
 
       const itemsMap = await loadItemsForMaintenanceIds(rows.map((r) => r.m.id));
       res.json({
-        data: rows.map((r) => serializeMaintenance(r.m, itemsMap.get(r.m.id) ?? [])),
+        data: rows.map((r) => serializeMaintenance({ ...r.m, subcategoryKey: r.subcategoryKey }, itemsMap.get(r.m.id) ?? [])),
         total: rows.length,
         range: { from: from.toISOString(), to: to.toISOString() },
       });
@@ -169,17 +181,19 @@ router.get(
           assetName:  companyAssets.name,
           assetPlate: companyAssets.plate,
           workshopName: companyWorkshops.name,
+          subcategoryKey: maintSubcatAliasReports.key,
         })
         .from(companyMaintenanceRecords)
         .leftJoin(companyAssets, eq(companyAssets.id, companyMaintenanceRecords.assetId))
         .leftJoin(companyWorkshops, eq(companyWorkshops.id, companyMaintenanceRecords.workshopId))
+        .leftJoin(maintSubcatAliasReports, eq(maintSubcatAliasReports.id, companyMaintenanceRecords.subcategoryId))
         .where(and(...where))
         .orderBy(desc(companyMaintenanceRecords.scheduledFor));
 
       const itemsMap = await loadItemsForMaintenanceIds(rows.map((r) => r.m.id));
       res.json({
         workshop: { id: toId('workshop', workshop.id), name: workshop.name, nit: workshop.nit },
-        data: rows.map((r) => serializeMaintenance(r.m, itemsMap.get(r.m.id) ?? [])),
+        data: rows.map((r) => serializeMaintenance({ ...r.m, subcategoryKey: r.subcategoryKey }, itemsMap.get(r.m.id) ?? [])),
         total: rows.length,
         range: { from: from?.toISOString() ?? null, to: to?.toISOString() ?? null },
       });

@@ -1,249 +1,223 @@
+// hooks/useHandoverWizard.ts
+//
+// jul 2026 v4 — Wizard simplificado. Los dos formatos de acta nuevos
+// (Recepción y Entrega) son MUCHO más cortos que el modelo viejo:
+//
+//   - NO hay lista de 9 checks de Novedades
+//   - NO hay lista de 11 checks de Accesorios
+//   - NO hay Cargo, Teléfono, Combustible, Estado general
+//   - NO hay N° de acta, Lugar, Área (la ciudad se mantiene para el
+//     encabezado de la fecha en formato "En la ciudad de X, a los N
+//     días del mes de M del año YYYY")
+//   - NO hay bloque de Declaración legal largo (queda un párrafo
+//     dentro de cada acta)
+//   - NO hay campos de devolución en el alta (km, multas, foto
+//     odómetro al regreso) — esas se manejan en el finalize
+//
+// El WizardData queda con lo mínimo indispensable para generar
+// cualquiera de los dos PDFs. El `actaKind` (recepcion | entrega) se
+// setea en el paso 1 del wizard y define qué plantilla se usa al
+// generar el PDF.
+
 import { useCallback, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Tipos ──────────────────────────────────────────────────────────────────
 
-export type NovedadesState = {
-  sinNovedades:         boolean;
-  lucesDanadas:         boolean;
-  faltanAccesorios:     boolean;
-  fallaMecanica:        boolean;
-  llantasMalEstado:     boolean;
-  requiereMantenimiento:boolean;
-  choqueAccidente:      boolean;
-  golpes:               boolean;
-  interiorSucio:        boolean;
-  multas:               boolean;
-};
-
-export type AccesoriosState = {
-  matricula:      boolean;
-  llaveRepuesto:  boolean;
-  triangulos:     boolean;
-  herramientas:   boolean;
-  seguro:         boolean;
-  gata:           boolean;
-  extintor:       boolean | "noTiene";
-  radio:          boolean;
-  llavePrincipal: boolean;
-  llaveRuedas:    boolean;
-  botiquin:       boolean | "noTiene";
-};
+/** Tipo de acta que se va a generar. */
+export type ActaKind = "recepcion" | "entrega";
 
 export type WizardData = {
-  // Step 1
-  actaNumber:    string;
-  actaDate:      string;
-  actaTime:      string;
-  actaPlace:     string;
-  actaArea:      string;
-  companyName:   string;
-  // Step 2
-  driverName:    string;
-  driverDni:     string;
-  driverPhone:   string;
-  driverRole:    string;
-  // Step 3
-  vehiclePlate:  string;
-  vehicleBrand:  string;
-  vehicleModel:  string;
-  vehicleColor:  string;
-  vehicleYear:   string;
-  /** Km al devolver (entrega) en modo alta. En modo finalize es el km de regreso (usuario lo ingresa). */
-  vehicleOdometer:  string;
-  /** Km originales al momento de la entrega — se muestra como referencia en finalize. */
-  vehicleOdometerDelivery: string;
-  vehicleFuelLevel: string;
-  vehicleCondition: string;
-  // Step 4
-  novedades:     NovedadesState;
-  novedadesText: string;
-  // Step 5
-  accesorios:       AccesoriosState;
-  accesoriosOtros:  string;
-  // Step 6
+  /** Tipo de acta. Define el template del PDF. */
+  actaKind: ActaKind;
+  /** Ciudad donde se firma el acta (aparece en el encabezado de fecha). */
+  actaPlace: string;
+  /** Fecha del acta en formato "YYYY-MM-DD". */
+  actaDate: string;
+  /** Hora del acta en formato "HH:MM". */
+  actaTime: string;
+  /** Nombre de la empresa (sale de la sesión). */
+  companyName: string;
+  /** Tipo de vehículo (camioneta, sedan, etc.) — solo se muestra en
+   *  el acta de Entrega. En Recepción es opcional. */
+  vehicleType: string;
+
+  // Datos del chofer (los trae el hook desde el conductor seleccionado)
+  driverName:  string;
+  driverDni:   string;
+
+  // Datos del vehículo (los trae el hook desde el activo seleccionado)
+  vehiclePlate: string;
+  vehicleBrand: string;
+  vehicleModel: string;
+  vehicleColor: string;
+  vehicleYear:  string;
+
+  // Anexos: fotos del vehículo para incluir en el PDF
   vehiclePhotos:    File[];
   vehiclePhotoUrls: string[];
-  // Step 7 & 8
-  signatureLogDataUrl:  string | null;
-  signatureLogUrl:      string | null;
-  signatureRespDataUrl: string | null;
-  signatureRespUrl:     string | null;
-  // PDF
+
+  // jul 2026 v5 — Texto libre de novedades / observaciones. Aparece
+  // en AMBAS actas de alta (Recepción y Entrega) como un bloque
+  // "OBSERVACIONES" debajo del cuerpo principal. El chofer puede
+  // escribir cualquier cosa que encuentre en el vehículo al momento
+  // de recibirlo (golpes, rayones, detalles, etc).
+  novedadesText: string;
+
+  // Firmas
+  // jul 2026 v5.1 — Tanto en Recepción como en Entrega, el firmante
+  // principal es el CHOFER (la firma va en `signatureRecibeDataUrl`).
+  // En Entrega hay un SEGUNDO firmante (el encargado de logística) que
+  // se guarda en `signatureEntregaDataUrl`. NO hay caso donde firme
+  // el admin solo — en Recepción es el chofer.
+  signatureEntregaDataUrl:  string | null;
+  signatureEntregaUrl:      string | null;
+  signatureRecibeDataUrl:   string | null;
+  signatureRecibeUrl:       string | null;
+
+  /** Nombre y DNI del encargado de la entrega (Departamento Logístico).
+   *  Solo se usa en el acta de Entrega. Lo trae la sesión
+   *  (current user). En el acta de Recepción, el único firmante es
+   *  el chofer (ver `driverName` / `driverDni`). */
+  signatoryName: string;
+  signatoryDni:  string;
+
+  /** PDF resultante (URL del storage una vez subido). */
   pdfUrl: string | null;
-  logisticsName: string;
-  logisticsDni:  string;
-  // ── Campos específicos del acta de DEVOLUCIÓN (solo finalize) ─────────────
-  returnOdometerPhotoUrl: string | null;
-  /** File local del odómetro al regreso, antes de subir. */
-  returnOdometerPhoto:    File | null;
-  multasText:            string;
 };
 
-// Datos que vienen del acta existente (edit mode)
+/** Datos pre-cargados al editar un acta existente. */
 export type ExistingHandoverData = {
-  actaNumber?:       string | null;
-  actaDate?:         string | null;
-  actaTime?:         string | null;
-  actaPlace?:        string | null;
-  actaArea?:         string | null;
-  driverDni?:        string | null;
-  driverPhone?:      string | null;
-  driverRole?:       string | null;
-  vehicleOdometer?:  string | null;
-  vehicleFuelLevel?: string | null;
-  vehicleCondition?: string | null;
-  novedades?:        Record<string, unknown> | null;
-  accesorios?:       Record<string, unknown> | null;
-  novedadesText?:    string | null;
-  signatureLogUrl?:  string | null;
-  signatureRespUrl?: string | null;
-  vehiclePhotoUrls?: string[];
-  handoverUrl?:      string | null;
-  // Datos del acta de devolución (si la asignación ya fue finalizada).
-  returnOdometerPhotoUrl?: string | null;
-  multasText?:            string | null;
-};
-
-const DEFAULT_NOVEDADES: NovedadesState = {
-  sinNovedades:          false,
-  lucesDanadas:          false,
-  faltanAccesorios:      false,
-  fallaMecanica:         false,
-  llantasMalEstado:      false,
-  requiereMantenimiento: false,
-  choqueAccidente:       false,
-  golpes:                false,
-  interiorSucio:         false,
-  multas:                false,
-};
-
-const DEFAULT_ACCESORIOS: AccesoriosState = {
-  matricula:      true,
-  llaveRepuesto:  true,
-  triangulos:     true,
-  herramientas:   true,
-  seguro:         true,
-  gata:           true,
-  extintor:       true,
-  radio:          true,
-  llavePrincipal: true,
-  llaveRuedas:    true,
-  botiquin:       true,
+  actaKind?:          ActaKind | null;
+  actaPlace?:         string | null;
+  actaDate?:          string | null;
+  actaTime?:          string | null;
+  vehicleType?:       string | null;
+  driverDni?:         string | null;
+  signatureReceptorUrl?: string | null;
+  signatureEntregaUrl?:  string | null;
+  signatureRecibeUrl?:   string | null;
+  vehiclePhotoUrls?:  string[];
+  handoverUrl?:       string | null;
 };
 
 function buildInitialData(
-  driver: { firstName: string; lastName: string; phone?: string | null; dni?: string | null },
+  driver: { firstName: string; lastName: string; dni?: string | null },
   asset: {
     plate?: string | null;
     brand?: string | null;
     model?: string | null;
     color?: string | null;
     year?: string | null;
+    category?: string | null;
   },
   companyName: string,
-  assignmentCount: number,
+  currentUser: { name?: string | null; dni?: string | null },
+  city: string,
   existing?: ExistingHandoverData | null,
-  finalizeMode = false,
-  currentUser?: { name?: string | null; dni?: string | null } | null,
 ): WizardData {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
   const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  const year    = now.getFullYear();
 
-  // Si hay datos existentes, los usamos; si no, valores por defecto
   return {
-    actaNumber:    existing?.actaNumber    ?? `ACTA-${year}-${String(assignmentCount + 1).padStart(4, "0")}`,
-    actaDate:      existing?.actaDate      ?? dateStr,
-    actaTime:      existing?.actaTime      ?? timeStr,
-    actaPlace:     existing?.actaPlace     ?? "",
-    actaArea:      existing?.actaArea      ?? "",
-    companyName,
-    driverName:    `${driver.firstName} ${driver.lastName}`,
-    // jun 2026 — autorrellenamos el DNI desde el perfil del conductor.
-    // Prioridad: existingData (acta editada) > driver.dni (columna
-    // dedicada del conductor en company_drivers, migración 0040).
-    // Antes había que tipearlo a mano cada vez.
-    driverDni:     existing?.driverDni     ?? driver.dni ?? "",
-    driverPhone:   existing?.driverPhone   ?? driver.phone ?? "",
-    driverRole:    existing?.driverRole    ?? "",
-    vehiclePlate:  asset.plate  ?? "",
-    vehicleBrand:  asset.brand  ?? "",
-    vehicleModel:  asset.model  ?? "",
-    vehicleColor:  asset.color  ?? "",
-    vehicleYear:   asset.year   ?? "",
-    // En finalizeMode: guardamos el km original en vehicleOdometerDelivery
-    // y dejamos vehicleOdometer vacío para que el usuario ingrese el de regreso.
-    vehicleOdometer: finalizeMode ? "" : (existing?.vehicleOdometer ?? ""),
-    vehicleOdometerDelivery: existing?.vehicleOdometer ?? "",
-    vehicleFuelLevel: existing?.vehicleFuelLevel ?? "",
-    vehicleCondition: existing?.vehicleCondition ?? "",
-    novedades:     (existing?.novedades as NovedadesState) ?? { ...DEFAULT_NOVEDADES },
-    novedadesText: existing?.novedadesText ?? "",
-    accesorios:    (existing?.accesorios as AccesoriosState) ?? { ...DEFAULT_ACCESORIOS },
-    accesoriosOtros:  "",
+    actaKind:    existing?.actaKind    ?? "entrega",
+    // jul 2026 v7 — `city` (default de cabecera) solo se usa si NO hay
+    // un acta existente Y NO hay companyName. La ciudad por defecto
+    // sale de la sesión del usuario, no de la empresa. Si la sesión
+    // no la trae, queda en blanco para que el user la tipee.
+    actaPlace:   existing?.actaPlace   ?? city,
+    actaDate:    existing?.actaDate    ?? dateStr,
+    actaTime:    existing?.actaTime    ?? timeStr,
+    // jul 2026 v7 — companyName ahora viene como prop desde page.tsx
+    // (session.companyName). Antes se leía con un cast raro y un
+    // ternario bug que lo dejaba vacío, mostrando "EMPRESA" en el
+    // header del PDF. Prioridad: prop > existing.handoverUrl no
+    // aporta nada, así que solo el prop manda.
+    companyName: companyName || "",
+    vehicleType: existing?.vehicleType ?? asset.category ?? "",
+
+    driverName:  `${driver.firstName} ${driver.lastName}`,
+    driverDni:   existing?.driverDni ?? driver.dni ?? "",
+
+    vehiclePlate: asset.plate ?? "",
+    vehicleBrand: asset.brand ?? "",
+    vehicleModel: asset.model ?? "",
+    vehicleColor: asset.color ?? "",
+    vehicleYear:  asset.year  ?? "",
+
     vehiclePhotos:    [],
     vehiclePhotoUrls: existing?.vehiclePhotoUrls ?? [],
-    signatureLogDataUrl:  existing?.signatureLogUrl  ?? null,  // precarga URL como dataUrl visual
-    signatureLogUrl:      existing?.signatureLogUrl  ?? null,
-    signatureRespDataUrl: existing?.signatureRespUrl ?? null,
-    signatureRespUrl:     existing?.signatureRespUrl ?? null,
+
+    // jul 2026 v5 — Por defecto vacío, el chofer lo llena en el wizard.
+    novedadesText: "",
+
+    signatureEntregaDataUrl:  existing?.signatureEntregaUrl  ?? null,
+    signatureEntregaUrl:      existing?.signatureEntregaUrl  ?? null,
+    signatureRecibeDataUrl:   existing?.signatureRecibeUrl   ?? null,
+    signatureRecibeUrl:       existing?.signatureRecibeUrl   ?? null,
+
+    signatoryName: currentUser.name ?? "",
+    signatoryDni:  currentUser.dni  ?? "",
+
     pdfUrl: existing?.handoverUrl ?? null,
-    logisticsName: currentUser?.name ?? "",
-    logisticsDni:  currentUser?.dni  ?? "",
-    returnOdometerPhotoUrl: existing?.returnOdometerPhotoUrl ?? null,
-    returnOdometerPhoto:    null,
-    multasText:            existing?.multasText ?? "",
   };
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
+// ─── Hook ────────────────────────────────────────────────────────────────────
 
 export function useHandoverWizard(
-  driver: { firstName: string; lastName: string; phone?: string | null; dni?: string | null } | null,
+  driver: { firstName: string; lastName: string; dni?: string | null } | null,
   asset: {
     plate?: string | null;
     brand?: string | null;
     model?: string | null;
     color?: string | null;
     year?: string | null;
+    category?: string | null;
   } | null,
-  assignmentCount: number,
   existing?: ExistingHandoverData | null,
-  finalizeMode = false,
+  // jul 2026 v7 — companyName ahora viene como prop desde el call site
+  // (page.tsx lo levanta de `session.companyName`). Dejamos de leerlo
+  // desde useAuth con el cast raro + ternario bug que lo dejaba vacío.
+  companyNameOverride?: string,
 ) {
   const { session } = useAuth();
-  const companyName = (session as Record<string, unknown>)?.companyName as string ?? "";
-  const companyId   = session?.companyId;
+  const companyId = session?.companyId;
+
+  // Resolver companyName: prop > sesión. El prop es la fuente primaria
+  // porque el padre lo levanta con el typing correcto desde
+  // useAuth; la sesión se mantiene como fallback por compat.
+  const companyName = (companyNameOverride && companyNameOverride.trim())
+    || session?.companyName
+    || "";
 
   const [data, setData] = useState<WizardData>(() =>
     buildInitialData(
       driver ?? { firstName: "", lastName: "" },
       asset  ?? {},
       companyName,
-      assignmentCount,
-      existing,
-      finalizeMode,
       { name: session?.name ?? null, dni: session?.dni ?? null },
+      "",  // city default — sin sede por defecto; el user lo tipea
+      existing,
     )
   );
   const [uploading, setUploading] = useState(false);
   const [error, setError]         = useState<string | null>(null);
 
-  const reinitialize = useCallback((existingOverride?: ExistingHandoverData | null, isFinalize?: boolean) => {
+  const reinitialize = useCallback((existingOverride?: ExistingHandoverData | null) => {
     setData(buildInitialData(
       driver ?? { firstName: "", lastName: "" },
       asset  ?? {},
       companyName,
-      assignmentCount,
+      { name: session?.name ?? null, dni: session?.dni ?? null },
+      "",
       existingOverride ?? existing,
-      isFinalize ?? finalizeMode,
     ));
     setError(null);
-  }, [driver, asset, companyName, assignmentCount, existing, finalizeMode]);
+  }, [driver, asset, companyName, session?.name, session?.dni, existing]);
 
   const setField = useCallback(<K extends keyof WizardData>(key: K, value: WizardData[K]) => {
     setData((prev) => ({ ...prev, [key]: value }));
@@ -254,7 +228,6 @@ export function useHandoverWizard(
     setUploading(true);
     try {
       const form = new FormData();
-      // Comprimir cada foto antes de subirla
       const compressed = await Promise.all(
         data.vehiclePhotos.map((f) => compressIfImage(f, COMPRESS_OPTS_EVIDENCE))
       );
@@ -273,11 +246,11 @@ export function useHandoverWizard(
   }, [data.vehiclePhotos, companyId]);
 
   const uploadSignature = useCallback(
-    async (type: "log" | "resp", dataUrl: string): Promise<string> => {
+    async (kind: "entrega" | "recibe", dataUrl: string): Promise<string> => {
       setUploading(true);
       try {
         const blob = await (await fetch(dataUrl)).blob();
-        const file = new File([blob], `sig-${type}-${Date.now()}.png`, { type: "image/png" });
+        const file = new File([blob], `sig-${kind}-${Date.now()}.png`, { type: "image/png" });
         const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
         const form = new FormData();
         form.append("photos", toUpload);
@@ -288,8 +261,8 @@ export function useHandoverWizard(
         if (!res.ok) throw new Error("Error al subir firma");
         const { urls } = await res.json();
         const url = urls[0] as string;
-        if (type === "log") setData((prev) => ({ ...prev, signatureLogUrl: url }));
-        else                setData((prev) => ({ ...prev, signatureRespUrl: url }));
+        if (kind === "entrega") setData((p) => ({ ...p, signatureEntregaUrl: url }));
+        else                     setData((p) => ({ ...p, signatureRecibeUrl: url }));
         return url;
       } finally {
         setUploading(false);
@@ -302,7 +275,6 @@ export function useHandoverWizard(
     setUploading(true);
     try {
       const form = new FormData();
-      // PDF: no se comprime (compressIfImage lo dejaría igual por no ser imagen)
       form.append("pdf", blob, `acta-${Date.now()}.pdf`);
       const res = await fetch(
         `/api/upload/handover-pdf?companyId=${companyId}`,
@@ -317,34 +289,9 @@ export function useHandoverWizard(
     }
   }, [companyId]);
 
-  /**
-   * Sube la foto del odómetro al regreso y devuelve la URL persistida.
-   * Devuelve string vacío si no hay foto (sin upload).
-   */
-  const uploadOdometerPhoto = useCallback(async (file: File | null): Promise<string | null> => {
-    if (!file) return null;
-    setUploading(true);
-    try {
-      const toUpload = await compressIfImage(file, COMPRESS_OPTS_EVIDENCE);
-      const form = new FormData();
-      form.append("photos", toUpload);
-      const res = await fetch(
-        `/api/upload/assignment-photos?companyId=${companyId}`,
-        { method: "POST", body: form },
-      );
-      if (!res.ok) throw new Error("Error al subir foto del odómetro");
-      const { urls } = await res.json();
-      const url = urls[0] as string;
-      setData((prev) => ({ ...prev, returnOdometerPhotoUrl: url }));
-      return url;
-    } finally {
-      setUploading(false);
-    }
-  }, [companyId]);
-
-  const reset = useCallback((existingOverride?: ExistingHandoverData | null, isFinalize?: boolean) => {
-    reinitialize(existingOverride, isFinalize);
+  const reset = useCallback((existingOverride?: ExistingHandoverData | null) => {
+    reinitialize(existingOverride);
   }, [reinitialize]);
 
-  return { data, setField, uploading, error, setError, uploadPhotos, uploadSignature, uploadPdf, uploadOdometerPhoto, reset };
+  return { data, setField, uploading, error, setError, uploadPhotos, uploadSignature, uploadPdf, reset };
 }

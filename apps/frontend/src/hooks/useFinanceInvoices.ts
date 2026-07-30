@@ -301,7 +301,12 @@ export function useFinanceInvoicesQuery() {
           throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
         }
         const json = (await res.json()) as Record<string, unknown>;
-        const rowsRaw = (json.rows ?? []) as Array<Record<string, unknown>>;
+        // jul 2026 v9 — El backend ahora usa la shape canónica
+        // de paginación del proyecto: `{ data, total, page,
+        // pageSize, totalPages }` (buildPageResponse). Antes
+        // devolvía `{ total, rows }`. Leemos `data` con
+        // fallback a `rows` para no romper consumidores viejos.
+        const rowsRaw = (json.data ?? json.rows ?? []) as Array<Record<string, unknown>>;
         const mapped = rowsRaw.map(mapApi);
         const totalResp =
           typeof json.total === "number" ? (json.total as number) : mapped.length;

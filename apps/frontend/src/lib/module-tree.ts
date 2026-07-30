@@ -121,6 +121,12 @@ export const MODULE_TREE = {
       // admin/owner (o quien tenga el permiso granular) pueda revisarlos
       // sin abrir la página de Reportes.
       historial:     "Historial (cerrados)",
+      // jul 2026 v3 — Submódulo "Data": consulta rápida por vehículo.
+      // Wizard 4 pasos (vehículo → módulo → categoría → tabla de
+      // detalles con desglose y suma de costos). Endpoint único
+      // backend `routes/company/maintenance-data.ts` (gate
+      // `mantenimiento.data.ver`).
+      data:          "Data",
     },
   },
   checklist: {
@@ -154,6 +160,11 @@ export const MODULE_TREE = {
       // Submódulo "Estadísticas" — solo owner/admin por defecto (ver ROLE_DEFAULT_PERMISSIONS).
       // Se renderiza como tab colorida dentro de /reportes con KPIs + 6 charts + matemática.
       estadisticas: "Estadísticas",
+      // jul 2026 v1 — Submódulo "Filtrado": cascada de 6 niveles
+      // (vehículo → módulo → categoría → año → mes → semana → día)
+      // con tabla de detalles al final. Permiso granular
+      // `reportes.filtrado.ver` para activar/desactivar el tab.
+      filtrado: "Filtrado",
     },
   },
   lienzo: {

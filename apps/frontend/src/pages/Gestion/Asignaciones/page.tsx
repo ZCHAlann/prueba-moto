@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { usePermissions } from "../../../hooks/usePermissions";
 import { useAssets } from "../../../hooks/useAssets";
 import { useDrivers } from "../../../hooks/useDrivers";
+import { useAuth } from "../../../context/AuthContext";
 // TODO(audit-modulos): Asignaciones depende de useAssets/useDrivers para
 // matchear IDs. La refactorización correcta es usar el response del
 // propio endpoint de Asignaciones (que ya devuelve assetName y
@@ -11,6 +12,7 @@ import { useDrivers } from "../../../hooks/useDrivers";
 // para el wizard de creación. Pendiente por tamaño del refactor.
 import { useAssignments } from "../../../hooks/useAssignments";
 import { HandoverWizard } from "./components/HandoerWizard";
+import { FinalizeAssignmentWizard } from "./components/FinalizeAssignmentWizard";
 import type { ApiDriver } from "../../../hooks/useDrivers";
 import type { Asset } from "../../../types/activo";
 import type { ExistingHandoverData } from "../../../hooks/useHandoverWizard";
@@ -202,6 +204,14 @@ export function AssignmentsPage() {
   const { drivers,  loading: driversLoading } = useDrivers();
   const { active, history, loading: assignmentsLoading, fetchPage, createAssignment, updateHandover, finalizeAssignment } =
     useAssignments();
+  // jul 2026 v7 — Company name para el header del PDF. Lo levantamos
+  // desde el AuthContext acá y se lo pasamos al wizard como prop, en
+  // vez de leerlo dentro del hook (donde el cast y el ternario bug
+  // hacían que llegara vacío al PDF y se mostrara "EMPRESA" como
+  // fallback). Fuente: `session.companyName` que el backend devuelve
+  // en `/auth/session`.
+  const { session } = useAuth();
+  const companyName = session?.companyName ?? "";
 
   const loading = assetsLoading || driversLoading || assignmentsLoading;
 
@@ -222,16 +232,18 @@ export function AssignmentsPage() {
   const [editWizardDriverId,    setEditWizardDriverId]    = useState<string | null>(null);
   const [editWizardAssetId,     setEditWizardAssetId]     = useState<string | null>(null);
 
-  // ── wizard — finalize mode ─────────────────────────────────────────────────
-  // Cuando el supervisor click "Finalizar" en una asignación Activa, en vez
-  // de cerrar inmediatamente, abrimos el wizard en finalizeMode para
-  // capturar fotos, odómetro final, condición, etc. y generar el acta
-  // de devolución. Los datos del conductor se heredan de la asignación.
+  // ── wizard — finalize mode (jul 2026 v5) ─────────────────────────────────
+  // Cuando el supervisor click "Finalizar" en una asignación Activa,
+  // abrimos el `FinalizeAssignmentWizard` (modal APARTE) que captura
+  // el estado del vehículo al regreso y genera el acta de devolución.
+  // El `HandoverWizard` viejo ya NO se usa para finalize — solo para
+  // crear/editar actas de alta.
   const [finalizeWizardOpen,    setFinalizeWizardOpen]    = useState(false);
   const [finalizeAssignmentId,  setFinalizeAssignmentId]  = useState<string | null>(null);
-  const [finalizeExistingData,  setFinalizeExistingData]  = useState<ExistingHandoverData | null>(null);
   const [finalizeWizardDriverId,setFinalizeWizardDriverId]= useState<string | null>(null);
   const [finalizeWizardAssetId, setFinalizeWizardAssetId] = useState<string | null>(null);
+  const [finalizeOdometerInitial, setFinalizeOdometerInitial] = useState<string | null>(null);
+  const [finalizeCompanyCity,  setFinalizeCompanyCity]   = useState<string | undefined>(undefined);
 
   // ── detail drawer ─────────────────────────────────────────────────────────
   const [drawerAssignmentId, setDrawerAssignmentId] = useState<string | null>(null);
@@ -448,34 +460,15 @@ export function AssignmentsPage() {
       return;
     }
 
-    // Pre-cargar datos existentes del acta (si los hay) como base.
-    // En finalizeMode esos datos se usan como punto de partida: el usuario
-    // los puede confirmar o ajustar.
-    const existingData: ExistingHandoverData = {
-      actaNumber:       assignment.actaNumber,
-      actaDate:         assignment.actaDate,
-      actaTime:         assignment.actaTime,
-      actaPlace:        assignment.actaPlace,
-      actaArea:         assignment.actaArea,
-      driverDni:        assignment.driverDni,
-      driverPhone:      assignment.driverPhone,
-      driverRole:       assignment.driverRole,
-      vehicleOdometer:  assignment.vehicleOdometer,
-      vehicleFuelLevel: assignment.vehicleFuelLevel,
-      vehicleCondition: assignment.vehicleCondition,
-      novedades:        (assignment as unknown as { novedades?: Record<string, unknown> | null }).novedades ?? null,
-      accesorios:       (assignment as unknown as { accesorios?: Record<string, unknown> | null }).accesorios ?? null,
-      novedadesText:    assignment.novedadesText,
-      signatureLogUrl:  assignment.signatureLogUrl,
-      signatureRespUrl: assignment.signatureRespUrl,
-      vehiclePhotoUrls: assignment.vehiclePhotoUrls,
-      handoverUrl:      assignment.handoverUrl,
-    };
-
     setFinalizeAssignmentId(id);
-    setFinalizeExistingData(existingData);
     setFinalizeWizardDriverId(driver.id);
     setFinalizeWizardAssetId(asset.id);
+    // jul 2026 v5 — Pasamos el km al entregar como referencia, y la
+    // ciudad de la empresa como default del campo "lugar". El
+    // backend ya tiene estos datos en la asignación, pero los
+    // pasamos al wizard para evitar un fetch extra.
+    setFinalizeOdometerInitial(assignment.vehicleOdometer ?? null);
+    setFinalizeCompanyCity(assignment.actaPlace ?? undefined);
     setFinalizeWizardOpen(true);
     if (drawerAssignmentId === id) setDrawerAssignmentId(null);
   }
@@ -483,9 +476,10 @@ export function AssignmentsPage() {
   function handleFinalizeWizardClose() {
     setFinalizeWizardOpen(false);
     setFinalizeAssignmentId(null);
-    setFinalizeExistingData(null);
     setFinalizeWizardDriverId(null);
     setFinalizeWizardAssetId(null);
+    setFinalizeOdometerInitial(null);
+    setFinalizeCompanyCity(undefined);
   }
 
   function handleFinalizeWizardComplete(assignment: { id: string } & Record<string, unknown>) {
@@ -881,6 +875,7 @@ export function AssignmentsPage() {
           assetId={selectedAssetId!}
           driver={wizardDriver}
           asset={wizardAsset}
+          companyName={companyName}
           assignmentCount={active.total}
           onClose={handleWizardClose}
           onComplete={handleWizardComplete}
@@ -897,6 +892,7 @@ export function AssignmentsPage() {
           assetId={editWizardAssetId!}
           driver={editWizardDriver}
           asset={editWizardAsset}
+          companyName={companyName}
           assignmentCount={active.total}
           onClose={handleEditWizardClose}
           onComplete={handleEditWizardComplete}
@@ -908,27 +904,24 @@ export function AssignmentsPage() {
         />
       )}
 
-      {/* ── HANDOVER WIZARD — finalize mode ── */}
+      {/* ── HANDOVER WIZARD — finalize mode (jul 2026 v5: NUEVO wizard
+            independiente, ya NO usa el `HandoverWizard` viejo) ── */}
       {finalizeWizardOpen && finalizeAssignmentId && finalizeWizardDriverId && finalizeWizardAssetId && (() => {
         const driver = drivers.find((d) => d.id === finalizeWizardDriverId);
         const asset  = assets.find((a) => a.id === finalizeWizardAssetId);
         if (!driver || !asset) return null;
         return (
-          <HandoverWizard
+          <FinalizeAssignmentWizard
             open={finalizeWizardOpen}
-            driverId={finalizeWizardDriverId}
-            assetId={finalizeWizardAssetId}
+            assignmentId={finalizeAssignmentId}
             driver={driver}
             asset={asset}
-            assignmentCount={active.total}
+            companyName={companyName}
+            odometerInitial={finalizeOdometerInitial}
+            companyCity={finalizeCompanyCity}
             onClose={handleFinalizeWizardClose}
             onComplete={handleFinalizeWizardComplete}
-            createAssignment={createAssignment}
-            updateHandover={updateHandover}
-            finalizeAssignment={finalizeAssignment}
-            finalizeMode
-            existingAssignmentId={finalizeAssignmentId}
-            existingData={finalizeExistingData}
+            finalizeAssignment={(id, body) => finalizeAssignment(id, body as unknown as HandoverPayload & { returnHandoverUrl?: string })}
           />
         );
       })()}

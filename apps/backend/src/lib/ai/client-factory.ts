@@ -243,6 +243,41 @@ export async function getGroqClientForCompany(companyId: number): Promise<Groq |
   return new Groq({ apiKey: k });
 }
 
+/**
+ * jul 2026 v3 — Cliente Groq exclusivo para el clasificador de intents.
+ * Usa la key `GROQ_CLASSIFIER_API_KEY` del .env si está configurada;
+ * si no, fallback a la cascada de la empresa (getGroqClientForCompany).
+ *
+ * Razón: el clasificador y el LLM principal (120b) comparten la misma
+ * cascada de keys, así que un pico de uso del LLM principal puede
+ * tirar la cuota del clasificador y hacer que el schema de tools se
+ * cargue completo (Capa 1 + Capa 2). Con esta key separada, el
+ * clasificador siempre tiene cuota.
+ *
+ * Uso:
+ *   const client = await getClassifierGroqClient(empresaId);
+ */
+// jul 2026 v3 — log 1 sola vez al primer uso para confirmar qué
+// configuración del clasificador quedó activa.
+let _classifierConfigLogged = false;
+
+export async function getClassifierGroqClient(companyId: number): Promise<Groq | null> {
+  const dedicated = process.env.GROQ_CLASSIFIER_API_KEY?.trim();
+  if (dedicated) {
+    if (!_classifierConfigLogged) {
+      console.log('[jarvis-config] classifier using DEDICATED key (GROQ_CLASSIFIER_API_KEY)');
+      _classifierConfigLogged = true;
+    }
+    return new Groq({ apiKey: dedicated });
+  }
+  if (!_classifierConfigLogged) {
+    console.log('[jarvis-config] classifier FALLBACK to main company cascade (set GROQ_CLASSIFIER_API_KEY to split quota)');
+    _classifierConfigLogged = true;
+  }
+  // Fallback: misma cascada que el LLM principal.
+  return getGroqClientForCompany(companyId);
+}
+
 export async function getGeminiClientForCompany(
   companyId: number,
 ): Promise<GoogleGenerativeAI | null> {

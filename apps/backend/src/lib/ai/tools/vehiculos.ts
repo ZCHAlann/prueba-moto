@@ -107,6 +107,9 @@ export const vehiculosTool: ToolDefinition<z.infer<typeof argsGetVehiculos>> = {
     'Lista los vehículos de la empresa. Filtros opcionales: estado (Operativo / En mantenimiento / Fuera de servicio), placa (búsqueda parcial), marca, assetType, fuelType. Devuelve hasta 500 vehículos con placa, marca, modelo, año, estado y tipo.',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 1,
+  cacheTtlMs: 60000,
   schema:      argsGetVehiculos,
 
   async execute(args, ctx): Promise<ToolResult> {
@@ -167,6 +170,9 @@ export const getVehicleByIdTool: ToolDefinition<z.infer<typeof argsGetVehicleByI
   description: 'Devuelve el detalle completo de UN vehículo: marca, modelo, año, estado, tipo, combustible, sede, garaje, código interno.',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 60000,
   schema:      argsGetVehicleById,
 
   async execute(args, ctx): Promise<ToolResult> {
@@ -305,6 +311,9 @@ export const getVehicleOdometerHistoryTool: ToolDefinition<z.infer<typeof argsGe
   description: 'Historial de lecturas de odómetro de un vehículo en un rango opcional.',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 60000,
   schema:      argsGetVehicleOdometerHistory,
   async execute(args, ctx): Promise<ToolResult> {
     if (!args.assetId) return { data: [], total: 0, note: 'Falta assetId.' };
@@ -362,6 +371,9 @@ export const getVehicleNotesTool: ToolDefinition<z.infer<typeof argsGetVehicleNo
   description: 'Lista las notas libres asociadas a un vehículo.',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 60000,
   schema:      argsGetVehicleNotes,
   async execute(args, ctx): Promise<ToolResult> {
     if (!args.assetId) return { data: [], total: 0, note: 'Falta assetId.' };
@@ -424,6 +436,9 @@ export const listVehicleStatusHistoryTool: ToolDefinition<z.infer<typeof argsLis
   description: 'Lista los cambios de estado de un vehículo (extraído del audit log).',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 60000,
   schema:      argsListVehicleStatusHistory,
   async execute(args, ctx): Promise<ToolResult> {
     if (!args.assetId) return { data: [], total: 0, note: 'Falta assetId.' };
@@ -458,6 +473,9 @@ export const getFleetUtilizationTool: ToolDefinition<z.infer<typeof argsGetFleet
   description: 'Porcentaje de la flota operativa vs en mantenimiento vs fuera de servicio. Opcional filtrar por sede.',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 300000,
   schema:      argsGetFleetUtilization,
   async execute(args, ctx): Promise<ToolResult> {
     const where = [eq(companyAssets.companyId, ctx.empresaId)];
@@ -490,6 +508,9 @@ export const getVehicleFullProfileTool: ToolDefinition<z.infer<typeof argsGetVeh
   description: 'Perfil 360° de un vehículo: estado, odómetro, último mantenimiento, gasto del mes, asignación actual.',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 1,
+  cacheTtlMs: 60000,
   schema:      argsGetVehicleFullProfile,
   async execute(args, ctx): Promise<ToolResult> {
     if (!args.assetId) return { data: [], total: 0, note: 'Falta assetId.' };
@@ -562,6 +583,9 @@ export const getVehicleSpendBreakdownTool: ToolDefinition<z.infer<typeof argsGet
   description: 'Desglose de gasto por categoría (combustible / mantenimiento / peajes). Si pasás assetId, devuelve el desglose de ESE vehículo en el rango. Si NO pasás assetId, devuelve el agregado de TODA la empresa en el rango (útil para "cuánto gastamos este mes").',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 300000,
   schema:      argsGetVehicleSpendBreakdown,
   async execute(args, ctx): Promise<ToolResult> {
     const dateFilterFuel = args.desde && args.hasta
@@ -642,6 +666,9 @@ export const listVehiclesWithoutRecentChecklistTool: ToolDefinition<z.infer<type
   description: 'Lista vehículos sin inspección reciente (más de N días).',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 300000,
   schema:      argsListVehiclesWithoutRecentChecklist,
   async execute(args, ctx): Promise<ToolResult> {
     const cutoff = new Date(Date.now() - args.dias * 24 * 60 * 60 * 1000);
@@ -678,6 +705,9 @@ export const listVehiclesWithoutRecentMaintenanceTool: ToolDefinition<z.infer<ty
   description: 'Lista vehículos sin mantenimiento reciente (más de N días).',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 300000,
   schema:      argsListVehiclesWithoutRecentMaintenance,
   async execute(args, ctx): Promise<ToolResult> {
     const cutoff = new Date(Date.now() - args.dias * 24 * 60 * 60 * 1000);
@@ -715,6 +745,9 @@ export const getMostExpensiveVehiclesTool: ToolDefinition<z.infer<typeof argsGet
   description: 'Top N vehículos con mayor costo operativo (combustible + mantenimiento + peajes) en un rango.',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 300000,
   schema:      argsGetMostExpensiveVehicles,
   async execute(args, ctx): Promise<ToolResult> {
     const fuelCond  = [eq(companyFuelEntries.companyId, ctx.empresaId)];
@@ -804,6 +837,9 @@ export const getFleetAgeDistributionTool: ToolDefinition<z.infer<typeof argsGetF
   description: 'Distribución de edad de la flota (año actual - año del activo).',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 300000,
   schema:      argsGetFleetAgeDistribution,
   async execute(args, ctx): Promise<ToolResult> {
     const where = [eq(companyAssets.companyId, ctx.empresaId), isNotNull(companyAssets.year)];
@@ -844,6 +880,9 @@ export const getVehicleTCOTool: ToolDefinition<z.infer<typeof argsGetVehicleTCO>
   description: 'TCO (Total Cost of Ownership) por vehículo: combustible + mantenimiento + peajes / km / mes en un rango.',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 300000,
   schema:      argsGetVehicleTCO,
   async execute(args, ctx): Promise<ToolResult> {
     if (!args.assetId) return { data: [], total: 0, note: 'Falta assetId.' };
@@ -891,6 +930,9 @@ export const getVehicleScorecardTool: ToolDefinition<z.infer<typeof argsGetVehic
   description: 'Scorecard de salud: incidentes, mantenimientos atrasados, observaciones en checklists.',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 300000,
   schema:      argsGetVehicleScorecard,
   async execute(args, ctx): Promise<ToolResult> {
     if (!args.assetId) return { data: [], total: 0, note: 'Falta assetId.' };
@@ -943,6 +985,9 @@ export const listVehiclesNeedingOilChangeTool: ToolDefinition<z.infer<typeof arg
   description: 'Lista vehículos cuyo próximo cambio de aceite está vencido o cerca de vencer.',
   category:    'vehiculos',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 2,
+  cacheTtlMs: 300000,
   schema:      argsListVehiclesNeedingOilChange,
   async execute(args, ctx): Promise<ToolResult> {
     const cutoff = new Date(Date.now() + args.diasUmbral * 24 * 60 * 60 * 1000);

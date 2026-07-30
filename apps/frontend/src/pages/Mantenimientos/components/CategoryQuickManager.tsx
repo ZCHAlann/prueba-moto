@@ -20,6 +20,7 @@ import {
   useUpdateMaintenanceCategory,
   useDeleteMaintenanceCategory,
   type MaintenanceCategory,
+  type MaintenanceSubcategory,
 } from "../../../hooks/useMaintenancesV2";
 import { usePermissions } from "../../../hooks/usePermissions";
 
@@ -61,18 +62,45 @@ function autoKey(label: string): string {
     .slice(0, 40) || "cat";
 }
 
+interface SubcatForm {
+  /** ID server-assigned si es una sub-cat existente. "" si es nueva. */
+  id:          string;
+  key:         string;
+  label:       string;
+  shortLabel:  string;
+  color:       string;
+  /** Flag: marcada para borrar al guardar. */
+  _deleted?:   boolean;
+  /** Flag: nueva, aún no existe en server. */
+  _new?:       boolean;
+}
+
 interface FormState {
-  key:        string;
-  label:      string;
-  shortLabel: string;
-  color:      string;
+  key:         string;
+  label:       string;
+  shortLabel:  string;
+  color:       string;
+  /** jul 2026 v9 — Lista editable de sub-categorías. Cada una con
+   *  su propio form (key, label, color). El user puede agregar con
+   *  "+" o quitar con la X. Al guardar la categoría, todas se
+   *  mandan al backend en una sola llamada atómica. */
+  subcategories: SubcatForm[];
 }
 
 const EMPTY_FORM: FormState = {
-  key:        "",
-  label:      "",
-  shortLabel: "",
-  color:      "sky",
+  key:         "",
+  label:       "",
+  shortLabel:  "",
+  color:       "sky",
+  subcategories: [],
+};
+
+const EMPTY_SUBCAT: SubcatForm = {
+  id:          "",
+  key:         "",
+  label:       "",
+  shortLabel:  "",
+  color:       "sky",
 };
 
 interface Props {
@@ -112,6 +140,18 @@ export function CategoryQuickManager({ open, onClose, onCreated }: Props) {
       label:      c.label,
       shortLabel: c.shortLabel ?? "",
       color:      c.color || "sky",
+      // jul 2026 v9 — Cargamos las sub-categorías existentes en el
+      // form. Cada una como `SubcatForm` con su id (para que al
+      // guardar el backend las pueda emparejar con las filas
+      // existentes). Si la categoría NO tiene sub-categorías,
+      // queda un array vacío.
+      subcategories: (c.subcategories ?? []).map((s) => ({
+        id:         s.id,
+        key:        s.key,
+        label:      s.label,
+        shortLabel: s.shortLabel ?? "",
+        color:      s.color || "sky",
+      })),
     });
   }
 
@@ -132,6 +172,37 @@ export function CategoryQuickManager({ open, onClose, onCreated }: Props) {
       return;
     }
 
+    // jul 2026 v9 — Validamos las sub-categorías antes de mandar.
+    // Cada una debe tener label y key (auto si vacía). Las que
+    // estén marcadas como _deleted se omiten. Las nuevas (_new)
+    // se mandan sin id.
+    const cleanedSubs: Array<{
+      id?: string;
+      key: string;
+      label: string;
+      shortLabel?: string | null;
+      color?: string;
+    }> = [];
+    for (const s of form.subcategories) {
+      if (s._deleted) continue;
+      const subKey = (s.key.trim() || autoKey(s.label)).trim();
+      if (!s.label.trim()) {
+        toast.error("Todas las sub-categorías deben tener nombre");
+        return;
+      }
+      if (!/^[A-Za-z0-9_\-:]+$/.test(subKey)) {
+        toast.error(`La clave de sub-categoría "${subKey}" tiene caracteres inválidos`);
+        return;
+      }
+      cleanedSubs.push({
+        id:         s.id || undefined,
+        key:        subKey,
+        label:      s.label,
+        shortLabel: s.shortLabel.trim() || null,
+        color:      s.color,
+      });
+    }
+
     setSaving(true);
     try {
       if (editingCat) {
@@ -142,6 +213,7 @@ export function CategoryQuickManager({ open, onClose, onCreated }: Props) {
             label:      form.label,
             shortLabel: form.shortLabel.trim() || null,
             color:      form.color,
+            subcategories: cleanedSubs,
           },
         });
         toast.success("Categoría actualizada");
@@ -152,6 +224,7 @@ export function CategoryQuickManager({ open, onClose, onCreated }: Props) {
           label:      form.label,
           shortLabel: form.shortLabel.trim() || undefined,
           color:      form.color,
+          subcategories: cleanedSubs,
         });
         toast.success("Categoría creada");
         // Avisamos al padre para que la auto-seleccione en su <select>.
@@ -346,6 +419,137 @@ export function CategoryQuickManager({ open, onClose, onCreated }: Props) {
                     </div>
                   </div>
 
+                  {/* jul 2026 v9 — Editor de sub-categorías. Lista
+                      editable: cada fila tiene label + color + botón
+                      "X" para quitar (soft delete, se manda al server
+                      en el submit). "+" al final para agregar una
+                      vacía. No tiene key explícito — se auto-slug
+                      en el submit. */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className={`${labelCls} mb-0`}>
+                        Sub-categorías ({form.subcategories.filter((s) => !s._deleted).length})
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setForm((f) => ({
+                            ...f,
+                            subcategories: [
+                              ...f.subcategories,
+                              { ...EMPTY_SUBCAT, _new: true },
+                            ],
+                          }));
+                        }}
+                        className="h-6 px-2 rounded-md text-[10px] font-bold uppercase tracking-widest text-violet-600 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-500/10 inline-flex items-center gap-1 transition"
+                        title="Agregar sub-categoría"
+                      >
+                        <Plus size={10} />
+                        Agregar
+                      </button>
+                    </div>
+
+                    {form.subcategories.length === 0 ? (
+                      <p className="text-[10px] text-gray-400 dark:text-gray-500 italic">
+                        Sin sub-categorías. Opcional — solo si querés clasificar
+                        los mantenimientos de esta categoría con un segundo nivel.
+                      </p>
+                    ) : (
+                      <ul className="space-y-1.5">
+                        <AnimatePresence initial={false}>
+                          {form.subcategories.map((s, idx) => {
+                            if (s._deleted) return null;
+                            const sCfg = colorByKey(s.color || "sky");
+                            return (
+                              <motion.li
+                                key={s.id || `new-${idx}`}
+                                layout
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: "auto" }}
+                                exit={{ opacity: 0, height: 0 }}
+                                transition={{ duration: 0.18 }}
+                                className="rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white/60 dark:bg-white/[0.02] p-2 space-y-1.5"
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    className={`${inputCls} h-8`}
+                                    value={s.label}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      setForm((f) => {
+                                        const next = [...f.subcategories];
+                                        next[idx] = { ...next[idx], label: v };
+                                        return { ...f, subcategories: next };
+                                      });
+                                    }}
+                                    placeholder="Ej. Cambio de aceite"
+                                    maxLength={120}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setForm((f) => {
+                                        const next = [...f.subcategories];
+                                        // Si la fila ya tiene id (existe en
+                                        // server), marcamos _deleted para que
+                                        // el backend la borre. Si es nueva
+                                        // (_new) y nunca se guardó, la sacamos
+                                        // del array directamente.
+                                        if (next[idx].id) {
+                                          next[idx] = { ...next[idx], _deleted: true };
+                                        } else {
+                                          next.splice(idx, 1);
+                                        }
+                                        return { ...f, subcategories: next };
+                                      });
+                                    }}
+                                    className="h-8 w-8 shrink-0 rounded-md text-gray-400 hover:text-rose-500 dark:hover:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-500/10 inline-flex items-center justify-center transition"
+                                    title="Quitar sub-categoría"
+                                  >
+                                    <X size={12} />
+                                  </button>
+                                </div>
+                                {/* Color dots compactos — paleta de 6
+                                    colores para no abrumar el form. */}
+                                <div className="flex items-center gap-1.5">
+                                  <div className="flex gap-1">
+                                    {COLOR_PALETTE.slice(0, 8).map((c) => {
+                                      const selected = (s.color || "sky") === c.key;
+                                      return (
+                                        <button
+                                          key={c.key}
+                                          type="button"
+                                          onClick={() => {
+                                            setForm((f) => {
+                                              const next = [...f.subcategories];
+                                              next[idx] = { ...next[idx], color: c.key };
+                                              return { ...f, subcategories: next };
+                                            });
+                                          }}
+                                          title={c.label}
+                                          className={[
+                                            "h-3.5 w-3.5 rounded transition",
+                                            c.dot,
+                                            selected
+                                              ? `ring-1 ring-offset-1 ring-offset-white dark:ring-offset-[#0b0f1a] ${c.ring}`
+                                              : "ring-1 ring-gray-300/60 dark:ring-white/10 hover:ring-gray-400 dark:hover:ring-white/30",
+                                          ].join(" ")}
+                                        />
+                                      );
+                                    })}
+                                  </div>
+                                  <span className="ml-auto text-[10px] font-mono text-gray-400 dark:text-gray-500 truncate max-w-[140px]">
+                                    {s.key || autoKey(s.label) || "—"}
+                                  </span>
+                                </div>
+                              </motion.li>
+                            );
+                          })}
+                        </AnimatePresence>
+                      </ul>
+                    )}
+                  </div>
+
                   {/* Botones */}
                   <div className="flex items-center gap-2 pt-1">
                     {editingCat && (
@@ -405,6 +609,14 @@ export function CategoryQuickManager({ open, onClose, onCreated }: Props) {
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-xs font-medium text-gray-800 dark:text-white">
                               {c.label}
+                              {/* jul 2026 v9 — Mostramos la cantidad de
+                                  sub-categorías como badge. Si no tiene,
+                                  lo ocultamos. */}
+                              {c.subcategories && c.subcategories.length > 0 && (
+                                <span className="ml-1.5 inline-flex items-center rounded-md bg-violet-50 dark:bg-violet-500/10 px-1 py-0.5 text-[9px] font-bold text-violet-600 dark:text-violet-300 align-middle">
+                                  {c.subcategories.length} sub
+                                </span>
+                              )}
                             </p>
                             <p className="truncate text-[10px] font-mono text-gray-400 dark:text-gray-500">
                               {c.key}

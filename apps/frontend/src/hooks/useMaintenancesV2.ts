@@ -143,6 +143,12 @@ export interface Maintenance {
   category:         string;
   /** FK a `company_maintenance_categories.id`. NULL para built-in. */
   categoryId:       string | null;
+  // jul 2026 v9 — Sub-categoría opcional del mantenimiento. FK a
+  // `company_maintenance_subcategories.id`. NULL si la categoría
+  // no tiene sub-categorías o el user no eligió una.
+  subcategoryId:    string | null;
+  subcategory:      string | null; // key string (display)
+  subcategoryLabel: string | null; // label legible
   title:            string | null;
   description:      string | null;
   odometerKm:       number | null;
@@ -195,6 +201,10 @@ export interface MaintenanceInput {
   status?:        MaintenanceStatus;
   category?:      string;
   categoryCustomId?: string | null;
+  // jul 2026 v9 — Sub-categoría opcional. Si la categoría padre
+  // tiene sub-categorías definidas, el user elige una. Si no
+  // (o si el user no quiere), se manda null.
+  subcategoryCustomId?: string | null;
   title:          string;
   description?:   string | null;
   odometerKm?:    number | null;
@@ -222,6 +232,10 @@ export interface ListFilters {
   status?:     MaintenanceStatus;
   type?:       MaintenanceType;
   category?:   string;
+  /** jul 2026 v9 — Filtrar por sub-categoría. Solo aplica si la cat
+   *  padre también está seteada (o si el backend lo resuelve por
+   *  id solo). Se manda como query string `subcategoryId`. */
+  subcategoryId?: string;
   workshopId?: string;
   assetId?:    string;
   from?:       string;
@@ -244,6 +258,22 @@ export interface AgendaRange { from: string; to: string; }
 
 // ─── Categorías ───────────────────────────────────────────────────────────────
 
+/** jul 2026 v9 — Sub-categoría de mantenimiento. Es opcional,
+ *  vive dentro de una categoría padre (`MaintenanceCategory`). */
+export interface MaintenanceSubcategory {
+  id:         string;
+  key:        string;
+  label:      string;
+  shortLabel: string | null;
+  color:      string;
+  icon:       string;
+  order:      number;
+  /** Conteo de mantenimientos del vehículo activo en esta sub-cat.
+   *  Solo presente en respuestas del endpoint de mantenimiento-data
+   *  o de filtrado. En el CRUD de categorías es opcional. */
+  count?:     number;
+}
+
 export interface MaintenanceCategory {
   id:         string;
   companyId:  string;
@@ -253,6 +283,9 @@ export interface MaintenanceCategory {
   color:      string;
   icon:       string;
   isSystem:   boolean;
+  /** jul 2026 v9 — Sub-categorías de esta categoría. Array vacío
+   *  si la categoría no tiene sub-categorías definidas. */
+  subcategories?: MaintenanceSubcategory[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -773,6 +806,37 @@ export function useAddMaintenanceItems() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['maintenance'] });
       qc.invalidateQueries({ queryKey: ['maintenances'] });
+    },
+  });
+}
+
+/**
+ * jul 2026 v9 — Edita UN item existente IN-PLACE (PATCH).
+ *
+ * Antes el drawer hacía DELETE + POST para "actualizar" un item, lo
+ * que causaba duplicaciones si el invalidateQueries traía la lista
+ * antes de que el DELETE se hubiera committeado (race condition con
+ * el refetch manual). Ahora hay un endpoint PATCH real: 1 sola
+ * operación, 1 solo refetch, imposible duplicar.
+ */
+export function useUpdateMaintenanceItem() {
+  const { companyId } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id, itemId, item,
+    }: {
+      id: string;
+      itemId: string;
+      item: MaintenanceItemInput;
+    }) => {
+      return jsonFetch<{ ok: boolean }>(
+        `/api/company/${companyId}/maintenances/${id}/items/${itemId}`,
+        { method: 'PATCH', body: JSON.stringify(item) },
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['maintenance'] });
     },
   });
 }

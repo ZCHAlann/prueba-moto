@@ -37,6 +37,9 @@ export const checklistsTool: ToolDefinition<Args> = {
     'Lista inspecciones de checklists. Filtros: estado (Aprobado/Observado/Pendiente/Rechazado), vehículo (assetId o placa parcial), conductor (driverId), rango de fechas (desde/hasta YYYY-MM-DD), soloVencidos (true para ver solo los pendientes vencidos). Devuelve fecha, estado, vehículo y conductor.',
   category:    'checklists',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 1,
+  cacheTtlMs: 60000,
   schema:      argsSchema,
 
   async execute(args, ctx): Promise<ToolResult> {
@@ -67,7 +70,7 @@ export const checklistsTool: ToolDefinition<Args> = {
       const ids = matches.map((m) => m.id);
       where.push(ids.length === 1
         ? eq(companyChecklists.assetId, ids[0]!)
-        : sql`${companyChecklists.assetId} = ANY(${ids})`);
+        : inArray(companyChecklists.assetId, ids));
     }
 
     if (args.soloVencidos) {

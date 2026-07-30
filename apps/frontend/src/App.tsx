@@ -17,6 +17,11 @@ import { ScrollToTop } from "./components/common/ScrollToTop";
 import { DashboardOverview } from "./pages/Dashboard/page";
 import MaintenanceGeneralPage from "./pages/Mantenimientos/page";
 import ReauthReportPage from "./pages/Mantenimientos/ReauthReportPage";
+// jul 2026 v3 — Submódulo Data de Mantenimientos. Wizard 4 pasos
+// (vehículo → módulo → categoría → detalle). El gate `mantenimiento.data.ver`
+// se chequea a nivel endpoint (maintenance-data.ts); el `RequireCompanyModule`
+// de acá solo asegura que la empresa tenga el módulo "mantenimiento" activo.
+import MaintenanceDataPage from "./pages/Mantenimientos/Data";
 import AcPage from "./pages/AiresAcondicionados/page";
 import AcMaintenancesPage from "./pages/AiresAcondicionados/Mantenimientos/page";
 import { ChecklistPage } from "./pages/Checklist/page";
@@ -121,6 +126,7 @@ function GuestPlatform({ children }: { children: React.ReactNode }) {
 // superadmin de plataforma (scope='plataforma') bypasea este check.
 const ROUTE_TO_COMPANY_MODULE: Record<string, string> = {
   "/mantenimiento": "mantenimiento",
+  "/mantenimiento/data": "mantenimiento",
   "/mantenimiento/reportes/reautorizaciones": "mantenimiento",
   "/checklist": "checklist",
   "/alertas": "alertas",
@@ -242,6 +248,16 @@ export default function App() {
           <Route path="/mantenimiento" element={
             <RequireCompanyModule module="mantenimiento">
               <MaintenanceGeneralPage />
+            </RequireCompanyModule>
+          } />
+          {/* jul 2026 v3 — Submódulo Data. Requiere el módulo mantenimiento
+              activo. El gate granular `mantenimiento.data.ver` lo evalúa
+              el endpoint `maintenance-data.ts`. Si el user no lo tiene,
+              el backend responde 403 y la página muestra un mensaje
+              claro (no se renderiza contenido). */}
+          <Route path="/mantenimiento/data" element={
+            <RequireCompanyModule module="mantenimiento">
+              <MaintenanceDataPage />
             </RequireCompanyModule>
           } />
           <Route path="/mantenimiento/reportes/reautorizaciones" element={

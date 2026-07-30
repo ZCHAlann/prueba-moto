@@ -24,6 +24,9 @@ const HREF_TO_MODULE_SUB: Array<{ test: (h: string) => boolean; mod: string; sub
   { test: (h) => h === "/generadores" || h.startsWith("/generadores"),                                    mod: "generadores",   sub: "generadores" },
   { test: (h) => h === "/aires-acondicionados" || h.startsWith("/aires-acondicionados"),                  mod: "ac",            sub: "lista_ac" },
   { test: (h) => h === "/mantenimiento" || h.startsWith("/mantenimiento"),                                 mod: "mantenimiento", sub: "agenda" },
+  // jul 2026 v3 — Sub-ruta de Data ANTES del catch-all para que gane
+  // el mapeo al submódulo `data` (no `agenda`).
+  { test: (h) => h === "/mantenimiento/data" || h.startsWith("/mantenimiento/data"),                       mod: "mantenimiento", sub: "data" },
   { test: (h) => h === "/checklist" || h.startsWith("/checklist"),                                        mod: "checklist",     sub: "checklist" },
   { test: (h) => h === "/alertas" || h.startsWith("/alertas"),                                             mod: "alertas",       sub: "alertas" },
   { test: (h) => h === "/reportes" || h.startsWith("/reportes"),                                          mod: "reportes",      sub: "reportes" },

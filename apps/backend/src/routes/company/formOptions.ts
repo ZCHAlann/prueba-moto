@@ -244,7 +244,11 @@ router.get('/ac-units/form-options', async (req, res, next) => {
 });
 
 // ─── /assignments/form-options ─────────────────────────────────────────────
-// Devuelve: vehículos y conductores para el wizard de asignaciones.
+// jul 2026 — Devuelve vehículos (con datos completos) y conductores
+// (con DNI) para el wizard de asignaciones. El wizard autollena
+// marca/modelo/año/color/placa del activo y la cédula del chofer
+// directamente desde este response, sin necesidad de un fetch extra
+// a /assets/:id o /drivers/:id.
 router.get('/assignments/form-options', async (req, res, next) => {
   try {
     const companyId = req.companyId!;
@@ -252,9 +256,17 @@ router.get('/assignments/form-options', async (req, res, next) => {
     const [assets, drivers] = await Promise.all([
       db
         .select({
-          id:    companyAssets.id,
-          name:  companyAssets.name,
-          plate: companyAssets.plate,
+          id:     companyAssets.id,
+          name:   companyAssets.name,
+          plate:  companyAssets.plate,
+          brand:  companyAssets.brand,
+          model:  companyAssets.model,
+          year:   companyAssets.year,
+          color:  companyAssets.color,
+          // jul 2026 — categoría del activo (camioneta, sedan, etc).
+          // Antes se llamaba "type" en assets. Ahora es "category"
+          // (assetCategoryEnum: Vehiculo, Camioneta, etc).
+          category: companyAssets.category,
         })
         .from(companyAssets)
         .where(eq(companyAssets.companyId, companyId)),
@@ -263,6 +275,10 @@ router.get('/assignments/form-options', async (req, res, next) => {
           id:        companyDrivers.id,
           firstName: companyDrivers.firstName,
           lastName:  companyDrivers.lastName,
+          // jul 2026 — DNI del chofer (columna `dni` de company_drivers,
+          // migración 0040). Se usa para autorrellenar el campo de
+          // cédula en el acta sin tener que tipearlo a mano.
+          dni:       companyDrivers.dni,
         })
         .from(companyDrivers)
         .where(eq(companyDrivers.companyId, companyId)),
@@ -270,14 +286,20 @@ router.get('/assignments/form-options', async (req, res, next) => {
 
     res.json({
       assets: assets.map((a) => ({
-        id:    `asset-${a.id}`,
-        name:  a.name,
-        plate: a.plate,
+        id:       `asset-${a.id}`,
+        name:     a.name,
+        plate:    a.plate,
+        brand:    a.brand,
+        model:    a.model,
+        year:     a.year,
+        color:    a.color,
+        category: a.category,
       })),
       drivers: drivers.map((d) => ({
         id:        `driver-${d.id}`,
         firstName: d.firstName,
         lastName:  d.lastName,
+        dni:       d.dni,
       })),
     });
   } catch (err) {

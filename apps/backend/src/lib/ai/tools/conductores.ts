@@ -8,7 +8,7 @@
 import { z } from 'zod';
 import { and, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import { db } from '../../../db/client';
-import { companyDrivers, companyAssets } from '../../../db/schema/operational';
+import { companyDrivers, companyAssets, companyAssignments } from '../../../db/schema/operational';
 import type { ToolDefinition, ToolResult } from './registry';
 import { tolerantString, tolerantBoolean, enumOrList } from '../schema-helpers';
 
@@ -27,6 +27,9 @@ export const conductoresTool: ToolDefinition<Args> = {
     'Lista conductores con filtros: estado (Activo/Inactivo), búsqueda libre por nombre/código/cédula, conAsignacion (true para incluir el vehículo asignado actualmente). Devuelve nombre, código, cédula, teléfono y (opcional) vehículo asignado.',
   category:    'conductores',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 1,
+  cacheTtlMs: 60000,
   schema:      argsSchema,
 
   async execute(args, ctx): Promise<ToolResult> {
@@ -65,25 +68,59 @@ export const conductoresTool: ToolDefinition<Args> = {
     // Si pidió conAsignacion, hacemos un LEFT JOIN a la asignación activa de cada uno.
     if (args.conAsignacion && rows.length > 0) {
       const driverIds = rows.map((r) => r.id);
-      const asigs = await db
+      // jul 2026 v3 — Bug fix: la query anterior usaba una subquery
+      // escalar dentro de la cláusula `ON` del LEFT JOIN, que
+      // PostgreSQL NO soporta con esa sintaxis (la query decía
+      // "left join ... on ... = (SELECT ...)"). Rompía con error
+      // "Failed query" en runtime para todas las llamadas a
+      // getConductores({conAsignacion: true}).
+      //
+      // Solución: hacer 2 queries separados. (a) Traer los IDs de
+      // asignación activa por driver. (b) Traer los assets de esos
+      // IDs. (c) Joinear en memoria. Funciona, es O(N) y no
+      // necesita un join SQL complejo.
+      const asigRows = await db
         .select({
-          driverId: companyDrivers.id,
-          placa:    companyAssets.plate,
-          marca:    companyAssets.brand,
-          modelo:   companyAssets.model,
+          driverId: companyAssignments.driverId,
+          assetId:  companyAssignments.assetId,
         })
-        .from(companyDrivers)
-        .leftJoin(companyAssets, eq(companyAssets.id, sql`(
-          SELECT asset_id FROM company_assignments
-          WHERE driver_id = ${companyDrivers.id}
-            AND status = 'Activa'
-          LIMIT 1
-        )`))
+        .from(companyAssignments)
         .where(and(
-          eq(companyDrivers.companyId, ctx.empresaId),
-          sql`${companyDrivers.id} = ANY(${driverIds})`,
+          eq(companyAssignments.status, 'Activa'),
+          // jul 2026 v3 — Bug fix: `sql`...ANY(${driverIds})` expande
+          // cada elemento del array como un placeholder separado,
+          // y `= ANY((1, 2, 3))` con 3 escalares NO es SQL válido
+          // (debería ser `= ANY(ARRAY[1, 2, 3])` o usar `inArray`).
+          // Usamos `inArray` que sí lo formatea correctamente como
+          // `= ANY($1::int[])` con un solo parámetro array.
+          inArray(companyAssignments.driverId, driverIds),
         ));
-      const mapAsig = new Map(asigs.map((a) => [a.driverId, a]));
+      const assetIds = Array.from(new Set(asigRows.map((a) => a.assetId).filter((x): x is number => !!x)));
+      let assetsMap = new Map<number, { plate: string | null; brand: string | null; model: string | null }>();
+      if (assetIds.length > 0) {
+        const assets = await db
+          .select({
+            id:    companyAssets.id,
+            plate: companyAssets.plate,
+            brand: companyAssets.brand,
+            model: companyAssets.model,
+          })
+          .from(companyAssets)
+          .where(inArray(companyAssets.id, assetIds));
+        assetsMap = new Map(assets.map((a) => [a.id, { plate: a.plate, brand: a.brand, model: a.model }]));
+      }
+      const mapAsig = new Map<number, { placa: string; marca: string; modelo: string }>();
+      for (const a of asigRows) {
+        if (!a.assetId) continue;
+        const asset = assetsMap.get(a.assetId);
+        if (asset) {
+          mapAsig.set(a.driverId, {
+            placa:  asset.plate  ?? '',
+            marca:  asset.brand  ?? '',
+            modelo: asset.model  ?? '',
+          });
+        }
+      }
       const enriched = rows.map((r) => ({
         ...r,
         vehiculoAsignado: mapAsig.get(r.id) ?? null,

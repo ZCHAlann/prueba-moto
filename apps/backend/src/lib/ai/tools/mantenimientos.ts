@@ -168,7 +168,7 @@ export const mantenimientosTool: ToolDefinition<Args> = {
     } else if (resolvedAssetIds && resolvedAssetIds.length === 1) {
       where.push(eq(companyMaintenanceRecords.assetId, resolvedAssetIds[0]!));
     } else if (resolvedAssetIds && resolvedAssetIds.length > 1) {
-      where.push(sql`${companyMaintenanceRecords.assetId} = ANY(${resolvedAssetIds})`);
+      where.push(inArray(companyMaintenanceRecords.assetId, resolvedAssetIds));
     }
 
     const rows = await db

@@ -7,7 +7,7 @@
 //   - ruta o nombre del peaje
 
 import { z } from 'zod';
-import { and, eq, gte, lte, desc, ilike, sql, sum } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, desc, ilike, sql, sum } from 'drizzle-orm';
 import { db } from '../../../db/client';
 import {
   companyTollEntries,
@@ -34,6 +34,9 @@ export const peajesTool: ToolDefinition<Args> = {
     'Lista registros de peajes con filtros: rango de fechas (desde/hasta YYYY-MM-DD), vehículo (assetId o placa), ruta (texto parcial). Devuelve fecha, nombre del peaje, ruta, costo y vehículo. Incluye el total gastado.',
   category:    'peajes',
   rolesPermitidos: ['admin_empresa', 'owner_empresa'],
+  kind: 'read',
+  layer: 1,
+  cacheTtlMs: 60000,
   schema:      argsSchema,
 
   async execute(args, ctx): Promise<ToolResult> {
@@ -58,7 +61,7 @@ export const peajesTool: ToolDefinition<Args> = {
       const ids = matches.map((m) => m.id);
       where.push(ids.length === 1
         ? eq(companyTollEntries.assetId, ids[0]!)
-        : sql`${companyTollEntries.assetId} = ANY(${ids})`);
+        : inArray(companyTollEntries.assetId, ids));
     }
 
     const rows = await db

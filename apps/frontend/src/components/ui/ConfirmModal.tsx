@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, AlertTriangle } from "lucide-react";
 
@@ -39,14 +40,29 @@ export function ConfirmModal({
 
   const t = TONE_CLS[tone];
 
-  return (
+  // jul 2026 v9 — Render via React Portal a `document.body`.
+  //
+  // Antes el modal se montaba como hijo del componente padre
+  // (típicamente un drawer con `position: fixed; max-width: 2xl;
+  // right: 0`). El backdrop del modal y la caja centrada usaban
+  // `position: fixed` con `left-1/2 -translate-x-1/2` para
+  // centrarse en la ventana, pero al estar dentro de un padre
+  // con `transform` implícito (de framer-motion) o stacking
+  // context propio, el modal quedaba recortado por el drawer y
+  // aparecía pegado al borde derecho o superpuesto a la tabla
+  // de fondo. Con el portal a `document.body` el modal se monta
+  // fuera del DOM del padre y se centra correctamente sobre
+  // TODA la ventana, sin importar qué drawer/modal lo contenga.
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <AnimatePresence>
       {open && (
         <>
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
+            className="fixed inset-0 z-[9998] bg-black/50 backdrop-blur-sm"
             onClick={() => { if (!blocking) onClose(); }}
           />
           <motion.div
@@ -54,7 +70,7 @@ export function ConfirmModal({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 12 }}
             transition={{ type: "spring", stiffness: 380, damping: 30 }}
-            className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2"
+            className="fixed left-1/2 top-1/2 z-[9999] w-full max-w-md -translate-x-1/2 -translate-y-1/2"
           >
             <div className={`rounded-2xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 shadow-2xl overflow-hidden ring-1 ${t.ring}`}>
               <div className="flex items-start gap-3 px-5 pt-5 pb-3">
@@ -85,6 +101,7 @@ export function ConfirmModal({
           </motion.div>
         </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

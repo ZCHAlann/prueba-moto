@@ -64,7 +64,7 @@ export const asignacionesTool: ToolDefinition<Args> = {
       const ids = matches.map((m) => m.id);
       where.push(ids.length === 1
         ? eq(companyAssignments.assetId, ids[0]!)
-        : sql`${companyAssignments.assetId} = ANY(${ids})`);
+        : inArray(companyAssignments.assetId, ids));
     }
 
     const rows = await db

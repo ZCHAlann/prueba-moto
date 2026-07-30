@@ -1,91 +1,374 @@
-// ActaPdf.tsx — todo el acta en UNA sola página A4, fotos en página 2+
+// pages/Gestion/Asignaciones/components/ActaPdf.tsx
+//
+// jul 2026 v6 — Actas de Asignación, formato SIMPLE.
+//
+// User feedback v6:
+//   - "No lo quiero colorido"
+//   - "Lo quiero más simple"
+//   - "Que quepa en una hoja"
+//
+// Entonces: monocromático (blanco/negro/gris), sin adornos, sin
+// barras de color, sin logos placeholder. Una sola página para los
+// tres documentos. Helvetica sans-serif, layout de documento
+// formal pero limpio, con tipografía fuerte.
+//
+// Recepción y Entrega: 1 página cada uno.
+// Devolución: 1 página.
+
 import { pdf, Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
 import type { WizardData } from "../../../../hooks/useHandoverWizard";
+
+// ─── Tipos ────────────────────────────────────────────────────────────────
+
+export type ActaReturnData = {
+  actaDate: string;
+  actaTime: string;
+  actaPlace: string;
+  companyName: string;
+  driverName: string;
+  driverDni: string;
+  vehiclePlate: string;
+  vehicleBrand: string;
+  vehicleModel: string;
+  vehicleColor: string;
+  vehicleYear: string;
+  odometerInitial: string | null;
+  odometerReturn:  string;
+  fuelLevel:       string;
+  condition:       string;
+  novedades: {
+    sinNovedades:        boolean;
+    lucesDanadas:        boolean;
+    faltanAccesorios:    boolean;
+    fallaMecanica:       boolean;
+    llantasMalEstado:    boolean;
+    requiereMantenimiento:boolean;
+    choqueAccidente:     boolean;
+    golpes:              boolean;
+    interiorSucio:       boolean;
+    multas:              boolean;
+  };
+  novedadesText: string;
+  accesorios: {
+    matricula:      boolean;
+    llaveRepuesto:  boolean;
+    triangulos:     boolean;
+    herramientas:   boolean;
+    seguro:         boolean;
+    gata:           boolean;
+    extintor:       boolean | "noTiene";
+    radio:          boolean;
+    llavePrincipal: boolean;
+    llaveRuedas:    boolean;
+    botiquin:       boolean | "noTiene";
+  };
+  accesoriosOtros: string;
+  signatureLogDataUrl: string | null;
+  signatureRespDataUrl: string | null;
+  pdfUrl: string | null;
+  signatoryName: string;
+  signatoryDni:  string;
+  odometerReturnPhotoUrl: string | null;
+  multasText:    string;
+};
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+const MONTHS_ES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+
+function formatLongDate(iso: string): string {
+  if (!iso) return "____";
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return iso;
+  return `a los ${d} días del mes de ${MONTHS_ES[m - 1]} del año ${y}`;
+}
+
+function nonEmpty(v: string | null | undefined, fallback = "—") {
+  return v && v.trim() ? v : fallback;
+}
+
+// ─── Estilos (monocromático) ─────────────────────────────────────────────
 
 const s = StyleSheet.create({
   page: {
     fontFamily: "Helvetica",
-    fontSize: 7.5,
-    color: "#000",
-    paddingTop: 14,
-    paddingBottom: 14,
-    paddingHorizontal: 16,
+    fontSize: 10.5,
+    color: "#000000",
+    paddingTop: 36,
+    paddingBottom: 32,
+    paddingHorizontal: 50,
+    lineHeight: 1.4,
   },
 
-  // Título
-  titleBlock: { alignItems: "center", marginBottom: 4 },
-  titleH1:    { fontSize: 13, fontFamily: "Helvetica-Bold", letterSpacing: 0.4 },
-  titleSub:   { fontSize: 7, marginTop: 1 },
+  // Header — sin color, solo tipo
+  headerCompany: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 13,
+    textAlign: "center",
+    letterSpacing: 0.4,
+    color: "#000000",
+  },
+  headerSub: {
+    fontSize: 8.5,
+    textAlign: "center",
+    color: "#555555",
+    marginBottom: 6,
+  },
+  headerRule: {
+    borderBottom: "1pt solid #000000",
+    marginBottom: 4,
+  },
+  headerRuleThin: {
+    borderBottom: "0.4pt solid #999999",
+    marginBottom: 14,
+  },
 
-  // Tablas
-  table:    { width: "100%", marginTop: 3 },
-  row:      { flexDirection: "row" },
-  cell:     { border: "0.75pt solid #000", padding: 3, flex: 1 },
-  cellLabel:{ border: "0.75pt solid #000", padding: 3, width: "22%", fontFamily: "Helvetica-Bold" },
-  cellFull: { border: "0.75pt solid #000", padding: 3, flex: 1 },
+  // Título del documento
+  title: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 15,
+    textAlign: "center",
+    marginBottom: 10,
+    letterSpacing: 0.2,
+  },
+
+  // Lead / fecha
+  lead: {
+    fontSize: 10.5,
+    marginBottom: 12,
+    lineHeight: 1.5,
+  },
+  leadBold: { fontFamily: "Helvetica-Bold" },
+
+  // Sección — sin barra de color, solo underline
   sectionTitle: {
-    border: "0.75pt solid #000", padding: 3,
-    fontFamily: "Helvetica-Bold", fontSize: 8,
-    textTransform: "uppercase", flex: 1,
+    fontFamily: "Helvetica-Bold",
+    fontSize: 10,
+    marginTop: 10,
+    marginBottom: 4,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    paddingBottom: 1,
+    borderBottom: "0.5pt solid #000000",
   },
 
-  // ── Checks ──────────────────────────────────────────────────────────────────
-  checkRow:     { flexDirection: "row", marginBottom: 3, alignItems: "center" },
-  checkLabel:   { fontSize: 7, flex: 1 },
-  checkGroup:   { flexDirection: "row", alignItems: "center", marginLeft: 3 },
-  checkOption:  { flexDirection: "row", alignItems: "center", marginRight: 5 },
-  // Caja más grande para que el ✓ se vea bien
-  checkBox: {
-    width: 9, height: 9,
-    border: "1pt solid #000",
-    marginRight: 2,
+  // Tabla de datos (sin header de color)
+  dataTable: {
+    marginBottom: 6,
+  },
+  dataRow: {
+    flexDirection: "row",
+    borderBottom: "0.4pt solid #cccccc",
+  },
+  dataLabel: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 9.5,
+    padding: 4,
+    width: "32%",
+    color: "#000000",
+  },
+  dataValue: {
+    fontSize: 10.5,
+    padding: 4,
+    flex: 1,
+    color: "#000000",
+  },
+
+  // Texto legal / párrafo
+  // jul 2026 v8 — `marginBottom: 4` (antes 6) y `lineHeight: 1.35`
+  // (antes 1.45) para que el acta de Entrega (con 7 secciones) entre
+  // en 1 sola hoja A4 sin desbordar. Tipografía sigue siendo
+  // Helvetica 10.5pt — solo ajustamos el ritmo vertical.
+  legal: {
+    textAlign: "justify",
+    marginBottom: 4,
+    lineHeight: 1.35,
+  },
+  legalBold: { fontFamily: "Helvetica-Bold" },
+
+  // jul 2026 v8 — Lista con bullets (•) para las prohibiciones /
+  // cesión / notificación. Cada item es una línea, no un párrafo.
+  // Entra mucho mejor en 1 página sin perder claridad.
+  bulletList: {
+    marginBottom: 4,
+    paddingLeft: 0,
+  },
+  bulletItem: {
+    flexDirection: "row",
+    marginBottom: 2,
+    lineHeight: 1.3,
+  },
+  bulletMark: {
+    width: 10,
+    fontSize: 10,
+    color: "#000000",
+  },
+  bulletText: {
+    flex: 1,
+    fontSize: 9.5,
+    color: "#000000",
+  },
+
+  // Observaciones — caja simple con border
+  obsBox: {
+    border: "0.5pt solid #000000",
+    padding: 6,
+    marginVertical: 6,
+  },
+  obsLabel: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 8.5,
+    color: "#000000",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginBottom: 2,
+  },
+  obsText: {
+    fontSize: 10,
+    lineHeight: 1.4,
+    color: "#000000",
+  },
+
+  // Firmas (en fila, monocromático)
+  sigBlock: {
+    flexDirection: "row",
+    marginTop: 16,
+  },
+  sigCol: {
+    flex: 1,
+    paddingHorizontal: 8,
+  },
+  sigBox: {
+    border: "0.5pt solid #000000",
+    height: 70,
     alignItems: "center",
     justifyContent: "center",
+    paddingTop: 6,
+    marginBottom: 4,
+  },
+  // jul 2026 v8 — El Image del garabato quedaba pegado al borde
+  // superior del sigBox porque `objectFit: contain` con `height: 74`
+  // sobre una caja de 80 no respeta el centrado vertical. Ahora la
+  // imagen tiene un alto explícito de 56 (cabe bien centrada) y un
+  // `paddingTop: 6` en el box para empujarla al medio visual.
+  sigImg: {
+    width: "85%",
+    height: 56,
+    objectFit: "contain",
+  },
+  sigLabel: {
+    fontSize: 8.5,
+    fontFamily: "Helvetica-Bold",
+    marginBottom: 2,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  sigName: {
+    fontSize: 10.5,
+    fontFamily: "Helvetica-Bold",
+    marginBottom: 1,
+  },
+  sigDni: {
+    fontSize: 9.5,
+    color: "#555555",
+  },
+
+  // Checks (devolución)
+  checkRow: { flexDirection: "row", alignItems: "center", marginBottom: 3, paddingVertical: 1 },
+  checkLabel: { fontSize: 10, flex: 1, color: "#000000" },
+  checkBox: {
+    width: 11, height: 11, border: "0.6pt solid #000000",
+    marginRight: 3, alignItems: "center", justifyContent: "center",
   },
   checkBoxFilled: {
-    width: 9, height: 9,
-    border: "1pt solid #000",
-    backgroundColor: "#000",   // caja rellena cuando está marcado
-    marginRight: 2,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 11, height: 11, border: "0.6pt solid #000000",
+    backgroundColor: "#000000", marginRight: 3,
+    alignItems: "center", justifyContent: "center",
   },
-  checkMark:     { fontSize: 7, fontFamily: "Helvetica-Bold", color: "#fff" },
-  checkOptLabel: { fontSize: 7 },
-
-  // ── Firmas ── orden: imagen firma → Firma → Nombre → CI/Cédula ─────────────
-  sigCell:       { border: "0.75pt solid #000", padding: 5, flex: 1, minHeight: 90 },
-  sigHeader:     { fontFamily: "Helvetica-Bold", fontSize: 7, marginBottom: 4 },
-  // Imagen de firma más grande
-  sigImg:        { height: 55, maxWidth: 200, objectFit: "contain", marginBottom: 2 },
-  sigImgPlaceholder: { height: 55, marginBottom: 2 },
-  sigLine:       { borderBottom: "0.5pt solid #000", marginTop: 12, marginBottom: 1.5 },
-  sigLineLabel:  { fontSize: 6.5, color: "#444" },
-
-  footer: { marginTop: 5, textAlign: "center", fontSize: 6.5, color: "#555" },
-
-  // ── Anexos ──────────────────────────────────────────────────────────────────
-  annexPage:  {
-    fontFamily: "Helvetica", fontSize: 9, color: "#000",
-    paddingTop: 24, paddingBottom: 24, paddingHorizontal: 24,
-  },
-  annexTitle: { fontSize: 12, fontFamily: "Helvetica-Bold", textAlign: "center", marginBottom: 16 },
-  photoGrid:  { flexDirection: "row", flexWrap: "wrap", gap: 14 },   // más separación
-  // Contenedor con fondo/borde: la foto se ve COMPLETA adentro (sin recorte),
-  // aunque queden pequeños espacios si la proporción no coincide.
-  photoBox: {
-    width: "46%",
-    height: 130,
-    border: "0.75pt solid #ccc",
-    backgroundColor: "#f5f5f5",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
-  photo:      { width: "100%", height: "100%", objectFit: "contain" },
+  checkMark: { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#ffffff" },
+  checkOpt: { fontSize: 9, marginRight: 8, color: "#000000", fontFamily: "Helvetica-Bold" },
 });
 
-// ─── CheckRow ─────────────────────────────────────────────────────────────────
+// ─── Componentes compartidos ─────────────────────────────────────────────
+
+function Header({ companyName, docLabel }: { companyName: string; docLabel: string }) {
+  return (
+    <View>
+      <Text style={s.headerCompany}>{nonEmpty(companyName, "EMPRESA").toUpperCase()}</Text>
+      <Text style={s.headerSub}>{docLabel} · Documento de control interno</Text>
+      <View style={s.headerRule} />
+      <View style={s.headerRuleThin} />
+    </View>
+  );
+}
+
+function SectionTitle({ children }: { children: string }) {
+  return <Text style={s.sectionTitle}>{children}</Text>;
+}
+
+function DataTable({ rows }: { rows: Array<[label: string, value: string]> }) {
+  // 6 entradas → 2 columnas de 3
+  const filled: Array<[string, string]> =
+    rows.length >= 6
+      ? rows
+      : [
+          ...rows,
+          ...Array.from({ length: 6 - rows.length }, () => ["", "—"] as [string, string]),
+        ];
+  const colA = filled.slice(0, 3);
+  const colB = filled.slice(3, 6);
+  return (
+    <View style={{ flexDirection: "row", marginBottom: 6 }}>
+      <View style={{ flex: 1, marginRight: 4 }}>
+        {colA.map(([k, v], i) => (
+          <View key={`a${i}`} style={s.dataRow}>
+            <Text style={s.dataLabel}>{k}</Text>
+            <Text style={s.dataValue}>{v}</Text>
+          </View>
+        ))}
+      </View>
+      <View style={{ flex: 1, marginLeft: 4 }}>
+        {colB.map(([k, v], i) => (
+          <View key={`b${i}`} style={s.dataRow}>
+            <Text style={s.dataLabel}>{k}</Text>
+            <Text style={s.dataValue}>{v}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function ObsBox({ label, text }: { label: string; text: string }) {
+  return (
+    <View style={s.obsBox}>
+      <Text style={s.obsLabel}>{label}</Text>
+      <Text style={s.obsText}>{text}</Text>
+    </View>
+  );
+}
+
+function SigRow({ blocks }: {
+  blocks: Array<{ title: string; dataUrl: string | null; name: string; dni?: string }>;
+}) {
+  return (
+    <View style={s.sigBlock}>
+      {blocks.map((b, i) => (
+        <View key={i} style={s.sigCol}>
+          <View style={s.sigBox}>
+            {b.dataUrl ? <Image src={b.dataUrl} style={s.sigImg} /> : null}
+          </View>
+          <Text style={s.sigLabel}>{b.title}</Text>
+          <Text style={s.sigName}>{b.name}</Text>
+          {b.dni ? <Text style={s.sigDni}>Cédula: {b.dni}</Text> : null}
+        </View>
+      ))}
+    </View>
+  );
+}
 
 function CheckRow({ label, value, tristate = false }: {
   label: string;
@@ -95,310 +378,325 @@ function CheckRow({ label, value, tristate = false }: {
   const si = value === true;
   const no = value === false;
   const nt = value === "noTiene";
-
   return (
     <View style={s.checkRow}>
       <Text style={s.checkLabel}>{label}</Text>
-      <View style={s.checkGroup}>
-        {/* SI */}
-        <View style={s.checkOption}>
-          <View style={si ? s.checkBoxFilled : s.checkBox}>
-            {si && <Text style={s.checkMark}>✓</Text>}
-          </View>
-          <Text style={s.checkOptLabel}>SI</Text>
-        </View>
-        {/* NO */}
-        <View style={s.checkOption}>
-          <View style={no ? s.checkBoxFilled : s.checkBox}>
-            {no && <Text style={s.checkMark}>✓</Text>}
-          </View>
-          <Text style={s.checkOptLabel}>NO</Text>
-        </View>
-        {tristate && (
-          <View style={s.checkOption}>
-            <View style={nt ? s.checkBoxFilled : s.checkBox}>
-              {nt && <Text style={s.checkMark}>✓</Text>}
-            </View>
-            <Text style={s.checkOptLabel}>NO TIENE</Text>
-          </View>
-        )}
-      </View>
+      <View style={si ? s.checkBoxFilled : s.checkBox}>{si && <Text style={s.checkMark}>✓</Text>}</View>
+      <Text style={s.checkOpt}>Sí</Text>
+      <View style={no ? s.checkBoxFilled : s.checkBox}>{no && <Text style={s.checkMark}>✓</Text>}</View>
+      <Text style={s.checkOpt}>No</Text>
+      {tristate && (
+        <>
+          <View style={nt ? s.checkBoxFilled : s.checkBox}>{nt && <Text style={s.checkMark}>✓</Text>}</View>
+          <Text style={s.checkOpt}>N/T</Text>
+        </>
+      )}
     </View>
   );
 }
 
-function SigBlock({
-  title, dataUrl, name, dni,
-}: {
-  title: string;
-  dataUrl: string | null;
-  name?: string | null;
-  dni?: string | null;
-}) {
-  return (
-    <View style={s.sigCell}>
-      <Text style={s.sigHeader}>{title}</Text>
+// ─── Acta 1: RECEPCIÓN (1 página) ─────────────────────────────────────────
 
-      {dataUrl ? <Image src={dataUrl} style={s.sigImg} /> : <View style={s.sigImgPlaceholder} />}
-
-      <View style={s.sigLine} /><Text style={s.sigLineLabel}>Firma</Text>
-
-      <Text style={{ fontSize: 8, marginTop: 10 }}>{name || " "}</Text>
-      <View style={s.sigLine} /><Text style={s.sigLineLabel}>Nombre</Text>
-
-      <Text style={{ fontSize: 8, marginTop: 10 }}>{dni || " "}</Text>
-      <View style={s.sigLine} /><Text style={s.sigLineLabel}>CI / Cédula</Text>
-    </View>
-  );
-}
-
-// ─── Documento completo ───────────────────────────────────────────────────────
-
-function ActaPdfDocument({
-  data,
-  photoDataUrls,
-  /** Modo del PDF: "alta" (entrega) o "finalizacion" (devolución). */
-  mode = "alta",
-  /** Datos del alta original. Cuando mode="finalizacion", se muestran al lado
-   *  de los datos al regreso para comparación (km inicial vs final, etc.). */
-  initialData,
-}: {
-  data: WizardData;
-  photoDataUrls: string[];
-  mode?: "alta" | "finalizacion";
-  initialData?: Partial<WizardData> | null;
-}) {
-  const { novedades: nov, accesorios: acc } = data;
-  const isFinalizacion = mode === "finalizacion";
-
+function ActaRecepcionDocument({ data }: { data: WizardData }) {
   return (
     <Document>
-      {/* ══ PÁGINA 1: Acta ══ */}
       <Page size="A4" style={s.page}>
+        <Header companyName={data.companyName} docLabel="Acta de Recepción de Vehículo" />
 
-        <View style={s.titleBlock}>
-          <Text style={s.titleH1}>
-            {isFinalizacion ? "ACTA DE FINALIZACIÓN DE ASIGNACIÓN" : "ACTA DE ENTREGA DE VEHÍCULO"}
-          </Text>
-          <Text style={s.titleSub}>
-            {isFinalizacion
-              ? "Devolución del vehículo al departamento logístico de transporte"
-              : "Entrega del vehículo por parte del departamento logístico de transporte"}
-          </Text>
-        </View>
+        <Text style={s.title}>Acta de Recepción de Vehículo</Text>
 
-        {/* Info general */}
-        <View style={s.table}>
-          <View style={s.row}>
-            <Text style={s.cellLabel}>ACTA N.°</Text><Text style={s.cell}>{data.actaNumber}</Text>
-            <Text style={s.cellLabel}>FECHA</Text><Text style={s.cell}>{data.actaDate}</Text>
-          </View>
-          <View style={s.row}>
-            <Text style={s.cellLabel}>HORA</Text><Text style={s.cell}>{data.actaTime}</Text>
-            <Text style={s.cellLabel}>LUGAR</Text><Text style={s.cell}>{data.actaPlace}</Text>
-          </View>
-          <View style={s.row}>
-            <Text style={s.cellLabel}>EMPRESA</Text><Text style={s.cell}>{data.companyName}</Text>
-            <Text style={s.cellLabel}>ÁREA / CUADRILLA</Text><Text style={s.cell}>{data.actaArea}</Text>
-          </View>
-        </View>
+        <Text style={s.lead}>
+          En la ciudad de <Text style={s.leadBold}>{nonEmpty(data.actaPlace, "____________")}</Text>, {formatLongDate(data.actaDate)}.
+        </Text>
 
-        {/* Conductor */}
-        <View style={s.table}>
-          <View style={s.row}><Text style={s.sectionTitle}>DATOS DEL CHOFER QUE RECIBE</Text></View>
-          <View style={s.row}>
-            <Text style={s.cellLabel}>Nombre</Text><Text style={s.cellFull}>{data.driverName}</Text>
-          </View>
-          <View style={s.row}>
-            <Text style={s.cellLabel}>Cédula</Text><Text style={s.cell}>{data.driverDni}</Text>
-            <Text style={s.cellLabel}>Teléfono</Text><Text style={s.cell}>{data.driverPhone}</Text>
-          </View>
-          <View style={s.row}>
-            <Text style={s.cellLabel}>Cargo</Text><Text style={s.cellFull}>{data.driverRole}</Text>
-          </View>
-        </View>
+        <SectionTitle>Datos del vehículo</SectionTitle>
+        <DataTable
+          rows={[
+            ["Marca",  nonEmpty(data.vehicleBrand)],
+            ["Modelo", nonEmpty(data.vehicleModel)],
+            ["Año",    nonEmpty(data.vehicleYear)],
+            ["Color",  nonEmpty(data.vehicleColor)],
+            ["Placa",  nonEmpty(data.vehiclePlate)],
+            ["Tipo",   nonEmpty(data.vehicleType)],
+          ]}
+        />
 
-        {/* Vehículo */}
-        <View style={s.table}>
-          <View style={s.row}><Text style={s.sectionTitle}>DATOS DEL VEHÍCULO</Text></View>
-          <View style={s.row}>
-            <Text style={s.cellLabel}>Placa</Text><Text style={s.cell}>{data.vehiclePlate}</Text>
-            <Text style={s.cellLabel}>Marca</Text><Text style={s.cell}>{data.vehicleBrand}</Text>
-          </View>
-          <View style={s.row}>
-            <Text style={s.cellLabel}>Modelo</Text><Text style={s.cell}>{data.vehicleModel}</Text>
-            <Text style={s.cellLabel}>Color</Text><Text style={s.cell}>{data.vehicleColor}</Text>
-          </View>
-          <View style={s.row}>
-            <Text style={s.cellLabel}>Año</Text><Text style={s.cell}>{data.vehicleYear}</Text>
-            <Text style={s.cellLabel}>{isFinalizacion ? "Km al regresar" : "Km al devolver"}</Text><Text style={s.cell}>{data.vehicleOdometer}</Text>
-          </View>
-          <View style={s.row}>
-            <Text style={s.cellLabel}>Combustible</Text><Text style={s.cell}>{data.vehicleFuelLevel}</Text>
-            <Text style={s.cellLabel}>Estado general</Text><Text style={s.cell}>{data.vehicleCondition}</Text>
-          </View>
-          {isFinalizacion && initialData?.vehicleOdometer && (
-            <View style={s.row}>
-              <Text style={s.cellLabel}>Km al entregar (ref.)</Text>
-              <Text style={s.cell}>{initialData.vehicleOdometer}</Text>
-              <Text style={s.cellLabel}>Diferencia</Text>
-              <Text style={s.cell}>
-                {(() => {
-                  const init = Number(initialData.vehicleOdometer);
-                  const fin  = Number(data.vehicleOdometer);
-                  if (!Number.isFinite(init) || !Number.isFinite(fin)) return "—";
-                  const diff = fin - init;
-                  return `${diff >= 0 ? "+" : ""}${diff.toLocaleString("es-EC")} km`;
-                })()}
-              </Text>
-            </View>
-          )}
-        </View>
+        <SectionTitle>Declaración del receptor</SectionTitle>
+        <Text style={s.legal}>
+          Yo, <Text style={s.legalBold}>{nonEmpty(data.driverName, "______________________")}</Text>,
+          portador de la cédula de identidad N.º{" "}
+          <Text style={s.legalBold}>{nonEmpty(data.driverDni, "______________")}</Text>,
+          declaro bajo constancia que recibo el vehículo antes descrito, habiendo verificado su
+          estado general y revisado sus características. Cualquier observación, daño o detalle
+          detectado al momento de la recepción queda asentado en el bloque siguiente.
+        </Text>
+        <Text style={s.legal}>
+          Declaro que he revisado el vehículo conforme a lo descrito y firmo el presente documento
+          en señal de conformidad.
+        </Text>
 
-        {/* Novedades */}
-        <View style={s.table}>
-          <View style={s.row}><Text style={s.sectionTitle}>DAÑOS / NOVEDADES VISIBLES</Text></View>
-          <View style={s.row}>
-            <View style={s.cell}>
-              <CheckRow label="Sin novedades visibles"  value={nov.sinNovedades} />
-              <CheckRow label="Luces dañadas"           value={nov.lucesDanadas} />
-              <CheckRow label="Faltan accesorios"       value={nov.faltanAccesorios} />
-              <CheckRow label="Falla mecánica"          value={nov.fallaMecanica} />
-            </View>
-            <View style={s.cell}>
-              <CheckRow label="Llantas en mal estado"   value={nov.llantasMalEstado} />
-              <CheckRow label="Requiere mantenimiento"  value={nov.requiereMantenimiento} />
-              <CheckRow label="Choque / accidente"      value={nov.choqueAccidente} />
-            </View>
-            <View style={s.cell}>
-              <CheckRow label="Golpes"                  value={nov.golpes} />
-              <CheckRow label="Interior sucio"          value={nov.interiorSucio} />
-              <CheckRow label="Multas / infracciones"   value={nov.multas} />
-            </View>
-          </View>
-          <View style={s.row}>
-            <View style={s.cellFull}>
-              <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 7, marginBottom: 1 }}>Otros:</Text>
-              <Text style={{ minHeight: 14, fontSize: 7 }}>{data.novedadesText}</Text>
-            </View>
-          </View>
-        </View>
+        {data.novedadesText ? (
+          <ObsBox label="Observaciones" text={data.novedadesText} />
+        ) : null}
 
-        {/* Accesorios */}
-        <View style={s.table}>
-          <View style={s.row}><Text style={s.sectionTitle}>ACCESORIOS / DOCUMENTOS DEVUELTOS</Text></View>
-          <View style={s.row}>
-            <View style={s.cell}>
-              <CheckRow label="Matrícula"            value={acc.matricula} />
-              <CheckRow label="Llave de repuesto"    value={acc.llaveRepuesto} />
-              <CheckRow label="Triángulos"           value={acc.triangulos} />
-              <CheckRow label="Herramientas básicas" value={acc.herramientas} />
-            </View>
-            <View style={s.cell}>
-              <CheckRow label="Seguro / póliza"      value={acc.seguro} />
-              <CheckRow label="Gata"                 value={acc.gata} />
-              <CheckRow label="Extintor"             value={acc.extintor} tristate />
-              <CheckRow label="Radio / GPS"          value={acc.radio} />
-            </View>
-            <View style={s.cell}>
-              <CheckRow label="Llave principal"      value={acc.llavePrincipal} />
-              <CheckRow label="Llave de ruedas"      value={acc.llaveRuedas} />
-              <CheckRow label="Botiquín"             value={acc.botiquin} tristate />
-            </View>
-          </View>
-          <View style={s.row}>
-            <View style={s.cellFull}>
-              <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 7, marginBottom: 1 }}>Otros:</Text>
-              <Text style={{ minHeight: 10, fontSize: 7 }}>{data.accesoriosOtros}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Novedades encontradas */}
-        <View style={s.table}>
-          <View style={s.row}><Text style={s.sectionTitle}>NOVEDADES ENCONTRADAS AL ENTREGAR</Text></View>
-          <View style={s.row}>
-            <View style={s.cellFull}>
-              <Text style={{ minHeight: 22, fontSize: 7 }}>{data.novedadesText || " "}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Declaración */}
-        <View style={s.table}>
-          <View style={s.row}><Text style={s.sectionTitle}>DECLARACIÓN</Text></View>
-          <View style={s.row}>
-            <View style={s.cellFull}>
-              <Text style={{ lineHeight: 1.5, fontSize: 7 }}>
-                El Departamento de Transporte entrega el vehículo a la persona indicada en esta acta,
-                en las condiciones aquí descritas. Quien recibe el vehículo acepta la responsabilidad
-                de su uso, cuidado, custodia y devolución, conforme a las políticas internas de la empresa.
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Firmas — orden: imagen firma → Firma → Nombre → CI/Cédula */}
-        <View style={s.table}>
-          <View style={s.row}><Text style={s.sectionTitle}>FIRMAS DE RESPONSABILIDAD</Text></View>
-          <View style={s.row}>
-            <SigBlock
-              title="DEPARTAMENTO LOGÍSTICO"
-              dataUrl={data.signatureLogDataUrl}
-              name={data.logisticsName}
-              dni={data.logisticsDni}
-            />
-            <SigBlock
-              title="RESPONSABLE (CONDUCTOR)"
-              dataUrl={data.signatureRespDataUrl}
-              name={data.driverName}
-              dni={data.driverDni}
-            />
-          </View>
-        </View>
-
-        <Text style={s.footer}>Documento de control vehicular | Uso interno de la empresa</Text>
+        <SectionTitle>Firma</SectionTitle>
+        <SigRow
+          blocks={[
+            {
+              title: "Firma del receptor",
+              dataUrl: data.signatureRecibeDataUrl,
+              name:   nonEmpty(data.driverName, "________________________"),
+              dni:    nonEmpty(data.driverDni, "______________________"),
+            },
+          ]}
+        />
       </Page>
-
-      {/* ══ PÁGINA 2+: Fotos completas, sin recorte (objectFit: contain) ══ */}
-      {photoDataUrls.length > 0 && (
-        <Page size="A4" style={s.annexPage}>
-          <Text style={s.annexTitle}>ANEXOS — Estado del vehículo</Text>
-          <View style={s.photoGrid}>
-            {photoDataUrls.map((uri, i) => (
-              <View key={i} style={s.photoBox}>
-                <Image src={uri} style={s.photo} />
-              </View>
-            ))}
-          </View>
-        </Page>
-      )}
     </Document>
   );
 }
 
-// ─── Export ───────────────────────────────────────────────────────────────────
+// ─── Acta 2: ENTREGA (1 página) ───────────────────────────────────────────
+
+function ActaEntregaDocument({ data }: { data: WizardData }) {
+  return (
+    <Document>
+      <Page size="A4" style={s.page}>
+        <Header companyName={data.companyName} docLabel="Entrega de Vehículo a Chofer" />
+
+        <Text style={s.title}>Entrega de Vehículo a Chofer</Text>
+
+        <Text style={s.lead}>
+          En la ciudad de {nonEmpty(data.actaPlace, "____________")}, {formatLongDate(data.actaDate)}, comparecen:
+        </Text>
+
+        {/* jul 2026 v8 — Comparecencia compactada: de 8 líneas a 5.
+            Quitamos el "Los comparecientes son mayores de edad…"
+            (redundante) y achicamos las frases. */}
+        <Text style={s.legal}>
+          Por una parte el Área de Logística de Transporte, en adelante
+          <Text style={s.legalBold}> "EL ÁREA LOGÍSTICA"</Text>, representada por{" "}
+          <Text style={s.legalBold}>{nonEmpty(data.signatoryName, "______________________")}</Text>,
+          con cédula N.º{" "}
+          <Text style={s.legalBold}>{nonEmpty(data.signatoryDni, "______________")}</Text>; y por la otra{" "}
+          <Text style={s.legalBold}>{nonEmpty(data.driverName, "______________________")}</Text>,
+          con cédula N.º{" "}
+          <Text style={s.legalBold}>{nonEmpty(data.driverDni, "______________")}</Text>, en calidad de trabajador.
+        </Text>
+
+        <SectionTitle>Características del vehículo</SectionTitle>
+        <DataTable
+          rows={[
+            ["Marca",  nonEmpty(data.vehicleBrand)],
+            ["Modelo", nonEmpty(data.vehicleModel)],
+            ["Color",  nonEmpty(data.vehicleColor)],
+            ["Placa",  nonEmpty(data.vehiclePlate)],
+            ["Año",    nonEmpty(data.vehicleYear)],
+            ["Tipo",   nonEmpty(data.vehicleType)],
+          ]}
+        />
+
+        {/* jul 2026 v8 — Antes eran 3 secciones separadas
+            (Prohibiciones / Cesión / Notificación) con `SectionTitle`
+            propio cada una. Ahora se consolidan en una sola lista de
+            bullets dentro de un único bloque "Compromisos del
+            trabajador". Mucho más compacto: cabe en página 1 sin
+            desbordar. */}
+        <SectionTitle>Compromisos del trabajador</SectionTitle>
+        <View style={s.bulletList}>
+          <View style={s.bulletItem}>
+            <Text style={s.bulletMark}>•</Text>
+            <Text style={s.bulletText}>
+              Asume total responsabilidad civil, penal y administrativa por el uso del vehículo,
+              incluyendo multas, infracciones o daños a terceros.
+            </Text>
+          </View>
+          <View style={s.bulletItem}>
+            <Text style={s.bulletMark}>•</Text>
+            <Text style={s.bulletText}>
+              Queda prohibido conducir bajo efectos de alcohol, drogas o sustancias prohibidas.
+            </Text>
+          </View>
+          <View style={s.bulletItem}>
+            <Text style={s.bulletMark}>•</Text>
+            <Text style={s.bulletText}>
+              Se prohíbe ceder, prestar o entregar el vehículo a otra persona sin autorización
+              escrita del empleador.
+            </Text>
+          </View>
+          <View style={s.bulletItem}>
+            <Text style={s.bulletMark}>•</Text>
+            <Text style={s.bulletText}>
+              En caso de accidente, robo o daño, notificará inmediatamente al empleador y a las
+              autoridades competentes.
+            </Text>
+          </View>
+        </View>
+
+        <Text style={[s.legal, { fontSize: 9, fontStyle: "italic", marginTop: 2 }]}>
+          Anexo: las fotografías adjuntas forman parte integral de la presente acta.
+        </Text>
+
+        {data.novedadesText ? (
+          <ObsBox label="Observaciones" text={data.novedadesText} />
+        ) : null}
+
+        <SectionTitle>Firmas</SectionTitle>
+        <SigRow
+          blocks={[
+            {
+              title: "Encargado de entrega",
+              dataUrl: data.signatureEntregaDataUrl,
+              name:   nonEmpty(data.signatoryName, "________________________"),
+              dni:    nonEmpty(data.signatoryDni, "______________________"),
+            },
+            {
+              title: "Recibe conforme",
+              dataUrl: data.signatureRecibeDataUrl,
+              name:   nonEmpty(data.driverName, "________________________"),
+              dni:    nonEmpty(data.driverDni, "______________________"),
+            },
+          ]}
+        />
+      </Page>
+    </Document>
+  );
+}
+
+// ─── Acta 3: DEVOLUCIÓN (1 página) ───────────────────────────────────────
+
+function ActaDevolucionDocument({ data }: { data: ActaReturnData }) {
+  const nov = data.novedades;
+  const acc = data.accesorios;
+  return (
+    <Document>
+      <Page size="A4" style={s.page}>
+        <Header companyName={data.companyName} docLabel="Acta de Devolución de Vehículo" />
+
+        <Text style={s.title}>Acta de Devolución de Vehículo</Text>
+
+        <Text style={s.lead}>
+          En la ciudad de {nonEmpty(data.actaPlace, "____________")}, {formatLongDate(data.actaDate)},
+          siendo las {nonEmpty(data.actaTime, "____")} horas.
+        </Text>
+
+        <SectionTitle>Datos del vehículo</SectionTitle>
+        <DataTable
+          rows={[
+            ["Marca",          nonEmpty(data.vehicleBrand)],
+            ["Modelo",         nonEmpty(data.vehicleModel)],
+            ["Año",            nonEmpty(data.vehicleYear)],
+            ["Color",          nonEmpty(data.vehicleColor)],
+            ["Placa",          nonEmpty(data.vehiclePlate)],
+            ["Km al entregar", data.odometerInitial ? `${data.odometerInitial} km` : "—"],
+          ]}
+        />
+        <View style={{ flexDirection: "row", marginBottom: 4 }}>
+          <View style={{ flex: 1, marginRight: 4 }}>
+            <Text style={s.legal}>
+              <Text style={s.legalBold}>Km al regresar: </Text>
+              {nonEmpty(data.odometerReturn)} km
+            </Text>
+          </View>
+          <View style={{ flex: 1, marginRight: 4 }}>
+            <Text style={s.legal}>
+              <Text style={s.legalBold}>Combustible: </Text>
+              {nonEmpty(data.fuelLevel)}
+            </Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.legal}>
+              <Text style={s.legalBold}>Estado general: </Text>
+              {nonEmpty(data.condition)}
+            </Text>
+          </View>
+        </View>
+
+        <SectionTitle>Daños y novedades al regreso</SectionTitle>
+        <View style={{ flexDirection: "row" }}>
+          <View style={{ flex: 1, paddingRight: 6 }}>
+            <CheckRow label="Sin novedades"           value={nov.sinNovedades} />
+            <CheckRow label="Luces dañadas"            value={nov.lucesDanadas} />
+            <CheckRow label="Faltan accesorios"        value={nov.faltanAccesorios} />
+            <CheckRow label="Falla mecánica"           value={nov.fallaMecanica} />
+            <CheckRow label="Llantas en mal estado"    value={nov.llantasMalEstado} />
+          </View>
+          <View style={{ flex: 1, paddingRight: 6 }}>
+            <CheckRow label="Requiere mantenimiento"   value={nov.requiereMantenimiento} />
+            <CheckRow label="Choque / accidente"       value={nov.choqueAccidente} />
+            <CheckRow label="Golpes"                   value={nov.golpes} />
+            <CheckRow label="Interior sucio"           value={nov.interiorSucio} />
+            <CheckRow label="Multas / infracciones"    value={nov.multas} />
+          </View>
+        </View>
+        {data.novedadesText ? (
+          <ObsBox label="Detalle de novedades" text={data.novedadesText} />
+        ) : null}
+
+        <SectionTitle>Accesorios y documentos devueltos</SectionTitle>
+        <View style={{ flexDirection: "row" }}>
+          <View style={{ flex: 1, paddingRight: 6 }}>
+            <CheckRow label="Matrícula"            value={acc.matricula} />
+            <CheckRow label="Llave de repuesto"    value={acc.llaveRepuesto} />
+            <CheckRow label="Triángulos"           value={acc.triangulos} />
+            <CheckRow label="Herramientas básicas" value={acc.herramientas} />
+            <CheckRow label="Gata"                 value={acc.gata} />
+          </View>
+          <View style={{ flex: 1, paddingRight: 6 }}>
+            <CheckRow label="Seguro / póliza"      value={acc.seguro} />
+            <CheckRow label="Extintor"             value={acc.extintor} tristate />
+            <CheckRow label="Radio / GPS"          value={acc.radio} />
+            <CheckRow label="Llave principal"      value={acc.llavePrincipal} />
+            <CheckRow label="Llave de ruedas"      value={acc.llaveRuedas} />
+            <CheckRow label="Botiquín"             value={acc.botiquin} tristate />
+          </View>
+        </View>
+        {data.accesoriosOtros ? (
+          <ObsBox label="Otros accesorios" text={data.accesoriosOtros} />
+        ) : null}
+        {data.multasText ? (
+          <ObsBox label="Multas e infracciones" text={data.multasText} />
+        ) : null}
+
+        <SectionTitle>Firmas de conformidad</SectionTitle>
+        <SigRow
+          blocks={[
+            {
+              title: "Departamento Logístico",
+              dataUrl: data.signatureLogDataUrl,
+              name:   nonEmpty(data.signatoryName, "________________________"),
+              dni:    nonEmpty(data.signatoryDni, "______________________"),
+            },
+            {
+              title: "Conductor",
+              dataUrl: data.signatureRespDataUrl,
+              name:   nonEmpty(data.driverName, "________________________"),
+              dni:    nonEmpty(data.driverDni, "______________________"),
+            },
+          ]}
+        />
+      </Page>
+    </Document>
+  );
+}
+
+// ─── API pública ──────────────────────────────────────────────────────────
+
+export type GenerateActaOptions = {
+  kind?: "recepcion" | "entrega";
+};
 
 export async function generateActaPdf(
   data: WizardData,
-  photoFiles: File[],
-  options?: { mode?: "alta" | "finalizacion"; initialData?: Partial<WizardData> | null },
+  _photoFiles: File[] = [],
+  options?: GenerateActaOptions,
 ): Promise<Blob> {
-  const photoDataUrls = await Promise.all(
-    photoFiles.map(
-      (file) => new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(file);
-      }),
-    ),
-  );
-  return pdf(
-    <ActaPdfDocument
-      data={data}
-      photoDataUrls={photoDataUrls}
-      mode={options?.mode ?? "alta"}
-      initialData={options?.initialData ?? null}
-    />,
-  ).toBlob();
+  const kind = options?.kind ?? data.actaKind;
+  const doc = kind === "recepcion"
+    ? <ActaRecepcionDocument data={data} />
+    : <ActaEntregaDocument   data={data} />;
+  return pdf(doc).toBlob();
+}
+
+export async function generateReturnActaPdf(data: ActaReturnData): Promise<Blob> {
+  return pdf(<ActaDevolucionDocument data={data} />).toBlob();
 }

@@ -45,6 +45,11 @@ async function postToBackend(
   path: string,
   body: Record<string, unknown>,
 ): Promise<{ ok: boolean; status: number; data: unknown; error?: string }> {
+  // jul 2026 — loggear el body que mandamos para debug. El LLM a veces
+  // manda campos mal formados (ej. tipos de Zod que el backend no acepta)
+  // y necesitamos ver qué le llegó al backend.
+  // eslint-disable-next-line no-console
+  console.log(`[jarvis:tool:post] → ${path}`, JSON.stringify(body, null, 2).slice(0, 1000));
   try {
     const res = await fetch(`${ctx.baseUrl}${path}`, {
       method: 'POST',
@@ -55,9 +60,35 @@ async function postToBackend(
       body: JSON.stringify(body),
     });
     let data: any = null;
-    try { data = await res.json(); } catch { /* sin body */ }
-    return { ok: res.ok, status: res.status, data, error: res.ok ? undefined : (data?.error ?? data?.message ?? `HTTP ${res.status}`) };
+    let rawBody = '';
+    try {
+      rawBody = await res.text();
+      data = rawBody ? JSON.parse(rawBody) : null;
+    } catch (parseErr) {
+      // eslint-disable-next-line no-console
+      console.warn(`[jarvis:tool:post] ← ${path} no-JSON response (status=${res.status}):`, rawBody.slice(0, 500));
+      data = { __raw: rawBody.slice(0, 500) };
+    }
+    // Log SIEMPRE del resultado, sea OK o error. Es clave para debug.
+    // eslint-disable-next-line no-console
+    console.log(
+      `[jarvis:tool:post] ← ${path} status=${res.status} ok=${res.ok} data=${JSON.stringify(data).slice(0, 800)}`,
+    );
+    if (!res.ok) {
+      // El backend puede devolver el error en distintos campos.
+      // Guardamos el body crudo para que el LLM (y el user) sepa qué pasó.
+      const errMsg =
+        data?.error ??
+        data?.message ??
+        (Array.isArray(data?.errors) ? data.errors.map((e: any) => e?.message ?? JSON.stringify(e)).join('; ') : null) ??
+        (typeof data === 'string' ? data : null) ??
+        `HTTP ${res.status}`;
+      return { ok: false, status: res.status, data, error: errMsg };
+    }
+    return { ok: true, status: res.status, data };
   } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(`[jarvis:tool:post] ✗ ${path} network error:`, e);
     return { ok: false, status: 0, data: null, error: e instanceof Error ? e.message : 'Error de red' };
   }
 }
@@ -150,10 +181,15 @@ export const scheduleMaintenanceTool: ToolDefinition<z.infer<typeof argsSchedule
   cacheable:   false,
   async execute(args, ctx): Promise<ToolResult> {
     const actx = ctx as unknown as ActionToolContext;
+    // jul 2026 — LOG INICIAL: ver qué args está mandando el LLM.
+    // eslint-disable-next-line no-console
+    console.log(`[jarvis:tool:scheduleMaintenance] START args=${JSON.stringify(args)}`);
     if (!actx.cookieHeader) {
       return { data: [], total: 0, note: 'Error: tools de acción necesitan cookie de sesión. Reinicia el chat.' };
     }
     const resolved = await resolveAssetId(args.assetId ?? args.plate, actx);
+    // eslint-disable-next-line no-console
+    console.log(`[jarvis:tool:scheduleMaintenance] resolveAssetId → ${JSON.stringify(resolved)}`);
     if (!resolved.ok) {
       return { data: [], total: 0, note: resolved.error };
     }
@@ -169,7 +205,7 @@ export const scheduleMaintenanceTool: ToolDefinition<z.infer<typeof argsSchedule
       assignedUserId: args.assignedUserId,
     });
     if (!res.ok) {
-      return { data: [], total: 0, note: `Error agendando mantenimiento: ${res.error}` };
+      return { data: [], total: 0, note: `Error agendando mantenimiento (HTTP ${res.status}): ${res.error}` };
     }
     const m: any = res.data;
     return {

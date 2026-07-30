@@ -245,6 +245,117 @@ export async function createChatCompletion(
   return await createWithCascade(messages, opts);
 }
 
+// ─── Streaming con cascada 2D ──────────────────────────────────────────
+// jul 2026 v3 — Wrapper para streaming con cascada completa de keys ×
+// modelos. Si el rate limit llega PRE-stream (en `create()`), rota
+// a la siguiente combinación. Si llega MID-stream (ya empezó a
+// transmitir), no se puede reiniciar — el caller lo maneja.
+//
+// Diferencia con `createChatCompletion({ stream: true })`:
+//   - `createChatCompletion` ya itera keys × modelos, pero está
+//     pensado para el caso no-stream. La diferencia es que para
+//     stream queremos devolver, además del stream, METADATA sobre
+//     qué modelo y key se usaron (para que el caller loguee y el
+//     frontend sepa si hubo fallback).
+//
+// Estructura del retorno:
+//   { stream, model, keyIndex, fallbackUsed }
+export interface StreamingCascadeResult {
+  stream: any; // AsyncIterable<ChatCompletionChunk> (tipo Groq)
+  model: string;
+  keyIndex: number;
+  /** True si se tuvo que cambiar al modelo fallback durante los intentos. */
+  fallbackUsed: boolean;
+}
+
+export async function createStreamingChatCompletion(
+  messages: any[],
+  opts: {
+    temperature?: number;
+    max_tokens?: number;
+    top_p?: number;
+    tools?: any[];
+    tool_choice?: any;
+    stream_options?: any;
+    [k: string]: any;
+  } = {},
+): Promise<StreamingCascadeResult> {
+  const keys = getApiKeys();
+  if (keys.length === 0) {
+    throw new Error('GROQ_API_KEY no configurada.');
+  }
+
+  const totalKeys = keys.length;
+  const primaryModel = getModel();
+  const fallbackModel = getFallback();
+  const totalModels = fallbackEnabled() ? 2 : 1;
+
+  const visited = new Set<string>();
+  const HARD_LIMIT = Math.max(20, totalKeys * totalModels * 2);
+
+  let attemptKeyIndex = clampCurrentIndex(totalKeys);
+  let attemptModel = primaryModel;
+  let lastError: unknown = null;
+  let fallbackUsed = false;
+
+  for (let i = 0; i < HARD_LIMIT; i++) {
+    const stateKey = `${attemptKeyIndex}|${attemptModel}`;
+    if (visited.has(stateKey)) break;
+    visited.add(stateKey);
+
+    const key = keys[attemptKeyIndex];
+    const client = _clients.get(key) ?? new Groq({ apiKey: key });
+    _clients.set(key, client);
+
+    try {
+      const stream = await client.chat.completions.create({
+        model: attemptModel,
+        messages,
+        ...opts,
+        stream: true,
+      });
+      return {
+        stream,
+        model: attemptModel,
+        keyIndex: attemptKeyIndex,
+        fallbackUsed,
+      };
+    } catch (err) {
+      const rateInfo = detectRateLimit(err);
+      if (!rateInfo) throw err; // No es rate-limit → propagar.
+
+      lastError = err;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[groq-client:stream] rate limit pre-stream key=${attemptKeyIndex} model=${attemptModel}: ${rateInfo.message}`,
+      );
+
+      // Paso 1: intentar fallback de modelo en esta misma key.
+      if (fallbackEnabled() && attemptModel === primaryModel && primaryModel !== fallbackModel) {
+        attemptModel = fallbackModel;
+        fallbackUsed = true;
+        continue;
+      }
+
+      // Paso 2: rotar a la siguiente key, resetear a primary.
+      const advance = advanceKeyIndex();
+      if (!advance) break;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[groq-client:stream] rotando key: ${advance.previous} → ${advance.current}`,
+      );
+      noteKeyRotation();
+      attemptKeyIndex = advance.current;
+      attemptModel = primaryModel;
+    }
+  }
+
+  throw new GroqRateLimitError(
+    60_000,
+    String((lastError as any)?.message ?? lastError ?? 'rate_limit'),
+  );
+}
+
 /**
  * Después de un 200 OK, si hace rato estamos en una key fallback y
  * pasaron `GROQ_KEY_RECOVERY_MIN` minutos desde la última rotación,

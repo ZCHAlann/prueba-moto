@@ -24,6 +24,7 @@ import { usePermissions } from "../../hooks/usePermissions";
 import { useFinance, type TransactionItem } from "../../hooks/useFinance";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import { Pagination } from "../../components/ui/Pagination";
+import { AnnualExpensesTimeline } from "./AnnualExpensesTimeline";
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
@@ -302,193 +303,13 @@ function CajaChicaTab() {
 
 // ─── Tab: Gastos Anuales ─────────────────────────────────────────────────────
 
+// jul 2026 — Reemplazado por <AnnualExpensesTimeline />: línea de tiempo
+// con acordeón anidado (Año → Categoría → Mes → Items) + proyección
+// automática del año siguiente. El árbol reemplaza la antigua vista
+// plana de "Año → Mes" + paginación canónica (que rompía el agrupado
+// al cortar a 10 items por página).
 function GastosAnualesTab() {
-  const finance = useFinance();
-  const [items, setItems] = useState<TransactionItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  // jul 2026 v9 — paginación canónica.
-  const [page, setPage]         = useState(1);
-  const [total, setTotal]       = useState(0);
-  const [pageSize, setPageSize] = useState(10);
-  const [totalPages, setTotalPages] = useState(1);
-
-  const load = useCallback(async (pageToLoad: number) => {
-    setLoading(true);
-    try {
-      // jul 2026 v9 — paginación canónica (default 10, cap 100).
-      const result = await finance.transactions.fetch({
-        scope: "annual",
-        page: pageToLoad,
-        pageSize,
-      });
-      setItems(result.data);
-      setTotal(result.total);
-      setPageSize(result.pageSize);
-      setTotalPages(result.totalPages);
-      setPage(result.page);
-    } catch (err) {
-      toast.error("Error al cargar gastos anuales");
-    } finally {
-      setLoading(false);
-    }
-  }, [finance, pageSize]);
-
-  useEffect(() => { void load(1); }, [load]);
-
-  function handlePageChange(nextPage: number) {
-    void load(nextPage);
-  }
-
-  const exportPdf = useCallback(async () => {
-    try {
-      await finance.transactions.downloadPdf({ scope: "annual" });
-    } catch (err) {
-      toast.error("Error al exportar el PDF");
-    }
-  }, [finance]);
-
-  // Agrupar por año → mes
-  const grouped = useMemo(() => {
-    const byYear = new Map<number, Map<number, TransactionItem[]>>();
-    for (const item of items) {
-      const d = new Date(item.occurredAt);
-      const y = d.getUTCFullYear();
-      const m = d.getUTCMonth();
-      if (!byYear.has(y)) byYear.set(y, new Map());
-      const yearMap = byYear.get(y)!;
-      if (!yearMap.has(m)) yearMap.set(m, []);
-      yearMap.get(m)!.push(item);
-    }
-    return Array.from(byYear.entries())
-      .sort(([a], [b]) => b - a);
-  }, [items]);
-
-  // Proyección para el año entrante: sumamos por mes del año anterior
-  const currentYear = new Date().getUTCFullYear();
-  const previousYear = currentYear - 1;
-  const previousYearData = grouped.find(([y]) => y === previousYear)?.[1];
-  const projection: Array<{ month: number; total: number }> = [];
-  if (previousYearData) {
-    for (let m = 0; m < 12; m++) {
-      const monthItems = previousYearData.get(m) ?? [];
-      const total = monthItems.reduce((s, i) => s + Number(i.amount), 0);
-      projection.push({ month: m, total });
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      {/* Summary */}
-      <div className={`${cardCls} flex items-center justify-between p-4`}>
-        <div>
-          <p className={labelCls}>Total acumulado</p>
-          <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-            {fmtMoney(items.reduce((s, i) => s + Number(i.amount), 0))}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => void exportPdf()}
-          className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
-        >
-          <FileDown className="h-4 w-4" />
-          Exportar PDF
-        </button>
-      </div>
-
-      {/* Proyección del año entrante */}
-      {projection.length > 0 && (
-        <div className={`${cardCls} p-4`}>
-          <div className="flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-emerald-500" />
-            <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
-              Proyección {currentYear + 1} (basada en {previousYear})
-            </h3>
-          </div>
-          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Estimación calculada del gasto anual recurrente. Útil para presupuesto.
-          </p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-4">
-            {projection
-              .filter(p => p.total > 0)
-              .sort((a, b) => b.total - a.total)
-              .slice(0, 8)
-              .map(p => (
-                <div key={p.month} className="rounded-xl border border-gray-100 bg-gray-50 p-3 dark:border-white/[0.06] dark:bg-white/[0.04]">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
-                    {monthName(p.month)}
-                  </p>
-                  <p className="mt-0.5 text-base font-bold text-gray-900 dark:text-gray-100">
-                    {fmtMoney(p.total)}
-                  </p>
-                </div>
-              ))}
-          </div>
-        </div>
-      )}
-
-      {loading ? (
-        <div className={`${cardCls} flex items-center justify-center p-10`}>
-          <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
-        </div>
-      ) : grouped.length === 0 ? (
-        <div className={`${cardCls} p-10 text-center`}>
-          <AlertCircle className="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600" />
-          <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
-            No hay gastos anuales registrados.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {grouped.map(([year, months]) => {
-            const yearTotal = Array.from(months.values()).flat().reduce((s, i) => s + Number(i.amount), 0);
-            return (
-              <div key={year} className={`${cardCls} overflow-hidden`}>
-                <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-4 py-3 dark:border-white/[0.06] dark:bg-white/[0.04]">
-                  <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Año {year}</h3>
-                  <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">{fmtMoney(yearTotal)}</span>
-                </div>
-                <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
-                  {Array.from(months.entries())
-                    .sort(([a], [b]) => b - a)
-                    .map(([month, monthItems]) => {
-                      const monthTotal = monthItems.reduce((s, i) => s + Number(i.amount), 0);
-                      return (
-                        <div key={month} className="px-4 py-3">
-                          <div className="flex items-center justify-between">
-                            <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                              {monthName(month)} {year}
-                            </p>
-                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">{fmtMoney(monthTotal)}</p>
-                          </div>
-                          <ul className="mt-2 space-y-1">
-                            {monthItems.map(i => (
-                              <li key={i.id} className="flex items-center justify-between gap-3 text-xs text-gray-600 dark:text-gray-400">
-                                <span className="truncate">{fmtDate(i.occurredAt)} — {i.description}</span>
-                                <span className="font-mono">{fmtMoney(i.amount)}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {/* jul 2026 v9 — paginación canónica. */}
-      <Pagination
-        page={page}
-        totalPages={totalPages}
-        total={total}
-        pageSize={pageSize}
-        onPageChange={handlePageChange}
-        itemLabel="gasto anual"
-      />
-    </div>
-  );
+  return <AnnualExpensesTimeline />;
 }
 
 function monthName(m: number): string {

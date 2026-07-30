@@ -15,6 +15,12 @@ import assetsRouter from './assets';
 import driversRouter from './drivers';
 import assignmentsRouter from './assignments';
 import maintenancesRouter from './maintenances';
+// jul 2026 v3 — Submódulo "Data" de Mantenimientos. Endpoint único de
+// solo lectura (assets / categories / detail por módulo) protegido por
+// `requirePermission('mantenimiento', 'data', 'ver')`. Se montó en su
+// propia ruta a propósito para que el gate se evalúe UNA sola vez y el
+// front no dependa de hooks cruzados.
+import maintenanceDataRouter from './maintenance-data';
 // jul 2026 — Horario de conductores (driver_time_off). CRUD + copy.
 import driverScheduleRouter from './driver-schedule';
 import fuelRouter from './fuel';
@@ -39,6 +45,7 @@ import suppliersRouter from './suppliers';
 import odometerRouter from './odometer';
 import notificationsRouter from './notifications';
 import reportsRouter from './reports';
+import reportsFiltradoRouter from './reports-filtrado';
 import estadisticasRouter from './estadisticas';
 import jarvisRouter from './jarvis';
 import formOptionsRouter from './formOptions';
@@ -79,6 +86,10 @@ router.use('/driver-schedule', driverScheduleRouter);
 router.use(formOptionsRouter);
 router.use('/assignments', assignmentsRouter);
 router.use('/maintenances', maintenancesRouter);
+// jul 2026 v3 — Submódulo Data de Mantenimientos. Comparte el módulo
+// `mantenimiento` para el `requireCompanyModule` del front, pero su
+// gating interno es `mantenimiento.data.ver`.
+router.use('/maintenance-data', maintenanceDataRouter);
 router.use('/fuel', fuelRouter);
 router.use('/toll', tollRouter);
 router.use('/alerts', alertsRouter);
@@ -101,6 +112,7 @@ router.use('/suppliers', suppliersRouter);
 router.use('/odometer', odometerRouter);
 router.use('/notifications', notificationsRouter);
 router.use('/reports', reportsRouter);
+router.use('/reports/filtrado', reportsFiltradoRouter);
 router.use('/estadisticas', estadisticasRouter);
 router.use('/ai', jarvisRouter);
 

@@ -92,3 +92,18 @@ scripts/
 apps/backend/drizzle/
 apps/docs/**
 **/docs/
+
+
+# Piper TTS — modelos, entorno virtual, cache
+apps/piper_tts/.venv/
+apps/piper_tts/.venv/**
+apps/piper_tts/models/
+apps/piper_tts/*.onnx
+apps/piper_tts/*.onnx.json
+apps/piper_tts/test.wav
+apps/piper_tts/.cache/
+# Voces Piper descargadas (en home del usuario, no en el repo,
+# pero por si las descargaste adentro)
+**/piper_voices/
+**/*.onnx
+**/*.onnx.json

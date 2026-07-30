@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation } from "react-router";
 import {
   Bot, Send, X, Loader2, MessageSquarePlus, History, Trash2, Pencil,
-  Check, Search, AlertCircle, Mic, MicOff, Volume2, Download, FileText,
+  Check, Search, AlertCircle, Mic, MicOff, Volume2, Download,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { ConfirmModal } from "./ConfirmModal";
@@ -548,18 +548,18 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
     }
   }
 
-  async function exportConversation(cid: string, format: "csv" | "pdf") {
+  async function exportConversation(cid: string) {
     if (!companyId) return;
     try {
       const res = await fetch(
-        `/api/company/${companyId}/ai/conversations/${cid}/export?format=${format}`,
+        `/api/company/${companyId}/ai/conversations/${cid}/export?format=csv`,
         { credentials: "include" },
       );
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const blob = await res.blob();
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement("a");
-      a.href = url; a.download = `jarvis-conversation.${format}`;
+      a.href = url; a.download = `jarvis-conversation.csv`;
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -1505,8 +1505,7 @@ function speakLastResponse() {
                           </button>
                           <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                             {[
-                              { icon: <Download className="h-3 w-3" />, fn: () => void exportConversation(c.id, "csv"), title: "CSV" },
-                              { icon: <FileText className="h-3 w-3" />,  fn: () => void exportConversation(c.id, "pdf"), title: "PDF" },
+                              { icon: <Download className="h-3 w-3" />, fn: () => void exportConversation(c.id), title: "CSV" },
                               { icon: <Pencil className="h-3 w-3" />,    fn: () => { setRenamingId(c.id); setRenameValue(c.title ?? ""); }, title: "Renombrar" },
                               { icon: <Trash2 className="h-3 w-3" />,    fn: () => setConvToDelete(c), title: "Eliminar" },
                             ].map((btn, i) => (

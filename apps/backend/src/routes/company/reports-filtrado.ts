@@ -907,9 +907,16 @@ router.get(
         // real: se programó para otra fecha pero se terminó hoy).
         // Usamos string YYYY-MM-DD con `sql` raw para que Postgres
         // haga el cast a `date` correctamente.
+        //
+        // jul 2026 v9.1 — Filtrar SOLO mantenimientos `Completado`.
+        // El reporte de filtrado refleja el estado FINAL del
+        // mantenimiento (lo que se gastó realmente). Mantenimientos
+        // en Programado / En proceso / Correccion NO entran al
+        // reporte porque sus items/costos están en estado parcial.
         const conds: any[] = [
           eq(companyMaintenanceRecords.companyId, companyId),
           eq(companyMaintenanceRecords.assetId, vehicleId),
+          eq(companyMaintenanceRecords.status, 'Completado'),
           dateRangeExpr('mantenimiento', date, nextDayYmd(date)),
         ];
         if (categoryId) conds.push(eq(companyMaintenanceRecords.categoryId, categoryId));

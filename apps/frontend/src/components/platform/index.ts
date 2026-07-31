@@ -5,6 +5,7 @@ export { PlatformSearchBar }  from "./PlatformSearchbar";
 export { ModalActions }       from "./ModalActions";
 export { IconPicker }         from "./IconPicker";
 export { AccentPicker }       from "./AccentPicker";
+export { AiApiKeysSection }   from "./AiApiKeysSection";
 export {
   InputField,
   SelectField,

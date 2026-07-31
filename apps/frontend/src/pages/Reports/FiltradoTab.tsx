@@ -18,6 +18,20 @@ import {
   type CascadeItem,
   type ModuleKey,
 } from "../../hooks/useFiltradoReport";
+// jul 2026 v9.1 — Recalculamos subtotal/iva/total en el FRONTEND
+// desde los datos crudos del item (unitCost, quantity, discountType,
+// discountValue, ivaPercent). NO usamos los campos `subtotal/iva/total`
+// que vienen de la API porque pueden estar mal guardados en la BD
+// (ítems viejos con discountType='percent' calculado con fórmula de
+// monto). La lib es la misma que usa el form modal, así el
+// filtrado refleja los MISMOS números que el mantenimiento directo.
+//
+// jul 2026 v9.2 — Usamos `aggregateTotals` para el resumen (igual
+// que el drawer) y `computeItemTotals` solo para la tabla por item.
+// Regla de negocio: el IVA va SOLO a repuestos, la mano de obra
+// NO lleva IVA. Esto matchea exactamente con `liveTotalCost =
+// labor + partsAgg.grandTotal` del MaintenanceDetailDrawer.
+import { computeItemTotals, aggregateTotals } from "../../lib/maintenance-totals";
 
 // ─── Constantes ─────────────────────────────────────────────────────
 
@@ -92,7 +106,15 @@ export function FiltradoTab() {
     // matcheaba, por eso Año / Mes / Día salían vacíos.
     const itemKey = (raw as { key?: string } | undefined)?.key ?? null;
     switch (level) {
-      case "vehicles":      setVehicleId(v == null ? null : Number(v)); break;
+      case "vehicles": {
+        const id = v == null ? null : Number(v);
+        // jul 2026 — toggle: si ya estaba seleccionado ese mismo
+        // vehículo, lo deseleccionamos (vuelve a null). Al volver
+        // a null, gridMode se reactiva solo (depende de
+        // state.vehicleId == null) y reaparecen las columnas de 10.
+        setVehicleId(state.vehicleId === id ? null : id);
+        break;
+      }
       case "modules":       setModule(v as ModuleKey); break;
       case "categories": {
         const id = v == null ? null : Number(v);
@@ -234,7 +256,14 @@ export function FiltradoTab() {
 
       {/* ── Cascada horizontal con wrap a 2 filas ── */}
       {/* jul 2026 v5 — flex-wrap permite que las columnas bajen a una
-          segunda fila si el viewport no entra. Sin overflow-x-auto. */}
+          segunda fila si el viewport no entra. Sin overflow-x-auto.
+          jul 2026 v5.b — `gridMode` se pasa a la primera columna
+          (Vehículos) solo cuando NO hay vehículo seleccionado. En ese
+          caso, los items se reparten en N columnas de 10 para no
+          estirar el contenedor verticalmente. Cuando se selecciona
+          un vehículo, `gridMode` pasa a false y la columna se
+          re-renderiza en su layout vertical normal con animación
+          de Framer Motion (`layout` en cada item). */}
       <div className="relative rounded-lg border border-gray-200 bg-white/50 p-4 dark:border-white/[0.08] dark:bg-white/[0.02]">
         {cols.length === 0 ? (
           <div className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
@@ -257,6 +286,11 @@ export function FiltradoTab() {
                   isLast={idx === cols.length - 1}
                   onPick={onPick}
                   module={state.module}
+                  // jul 2026 v5.b — Grid solo en la primera columna
+                  // (vehículos) y solo cuando state.vehicleId es null
+                  // (estado "inicial" del cascada). Para los demás
+                  // niveles, layout vertical normal.
+                  gridMode={c.col.level === "vehicles" && state.vehicleId == null}
                 />
               ))}
             </AnimatePresence>
@@ -300,7 +334,15 @@ export function FiltradoTab() {
 //   │ └─ Placa 3   │
 //   └───────────────┘
 
-function CascadeCol({ col, items, loading, selected, flashed, colIndex, isFirst, isLast, onPick, module: currentModule }: {
+// jul 2026 v5.b — Items por columna cuando los vehículos se
+// distribuyen en grid. Si tenés 30 carros → 3 columnas de 10. Si
+// tenés 50 → 5 columnas. Se respeta este número hasta que el user
+// elige un vehículo, momento en el que el layout vuelve a la
+// columna vertical original (todos los carros en una sola columna
+// de filas, como el layout viejo).
+const ITEMS_PER_COLUMN = 10;
+
+function CascadeCol({ col, items, loading, selected, flashed, colIndex, isFirst, isLast, onPick, module: currentModule, gridMode = false }: {
   col: Col;
   items: CascadeItem[];
   loading: boolean;
@@ -309,11 +351,59 @@ function CascadeCol({ col, items, loading, selected, flashed, colIndex, isFirst,
   colIndex: number;
   isFirst: boolean;
   isLast: boolean;
-  onPick: (level: Col["level"], v: any) => void;
+  onPick: (level: Col["level"], v: any, label: string, raw?: any) => void;
   module: ModuleKey | null;
+  /**
+   * jul 2026 v5.b — `gridMode` true: el nivel Vehículo SIN selección
+   * muestra los items repartidos en N columnas de 10 (ITEMS_PER_COLUMN).
+   * Esto evita que el contenedor se estire verticalmente cuando hay
+   * muchos vehículos. Cuando se selecciona uno, vuelve al layout de
+   * columna vertical normal.
+   */
+  gridMode?: boolean;
 }) {
   const Icon = col.Icon;
   const isModuleCol = col.level === "modules";
+
+  // ── gridMode: partir items en chunks de ITEMS_PER_COLUMN ──
+  //
+  // jul 2026 v5.b.3 — Debug: el código ya estaba correcto en la
+  // última versión (useGrid && col.level === "vehicles", sin la
+  // condición de selected). Si los items siguen sin desaparecer al
+  // seleccionar, es un problema de caché del browser. Forzamos
+  // remontage con un key que cambia según el estado.
+  const useGrid = gridMode && col.level === "vehicles";
+  const hasSelection = selected != null;
+  const visibleItems: CascadeItem[] = useGrid
+    ? (!hasSelection
+        ? items
+        : items.filter((it) => {
+            const v = valueOfItem(it, col.level);
+            return v != null && selected === v;
+          })
+      )
+    : items;
+  const chunks: CascadeItem[][] = useGrid
+    ? Array.from(
+        { length: Math.max(1, Math.ceil(visibleItems.length / ITEMS_PER_COLUMN)) },
+        (_, i) => visibleItems.slice(i * ITEMS_PER_COLUMN, (i + 1) * ITEMS_PER_COLUMN),
+      )
+    : null;
+
+  // jul 2026 v5.b.3 — Log temporal de debug. Borrar después de
+  // confirmar que funciona. Ayuda a ver en la consola del browser
+  // (F12 → Console) que el filtrado se está aplicando.
+  if (process.env.NODE_ENV !== "production" && useGrid) {
+    // eslint-disable-next-line no-console
+    console.log("[CascadeCol]", {
+      col: col.level,
+      gridMode,
+      hasSelection,
+      itemsCount: items.length,
+      visibleCount: visibleItems.length,
+      chunksCount: chunks?.length,
+    });
+  }
 
   return (
     <>
@@ -352,6 +442,11 @@ function CascadeCol({ col, items, loading, selected, flashed, colIndex, isFirst,
           <span className="text-[9.5px] font-bold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">
             {col.title}
           </span>
+          {useGrid && items.length > 0 && (
+            <span className="text-[9px] tabular-nums text-gray-400 dark:text-gray-500">
+              ({items.length})
+            </span>
+          )}
         </div>
 
         {/* Contenido de la columna (ramas) */}
@@ -365,6 +460,82 @@ function CascadeCol({ col, items, loading, selected, flashed, colIndex, isFirst,
             <div className="py-1.5 text-[10.5px] italic text-gray-400 dark:text-gray-500">
               Sin opciones
             </div>
+          ) : useGrid && chunks ? (
+            // ── Modo grid: items repartidos en N columnas de 10 ──
+            // Cada "columna" del grid es un <ul> con sus items. El
+            // contenedor es un `flex flex-wrap` que pone las columnas
+            // lado a lado. Cuando hay un vehículo seleccionado,
+            // visibleItems se filtra a solo el seleccionado → quedan
+            // 1 chunk de 1 item → los demás ejecutan `exit` con la
+            // animación de framer-motion.
+            //
+            // jul 2026 v5.b.3 — el `key` cambia cuando cambia la
+            // selección para forzar el remontage del contenedor y
+            // asegurar que AnimatePresence dispare las animaciones
+            // de los items cuando visibleItems se reduce.
+            <motion.div
+              key={`grid-${hasSelection ? "selected" : "all"}-${visibleItems.length}`}
+              layout
+              transition={{ layout: { duration: 0.32, ease: [0.16, 1, 0.3, 1] } }}
+              className="flex flex-wrap gap-x-3 gap-y-1"
+            >
+              <AnimatePresence mode="popLayout" initial={false}>
+                {chunks.map((chunk, chunkIdx) => (
+                  <motion.ul
+                    // Key estable por chunkIdx — el `items.length` NO entra
+                    // en la key, así cuando la lista se filtra (ej: solo
+                    // queda 1 item seleccionado) Framer Motion puede
+                    // animar la salida de los items viejos en lugar de
+                    // desmontar y remontar el chunk entero de golpe.
+                    key={`chunk-${chunkIdx}`}
+                    layout
+                    initial={{ opacity: 0, x: 12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -12 }}
+                    transition={{
+                      duration: 0.32,
+                      delay: chunkIdx * 0.05,
+                      ease: [0.16, 1, 0.3, 1],
+                    }}
+                    className="m-0 flex min-w-[120px] flex-col space-y-0.5 p-0"
+                  >
+                    <AnimatePresence mode="popLayout" initial={false}>
+                      {chunk.map((it, i) => {
+                        const v = valueOfItem(it, col.level);
+                        const label = labelOfItem(it, col.level);
+                        // En grid mode ocultamos el connector ASCII
+                        // (├─ └─) porque ya no aporta: ahora es
+                        // una grilla plana, no un árbol vertical.
+                        const isSelected = v != null && selected === v;
+                        const isFlashed = flashed === `${col.level}-${v}`;
+                        return (
+                          <motion.li
+                            key={String(v ?? i)}
+                            layout
+                            initial={{ opacity: 0, x: 8 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -8 }}
+                            transition={{ duration: 0.22, delay: i * 0.025 }}
+                            className="list-none"
+                          >
+                            <RamalItem
+                              connector=""
+                              label={label}
+                              secondary={null}
+                              isSelected={isSelected}
+                              isFlashed={isFlashed}
+                              isModule={false}
+                              moduleKey={null}
+                              onClick={() => onPick(col.level, v, label, it)}
+                            />
+                          </motion.li>
+                        );
+                      })}
+                    </AnimatePresence>
+                  </motion.ul>
+                ))}
+              </AnimatePresence>
+            </motion.div>
           ) : (
             <ul className="space-y-0.5">
               <AnimatePresence mode="popLayout">
@@ -603,18 +774,40 @@ function MantenimientoDetails({ rows }: { rows: any[] }) {
       {rows.map((r) => {
         const items    = Array.isArray(r.items) ? r.items : [];
         const laborCost = Number(r.laborCost  ?? 0);
-        const ivaPercent = Number(r.ivaPercent ?? 0);
-        const itemsSubtotal = items.reduce(
-          (acc: number, it: any) => acc + Number(it.subtotal ?? 0),
-          0,
-        );
-        // jul 2026 v9 — Subtotal general = repuestos + mano de
-        // obra. El IVA se aplica sobre ese subtotal. (Misma lógica
-        // que el form modal: subtotal = items + labor, iva =
-        // subtotal * ivaPercent/100, total = subtotal + iva.)
-        const subtotal  = itemsSubtotal + laborCost;
-        const ivaAmount = subtotal * (ivaPercent / 100);
-        const totalCost = Number(r.totalCost ?? 0) || (subtotal + ivaAmount);
+        // jul 2026 v9.2 — Usar `aggregateTotals` (misma lib que el
+        // form modal y el drawer) en vez de recalcular a mano. Esto
+        // garantiza que el filtrado refleje EXACTAMENTE los mismos
+        // números que el mantenimiento directo.
+        //
+        // Regla de negocio confirmada (jul 2026):
+        //   - El IVA se aplica SOLO a los repuestos.
+        //   - La mano de obra NO lleva IVA.
+        //   - Subtotal = suma de subtotales de items (post-descuento).
+        //   - Total    = suma(items.total) + labor   (con IVA en items).
+        //
+        // Antes (v9.1) hacía la heurística rara del ivaPercent del
+        // mantenimiento; eso metía IVA sobre la mano de obra y daba
+        // totales diferentes a la pantalla del mantenimiento.
+        const partsAgg = aggregateTotals(items.map((it: any) => ({
+          quantity:      Number(it.quantity ?? 0),
+          unitCost:      Number(it.unitCost ?? 0),
+          discountValue: Number(it.discountValue ?? 0),
+          discountType:  it.discountType ?? 'amount',
+          ivaPercent:    Number(it.ivaPercent ?? 15),
+        })));
+        const itemsSubtotal = partsAgg.grandSubtotal; // repuestos sin IVA
+        const ivaAmount     = partsAgg.grandIva;      // IVA de repuestos
+        const itemsTotal    = partsAgg.grandTotal;    // repuestos con IVA
+        const subtotal      = itemsSubtotal + laborCost;
+        const totalCost     = itemsTotal + laborCost;
+        // Necesario para la tabla por item (mismo cálculo):
+        const itemTotals = items.map((it: any) => computeItemTotals({
+          quantity:      Number(it.quantity ?? 0),
+          unitCost:      Number(it.unitCost ?? 0),
+          discountValue: Number(it.discountValue ?? 0),
+          discountType:  it.discountType ?? 'amount',
+          ivaPercent:    Number(it.ivaPercent ?? 15),
+        }));
         return (
           <div key={r.id} className="rounded-lg border border-gray-200 bg-white p-3 dark:border-white/[0.08] dark:bg-white/[0.02]">
             <div className="mb-2 flex flex-wrap items-baseline gap-2">
@@ -658,29 +851,41 @@ function MantenimientoDetails({ rows }: { rows: any[] }) {
 
             {/* ── Repuestos / gastos — tabla completa como el form modal ── */}
             {items.length > 0 && (
-              <div className="mt-2">
-                <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <div className="mt-3">
+                <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                   Repuestos / gastos
                 </div>
-                <div className="overflow-x-auto">
+                {/* jul 2026 v9.3 — Wrapper con scroll vertical acotado
+                    (max-h) para que el <thead> pueda ser `sticky` y
+                    quede visible al scrollear items largos. El
+                    overflow-x-auto se mantiene por si el nombre de
+                    algún repuesto es tan largo que necesita scroll
+                    horizontal, pero la columna más larga
+                    (Repuesto) ya está truncada a 180px, así que
+                    en la práctica no debería pasar. */}
+                <div className="max-h-[420px] overflow-x-auto overflow-y-auto rounded-md border border-gray-200/60 dark:border-white/[0.06]">
                   <table className="w-full text-[11.5px]">
-                    <thead>
+                    <thead className="sticky top-0 z-10 bg-gray-50/95 backdrop-blur-sm dark:bg-[#0f172a]/95">
                       <tr className="border-b border-gray-200 text-left text-[10px] uppercase tracking-wide text-gray-500 dark:border-white/[0.08] dark:text-gray-400">
-                        <th className="py-1.5 font-semibold">Repuesto</th>
-                        <th className="py-1.5 font-semibold">Proveedor</th>
-                        <th className="py-1.5 text-right font-semibold">Cant.</th>
-                        <th className="py-1.5 text-right font-semibold">Precio Unit.</th>
-                        <th className="py-1.5 text-right font-semibold">Desc.</th>
-                        <th className="py-1.5 text-right font-semibold">Subtotal</th>
-                        <th className="py-1.5 text-right font-semibold">IVA</th>
-                        <th className="py-1.5 text-right font-semibold">Total</th>
+                        <th className="whitespace-nowrap px-3 py-2 font-semibold">Repuesto</th>
+                        <th className="whitespace-nowrap px-3 py-2 font-semibold">Proveedor</th>
+                        <th className="whitespace-nowrap px-3 py-2 text-right font-semibold">Cant.</th>
+                        <th className="whitespace-nowrap px-3 py-2 text-right font-semibold">Precio Unit.</th>
+                        <th className="whitespace-nowrap px-3 py-2 text-right font-semibold">Desc.</th>
+                        <th className="whitespace-nowrap px-3 py-2 text-right font-semibold">Subtotal</th>
+                        <th className="whitespace-nowrap px-3 py-2 text-right font-semibold">IVA</th>
+                        <th className="whitespace-nowrap px-3 py-2 text-right font-semibold">Total</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {items.map((it: any) => {
-                        const sub = Number(it.subtotal  ?? 0);
-                        const iva = Number(it.ivaAmount ?? 0);
-                        const tot = Number(it.total     ?? (sub + iva));
+                      {items.map((it: any, i: number) => {
+                        // jul 2026 v9.1 — Usar el cálculo recalculado
+                        // en el frontend (itemTotals[i]), NO los
+                        // campos subtotal/iva/total del JSON.
+                        const t = itemTotals[i] ?? { subtotal: 0, ivaAmount: 0, total: 0 };
+                        const sub = t.subtotal;
+                        const iva = t.ivaAmount;
+                        const tot = t.total;
                         // jul 2026 v9 — descuento formateado como
                         // "$X" o "X%" según discountType. Si es 0,
                         // mostramos "—" para no ensuciar la tabla.
@@ -690,15 +895,49 @@ function MantenimientoDetails({ rows }: { rows: any[] }) {
                           ? (dType === "percent" ? `${dVal}%` : `$${dVal.toFixed(2)}`)
                           : "—";
                         return (
-                          <tr key={it.id} className="border-b border-gray-100 dark:border-white/[0.04]">
-                            <td className="py-1.5 text-gray-800 dark:text-white">{it.name}</td>
-                            <td className="py-1.5 text-gray-600 dark:text-gray-300">{it.supplierName ?? "—"}</td>
-                            <td className="py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{it.quantity}</td>
-                            <td className="py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-200">${Number(it.unitCost ?? 0).toFixed(2)}</td>
-                            <td className="py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{dLabel}</td>
-                            <td className="py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-200">${sub.toFixed(2)}</td>
-                            <td className="py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-200">${iva.toFixed(2)}</td>
-                            <td className="py-1.5 text-right font-semibold tabular-nums text-gray-900 dark:text-white">${tot.toFixed(2)}</td>
+                          <tr key={it.id} className="border-b border-gray-100 transition-colors hover:bg-gray-50/50 dark:border-white/[0.04] dark:hover:bg-white/[0.02]">
+                            {/* Repuesto: line-clamp-1 + max-w para que
+                                nombres largos no rompan la tabla. El
+                                `title` muestra el nombre completo al
+                                hacer hover. */}
+                            <td
+                              className="max-w-[180px] truncate px-3 py-2 text-gray-800 dark:text-white"
+                              title={it.name}
+                            >
+                              {it.name}
+                            </td>
+                            {/* Proveedor: mismo tratamiento. Como
+                                casi siempre es el mismo supplier,
+                                el line-clamp-1 + truncate lo deja
+                                prolijo sin estirar la columna. */}
+                            <td
+                              className="max-w-[180px] truncate px-3 py-2 text-gray-600 dark:text-gray-300"
+                              title={it.supplierName ?? ""}
+                            >
+                              {it.supplierName ?? "—"}
+                            </td>
+                            {/* Numéricas: tabular-nums ya estaba, le
+                                agrego `min-w` para que las celdas
+                                tengan el mismo ancho y los valores
+                                no se peguen entre sí. */}
+                            <td className="min-w-[44px] whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">
+                              {it.quantity}
+                            </td>
+                            <td className="min-w-[78px] whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">
+                              ${Number(it.unitCost ?? 0).toFixed(2)}
+                            </td>
+                            <td className="min-w-[60px] whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">
+                              {dLabel}
+                            </td>
+                            <td className="min-w-[78px] whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">
+                              ${sub.toFixed(2)}
+                            </td>
+                            <td className="min-w-[68px] whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">
+                              ${iva.toFixed(2)}
+                            </td>
+                            <td className="min-w-[80px] whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums text-gray-900 dark:text-white">
+                              ${tot.toFixed(2)}
+                            </td>
                           </tr>
                         );
                       })}
@@ -727,7 +966,12 @@ function MantenimientoDetails({ rows }: { rows: any[] }) {
                 <span className="tabular-nums">${subtotal.toFixed(2)}</span>
               </div>
               <div className="flex items-center justify-between text-[11px] text-gray-600 dark:text-gray-300">
-                <span>IVA ({ivaPercent}%)</span>
+                {/* jul 2026 v9.2 — el IVA del footer es la SUMA del
+                    IVA de los repuestos. Cada item puede tener su
+                    propio ivaPercent, así que mostramos el total
+                    sin porcentaje en el label. Si el cliente quiere
+                    ver el desglose, está en la tabla por item. */}
+                <span>IVA</span>
                 <span className="tabular-nums">${ivaAmount.toFixed(2)}</span>
               </div>
               <div className="flex items-center justify-between text-[12px] font-black text-gray-900 dark:text-white border-t border-gray-200 dark:border-white/[0.08] pt-1">
@@ -974,6 +1218,11 @@ function TollDetails({ rows }: { rows: any[] }) {
 
 function valueOfItem(it: CascadeItem, level: Col["level"]): number | string | null {
   switch (level) {
+    // jul 2026 — fix: este case solo debe LEER el valor del item,
+    // igual que los demás. El toggle de selección/deselección vive
+    // en onPick (dentro de FiltradoTab), no acá. Antes tenía código
+    // pegado de onPick (usaba `v`, `setVehicleId`, `state`, que no
+    // existen en este scope) y rompía la compilación.
     case "vehicles":      return (it as any).id ?? null;
     case "modules":       return (it as any).key ?? null;
     case "categories":    return (it as any).id ?? null;

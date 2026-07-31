@@ -4059,6 +4059,87 @@ router.delete(
   },
 );
 
+// ─── POST /:id/recalc-total ────────────────────────────────────────────────
+//
+// jul 2026 v9.1 — Recalcula los `subtotal/iva/total` de CADA item
+// del mantenimiento, usando la nueva lib `maintenance-totals.ts`
+// (que respeta `discountType`). Esto es para los mantenimientos
+// viejos que tienen esos campos mal guardados porque se calcularon
+// con la fórmula de monto en vez de porcentaje.
+//
+// Endpoint temporal. Después de ejecutarlo una vez por cada
+// mantenimiento viejo, se puede borrar.
+//
+// Uso: `POST /api/company/:companyId/maintenances/:id/recalc-total`
+//
+// Devuelve: `{ ok: true, totalCost, itemsUpdated }`.
+//
+// Permisos: solo admin/owner (los datos de costos son sensibles).
+
+router.post(
+  '/:id/recalc-total',
+  requirePermission('mantenimiento', 'execution', 'editar'),
+  async (req, res, next) => {
+    try {
+      const companyId = req.companyId!;
+      const id = parseId('maintenance', req.params.id);
+
+      // Verificar que el mantenimiento existe.
+      const [m] = await db
+        .select({ id: companyMaintenanceRecords.id, laborCost: companyMaintenanceRecords.laborCost })
+        .from(companyMaintenanceRecords)
+        .where(and(
+          eq(companyMaintenanceRecords.id, id),
+          eq(companyMaintenanceRecords.companyId, companyId),
+        ))
+        .limit(1);
+      if (!m) throw new NotFoundError('Mantenimiento', String(id));
+
+      // Traer todos los items crudos.
+      const items = await db
+        .select({
+          id:        companyMaintenanceItems.id,
+          quantity:  companyMaintenanceItems.quantity,
+          unitCost:  companyMaintenanceItems.unitCost,
+          discountType:  companyMaintenanceItems.discountType,
+          discountValue: companyMaintenanceItems.discountValue,
+          ivaPercent:    companyMaintenanceItems.ivaPercent,
+        })
+        .from(companyMaintenanceItems)
+        .where(eq(companyMaintenanceItems.maintenanceId, id));
+
+      // Recalcular cada item con la lib nueva (respeta discountType)
+      // y persistir el resultado.
+      let itemsUpdated = 0;
+      for (const it of items) {
+        const totals = computeItemTotals({
+          quantity:      it.quantity,
+          unitCost:      it.unitCost,
+          discountValue: it.discountValue,
+          discountType:  it.discountType,
+          ivaPercent:    it.ivaPercent,
+        });
+        await db
+          .update(companyMaintenanceItems)
+          .set({
+            subtotal:  totals.subtotal.toFixed(2),
+            ivaAmount: totals.ivaAmount.toFixed(2),
+            total:     totals.total.toFixed(2),
+          })
+          .where(eq(companyMaintenanceItems.id, it.id));
+        itemsUpdated++;
+      }
+
+      // Recalcular el total del mantenimiento (mano de obra + items).
+      const totalCost = await recalcMaintenanceTotal(id, companyId);
+
+      res.json({ ok: true, totalCost, itemsUpdated });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 function round2(n: number): number { return Math.round(n * 100) / 100; }
 
 export default router;

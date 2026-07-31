@@ -128,15 +128,20 @@ router.get('/state', async (req, res, next) => {
 
 // ─── Subrutas ─────────────────────────────────────────────────────────────────
 
+// jul 2026 v9.9 — `aiApiKeysRouter` se monta ANTES de `companiesRouter`
+// y `companiesAiRouter` para garantizar que el path
+// `/companies/:id/ai-api-keys/*` matchee PRIMERO. Si se monta después,
+// Express prueba con los routers anteriores primero. Como
+// `companiesRouter` tiene `router.get('/:id', ...)` y no tiene un
+// `router.get('/:id/.../*')`, no debería interferir, pero el orden
+// explícito elimina cualquier ambigüedad y es la práctica
+// recomendada de Express.
+router.use('/companies/:id/ai-api-keys', aiApiKeysRouter);
 router.use('/companies', companiesRouter);
 // jul 2026 v6 — endpoints de IA por empresa (superadmin): ai-settings,
 // ai-usage, ai-disable, ai-enable. Se monta en /platform/companies/:id/ai-*
 // y NO pisa a companiesRouter (las rutas son distintas).
 router.use('/companies', companiesAiRouter);
-// jul 2026 v7 — gestión de API Keys de /api/ai/* por empresa.
-// El path final es /platform/companies/:id/ai-api-keys/* (el `:id` lo trae
-// companiesRouter). mergeParams:true en ai-api-keys.ts permite accederlo.
-router.use('/companies/:id/ai-api-keys', aiApiKeysRouter);
 router.use('/users',     usersRouter);
 router.use('/plans',     plansRouter);
 router.use('/modules',   modulesRouter);

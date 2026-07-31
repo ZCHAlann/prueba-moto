@@ -26,6 +26,7 @@ import { fmtDateShortEc } from "@/lib/datetime";
 import {
   PlatformKpiCard, PlatformModal, ModalActions,
   InputField, SelectField, TextareaField,
+  AiApiKeysSection,
 } from "../../../components/platform";
 import { StatusPill } from "../../../components/common/StatusPill";
 import type {
@@ -362,7 +363,7 @@ function CompanyDrawer({
               </div>
             </div>
 
-            <div className="space-y-5 px-5 py-5">
+            <div className="space-y-6 px-5 py-5">
               {/* Uso del plan */}
               {plan && counts && (
                 <Section title="Uso del plan">
@@ -441,7 +442,7 @@ function CompanyDrawer({
               {/* jul 2026 v6 — link a la config de IA por empresa */}
               <Section title="Asistente IA">
                 <Link
-                  to={`/platform/companies/${company.id}/ai`}
+                  to={`/panel/companies/${company.id}/ai`}
                   className="inline-flex items-center gap-1.5 text-xs font-medium text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
                 >
                   <Sparkles size={12} /> Ver config IA →
@@ -449,6 +450,19 @@ function CompanyDrawer({
                 <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
                   Provider, API key, kill-switch y uso de tokens.
                 </p>
+              </Section>
+
+              {/* jul 2026 — Sección de API Keys para integraciones externas
+                  (Custom GPT, n8n, etc.). Vive en el drawer para acceso
+                  rápido. Para vista completa, ver /panel/companies/:id/ai-api-keys */}
+              <Section title="API Keys">
+                <Link
+                  to={`/panel/companies/${company.id}/ai-api-keys`}
+                  className="mb-2 inline-flex items-center gap-1.5 text-xs font-medium text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+                >
+                  <KeyRound size={12} /> Ver página completa →
+                </Link>
+                <AiApiKeysSection companyId={company.id} compact />
               </Section>
 
               <button type="button" onClick={onEdit}
@@ -488,7 +502,10 @@ function PlanUsageRow({ label, used, max }: { label: string; used: number; max: 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+      {/* jul 2026 v9.9 — `mb-3` (12px) entre el label y la caja.
+          Antes `mb-2` (8px) se sentía apretado cuando el contenido
+          interno tenía poco padding propio. */}
+      <p className="mb-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
         {title}
       </p>
       <div className="rounded-xl border border-gray-100 dark:border-white/[0.06] divide-y divide-gray-100 dark:divide-white/[0.04]">

@@ -26,6 +26,7 @@ import { companies } from '../../db/schema/platform';
 import { generateApiKey } from '../../lib/ai-api-keys';
 import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors';
 import { requireSuperadmin } from '../../middlewares/requireSuperadmin';
+import { parseIdFlexible } from '../../lib/ids';
 
 const router = Router({ mergeParams: true });
 
@@ -77,9 +78,25 @@ router.get(
   '/',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const companyId = Number(req.params.id);
+      const rawId = req.params.id;
+      // jul 2026 v9.9 — Usar `parseIdFlexible('any', ...)` en vez
+      // de `Number(...)`. Acepta tanto `2` (legacy) como
+      // `"company-2"` (formato que devuelve `toId('company', c.id)`
+      // en companies.ts línea 81). El frontend recibe el id con
+      // prefijo y lo manda tal cual al path, así que el backend
+      // tiene que parsearlo.
+      const companyId = parseIdFlexible('any', rawId);
       if (!Number.isInteger(companyId) || companyId <= 0) {
-        throw new AppError(400, 'companyId inválido');
+        console.warn('[platform/ai-api-keys] companyId inválido:', {
+          rawId,
+          type: typeof rawId,
+          url: req.originalUrl,
+          params: req.params,
+        });
+        throw new AppError(
+          400,
+          `companyId inválido (recibido: ${JSON.stringify(rawId)})`,
+        );
       }
       const { page, pageSize, withSecrets } = listQuerySchema.parse(req.query);
 
@@ -115,8 +132,8 @@ router.get(
   '/:keyId',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const companyId = Number(req.params.id);
-      const keyId = Number(req.params.keyId);
+      const companyId = parseIdFlexible('any', req.params.id);
+      const keyId = parseIdFlexible('any', req.params.keyId);
       if (!Number.isInteger(companyId) || companyId <= 0) {
         throw new AppError(400, 'companyId inválido');
       }
@@ -152,7 +169,7 @@ router.post(
   '/',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const companyId = Number(req.params.id);
+      const companyId = parseIdFlexible('any', req.params.id);
       if (!Number.isInteger(companyId) || companyId <= 0) {
         throw new AppError(400, 'companyId inválido');
       }
@@ -201,8 +218,14 @@ router.post(
         });
 
       // Devolvemos `plainKey` SOLO acá. El frontend debe mostrarlo una vez.
+      // jul 2026 v9.10 — El frontend espera la forma
+      // `{ plainKey, key: { id, name, ... }, warning }` (ver type
+      // `PlatformAiApiKeyCreateResponse` en usePlatformAiApiKeys.ts).
+      // Antes el backend devolvía los campos del key FLAT mezclados
+      // con `plainKey` y `warning`, lo que rompía `data.key.name` en
+      // el AiApiKeysSection.tsx:579.
       res.status(201).json({
-        ...serializeKey(created, { withSecrets: false }),
+        key: serializeKey(created, { withSecrets: false }),
         // ↓↓↓ ESTE campo es la única vez que se muestra ↓↓↓
         plainKey,
         // ↑↑↑ NUNCA más se devuelve ↑↑↑
@@ -221,8 +244,8 @@ router.post(
   '/:keyId/revoke',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const companyId = Number(req.params.id);
-      const keyId = Number(req.params.keyId);
+      const companyId = parseIdFlexible('any', req.params.id);
+      const keyId = parseIdFlexible('any', req.params.keyId);
       if (!Number.isInteger(companyId) || companyId <= 0) {
         throw new AppError(400, 'companyId inválido');
       }
@@ -272,8 +295,8 @@ router.post(
   '/:keyId/reactivate',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const companyId = Number(req.params.id);
-      const keyId = Number(req.params.keyId);
+      const companyId = parseIdFlexible('any', req.params.id);
+      const keyId = parseIdFlexible('any', req.params.keyId);
       if (!Number.isInteger(companyId) || companyId <= 0) {
         throw new AppError(400, 'companyId inválido');
       }
@@ -325,8 +348,8 @@ router.delete(
   '/:keyId',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const companyId = Number(req.params.id);
-      const keyId = Number(req.params.keyId);
+      const companyId = parseIdFlexible('any', req.params.id);
+      const keyId = parseIdFlexible('any', req.params.keyId);
       if (!Number.isInteger(companyId) || companyId <= 0) {
         throw new AppError(400, 'companyId inválido');
       }
@@ -380,8 +403,8 @@ router.get(
   '/:keyId/logs',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const companyId = Number(req.params.id);
-      const keyId = Number(req.params.keyId);
+      const companyId = parseIdFlexible('any', req.params.id);
+      const keyId = parseIdFlexible('any', req.params.keyId);
       if (!Number.isInteger(companyId) || companyId <= 0) {
         throw new AppError(400, 'companyId inválido');
       }

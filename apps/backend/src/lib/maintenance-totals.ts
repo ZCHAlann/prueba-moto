@@ -1,24 +1,28 @@
 // lib/maintenance-totals.ts
-// jul 2026 v4-b — Cálculo de subtotal / iva / total para los items de
-// mantenimiento y los extras de lavada. Centralizado acá para que el
-// backend, frontend y PDF (cuando se agregue) usen la misma fórmula.
+// jul 2026 v4-b — Mirror del frontend (apps/frontend/src/lib/maintenance-totals.ts).
+// jul 2026 v4-c — `discountValue` es IMPORTE monetario.
+// jul 2026 v4-d — `discountType` ('amount' | 'percent') define cómo se lee
+// `discountValue`: como importe directo o como % sobre el subtotal pre-descuento.
+// Default 'amount' para no romper mantenimientos ya guardados (columna nueva,
+// filas viejas quedan sin discountType → se tratan como importe, igual que antes).
 //
-// jul 2026 v4-c — Cambio de semántica: `discountValue` es un IMPORTE
-// monetario que el usuario ingresa (ej: "le descontaron $50"), NO un
-// porcentaje. Fórmula:
-//
-//   subtotalPre  = quantity * unitCost           (sin descuento)
-//   subtotal     = max(0, subtotalPre - discountValue)
-//   ivaAmount    = subtotal * (ivaPercent/100)
-//   total        = subtotal + ivaAmount
-//
-// El campo en BD se llama `discount_value` (migración 0042). Antes se
-// llamaba `discount_percent` y representaba un 0..100.
+// Reglas:
+//   subtotalPre = quantity * unitCost
+//   discountAmount = discountType === 'percent'
+//                      ? subtotalPre * clamp(discountValue, 0, 100) / 100
+//                      : clamp(discountValue, 0, subtotalPre)
+//   subtotal    = max(0, subtotalPre - discountAmount)
+//   ivaAmount   = subtotal * (ivaPercent/100)
+//   total       = subtotal + ivaAmount
+
+export type DiscountType = 'amount' | 'percent';
 
 export type ItemTotals = {
   subtotal: number;
   ivaAmount: number;
   total: number;
+  /** Importe efectivo del descuento en $, ya resuelto sea cual sea el discountType. Útil para el footer agregado. */
+  discountAmount: number;
 };
 
 function toNum(v: unknown, fallback = 0): number {
@@ -31,25 +35,47 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+function resolveDiscountType(v: unknown): DiscountType {
+  return v === 'percent' ? 'percent' : 'amount';
+}
+
+function computeDiscountAmount(input: {
+  quantity?: unknown;
+  unitCost?: unknown;
+  discountValue?: unknown;
+  discountType?: unknown;
+}): number {
+  const quantity = Math.max(0, toNum(input.quantity, 1));
+  const unitCost = Math.max(0, toNum(input.unitCost, 0));
+  const subtotalPre = quantity * unitCost;
+  const discountType = resolveDiscountType(input.discountType);
+
+  if (discountType === 'percent') {
+    const pct = Math.max(0, Math.min(100, toNum(input.discountValue, 0)));
+    return round2(subtotalPre * (pct / 100));
+  }
+  return round2(Math.max(0, Math.min(subtotalPre, toNum(input.discountValue, 0))));
+}
+
 /** Calcula subtotal / iva / total de UN item. */
 export function computeItemTotals(input: {
   quantity?: unknown;
   unitCost?: unknown;
-  /** IMPORTE del descuento (no porcentaje). Se clampea al subtotal original. */
+  /** Importe o % de descuento, según `discountType`. */
   discountValue?: unknown;
+  discountType?: unknown;
   ivaPercent?: unknown;
 }): ItemTotals {
-  const quantity         = Math.max(0, toNum(input.quantity, 1));
-  const unitCost         = Math.max(0, toNum(input.unitCost, 0));
-  // El descuento no puede ser negativo ni superar el subtotal original.
-  const discountValue    = Math.max(0, Math.min(quantity * unitCost, toNum(input.discountValue, 0)));
-  const ivaPercent       = Math.max(0, Math.min(100, toNum(input.ivaPercent, 15)));
+  const quantity   = Math.max(0, toNum(input.quantity, 1));
+  const unitCost   = Math.max(0, toNum(input.unitCost, 0));
+  const ivaPercent = Math.max(0, Math.min(100, toNum(input.ivaPercent, 15)));
 
-  const subtotalPre = round2(quantity * unitCost);
-  const subtotal    = round2(Math.max(0, subtotalPre - discountValue));
-  const ivaAmount   = round2(subtotal * (ivaPercent / 100));
-  const total       = round2(subtotal + ivaAmount);
-  return { subtotal, ivaAmount, total };
+  const subtotalPre     = round2(quantity * unitCost);
+  const discountAmount  = computeDiscountAmount(input);
+  const subtotal        = round2(Math.max(0, subtotalPre - discountAmount));
+  const ivaAmount       = round2(subtotal * (ivaPercent / 100));
+  const total           = round2(subtotal + ivaAmount);
+  return { subtotal, ivaAmount, total, discountAmount };
 }
 
 /**
@@ -62,6 +88,7 @@ export function aggregateTotals(items: Array<{
   quantity?: unknown;
   unitCost?: unknown;
   discountValue?: unknown;
+  discountType?: unknown;
   ivaPercent?: unknown;
 }>): {
   grandSubtotal: number;
@@ -78,17 +105,12 @@ export function aggregateTotals(items: Array<{
 
   for (const it of items) {
     const t = computeItemTotals(it);
-    const quantity         = Math.max(0, toNum(it.quantity, 1));
-    const unitCost         = Math.max(0, toNum(it.unitCost, 0));
-    const discountValue    = Math.max(0, Math.min(quantity * unitCost, toNum(it.discountValue, 0)));
-    const ivaPercent       = Math.max(0, Math.min(100, toNum(it.ivaPercent, 15)));
-
-    const originalSubtotal = round2(quantity * unitCost);
+    const ivaPercent = Math.max(0, Math.min(100, toNum(it.ivaPercent, 15)));
 
     grandSubtotal += t.subtotal;
     grandIva      += t.ivaAmount;
     grandTotal    += t.total;
-    totalDiscount += discountValue;
+    totalDiscount += t.discountAmount;
 
     // Acumular por bucket de % de IVA.
     const bucket = Math.round(ivaPercent);
@@ -96,11 +118,6 @@ export function aggregateTotals(items: Array<{
     byIvaPercent[bucket].subtotal = round2(byIvaPercent[bucket].subtotal + t.subtotal);
     byIvaPercent[bucket].iva      = round2(byIvaPercent[bucket].iva      + t.ivaAmount);
     byIvaPercent[bucket].total    = round2(byIvaPercent[bucket].total    + t.total);
-    // Nota: originalSubtotal acá solo se usa por coherencia con la regla
-    // "subtotal_pre - subtotal_post = discount" — pero como clampeamos
-    // discountValue al subtotal original, en la práctica coincide con
-    // `discountValue`. Mantener para auditoría visual.
-    void originalSubtotal;
   }
 
   return {

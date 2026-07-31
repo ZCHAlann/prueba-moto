@@ -1,6 +1,5 @@
 "use client";
-
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useAssets } from "../../hooks/useAssets";
 import { useDrivers } from "../../hooks/useDrivers";
 import { useAssignments } from "../../hooks/useAssignments";
@@ -42,6 +41,9 @@ import {
   PinOff,
   FileText,
   Sheet,
+  FileDown,
+  Copy,
+  MoreVertical,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ExportToolbar } from "../../components/ui/export-toolbar/ExportToolbar";
@@ -669,6 +671,144 @@ function Pagination({
   );
 }
 
+// ─── GroupedExportKebab ──────────────────────────────────────────────────────
+// jul 2026 v9.5 — Variante COMPACTA de GroupedExportButton. En vez del
+// botón grande "Exportar" con icono, usamos 3 puntitos verticales
+// (MoreVertical de Lucide) que ocupa lo mínimo y deja respirar la
+// carpetita. Al hacer click abre el mismo dropdown de 4 opciones
+// (PDF / CSV / Excel / Copiar) usando portal para no chocar con
+// el overflow del contenedor scrollable.
+//
+// Reutiliza las funciones de `groupedExport.ts` directamente para no
+// duplicar lógica de generación. Solo cambia el trigger visual.
+// ────────────────────────────────────────────────────────────────────────────
+
+
+import { createPortal } from "react-dom";
+import { toast } from "sonner";
+import {
+  exportGroupedToPdf,
+  exportGroupedToExcel,
+  exportGroupedToCsv,
+  copyGroupedToClipboard,
+  type GroupedColumn,
+  type GroupedRow,
+} from "./groupedExport";
+
+type GroupedExportKebabProps = {
+  title: string;
+  subtitle?: string;
+  filename: string;
+  columns: GroupedColumn[];
+  rows: GroupedRow[];
+  numericCols: string[];
+  palette: string;
+};
+
+function GroupedExportKebab({
+  title, subtitle, filename, columns, rows, numericCols, palette,
+}: GroupedExportKebabProps) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number; openUpward: boolean } | null>(null);
+  const [loading, setLoading] = useState<string | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const recalcPos = useCallback(() => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    setPos({
+      top: rect.bottom,
+      right: window.innerWidth - rect.right,
+      openUpward: spaceBelow < 240,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (triggerRef.current?.contains(e.target as Node)) return;
+      if (menuRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  async function run(id: string, fn: () => Promise<void> | void) {
+    setLoading(id);
+    setOpen(false);
+    try {
+      await fn();
+      toast.success(id === "copy" ? "Copiado" : "Archivo generado", {
+        description: id === "copy" ? "Listo para pegar." : "Descarga iniciada.",
+      });
+    } catch (err) {
+      toast.error("Error al exportar", {
+        description: err instanceof Error ? err.message : "Intenta de nuevo.",
+      });
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  const groups = [{ groupValue: title.split(" — ").pop() ?? title, rows }];
+  const items: { id: string; label: string; icon: React.ReactNode; run: () => Promise<void> | void }[] = [
+    { id: "pdf",   label: "Exportar a PDF",   icon: <FileText size={13} />, run: () => exportGroupedToPdf({ title, subtitle, filename, columns, groups, numericCols, palette }) },
+    { id: "csv",   label: "Exportar a CSV",   icon: <FileDown size={13} />, run: () => exportGroupedToCsv({ title, filename, columns, groups, numericCols }) },
+    { id: "excel", label: "Exportar a Excel", icon: <Sheet    size={13} />, run: () => exportGroupedToExcel({ title, filename, columns, groups, numericCols, palette }) },
+    { id: "copy",  label: "Copiar al portapapeles", icon: <Copy size={13} />, run: () => copyGroupedToClipboard({ title, filename, columns, groups, numericCols }) },
+  ];
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => { recalcPos(); setOpen((v) => !v); }}
+        disabled={loading !== null}
+        className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-500 transition hover:bg-gray-50 hover:text-gray-700 disabled:opacity-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-200"
+        title="Opciones de exportación"
+        aria-label="Exportar"
+      >
+        {loading
+          ? <Loader2 size={13} className="animate-spin" />
+          : <MoreVertical size={14} />
+        }
+      </button>
+
+      {open && pos && createPortal(
+        <div
+          ref={menuRef}
+          style={{
+            position: "fixed",
+            top: pos.openUpward ? undefined : pos.top + 6,
+            bottom: pos.openUpward ? `calc(100vh - ${pos.top}px + 6px)` : undefined,
+            right: pos.right,
+            zIndex: 9999,
+          }}
+          className="min-w-[180px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl shadow-black/[0.08] dark:border-white/[0.08] dark:bg-gray-900 dark:shadow-black/40"
+        >
+          {items.map((it) => (
+            <button
+              key={it.id}
+              type="button"
+              disabled={loading === it.id}
+              onClick={() => run(it.id, it.run)}
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 dark:text-gray-200 dark:hover:bg-white/[0.04]"
+            >
+              <span className="text-gray-400 dark:text-gray-500">{it.icon}</span>
+              <span className="font-medium">{it.label}</span>
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 // ─── GroupedReportTable ──────────────────────────────────────────────────────
 // Tabla con acordeón agrupado por placa/equipo. Reemplaza la tabla plana
 // para los módulos en GROUPED_MODULES.
@@ -720,47 +860,23 @@ function GroupedReportTable({
   moduleSubtitle: string;
   moduleFilename: string;
   onRowClick: (row: ReportRow) => void;
-  /** Categorías disponibles para el dropdown por carpetita (rep-009). */
   categories?: { key: string; label: string }[];
-  /** Si true, cada carpetita muestra su propio dropdown de categoría. */
   enableCategoryFilter?: boolean;
-  /** jul 2026 v9 — Sub-categorías disponibles para el dropdown
-   *  por carpetita. Se filtran por la categoría elegida
-   *  (groupCategoryFilter). */
-  subcategories?: Array<{
-    /** categoryKey (padre) → sub-key (hija). Usamos categoryKey
-     *  para agrupar las subs y mostrar solo las que
-     *  correspondan a la cat seleccionada. */
-    parentKey: string;
-    key: string;
-    label: string;
-  }>;
-  /** Si true, cada carpetita muestra su propio dropdown de
-   *  sub-categoría (filtrado por la categoría elegida). */
+  subcategories?: Array<{ parentKey: string; key: string; label: string }>;
   enableSubcategoryFilter?: boolean;
-  /** Tipos disponibles (Programado / Correctivo / Lavada) para el dropdown por carpetita. */
   types?: { key: string; label: string }[];
-  /** Si true, cada carpetita muestra su propio dropdown de tipo. */
   enableTypeFilter?: boolean;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
-  // Filtro de categoría POR carpetita: clave = groupValue (placa),
-  // valor = category key seleccionada ("all" = sin filtro).
   const [groupCategoryFilter, setGroupCategoryFilter] = useState<Record<string, string>>({});
-  // Filtro de tipo (Programado/Correctivo/Lavada) POR carpetita, misma mecánica.
   const [groupTypeFilter, setGroupTypeFilter] = useState<Record<string, string>>({});
-  // jul 2026 v9 — Filtro de sub-categoría POR carpetita.
   const [groupSubcategoryFilter, setGroupSubcategoryFilter] = useState<Record<string, string>>({});
+
   const p = PALETTE[palette];
 
   const groups = useMemo(() => groupRowsByKey(rows, groupKey), [rows, groupKey]);
-  const grandTotal = useMemo(
-    () => sumNumericCols(rows, numericCols),
-    [rows, numericCols],
-  );
+  const grandTotal = useMemo(() => sumNumericCols(rows, numericCols), [rows, numericCols]);
 
-  // Al cambiar los filtros (las filas cambian), cerramos todos los grupos
-  // y limpiamos los filtros de categoría por carpetita.
   useEffect(() => {
     setOpenGroup(null);
     setGroupCategoryFilter({});
@@ -774,26 +890,19 @@ function GroupedReportTable({
 
   function setCategoryFor(groupValue: string, catKey: string) {
     setGroupCategoryFilter((prev) => ({ ...prev, [groupValue]: catKey }));
-    // jul 2026 v9 — Al cambiar la categoría, reseteamos la
-    // sub-categoría del mismo grupo (la sub anterior ya no
-    // matchea con la nueva cat).
     setGroupSubcategoryFilter((prev) => {
       if (!(groupValue in prev)) return prev;
       const { [groupValue]: _drop, ...rest } = prev;
       return rest;
     });
   }
-
   function setTypeFor(groupValue: string, typeKey: string) {
     setGroupTypeFilter((prev) => ({ ...prev, [groupValue]: typeKey }));
   }
-
   function setSubcategoryFor(groupValue: string, subKey: string) {
     setGroupSubcategoryFilter((prev) => ({ ...prev, [groupValue]: subKey }));
   }
 
-  // Exporta solo este grupo a PDF/Excel. Recibe las filas YA filtradas
-  // por categoría (si había un filtro activo en esa carpetita).
   const handleExportPdf = (groupValue: string, groupRows: ReportRow[]) => {
     void import("./groupedExport").then(({ exportGroupedToPdf }) => {
       void exportGroupedToPdf({
@@ -807,7 +916,6 @@ function GroupedReportTable({
       });
     });
   };
-
   const handleExportExcel = (groupValue: string, groupRows: ReportRow[]) => {
     void import("./groupedExport").then(({ exportGroupedToExcel }) => {
       void exportGroupedToExcel({
@@ -821,22 +929,47 @@ function GroupedReportTable({
     });
   };
 
-  // ── Plantilla de columnas compartida (header + filas) ──────────────────────
-  // Usamos un único grid CSS con el mismo gridTemplateColumns en todos
-  // lados, así header y filas quedan siempre alineados 1:1.
+  // ── Grid único compartido por header, filas, subtotales y total general ──
+  // jul 2026 v10.1 — Antes la fila de la carpetita (toggle) y las de
+  // subtotal/total armaban un grid APARTE solo para las columnas numéricas,
+  // con columnGap: 24. El header no tenía ese gap, así que cada columna
+  // numérica quedaba desplazada respecto al header (arrastrando el error
+  // en cascada: MANO OBRA, REPUESTOS y COSTO TOTAL cada vez más desalineados).
+  // Ahora TODAS las filas usan el mismo `gridTemplate`, columna por columna,
+  // así que quedan pegadas al pixel contra el header. Se agrega una columna
+  // extra de 44px al final, reservada para el botón de exportar (kebab),
+  // que en el header y en las filas de datos simplemente queda vacía.
   const gridTemplate = useMemo(
-    () => columns.map((col) => (
-      numericCols.includes(col.key)
-        ? "108px"
-        : `minmax(${Math.max(110, col.label.length * 9 + 36)}px, 1.3fr)`
-    )).join(" "),
+    () =>
+      [
+        ...columns.map((col) =>
+          numericCols.includes(col.key)
+            ? "108px"
+            : `minmax(${Math.max(110, col.label.length * 9 + 36)}px, 1.3fr)`
+        ),
+        "44px", // columna de acciones (kebab)
+      ].join(" "),
     [columns, numericCols],
   );
+
+  // Índice de la primera columna numérica. Todo lo que va ANTES de ese
+  // índice es el "área de etiqueta" (nombre del grupo, badge, etc.), que
+  // ocupa esas columnas vía gridColumn span. Todo lo que va DESDE ese
+  // índice se recorre celda por celda: numérica → valor, no numérica → vacío.
+  // Esto también soporta módulos donde la columna numérica NO es la última
+  // (ej. rep-003 "Gastos", donde "amount" va antes de "status"/"date").
+  const firstNumericIdx = useMemo(() => {
+    const idx = columns.findIndex((c) => numericCols.includes(c.key));
+    return idx === -1 ? columns.length : idx;
+  }, [columns, numericCols]);
+
   const minTableWidth = useMemo(
-    () => columns.reduce(
-      (sum, col) => sum + (numericCols.includes(col.key) ? 108 : Math.max(110, col.label.length * 9 + 36)),
-      0,
-    ),
+    () =>
+      columns.reduce(
+        (sum, col) =>
+          sum + (numericCols.includes(col.key) ? 108 : Math.max(110, col.label.length * 9 + 36)),
+        0,
+      ) + 44,
     [columns, numericCols],
   );
 
@@ -844,19 +977,20 @@ function GroupedReportTable({
 
   return (
     <div>
-      {/* ── Contenedor de scroll ÚNICO para header + todos los grupos ── */}
-      <div className="overflow-x-auto">
+      <div className="max-h-[70vh] overflow-x-auto overflow-y-auto rounded-lg border border-gray-200/60 dark:border-white/[0.06]">
         <div style={{ minWidth: minTableWidth }}>
           {/* ── Header (siempre visible) ── */}
           <div
-            className="grid border-b border-gray-100 dark:border-white/[0.06]"
+            className="sticky top-0 z-20 grid border-b border-gray-200 bg-gray-50/95 backdrop-blur-sm dark:border-white/[0.08] dark:bg-[#0f172a]/95"
             style={{ gridTemplateColumns: gridTemplate }}
           >
             {columns.map((col) => (
               <div
                 key={col.key}
                 title={col.label}
-                className="truncate px-4 py-3.5 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500"
+                className={`truncate px-4 py-3.5 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 ${
+                  numericCols.includes(col.key) ? "text-right" : "text-left"
+                }`}
               >
                 {col.label}
               </div>
@@ -867,116 +1001,93 @@ function GroupedReportTable({
           <div>
             {groups.map(({ groupValue, rows: groupRows }) => {
               const isOpen = openGroup === groupValue;
-              // Subtotal del HEADER de la carpetita: siempre sobre el total
-              // sin filtrar (el filtro de categoría solo afecta el detalle
-              // interno, no el resumen colapsado).
               const subtotals = sumNumericCols(groupRows, numericCols);
               const groupId = `group-${moduleId}-${groupValue.replace(/\s+/g, "_")}`;
 
-              // ── Filtros de categoría, sub-categoría y tipo aplicados SOLO al contenido expandido ──
-              const catFilter  = groupCategoryFilter[groupValue] ?? "all";
+              const catFilter = groupCategoryFilter[groupValue] ?? "all";
               const typeFilter = groupTypeFilter[groupValue] ?? "all";
-              // jul 2026 v9 — sub-categoría. Si hay cat elegida y
-              // subs definidas para esa cat, el dropdown muestra
-              // solo las subs de esa cat. Si no hay cat elegida,
-              // igual funciona: usamos el parentKey de cada sub
-              // para matchear con categoryKey de la fila.
-              const subFilter  = groupSubcategoryFilter[groupValue] ?? "all";
+              const subFilter = groupSubcategoryFilter[groupValue] ?? "all";
+
               const filteredGroupRows = groupRows.filter((r) => {
                 if (enableCategoryFilter && catFilter !== "all" && String(r.categoryKey ?? "") !== catFilter) return false;
                 if (enableTypeFilter && typeFilter !== "all" && String(r.kind ?? "") !== typeFilter) return false;
-                // jul 2026 v9 — filtro por sub. Si subFilter es
-                // "all", no filtramos. Si hay sub elegida, matchea
-                // por subcategoryKey. Si la fila no tiene sub y el
-                // user eligió una sub específica, queda fuera.
                 if (enableSubcategoryFilter && subFilter !== "all") {
                   if (String(r.subcategoryKey ?? "") !== subFilter) return false;
                 }
                 return true;
               });
               const filteredSubtotals = sumNumericCols(filteredGroupRows, numericCols);
-              // jul 2026 v9 — Subs disponibles para esta carpetita.
-              // Si hay cat elegida, filtramos por parentKey; si no,
-              // mostramos todas (caso sin filtro de cat).
+
               const subsForGroup = enableSubcategoryFilter
-                ? (subcategories ?? []).filter((s) =>
-                    catFilter === "all" ? true : s.parentKey === catFilter,
-                  )
+                ? (subcategories ?? []).filter((s) => (catFilter === "all" ? true : s.parentKey === catFilter))
                 : [];
+
               const anyFilterActive =
                 (enableCategoryFilter && catFilter !== "all") ||
                 (enableSubcategoryFilter && subFilter !== "all") ||
                 (enableTypeFilter && typeFilter !== "all");
 
               return (
-                <div
-                  key={groupValue}
-                  className="border-b border-gray-100 dark:border-white/[0.06]"
-                >
+                <div key={groupValue} className="border-b border-gray-100 dark:border-white/[0.06]">
+                  {/* ── Fila toggle de la carpetita — mismo grid que el header ── */}
                   <button
                     type="button"
                     onClick={() => toggle(groupValue)}
                     aria-expanded={isOpen}
                     aria-controls={groupId}
-                    className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors cursor-pointer ${
+                    className={`grid w-full items-center text-left transition-colors cursor-pointer ${
                       isOpen
                         ? `${p.bg} border-l-4 ${p.border}`
                         : "bg-gray-50/40 dark:bg-white/[0.02] hover:bg-gray-100 dark:hover:bg-white/[0.04]"
                     }`}
+                    style={{ gridTemplateColumns: gridTemplate }}
                   >
-                    <ChevronRight
-                      size={14}
-                      className={`shrink-0 text-gray-400 dark:text-gray-500 transition-transform ${
-                        isOpen ? "rotate-90" : ""
-                      }`}
-                    />
-                    <span className={`h-1.5 w-1.5 rounded-full ${p.dot} shrink-0`} />
-                    <span className="font-semibold text-sm text-gray-800 dark:text-white truncate">
-                      {groupValue}
-                    </span>
-                    <span className="rounded-md bg-gray-200/60 dark:bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 dark:text-gray-400 tabular-nums">
-                      {groupRows.length} registro{groupRows.length !== 1 ? "s" : ""}
-                    </span>
-                    <span className="flex-1" />
-                    {numericCols.map((col) => {
-                      const colDef = columns.find((c) => c.key === col);
-                      return (
-                        <span
-                          key={col}
-                          className="hidden sm:inline-flex flex-col items-end text-right"
-                        >
-                          <span className="text-[9px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                            {colDef?.label ?? col}
-                          </span>
-                          <span className="text-sm font-bold tabular-nums text-gray-800 dark:text-white">
-                            {fmtSubtotal(subtotals[col] ?? 0, col)}
-                          </span>
-                        </span>
-                      );
-                    })}
+                    <div
+                      style={{ gridColumn: `1 / ${firstNumericIdx + 1}` }}
+                      className="flex min-w-0 items-center gap-3 px-4 py-3.5"
+                    >
+                      <ChevronRight
+                        size={14}
+                        className={`shrink-0 text-gray-400 dark:text-gray-500 transition-transform ${
+                          isOpen ? "rotate-90" : ""
+                        }`}
+                      />
+                      <span className={`h-1.5 w-1.5 rounded-full ${p.dot} shrink-0`} />
+                      <span className="min-w-0 truncate font-semibold text-sm text-gray-800 dark:text-white">
+                        {groupValue}
+                      </span>
+                      <span className="shrink-0 rounded-md bg-gray-200/60 dark:bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 dark:text-gray-400 tabular-nums">
+                        {groupRows.length} registro{groupRows.length !== 1 ? "s" : ""}
+                      </span>
+                    </div>
 
-                    {/* ── Botones de exportar (solo este grupo, respetando filtro de categoría) ── */}
-                    <span
-                      className="inline-flex items-center gap-1.5 ml-2 shrink-0"
+                    {columns.slice(firstNumericIdx).map((col) => (
+                      <div
+                        key={col.key}
+                        className={`px-4 py-3.5 ${
+                          numericCols.includes(col.key)
+                            ? "text-right tabular-nums text-sm font-bold text-gray-800 dark:text-white"
+                            : ""
+                        }`}
+                      >
+                        {numericCols.includes(col.key) ? fmtSubtotal(subtotals[col.key] ?? 0, col.key) : null}
+                      </div>
+                    ))}
+
+                    <div
+                      className="flex items-center justify-center"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <button
-                        type="button"
-                        onClick={() => handleExportPdf(groupValue, filteredGroupRows)}
-                        className="inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1 text-[11px] font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.08] transition"
-                        title={`Exportar ${groupValue} a PDF`}
-                      >
-                        <FileText size={11} /> PDF
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleExportExcel(groupValue, filteredGroupRows)}
-                        className="inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.04] px-2 py-1 text-[11px] font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.08] transition"
-                        title={`Exportar ${groupValue} a Excel`}
-                      >
-                        <Sheet size={11} /> Excel
-                      </button>
-                    </span>
+                      <GroupedExportKebab
+                        title={`${moduleTitle} — ${groupValue}`}
+                        subtitle={moduleSubtitle}
+                        filename={`${moduleFilename}-${groupValue.replace(/\s+/g, "_").toLowerCase()}`}
+                        columns={columns}
+                        rows={filteredGroupRows}
+                        numericCols={numericCols}
+                        palette={palette}
+                      />
+                    </div>
                   </button>
 
                   <AnimatePresence initial={false}>
@@ -989,7 +1100,7 @@ function GroupedReportTable({
                         transition={{ duration: 0.22, ease: "easeInOut" }}
                         className="overflow-hidden"
                       >
-                        {/* ── Dropdowns de Tipo, Categoría y Sub-categoría — solo si están habilitados ── */}
+                        {/* ── Dropdowns de Tipo, Categoría y Sub-categoría ── */}
                         {((enableTypeFilter && types && types.length > 0) ||
                           (enableCategoryFilter && categories && categories.length > 0) ||
                           (enableSubcategoryFilter && subcategories && subcategories.length > 0)) && (
@@ -1007,14 +1118,11 @@ function GroupedReportTable({
                                 >
                                   <option value="all">Todos los tipos</option>
                                   {types.map((t) => (
-                                    <option key={t.key} value={t.key}>
-                                      {t.label}
-                                    </option>
+                                    <option key={t.key} value={t.key}>{t.label}</option>
                                   ))}
                                 </select>
                               </div>
                             )}
-
                             {enableCategoryFilter && categories && categories.length > 0 && (
                               <div className="flex items-center gap-2">
                                 <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
@@ -1028,20 +1136,11 @@ function GroupedReportTable({
                                 >
                                   <option value="all">Todas las categorías</option>
                                   {categories.map((c) => (
-                                    <option key={c.key} value={c.key}>
-                                      {c.label}
-                                    </option>
+                                    <option key={c.key} value={c.key}>{c.label}</option>
                                   ))}
                                 </select>
                               </div>
                             )}
-
-                            {/* jul 2026 v9 — Sub-categoría. Solo se
-                                renderiza si `enableSubcategoryFilter`
-                                y hay subs. Si NO hay cat elegida,
-                                mostramos todas las subs de la
-                                empresa; si hay cat elegida, solo
-                                las de esa cat. */}
                             {enableSubcategoryFilter && subcategories && subcategories.length > 0 && subsForGroup.length > 0 && (
                               <div className="flex items-center gap-2">
                                 <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
@@ -1057,14 +1156,11 @@ function GroupedReportTable({
                                     {catFilter === "all" ? "Todas las sub-categorías" : "Todas (de esta cat.)"}
                                   </option>
                                   {subsForGroup.map((s) => (
-                                    <option key={`${s.parentKey}::${s.key}`} value={s.key}>
-                                      {s.label}
-                                    </option>
+                                    <option key={`${s.parentKey}::${s.key}`} value={s.key}>{s.label}</option>
                                   ))}
                                 </select>
                               </div>
                             )}
-
                             {anyFilterActive && (
                               <span className="text-[11px] text-gray-400 dark:text-gray-500">
                                 {filteredGroupRows.length} de {groupRows.length}
@@ -1084,7 +1180,10 @@ function GroupedReportTable({
                                 key={i}
                                 style={{ gridTemplateColumns: gridTemplate }}
                                 className="grid text-sm border-b border-gray-100/70 last:border-b-0 dark:border-white/[0.03] hover:bg-gray-50/80 dark:hover:bg-white/[0.02] cursor-pointer"
-                                onClick={(e) => { e.stopPropagation(); onRowClick(row); }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onRowClick(row);
+                                }}
                                 title="Ver detalle"
                               >
                                 {columns.map((col) => (
@@ -1098,17 +1197,8 @@ function GroupedReportTable({
                                     {col.key === "category" && row.categoryConfig ? (
                                       (() => {
                                         const cfg = row.categoryConfig as {
-                                          key: string;
-                                          label: string;
-                                          dot: string;
-                                          cls: string;
-                                          customColor: string | null;
+                                          key: string; label: string; dot: string; cls: string; customColor: string | null;
                                         };
-                                        // jul 2026 v9 — Si la fila tiene
-                                        // sub-categoría, la apilamos debajo
-                                        // del pill de categoría. Antes solo
-                                        // se mostraba el label de la cat
-                                        // padre, lo que ocultaba la jerarquía.
                                         const sub = row.subcategory as string | null;
                                         const subColor = row.subcategoryColor as string | null;
                                         return (
@@ -1126,9 +1216,7 @@ function GroupedReportTable({
                                                   className="h-1 w-1 rounded-full"
                                                   style={subColor ? { backgroundColor: subColor } : undefined}
                                                 />
-                                                <span className="truncate max-w-[200px]">
-                                                  {cfg.label} · {sub}
-                                                </span>
+                                                <span className="truncate max-w-[200px]">{cfg.label} · {sub}</span>
                                               </span>
                                             )}
                                           </div>
@@ -1144,37 +1232,40 @@ function GroupedReportTable({
                           )}
                         </div>
 
-                        {/* Subtotal del grupo — refleja SOLO las filas visibles
-                            (respeta el filtro de categoría activo). */}
+                        {/* ── Subtotal del grupo — mismo grid que el header ── */}
                         {numericCols.length > 0 && filteredGroupRows.length > 0 && (
-                          <div className="flex items-center gap-3 border-t border-gray-100 dark:border-white/[0.05] bg-gray-50/60 px-4 py-2.5 dark:bg-white/[0.03]">
-                            <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                          <div
+                            className="grid items-center border-t border-gray-100 dark:border-white/[0.05] bg-gray-50/60 py-2.5 dark:bg-white/[0.03]"
+                            style={{ gridTemplateColumns: gridTemplate }}
+                          >
+                            <div
+                              style={{ gridColumn: `1 / ${firstNumericIdx + 1}` }}
+                              className="px-4 text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400"
+                            >
                               Subtotal {groupValue}
                               {anyFilterActive && (
                                 <span className="ml-1 font-normal normal-case text-gray-400">
-                                  (
-                                  {[
+                                  ({[
                                     typeFilter !== "all" ? (types?.find((t) => t.key === typeFilter)?.label ?? typeFilter) : null,
                                     catFilter !== "all" ? (categories?.find((c) => c.key === catFilter)?.label ?? catFilter) : null,
-                                  ].filter(Boolean).join(" · ")}
-                                  )
+                                  ].filter(Boolean).join(" · ")})
                                 </span>
                               )}
-                            </span>
-                            <span className="flex-1" />
-                            {numericCols.map((col) => {
-                              const colDef = columns.find((c) => c.key === col);
-                              return (
-                                <span key={col} className="inline-flex min-w-[90px] flex-col items-end text-right">
-                                  <span className="text-[9px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                                    {colDef?.label ?? col}
-                                  </span>
-                                  <span className="text-sm font-bold tabular-nums text-gray-800 dark:text-white">
-                                    {fmtSubtotal(filteredSubtotals[col] ?? 0, col)}
-                                  </span>
-                                </span>
-                              );
-                            })}
+                            </div>
+                            {columns.slice(firstNumericIdx).map((col) => (
+                              <div
+                                key={col.key}
+                                className={`px-4 ${
+                                  numericCols.includes(col.key)
+                                    ? "text-right tabular-nums text-sm font-bold text-gray-800 dark:text-white"
+                                    : ""
+                                }`}
+                              >
+                                {numericCols.includes(col.key)
+                                  ? fmtSubtotal(filteredSubtotals[col.key] ?? 0, col.key)
+                                  : null}
+                              </div>
+                            ))}
                           </div>
                         )}
                       </motion.div>
@@ -1184,32 +1275,35 @@ function GroupedReportTable({
               );
             })}
 
-            {/* ── Gran total (siempre sobre TODAS las filas, sin filtro de categoría) ── */}
+            {/* ── Total general — mismo grid que el header ── */}
             {numericCols.length > 0 && (
-              <div className="flex items-center gap-3 px-4 py-3 border-t-2 border-gray-200 dark:border-white/[0.1] bg-gray-100/60 dark:bg-white/[0.04]">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-700 dark:text-gray-200">
-                  TOTAL GENERAL
-                </span>
-                <span className="rounded-md bg-gray-200/60 dark:bg-white/[0.08] px-1.5 py-0.5 text-[10px] font-semibold text-gray-600 dark:text-gray-300 tabular-nums">
-                  {rows.length} registros
-                </span>
-                <span className="flex-1" />
-                {numericCols.map((col) => {
-                  const colDef = columns.find((c) => c.key === col);
-                  return (
-                    <span
-                      key={col}
-                      className="hidden sm:inline-flex flex-col items-end text-right"
-                    >
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                        {colDef?.label ?? col}
-                      </span>
-                      <span className="text-sm font-black tabular-nums text-gray-900 dark:text-white">
-                        {fmtSubtotal(grandTotal[col] ?? 0, col)}
-                      </span>
-                    </span>
-                  );
-                })}
+              <div
+                className="sticky bottom-0 z-20 grid items-center border-t-2 border-gray-200 bg-gray-100/95 py-3 backdrop-blur-sm dark:border-white/[0.1] dark:bg-[#0f172a]/95"
+                style={{ gridTemplateColumns: gridTemplate }}
+              >
+                <div
+                  style={{ gridColumn: `1 / ${firstNumericIdx + 1}` }}
+                  className="flex items-center gap-3 px-4"
+                >
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-gray-700 dark:text-gray-200">
+                    TOTAL GENERAL
+                  </span>
+                  <span className="rounded-md bg-gray-200/60 dark:bg-white/[0.08] px-1.5 py-0.5 text-[10px] font-semibold text-gray-600 dark:text-gray-300 tabular-nums">
+                    {rows.length} registros
+                  </span>
+                </div>
+                {columns.slice(firstNumericIdx).map((col) => (
+                  <div
+                    key={col.key}
+                    className={`px-4 ${
+                      numericCols.includes(col.key)
+                        ? "text-right tabular-nums text-sm font-black text-gray-900 dark:text-white"
+                        : ""
+                    }`}
+                  >
+                    {numericCols.includes(col.key) ? fmtSubtotal(grandTotal[col.key] ?? 0, col.key) : null}
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -1224,27 +1318,12 @@ function GroupedReportTable({
 export function ReportsPage() {
   const { session } = useAuth();
   const isAdmin = !!session && ADMIN_ROLES.has(session.role as string);
-  // jul 2026 v1 — `can` para el permiso granular del nuevo tab
-  // "Filtrado" (`reportes.filtrado.ver`). isAdmin bypasea el check
-  // (ver usePermissions), pero el botón se muestra dentro de un
-  // `isAdmin &&` wrapper para que solo admins/owners lo vean. Si en
-  // el futuro querés permitir a operadores ver este tab, sacá el
-  // `isAdmin &&` del wrapper y dejá solo `can(...)`.
   const { can } = usePermissions();
-  // jul 2026 v6 — Filtramos los módulos del sidebar interno de
-  // /reportes según los módulos activos de la empresa. Si `enabledModules`
-  // jul 2026 v9 — Filtrado por módulos de la empresa. Aplica SIEMPRE
-  // cuando hay `companyId` en la sesión (UI de empresa), incluso al
-  // superadmin. Sin `companyId` (UI master) mostramos todo.
   const companyModules = (session?.companyModules ?? []) as string[];
   const hasCompanyContext = !!session?.companyId;
   const visibleReportModules = useMemo(() => {
-    // UI master (sin empresa activa): no filtrar.
     if (!hasCompanyContext) return REPORT_MODULES;
-    // Si el backend no devolvió módulos (caso raro, sesión vieja),
-    // mostrar todo para no romper la pantalla.
     if (companyModules.length === 0) return REPORT_MODULES;
-    // UI de empresa: filtrar por companyModules.
     return REPORT_MODULES.filter((m) =>
       !m.requiresModule || companyModules.includes(m.requiresModule)
     );
@@ -1253,15 +1332,6 @@ export function ReportsPage() {
   const { assets,       loading: loadingAssets }       = useAssets();
   const { drivers,      loading: loadingDrivers }      = useDrivers();
   const { assignments,  loading: loadingAssignments }  = useAssignments();
-  // Migrado del hook legacy useMaintenances: su mapApi() esperaba campos
-  // que el backend V2 ya no devuelve así (kind, scheduledDate, partsCost),
-  // lo que hacía que Reportes mostrara $0.00 y "Preventivo" por defecto
-  // aunque el mantenimiento real (visto en el módulo de Mantenimientos)
-  // tuviera datos correctos.
-  // jul 2026 — Reportes muestra SOLO mantenimientos CERRADOS (los del
-  // módulo principal están en el tab Historial, no en Reportes). El
-  // `status="Completado"` es server-side (más rápido y consistente con
-  // los totales del header).
   const { data: maintenancesPage, isLoading: loadingMaintenances } = useMaintenancesList({ status: "Completado", pageSize: 100 });
   const maintenances = maintenancesPage?.data ?? [];
   const { checklists,   loading: loadingChecklists }   = useChecklists();
@@ -1270,17 +1340,8 @@ export function ReportsPage() {
   const { items: exitAuths, loading: loadingExitAuths, fetchList: fetchExitAuths } = useExitAuthorizations();
   const { workshops } = useWorkshops();
   const { suppliers } = useSuppliers();
-  // Categorías de mantenimiento (sistema + custom de la empresa). Se usan
-  // para el dropdown de filtro por categoría DENTRO de cada carpetita del
-  // reporte de Mantenimiento (rep-009).
   const { data: maintCategoriesRaw } = useMaintenanceCategories();
   const customMaintCategories = maintCategoriesRaw ?? [];
-  // Lista COMPLETA de categorías (built-in + custom) para el dropdown de
-  // filtro por carpetita del reporte de Mantenimiento (rep-009).
-  // jul 2026 v5 — la key de las custom pasó de `custom:N` a la `key`
-  // real que la empresa eligió (p.ej. "refrigeracion"). Esto matchea con
-  // el valor guardado en `company_maintenance_records.category` y por lo
-  // tanto el filtro del backend `WHERE category = ?` funciona.
   const maintCategories = useMemo(() => {
     const builtIn: { key: string; label: string }[] = [
       { key: "Primordial:Bombas",  label: "Primordial · Bombas"  },
@@ -1298,24 +1359,11 @@ export function ReportsPage() {
     void fetchExitAuths();
   }, [fetchExitAuths]);
 
-  // jul 2026 — Hook de finanzas para el módulo Caja Chica histórica (rep-010).
-  // Lo dejamos aquí arriba (junto a los demás hooks de datos) y movemos los
-  // useState/useEffect del módulo a MÁS ABAJO, después de declarar `activeId`
-  // y `applied` — TDZ bug clásico: declarar un useEffect que referencia
-  // `activeId` ANTES del useState que lo crea tira `ReferenceError: Cannot
-  // access 'activeId' before initialization` en runtime (TS no lo cacha).
-  // Igual con el `loading` const: depende de `activeId` y `loadingClosedAccounts`,
-  // por eso se declara ABAJO de ambos useState.
   const finance = useFinance();
 
   const [activeId, setActiveId] = useState(() => visibleReportModules[0]?.id ?? "rep-001");
   const [search, setSearch]     = useState("");
   const [page, setPage]         = useState(1);
-  // jul 2026 v5 — Default de rango: últimos 30 días. Antes arrancaba
-  // vacío ("Inicio abierto — Fin abierto") y la pantalla se veía vacía
-  // hasta que el usuario tocaba el filtro. Ahora se ven datos al entrar
-  // y el filtro es explícito (botón "Aplicar" después de cambiar las
-  // fechas).
   const defaultRange = useMemo<DateRange>(() => {
     const to   = new Date();
     const from = new Date();
@@ -1328,30 +1376,16 @@ export function ReportsPage() {
   const [draft, setDraft]       = useState<DateRange>(defaultRange);
   const [applied, setApplied]   = useState<DateRange>(defaultRange);
   const [maintSubtab, setMaintSubtab] = useState<"todos" | "programados" | "en_proceso" | "completados" | "atrasados">("todos");
-  // V2 solo tiene 3 tipos: Correctivo | Programado | Lavada (el legacy
-  // tenía Preventivo/Predictivo/Emergencia, que ya no existen en el schema).
   const [maintCategory, setMaintCategory] = useState<"all" | "Correctivo" | "Programado" | "Lavada">("all");
   const [maintWorkshopId,  setMaintWorkshopId]  = useState<number | null>(null);
   const [maintSupplierId,  setMaintSupplierId]  = useState<number | null>(null);
-  // jul 2026 v1 — "filtrado" es el nuevo tab del Centro de Reportes.
-  // Cascada de 6 niveles (vehículo → módulo → categoría → año → mes →
-  // semana → día) con tabla de detalles al final. Permiso granular
-  // `reportes.filtrado.ver` lo activa/desactiva.
   const [view, setView] = useState<"tablas" | "estadisticas" | "filtrado">("tablas");
 
-  // Fila actualmente seleccionada en la tabla. `null` = drawer cerrado.
-  // La fila viene del reporte (preview.rows), ya enriquecida con `__raw`
-  // por `buildPreview()`. El componente `ReportDetailDrawer` decide a qué
-  // drawer específico delegar según `__raw`.
   const [selectedRow, setSelectedRow] = useState<ReportRow | null>(null);
 
-  // jul 2026 — Estado del módulo Caja Chica histórica (rep-010).
-  // Declarado DESPUÉS de `activeId` y `applied` (TDZ: useEffect que los
-  // referencia debe estar abajo de su declaración).
   const [closedAccounts, setClosedAccounts] = useState<PettyCashClosedAccountRow[]>([]);
   const [closedAccountsTotal, setClosedAccountsTotal] = useState(0);
   const [loadingClosedAccounts, setLoadingClosedAccounts] = useState(false);
-  // Filtro de modo (period | balance | all) — vive en el módulo.
   const [pettyCashModeFilter, setPettyCashModeFilter] = useState<"all" | "period" | "balance">("all");
 
   useEffect(() => {
@@ -1380,23 +1414,14 @@ export function ReportsPage() {
       }
     })();
     return () => { cancelled = true; };
-  // Re-fetch cuando cambia el rango aplicado o el filtro de modo.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, applied.from, applied.to, pettyCashModeFilter, session?.companyId]);
 
-  // jul 2026 — Loading combinado. Movido ABAJO del useState de `activeId`
-  // y de `loadingClosedAccounts` para evitar el bug de TDZ (este const
-  // referencia ambos, declararlos antes garantiza que la lectura dentro
-  // del render no falle con "Cannot access 'activeId' before initialization").
   const loading =
     loadingAssets || loadingDrivers || loadingAssignments ||
     loadingMaintenances || loadingChecklists || loadingAlerts ||
     loadingFuel || loadingExitAuths || (activeId === "rep-010" && loadingClosedAccounts);
 
-  // jul 2026 v6 — Si el activeId quedó apuntando a un módulo que la
-  // empresa no tiene habilitado (ej. porque cambió el plan o el owner
-  // desactivó el módulo), caemos al primer módulo visible. Mismo
-  // fallback si la lista quedó vacía.
   const activeModule = useMemo(
     () => visibleReportModules.find((m) => m.id === activeId) ?? visibleReportModules[0] ?? REPORT_MODULES[0],
     [visibleReportModules, activeId],
@@ -1527,7 +1552,6 @@ export function ReportsPage() {
       });
       const maintRows: ReportRow[] = maintenances.map((e) => {
         const asset = assets.find((a) => a.id === e.assetId);
-        // V2: totalCost ya viene recalculado por el backend (labor + items).
         const cost = e.totalCost ?? (e.laborCost ?? 0);
         return {
           plate: e.assetPlate ?? asset?.plate ?? "—", type: asset?.category ?? "—", brand: asset?.brand ?? "—",
@@ -1605,7 +1629,7 @@ export function ReportsPage() {
       const rows: ReportRow[] = fuelEntries.map((e) => {
         const asset = assets.find((a) => a.id === e.assetId);
         return {
-          invoice:   e.invoiceNumber || "—", // antes: `FAC-${String(i + 1).padStart(4, "0")}`
+          invoice:   e.invoiceNumber || "—",
           plate:     asset?.plate ?? "—",
           kmStart:   Math.max(e.odometer - 420, 0),
           kmEnd:     e.odometer,
@@ -1707,10 +1731,6 @@ export function ReportsPage() {
     }
 
     if (activeId === "rep-009") {
-      // jul 2026 — Reemplazamos la columna "Estado" por "Categoría" (pill
-      // coloreado). El estado del mantenimiento ya vive en los filtros
-      // del sub-tab (Programado / En proceso / Completado / Atrasado) y
-      // se sigue exponiendo vía `__status` para que el filtrado funcione.
       const columns: ReportColumn[] = [
         { key: "kind",          label: "Tipo"        },
         { key: "category",      label: "Categoría"   },
@@ -1723,25 +1743,14 @@ export function ReportsPage() {
       ];
       const rows: ReportRow[] = maintenances.map((m) => {
         const labor = m.laborCost ?? 0;
-        // V2: totalCost ya viene recalculado por el backend (labor + items).
         const total = m.totalCost ?? labor;
         const parts = Math.max(0, total - labor);
-        // Resolver placa: viene del backend (m.assetPlate) o la sacamos
-        // del asset joined en __raw. Si no hay, caemos al nombre del asset
-        // para no perder el agrupado.
         const plate = m.assetPlate
                    || m.assetName
                    || (m as any).__raw?.asset?.plate
                    || "—";
-        // Config visual del pill (color + label) para esta fila.
         const catKey = m.category ?? "Otro";
         const catPill = resolveCategoryPill(catKey, maintCategories, customMaintCategories);
-        // jul 2026 v9 — Sub-categoría. El backend ya devuelve
-        // `m.subcategoryId/subcategory/subcategoryLabel`. Buscamos
-        // el objeto Subcat dentro de la cat padre (customCats ya
-        // vienen con `subcategories` anidadas gracias al endpoint
-        // /categories). Si no se encuentra por id, caemos al label
-        // que devolvió el backend. Si NO tiene sub, queda null.
         let subForRow: { id: string; key: string; label: string; color: string } | null = null;
         if (m.subcategoryId) {
           for (const c of customMaintCategories) {
@@ -1753,19 +1762,14 @@ export function ReportsPage() {
             const s = (c.subcategories ?? []).find((x) => x.key === m.subcategory);
             if (s) { subForRow = { id: s.id, key: s.key, label: s.label, color: s.color }; break; }
           }
-          // Si la sub-cat es huérfana (no está en customCats),
-          // igual la exponemos con el label que mandó el backend.
           if (!subForRow && m.subcategoryLabel) {
             subForRow = { id: "", key: m.subcategory, label: m.subcategoryLabel, color: "#94a3b8" };
           }
         }
         return {
           kind:          m.type ?? "—",
-          // String para que filterRows() (search box) matchee por label.
           category:      catPill.label,
-          // Pill config para el cell renderer especial.
           categoryConfig: catPill,
-          // jul 2026 v9 — Sub-categoría (para mostrar y filtrar).
           subcategory:      subForRow?.label ?? null,
           subcategoryKey:   subForRow?.key   ?? null,
           subcategoryId:    subForRow?.id    ?? null,
@@ -1776,29 +1780,13 @@ export function ReportsPage() {
           labor,
           parts,
           cost:          total,
-          // jul 2026 v10 — Clave de agrupado (groupKey="assetPlate").
-          // Sin esto, groupRowsByKey cae al fallback "Sin placa".
           assetPlate:    plate,
-          // Clave de categoría cruda del backend ("Primordial:Bombas",
-          // "Aceite:Cambio", custom, "Otro", etc.). No es columna visible;
-          // solo se usa para el dropdown de filtro por carpetita.
           categoryKey:   catKey,
-          // jul 2026 v5 — Label legible de la categoría. Resuelve tanto
-          // built-in como custom (vía `maintCategories` ya armado arriba).
-          // Si la categoría se borró mientras el mantenimiento existía, cae
-          // a "Otro" para no mostrar la key cruda al usuario.
           categoryName:  catPill.label,
           __status:      m.status,
           __date:        m.scheduledFor,
-          // jul 2026 v9 — fecha REAL de trabajo. La usamos en el
-          // rango de fecha para que un mantenimiento programado
-          // para otro día pero completado HOY aparezca también en
-          // el filtro de HOY.
           __completedAt: m.completedAt ?? null,
           __workshopId:  m.workshopId ?? null,
-          // __raw ya no incluye el objeto `workshop`: la columna visual se
-          // eliminó. Mantenemos solo `maintenance` y `asset` (que el
-          // CostBreakdownPanel sigue consumiendo).
           __raw:         { maintenance: m, asset: assets.find((x) => x.id === m.assetId) ?? null },
         };
       });
@@ -1817,10 +1805,6 @@ export function ReportsPage() {
     }
 
     if (activeId === "rep-010") {
-      // jul 2026 — Caja Chica histórica. Cada fila = una cuenta cerrada.
-      // La tabla se agrupa por sede (acordeón), con los totales del periodo
-      // a la vista. El drawer (vía __raw.kind === "closed-petty-cash")
-      // muestra el flow completo (timeline) de la cuenta seleccionada.
       const columns: ReportColumn[] = [
         { key: "site",        label: "Sede"        },
         { key: "period",      label: "Periodo"     },
@@ -1855,13 +1839,8 @@ export function ReportsPage() {
           vouchers:  a.voucherCount.toString(),
           requests:  a.requestCount.toString(),
           creator:   a.createdByName ?? "—",
-          // Para el agrupado por sede (acordeón). Usamos el ID de la cuenta
-          // (que es único por periodo) pero la UI muestra la "carpetita"
-          // con el nombre de la sede.
           __siteId:  a.siteId,
           __date:    a.periodStartedAt,
-          // Discriminante para que ReportDetailDispatcher sepa qué drawer
-          // especializado abrir.
           __raw:     { kind: "closed-petty-cash", closedAccount: a },
         };
       });
@@ -1883,16 +1862,12 @@ export function ReportsPage() {
   }, [
     activeId,
     assets, drivers, assignments, maintenances, checklists, alerts, fuelEntries, exitAuths, workshops,
-    // jul 2026 — deps del módulo Caja Chica histórica (rep-010):
     closedAccounts, closedAccountsTotal,
   ]);
 
   // ─── Filtered rows ─────────────────────────────────────────────────────────
 
   const rangedRows = useMemo(
-    // jul 2026 v9 — Para mantenimiento (rep-009), el rango matchea
-    // scheduledFor O completedAt. Para el resto, comportamiento
-    // legacy: solo __date.
     () => preview.rows.filter((r) => {
       if (activeId === "rep-009") {
         return isInRangeDual(
@@ -1944,14 +1919,21 @@ export function ReportsPage() {
     [numericSummary]
   );
 
-  // En rep-009 (Mantenimiento) cuando hay filtro de taller o proveedor activo,
-  // el CostBreakdownPanel ya muestra la tabla detallada de OTs — ocultamos el
-  // GroupedReportTable para no duplicar la información. Cuando NO hay filtro
-  // activo, mostramos la vista agrupada por placa.
   const breakdownActivo =
     activeId === "rep-009" &&
     (maintWorkshopId != null || maintSupplierId != null);
   const mostrarAgrupada = GROUPED_MODULES.has(activeId) && !breakdownActivo;
+
+  // jul 2026 v10 — Set de columnas numéricas del módulo activo, para
+  // alinear a la derecha tanto el header como las celdas de la tabla
+  // PLANA (la que no usa GroupedReportTable). Antes solo la tabla
+  // agrupada tenía esta alineación; en la tabla plana "MANO OBRA",
+  // "REPUESTOS" y "COSTO TOTAL" quedaban con el header a la izquierda
+  // y los valores sin alinear consistentemente contra él.
+  const activeNumericCols = useMemo(
+    () => new Set(NUMERIC_COLS[activeId] ?? []),
+    [activeId],
+  );
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -2021,9 +2003,6 @@ export function ReportsPage() {
                   </>
                 )}
               </button>
-              {/* jul 2026 v1 — Tab "Filtrado". Permiso granular
-                  `reportes.filtrado.ver`. Si el user no lo tiene, el
-                  botón no se muestra (igual que el de Estadísticas). */}
               {can("reportes", "filtrado", "ver") && (
                 <button
                   type="button"
@@ -2056,9 +2035,6 @@ export function ReportsPage() {
       {view === "estadisticas" ? (
         session?.companyId && <EstadisticasTab companyId={session.companyId} />
       ) : view === "filtrado" ? (
-        // jul 2026 v1 — El tab Filtrado vive en su propio slot del
-        // Centro de Reportes. No usa el sidebar de módulos ni los
-        // KPIs — su layout es completamente independiente.
         <motion.div
           key="filtrado"
           initial={{ opacity: 0, y: 12 }}
@@ -2329,11 +2305,6 @@ export function ReportsPage() {
                       onRowClick={setSelectedRow}
                       categories={activeId === "rep-009" ? maintCategories : undefined}
                       enableCategoryFilter={activeId === "rep-009"}
-                      // jul 2026 v9 — Sub-categorías de cada
-                      // categoría custom. Las aplanamos con el
-                      // `parentKey` (la `key` de la cat padre)
-                      // para que el dropdown filtre por la
-                      // categoría seleccionada en la carpetita.
                       subcategories={activeId === "rep-009"
                         ? customMaintCategories.flatMap((c) =>
                             (c.subcategories ?? []).map((s) => ({
@@ -2360,7 +2331,9 @@ export function ReportsPage() {
                               {preview.columns.map((col) => (
                                 <th
                                   key={col.key}
-                                  className="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500"
+                                  className={`px-4 py-2.5 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 ${
+                                    activeNumericCols.has(col.key) ? "text-right" : "text-left"
+                                  }`}
                                 >
                                   {col.label}
                                 </th>
@@ -2381,7 +2354,9 @@ export function ReportsPage() {
                                 {preview.columns.map((col) => (
                                   <td
                                     key={col.key}
-                                    className="px-4 py-2.5 text-gray-600 dark:text-gray-300"
+                                    className={`px-4 py-2.5 text-gray-600 dark:text-gray-300 ${
+                                      activeNumericCols.has(col.key) ? "text-right tabular-nums" : ""
+                                    }`}
                                   >
                                     {/* jul 2026 — Special case para la columna
                                         "category" del rep-009: renderiza un pill
@@ -2401,8 +2376,6 @@ export function ReportsPage() {
                                           cls: string;
                                           customColor: string | null;
                                         };
-                                        // jul 2026 v9 — sub-categoría
-                                        // apilada debajo del pill.
                                         const sub = row.subcategory as string | null;
                                         const subColor = row.subcategoryColor as string | null;
                                         return (

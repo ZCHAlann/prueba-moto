@@ -65,6 +65,7 @@ import PlatformGeolocationPage from "./pages/Platform/Geolocalizacion/page";
 import { FleetHealthPage } from "./pages/Platform/Flotas/page";
 import PlatformTicketsPage from "./pages/Platform/Tickets/page";
 import CompanyAIPage from "./pages/Platform/Companies/AISettings/page";
+import CompanyAiApiKeysPage from "./pages/Platform/Companies/AiApiKeys/page";
 import { GeolocationPage } from "./pages/Geolocalizacion/GeolocationPage";
 
 //Landing
@@ -399,6 +400,7 @@ export default function App() {
           <Route path="/panel/plans" element={<PlansPage />} />
           <Route path="/panel/companies" element={<CompaniesPage />} />
           <Route path="/panel/companies/:id/ai" element={<CompanyAIPage />} />
+          <Route path="/panel/companies/:id/ai-api-keys" element={<CompanyAiApiKeysPage />} />
           <Route path="/panel/modules" element={<ModulesPage />} />
           <Route path="/panel/users" element={<PlatformUsersPage />} />
           <Route path="/panel/audit" element={<AuditPage />} />

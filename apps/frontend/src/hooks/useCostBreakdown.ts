@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 // hooks/useCostBreakdown.ts
 // ─────────────────────────────────────────────────────────────────────
 // Hook que consume GET /api/company/:id/maintenances/cost-breakdown.
@@ -122,7 +123,7 @@ export function useCostBreakdown(
       const json = (await res.json()) as CostBreakdown;
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }

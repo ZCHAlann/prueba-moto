@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 // hooks/useWorkshops.ts
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
@@ -51,7 +52,7 @@ export function useWorkshops() {
         setWorkshops(body.data ?? []);
         setTotal(typeof body.total === "number" ? body.total : (body.data?.length ?? 0));
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Error cargando talleres"))
+      .catch((err: unknown) => setError(extractApiErrorMessage(err, "Error cargando talleres")))
       .finally(() => setLoading(false));
   }, [companyId, tick]);
 
@@ -70,7 +71,7 @@ export function useWorkshops() {
       refresh();
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error creando taller");
+      setError(extractApiErrorMessage(err, "Error creando taller"));
       return false;
     }
   }, [companyId, refresh]);
@@ -90,7 +91,7 @@ export function useWorkshops() {
       refresh();
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error actualizando taller");
+      setError(extractApiErrorMessage(err, "Error actualizando taller"));
       return false;
     }
   }, [companyId, refresh]);
@@ -106,7 +107,7 @@ export function useWorkshops() {
       setWorkshops((current) => current.filter((w) => w.id !== id));
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error eliminando taller");
+      setError(extractApiErrorMessage(err, "Error eliminando taller"));
       return false;
     }
   }, [companyId]);

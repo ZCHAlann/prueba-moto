@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
+import { extractApiErrorMessage } from "../lib/form-validation";
 
 /**
  * Subset del "acta de asignación" que llega del endpoint de detalle
@@ -239,7 +240,7 @@ export function useDrivers() {
       });
       if (Array.isArray(json.sites)) setSites(json.sites);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al cargar conductores");
+      setError(extractApiErrorMessage(err, "Error al cargar conductores"));
     } finally {
       setLoading(false);
     }

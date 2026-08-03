@@ -285,14 +285,29 @@ export function withAudit(
       // este catch, eso se propaga como 500 Internal Server Error y el
       // LLM recibe un mensaje críptico. Lo convertimos a 400 con
       // detalle de que campo falta.
+      // jul 2026 v2.3 — Usamos toDidacticError para que el mensaje
+      // incluya ejemplo de body correcto y campo que falta. Asi el GPT
+      // puede aprender y reintentar.
       if (err && err.name === 'ZodError' && err.issues) {
-        const issues = (err.issues as any[])
-          .map((i) => `${i.path.join('.') || 'body'}: ${i.message}`)
-          .join('; ');
-        const friendly = `Datos inválidos — ${issues}`;
-        errMsg = friendly;
-        resultBody = { error: friendly };
-        res.status(400).json({ error: friendly });
+        const ctxMod = req.aiContext?.modulo ?? 'desconocido';
+        const ctxOp = req.aiContext?.operacion ?? 'desconocido';
+        const { toDidacticError } = await import('./error-format');
+        const didacticErr = toDidacticError(err, ctxMod, ctxOp, req.body?.datos ?? req.body);
+        errMsg = didacticErr.message;
+        const codigo = 'VALIDATION_ERROR';
+        if (!res.headersSent) {
+          const payload = {
+            ok: false,
+            error: {
+              codigo,
+              mensaje: didacticErr.message,
+              didactico: (didacticErr as any).didactico,
+              requestId: req.headers['x-request-id'] as string ?? `req-${Date.now()}`,
+            },
+          };
+          resultBody = payload;
+          res.status(400).json(payload);
+        }
         return;
       }
       // ── AppError (errores de negocio del backend: 400, 403, 404, 409) ─
@@ -300,10 +315,37 @@ export function withAudit(
       // status code en res, lo respetamos. Si no, usamos el de AppError.
       // Esto evita que un AppError(400, "...") se convierta en 500
       // porque Express no sabe que es 400.
+      // jul 2026 v2.1 — Envolvemos en el envelope uniforme {ok:false,
+      // error:{codigo, mensaje, requestId}} para que el LLM reciba el
+      // MISMO shape tanto en éxito como en error.
+      // jul 2026 v2.3 — Si el AppError trae `didactico` (del helper
+      // toDidacticError), lo incluimos en el envelope para que el GPT
+      // pueda aprender de los errores.
       if (err && typeof err.status === 'number') {
         if (!res.headersSent && res.statusCode === 200) {
-          resultBody = { error: err.message };
-          res.status(err.status).json({ error: err.message });
+          const status = err.status;
+          const codigo = (err as any).code
+            ?? (status === 400 ? 'BAD_REQUEST'
+            : status === 401 ? 'UNAUTHORIZED'
+            : status === 403 ? 'FORBIDDEN'
+            : status === 404 ? 'NOT_FOUND'
+            : status === 409 ? 'CONFLICT'
+            : status === 429 ? 'RATE_LIMITED'
+            : 'ERROR');
+          const payload: any = {
+            ok: false,
+            error: {
+              codigo,
+              mensaje: err.message,
+              requestId: req.headers['x-request-id'] as string ?? `req-${Date.now()}`,
+            },
+          };
+          // Adjuntar payload didactico si existe
+          if ((err as any).didactico) {
+            payload.error.didactico = (err as any).didactico;
+          }
+          resultBody = payload;
+          res.status(status).json(payload);
         }
         errMsg = err.message?.slice(0, 500);
         return;

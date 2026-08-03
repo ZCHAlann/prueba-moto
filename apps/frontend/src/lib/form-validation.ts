@@ -310,3 +310,88 @@ export function digitsOnlyInputFilter(e: React.KeyboardEvent<HTMLInputElement>) 
   if (special.includes(e.key)) return;
   if (!allowed.test(e.key)) e.preventDefault();
 }
+
+// ─── Extracción de errores de API (jul 2026 v6) ─────────────────────────────
+//
+// El backend ahora devuelve SIEMPRE un envelope uniforme cuando algo
+// falla:
+//   { ok: false, error: { codigo, mensaje, campos, requestId } }
+//
+// Este helper toma cualquier `error` (de un catch de fetch / apiFetch
+// / try { mutation.mutateAsync(...) } catch (e) {...}) y devuelve un
+// string legible en español para mostrar en un toast o como
+// description del error.
+//
+// Reglas:
+//   - Si el error es un `ApiError` con `body.error.mensaje` (envelope
+//     nuevo), usa ese mensaje.
+//   - Si tiene `body.__campos` (zod validation), arma un listado corto
+//     tipo "Falta: nombre, motivo, fecha".
+//   - Fallback al `.message` del error.
+//   - NUNCA muestra el stack ni el código interno.
+//
+// Uso típico en un hook:
+//   onError: (err) => toast.error(extractApiErrorMessage(err), { duration: 8000 })
+//
+export function extractApiErrorMessage(err: unknown, fallback = 'Error del servidor'): string {
+  if (!err) return fallback;
+
+  // ApiError de apiFetch.ts
+  const e = err as { body?: any; message?: string; status?: number };
+  const obj = (e.body && typeof e.body === 'object') ? e.body as Record<string, unknown> : null;
+  const inner = (obj && typeof obj.error === 'object' && obj.error !== null)
+    ? (obj.error as Record<string, unknown>)
+    : null;
+
+  // 1) Mensaje del envelope nuevo
+  if (inner && typeof inner.mensaje === 'string' && inner.mensaje) {
+    const msg = inner.mensaje as string;
+    const campos = Array.isArray(inner.campos) ? (inner.campos as Array<{ campo: string; motivo: string }>) : [];
+    if (campos.length > 0) {
+      // Si hay campos, agrega un mini listado al final para que el
+      // usuario vea exactamente qué le falta.
+      const list = campos.slice(0, 4).map((c) => c.campo).join(', ');
+      const mas = campos.length > 4 ? ` (+${campos.length - 4} más)` : '';
+      return `${msg} → ${list}${mas}`;
+    }
+    return msg;
+  }
+
+  // 2) Legacy { error: "msg" } o { message: "msg" }
+  if (obj && typeof obj.error === 'string' && obj.error) return obj.error as string;
+  if (obj && typeof obj.message === 'string' && obj.message) return obj.message as string;
+
+  // 3) ApiError.message si viene ya legible
+  if (typeof e.message === 'string' && e.message && e.message !== '[object Object]') {
+    return e.message;
+  }
+
+  // 4) Fallback genérico
+  return fallback;
+}
+
+/**
+ * Variante que devuelve un objeto estructurado con el mensaje corto
+ * y la lista de campos faltantes (para mostrarlos en el form como
+ * `setFieldErrors` o similar).
+ */
+export function extractApiErrorDetails(err: unknown): {
+  message: string;
+  campos: Array<{ campo: string; motivo: string }>;
+  requestId?: string;
+} {
+  const e = err as { body?: any };
+  const obj = (e.body && typeof e.body === 'object') ? e.body as Record<string, unknown> : null;
+  const inner = (obj && typeof obj.error === 'object' && obj.error !== null)
+    ? (obj.error as Record<string, unknown>)
+    : null;
+  const fallback = (typeof (err as any)?.message === 'string')
+    ? (err as any).message as string
+    : 'Error del servidor';
+
+  return {
+    message: (typeof inner?.mensaje === 'string' ? inner.mensaje as string : null) ?? fallback,
+    campos: Array.isArray(inner?.campos) ? (inner.campos as Array<{ campo: string; motivo: string }>) : [],
+    requestId: typeof inner?.requestId === 'string' ? inner.requestId as string : undefined,
+  };
+}

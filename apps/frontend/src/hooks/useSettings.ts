@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -60,7 +61,7 @@ export function useSettings(): UseSettingsReturn {
         setSettings(mapApiToSettings(data as Record<string, unknown>, companyId));
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Error cargando configuracion");
+        setError(extractApiErrorMessage(err, "Error cargando configuracion"));
       })
       .finally(() => setLoading(false));
   }, [companyId]);
@@ -85,7 +86,7 @@ export function useSettings(): UseSettingsReturn {
         setSettings(mapApiToSettings(data as Record<string, unknown>, companyId));
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error guardando configuracion");
+        setError(extractApiErrorMessage(err, "Error guardando configuracion"));
         return false;
       }
     },

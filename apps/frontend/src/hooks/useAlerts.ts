@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
@@ -108,7 +109,7 @@ export function useAlerts() {
       setTotalPages(typeof json.totalPages === "number" ? json.totalPages : 1);
       if (Array.isArray(json.assets)) setAssets(json.assets);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al cargar alertas");
+      setError(extractApiErrorMessage(err, "Error al cargar alertas"));
     } finally {
       setLoading(false);
     }

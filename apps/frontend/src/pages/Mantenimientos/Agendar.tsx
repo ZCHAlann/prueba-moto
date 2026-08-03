@@ -102,6 +102,23 @@ function VehicleCard({ asset, compact = false, onDragStarted, driverFreeToday }:
         e.dataTransfer.effectAllowed = "copy";
         e.dataTransfer.setData("application/motors-asset", asset.id);
         e.dataTransfer.setData("text/plain", asset.id);
+        // jul 2026 v5 — Borrar el ghost NATIVO del browser para que
+        // solo se vea el FloatingDragCard que sigue al cursor. Sin
+        // esto, el browser dibuja su propia "foto" del elemento
+        // arrastrado y se superpone con la pill atenuada del sidebar
+        // + la card flotante = TRES elementos con la misma info.
+        // Truco: setDragImage con un canvas 1x1 transparente fuera
+        // de pantalla. (dataTransfer.setDragImage exige un Element,
+        // no un Blob, por eso el canvas.)
+        try {
+          const empty = document.createElement("canvas");
+          empty.width = 1; empty.height = 1;
+          e.dataTransfer.setDragImage(empty, 0, 0);
+        } catch {
+          // Algunos browsers no soportan setDragImage en ciertos
+          // contextos. No es crítico, el fallback es el ghost nativo
+          // (que es feo pero funcional).
+        }
         setDragging(true);
         onDragStarted?.(asset);
       }}
@@ -462,6 +479,13 @@ export function MantenimientosAgendar() {
    * Determina si el asset está "libre HOY" (señal: el conductor activo
    * tiene entrada en driver_time_off para hoy). Se usa para pintar
    * la card de verde en el panel.
+   *
+   * jul 2026 v6 — Siempre usa `todayYmd` (el día de hoy en EC, no el
+   * día que el admin está mirando en el calendario). Esto es lo que
+   * el admin espera: el verde significa "podés agendar HOY sin
+   * preocuparte por el conductor". Si el admin está agendando para
+   * el 20/08, el verde se mantiene en función de HOY (no se actualiza
+   * con focusedDate).
    */
   const isAssetDriverFreeToday = useCallback(
     (assetId: string): boolean => {
@@ -538,10 +562,15 @@ export function MantenimientosAgendar() {
   };
 
   // ── Lookup por fecha ──────────────────────────────────────────────────────
+  // jul 2026 v4 — Deduplicar por id para que la lista del modal "día" no
+  // muestre la misma fila dos veces (mismo problema que el calendario).
   const eventsByDate = useMemo(() => {
     const map: Record<string, Maintenance[]> = {};
+    const seen = new Set<string | number>();
     for (const m of agenda?.data ?? []) {
       if (!m.scheduledFor) continue;
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
       const d = m.scheduledFor.slice(0, 10);
       if (!map[d]) map[d] = [];
       map[d].push(m);
@@ -558,20 +587,33 @@ export function MantenimientosAgendar() {
   // filtra — los necesitamos para el modal "lista del día" (que muestra
   // los ya completados con strikethrough/shadow). Por eso filtramos
   // acá en cliente, no en backend.
-  const events: EventInput[] = useMemo(() =>
-    (agenda?.data ?? [])
-      .filter((m) => m.status !== "Completado")
-      .map((m) => ({
-      id:              m.id,
-      title:           m.assetPlate ?? m.assetName ?? "Vehículo",
-      start:           m.scheduledFor,
-      backgroundColor: STATUS_COLOR[m.status] ?? "#7c3aed",
-      borderColor:     "transparent",
-      textColor:       "#fff",
-      classNames:      ["agenda-pill"],
-      extendedProps:   { maintenance: m },
-    })),
-  [agenda?.data]);
+  //
+  // jul 2026 v4 — Deduplicar por id. Aunque el backend no debería traer
+  // duplicados, hemos visto casos donde el mismo mantenimiento se ve dos
+  // veces en el calendario al arrastrar y soltar: el refetch de
+  // TanStack-Query vuelve con la fila optimistica y la del servidor,
+  // que en algunos casos son rows distintas en la respuesta (ej. cuando
+  // hay items duplicados que inflan el JOIN). Un set por id basta.
+  const events: EventInput[] = useMemo(() => {
+    const seen = new Set<string | number>();
+    const out: EventInput[] = [];
+    for (const m of (agenda?.data ?? [])) {
+      if (m.status === "Completado") continue;
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      out.push({
+        id:              m.id,
+        title:           m.assetPlate ?? m.assetName ?? "Vehículo",
+        start:           m.scheduledFor,
+        backgroundColor: STATUS_COLOR[m.status] ?? "#7c3aed",
+        borderColor:     "transparent",
+        textColor:       "#fff",
+        classNames:      ["agenda-pill"],
+        extendedProps:   { maintenance: m },
+      });
+    }
+    return out;
+  }, [agenda?.data]);
 
   // ── Filtro vehículos ──────────────────────────────────────────────────────
   // jul 2026 — antes se filtraba client-side sobre `assetsList` (la lista
@@ -1153,16 +1195,16 @@ export function MantenimientosAgendar() {
             />
           </div>
 
-          {/* Banner drop */}
-          {activeAsset && hoveredDate && (
-            <div className="pointer-events-none absolute inset-0 z-30 flex items-end justify-center pb-6">
-              <div className="rounded-2xl bg-violet-600/95 backdrop-blur px-6 py-4 shadow-2xl border border-violet-400/40 text-center min-w-[240px]">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-violet-100/80">Agendar para</p>
-                <p className="text-base font-bold text-white capitalize mt-1">{fmtHumanDate(hoveredDate)}</p>
-                <p className="text-[11px] text-violet-100/70 mt-1">Soltá para crear el mantenimiento</p>
-              </div>
-            </div>
-          )}
+          {/* jul 2026 v5 — Banner drop removido.
+              Antes se mostraba este banner grande al centro "AGENDAR PARA
+              miércoles 12 de agosto" junto con la pill de la placa en
+              el sidebar y la pill violeta de la celda destino. Eran
+              TRES elementos compitiendo por la misma información y
+              confundian al usuario. Ahora el feedback del drag es:
+                1) Pill atenuada en el sidebar (origen).
+                2) FloatingDragCard que sigue al cursor con placa + fecha.
+                3) Celda destino pintada en violeta (clase fc-day-drop-target).
+              Con eso alcanza para saber que se va a agendar. */}
 
           {isLoading && (
             <div className="absolute bottom-3 right-4 text-[11px] text-gray-400 dark:text-gray-500 animate-pulse">Cargando…</div>

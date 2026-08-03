@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
+import { extractApiErrorMessage } from "../lib/form-validation";
 import type {
   AirConditioningUnit,
   AirConditioningStatus,
@@ -148,7 +149,7 @@ export function useAcUnits() {
         setUnits((body.data ?? []).map(mapUnit));
       })
       .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : "Error cargando aires acondicionados")
+        setError(extractApiErrorMessage(err, "Error cargando aires acondicionados"))
       )
       .finally(() => setLoading(false));
   }, [companyId, tick]);
@@ -175,7 +176,7 @@ export function useAcUnits() {
         };
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Error cargando detalle de A/C"
+extractApiErrorMessage(err, "Error cargando detalle de A/C")
         );
         return null;
       }
@@ -226,7 +227,7 @@ export function useAcUnits() {
         refresh();
         return String(data.id ?? null);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error creando A/C");
+        setError(extractApiErrorMessage(err, "Error creando A/C"));
         return null;
       }
     },
@@ -271,7 +272,7 @@ export function useAcUnits() {
         refresh();
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error actualizando A/C");
+        setError(extractApiErrorMessage(err, "Error actualizando A/C"));
         return false;
       }
     },
@@ -295,7 +296,7 @@ export function useAcUnits() {
         setUnits((current) => current.filter((u) => u.id !== id));
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error eliminando A/C");
+        setError(extractApiErrorMessage(err, "Error eliminando A/C"));
         return false;
       }
     },
@@ -333,7 +334,7 @@ export function useAcUnits() {
         refresh();
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error registrando mantenimiento");
+        setError(extractApiErrorMessage(err, "Error registrando mantenimiento"));
         return false;
       }
     },
@@ -379,7 +380,7 @@ export function useAcUnits() {
         refresh();
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error registrando recarga");
+        setError(extractApiErrorMessage(err, "Error registrando recarga"));
         return false;
       }
     },

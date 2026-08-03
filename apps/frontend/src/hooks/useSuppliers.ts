@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 // hooks/useSuppliers.ts
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
@@ -49,7 +50,7 @@ export function useSuppliers() {
       .then((body: { data: Supplier[] }) => {
         setSuppliers(body.data ?? []);
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Error cargando proveedores"))
+      .catch((err: unknown) => setError(extractApiErrorMessage(err, "Error cargando proveedores")))
       .finally(() => setLoading(false));
   }, [companyId, tick]);
 
@@ -68,7 +69,7 @@ export function useSuppliers() {
       refresh();
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error creando proveedor");
+      setError(extractApiErrorMessage(err, "Error creando proveedor"));
       return false;
     }
   }, [companyId, refresh]);
@@ -88,7 +89,7 @@ export function useSuppliers() {
       refresh();
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error actualizando proveedor");
+      setError(extractApiErrorMessage(err, "Error actualizando proveedor"));
       return false;
     }
   }, [companyId, refresh]);
@@ -104,7 +105,7 @@ export function useSuppliers() {
       setSuppliers((current) => current.filter((s) => s.id !== id));
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error eliminando proveedor");
+      setError(extractApiErrorMessage(err, "Error eliminando proveedor"));
       return false;
     }
   }, [companyId]);

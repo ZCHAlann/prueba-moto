@@ -214,6 +214,15 @@ router.post(
       // para no dejar la fila creada si falla el assert.
       await assertWithinPlanAssetLimit(companyId);
 
+      // jul 2026 v2.1 — Validar unicidad de `code` y `plate` dentro de
+      // la empresa. Evita que el frontend cree dos activos con el
+      // mismo código (ej. por copy-paste o doble submit) y que dos
+      // vehículos compartan la misma placa. case-insensitive en plate.
+      await assertUniqueAssetIdentifiers(companyId, {
+        code:  body.code,
+        plate: body.plate ?? null,
+      });
+
       // Convertir siteId de string prefijado a número
       const siteId = body.siteId ? parseId('site', body.siteId) : null;
       const garageId = body.garageId ? parseId('garage', body.garageId) : null;
@@ -281,6 +290,15 @@ router.put(
         .limit(1);
 
       if (!existing.length) throw new NotFoundError('Activo', req.params.assetId);
+
+      // jul 2026 v2.1 — Validar unicidad de `code` y `plate` (si vienen
+      // modificados). El PUT no los trae a veces; chequeamos solo los
+      // que se están cambiando.
+      await assertUniqueAssetIdentifiers(companyId, {
+        code:  body.code,
+        plate: body.plate,
+        excludeAssetId: assetId,
+      });
 
       // Resolver siteId si viene
       const updateData: Record<string, unknown> = { ...body, updatedAt: new Date() };
@@ -687,6 +705,65 @@ async function assertWithinPlanAssetLimit(companyId: number): Promise<void> {
     throw new AppError(403,
       `El plan "${plan.name}" permite máximo ${plan.maxAssets} vehículos. Ya hay ${current} activos.`,
     );
+  }
+}
+
+/**
+ * jul 2026 v2.1 — Valida unicidad de `code` y `plate` dentro de una
+ * empresa. Lanza 409 Conflict si encuentra duplicado.
+ *
+ * Reglas:
+ *   - `code` se compara exacto (case-sensitive) para no romper códigos
+ *     como "VH-A" vs "vh-a" que pueden ser deliberadamente distintos.
+ *   - `plate` se compara case-insensitive y trim'd (las placas son
+ *     casi siempre uppercase, pero normalizamos para evitar
+ *     "ABC-123" vs "abc-123").
+ *   - Si `excludeAssetId` se pasa, no se considera a ese activo
+ *     (es el que se está editando).
+ *   - Si `code` o `plate` son undefined/null/empty, no se chequea
+ *     ese campo (útil para PUT parciales).
+ */
+async function assertUniqueAssetIdentifiers(
+  companyId: number,
+  args: { code?: string | null; plate?: string | null; excludeAssetId?: number },
+): Promise<void> {
+  const checks: Array<{ field: 'code' | 'plate'; value: string; matcher: 'exact' | 'icase' }> = [];
+  if (args.code && args.code.trim().length > 0) {
+    checks.push({ field: 'code', value: args.code.trim(), matcher: 'exact' });
+  }
+  if (args.plate && args.plate.trim().length > 0) {
+    checks.push({ field: 'plate', value: args.plate.trim(), matcher: 'icase' });
+  }
+  if (checks.length === 0) return;
+
+  for (const c of checks) {
+    const conditions: any[] = [
+      eq(companyAssets.companyId, companyId),
+    ];
+    if (c.matcher === 'exact') {
+      conditions.push(eq(companyAssets.code, c.value));
+    } else {
+      // case-insensitive con lower() — funciona en Postgres
+      conditions.push(sql`lower(${companyAssets.plate}) = lower(${c.value})`);
+    }
+    if (args.excludeAssetId !== undefined) {
+      conditions.push(sql`${companyAssets.id} <> ${args.excludeAssetId}`);
+    }
+    const dupe = await db
+      .select({ id: companyAssets.id, code: companyAssets.code, plate: companyAssets.plate, name: companyAssets.name })
+      .from(companyAssets)
+      .where(and(...conditions))
+      .limit(1);
+
+    if (dupe.length > 0) {
+      const d = dupe[0];
+      const fieldLabel = c.field === 'code' ? 'código' : 'placa';
+      const valueLabel = c.field === 'code' ? d.code : (d.plate ?? '?');
+      throw new AppError(409,
+        `Ya existe otro activo con ${fieldLabel} "${valueLabel}" (${d.name}). El ${fieldLabel} debe ser único dentro de la empresa.`,
+        'ASSET_DUPLICATE_IDENTIFIER',
+      );
+    }
   }
 }
 

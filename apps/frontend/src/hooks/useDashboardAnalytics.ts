@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 // hooks/useDashboardAnalytics.ts
 
 import { useState, useEffect, useCallback } from "react";
@@ -118,7 +119,7 @@ export function useDashboardAnalytics(companyId: string | null) {
       const json = await res.json();
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }
@@ -150,7 +151,7 @@ export function useConsumoPorConductor(companyId: string | null, limit = 10) {
     fetch(`/api/company/${companyId}/analytics/dashboard-extended/consumo-por-conductor?limit=${limit}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(j => setData(j.data ?? []))
-      .catch(err => setError(err instanceof Error ? err.message : "Error"))
+      .catch(err => setError(extractApiErrorMessage(err, "Error")))
       .finally(() => setLoading(false));
   }, [companyId, limit]);
 

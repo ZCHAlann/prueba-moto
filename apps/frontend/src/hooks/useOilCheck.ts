@@ -70,7 +70,7 @@ export function useOilCheck(companyId: string, assetId?: string): UseOilCheckRet
       const data = await res.json() as { data: OilCheckResult[]; total: number };
       setHistory(data.data);
     } catch (err) {
-      setHistoryError(err instanceof Error ? err.message : "Error al cargar historial.");
+      extractApiErrorMessage(err, "Error al cargar historial.");
     } finally {
       setHistoryLoading(false);
     }
@@ -104,7 +104,7 @@ export function useOilCheck(companyId: string, assetId?: string): UseOilCheckRet
       setHistory(prev => [result, ...prev]);
       return result;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Error al analizar la foto.";
+      const msg = extractApiErrorMessage(err, "Error al analizar la foto.");
       setAnalyzeError(msg);
       throw new Error(msg);
     } finally {

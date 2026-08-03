@@ -186,7 +186,7 @@ export function useExitAuthorizationAnalysis(exitAuthorizationId: string | null)
       setServerEffectiveDecision((data.effectiveDecision as OverallDecision) ?? 'pendiente');
       return data.authorization?.aiAnalysisStatus as AIAnalysisStatus;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al obtener análisis');
+      extractApiErrorMessage(err, 'Error al obtener análisis');
       return null;
     }
   }, [exitAuthorizationId, companyId]);
@@ -242,7 +242,7 @@ export function useExitAuthorizationAnalysis(exitAuthorizationId: string | null)
       }, POLL_INTERVAL_MS);
       return true;
     } catch (err) {
-      setTrigError(err instanceof Error ? err.message : 'Error al iniciar análisis');
+      extractApiErrorMessage(err, 'Error al iniciar análisis');
       return false;
     } finally {
       setLoading(false);
@@ -275,7 +275,7 @@ export function useExitAuthorizationAnalysis(exitAuthorizationId: string | null)
       }, POLL_INTERVAL_MS);
       return true;
     } catch (err) {
-      setTrigError(err instanceof Error ? err.message : 'Error al re-analizar');
+      extractApiErrorMessage(err, 'Error al re-analizar');
       return false;
     } finally {
       setLoading(false);
@@ -350,7 +350,7 @@ export function useExitAuthorizationAnalysis(exitAuthorizationId: string | null)
       await fetchAnalyses();
       return true;
     } catch (err) {
-      setTrigError(err instanceof Error ? err.message : 'Error al marcar ítem');
+      extractApiErrorMessage(err, 'Error al marcar ítem');
       return false;
     }
   }, [exitAuthorizationId, companyId, fetchAnalyses]);
@@ -384,7 +384,7 @@ export function useExitAuthorizationAnalysis(exitAuthorizationId: string | null)
       await fetchAnalyses();
       return true;
     } catch (err) {
-      setTrigError(err instanceof Error ? err.message : 'Error al reemplazar foto');
+      extractApiErrorMessage(err, 'Error al reemplazar foto');
       return false;
     }
   }, [exitAuthorizationId, companyId, fetchAnalyses]);
@@ -414,7 +414,7 @@ export function useExitAuthorizationAnalysis(exitAuthorizationId: string | null)
       await fetchAnalyses();
       return data as { ok: boolean; correctionsCount: number; round: number };
     } catch (err) {
-      setTrigError(err instanceof Error ? err.message : 'Error al devolver al conductor');
+      extractApiErrorMessage(err, 'Error al devolver al conductor');
       return null;
     }
   }, [exitAuthorizationId, companyId, fetchAnalyses]);
@@ -444,7 +444,7 @@ export function useExitAuthorizationAnalysis(exitAuthorizationId: string | null)
       }, POLL_INTERVAL_MS);
       return data as { ok: boolean; reanalyzedItems: AIItemType[] };
     } catch (err) {
-      setTrigError(err instanceof Error ? err.message : 'Error al enviar correcciones');
+      extractApiErrorMessage(err, 'Error al enviar correcciones');
       return null;
     }
   }, [exitAuthorizationId, companyId, fetchAnalyses, stopPolling]);

@@ -15,6 +15,32 @@ type SidebarContextType = {
 
 const SidebarContext = createContext<SidebarContextType | undefined>(undefined);
 
+// jul 2026 v6 — Persistir el estado expanded/collapsed en localStorage
+// para que el sidebar recuerde la elección del usuario entre recargas
+// y entre pestañas. Sin esto, el admin lo dejaba colapsado y al
+// refrescar se volvía a expandir (molesto).
+const STORAGE_KEY = 'app.sidebar.expanded';
+
+function readStoredExpanded(): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    const v = window.localStorage.getItem(STORAGE_KEY);
+    if (v === null) return true; // default
+    return v === 'true';
+  } catch {
+    return true;
+  }
+}
+
+function writeStoredExpanded(v: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, v ? 'true' : 'false');
+  } catch {
+    // ignore (quota, private mode, etc)
+  }
+}
+
 export const useSidebar = () => {
   const context = useContext(SidebarContext);
   if (!context) {
@@ -26,7 +52,10 @@ export const useSidebar = () => {
 export const SidebarProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [isExpanded, setIsExpanded] = useState(true);
+  // jul 2026 v6 — Inicialización lazy para leer localStorage en el
+  // primer render (no en useEffect, sino en useState, así no hay flash
+  // de "expandido → colapsado" al cargar).
+  const [isExpanded, setIsExpanded] = useState<boolean>(() => readStoredExpanded());
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -49,6 +78,11 @@ export const SidebarProvider: React.FC<{ children: React.ReactNode }> = ({
       window.removeEventListener("resize", handleResize);
     };
   }, []);
+
+  // jul 2026 v6 — Cada vez que cambia isExpanded, persistir.
+  useEffect(() => {
+    writeStoredExpanded(isExpanded);
+  }, [isExpanded]);
 
   const toggleSidebar = () => {
     setIsExpanded((prev) => !prev);

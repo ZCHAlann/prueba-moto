@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 import { useState, useEffect, useCallback } from "react";
 import type { PlatformCompany, PlatformCompanyInput } from "../types/platform";
 
@@ -39,7 +40,7 @@ export function usePlatformCompanies(): UsePlatformCompaniesResult {
       setCompanies(json.data);
       setTotal(json.total);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }

@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import type { ScopeKind } from "./useChecklistCategories";
@@ -74,7 +75,7 @@ export function useChecklistPendientes(filterAssetId?: string | null) {
       setPendientes(Array.isArray(jsonPend.data) ? jsonPend.data : []);
       setVencidos(Array.isArray(jsonVenc.data) ? jsonVenc.data : []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }

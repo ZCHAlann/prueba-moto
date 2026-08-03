@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 import { useState, useEffect, useCallback } from "react";
 import type { PlatformStats } from "../types/platform";
 
@@ -22,7 +23,7 @@ export function usePlatformStats(): UsePlatformStatsResult {
       const json: PlatformStats = await res.json();
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }

@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 // src/hooks/useCompanyLimits.ts
 //
 // jul 2026 — Devuelve los límites del plan asignado a la empresa actual
@@ -81,7 +82,7 @@ export function useCompanyLimits(): CompanyLimitsResult {
       setCounts(json.counts);
       setCurrentAssets(json.currentAssets ?? 0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }

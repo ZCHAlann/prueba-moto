@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
@@ -195,7 +196,7 @@ export function useAssignments() {
       if (Array.isArray(json.assets))  setAssets(json.assets);
       if (Array.isArray(json.drivers)) setDrivers(json.drivers);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al cargar asignaciones");
+      setError(extractApiErrorMessage(err, "Error al cargar asignaciones"));
     } finally {
       setLoading(false);
     }

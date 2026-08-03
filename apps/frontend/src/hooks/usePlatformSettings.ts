@@ -59,7 +59,7 @@ export function usePlatformSettings(): UsePlatformSettingsResult {
       const json: PlatformSettings = await res.json();
       setSettings(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error desconocido');
+      extractApiErrorMessage(err, 'Error desconocido');
     } finally {
       setLoading(false);
     }
@@ -84,7 +84,7 @@ export function usePlatformSettings(): UsePlatformSettingsResult {
       const updated: PlatformSettings = await res.json();
       setSettings(updated);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Error al guardar');
+      extractApiErrorMessage(err, 'Error al guardar');
       throw err;
     } finally {
       setSaving(false);

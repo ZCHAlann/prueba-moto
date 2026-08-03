@@ -42,6 +42,22 @@ registerOperativosOps();
 
 const router = Router();
 
+// ── Middleware global: forzar UTF-8 en TODAS las respuestas ─────────
+// jul 2026 v2.1 — Bugfix: respuestas con acentos/ñ se rompen a veces
+// (consumiÃ³, Ïƒ) si Express no declara charset. Forzamos UTF-8
+// en el header Content-Type de TODAS las respuestas de /api/ai/*.
+// Tambien seteamos X-Request-Id para que el LLM pueda referenciar
+// requests fallidos al pedir soporte.
+router.use((_req, res, next) => {
+  const ct = res.getHeader('Content-Type');
+  if (typeof ct === 'string' && ct.startsWith('application/json') && !ct.includes('charset')) {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  }
+  // X-Request-Id: si no viene del cliente, lo generamos
+  res.setHeader('X-Request-Id', `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  next();
+});
+
 // El router unificado es el ÚNICO que el LLM ve en el OpenAPI
 // (los routers por módulo son legacy y se mantienen por si un
 // cliente los usa directamente — pero el Custom GPT no los conoce).

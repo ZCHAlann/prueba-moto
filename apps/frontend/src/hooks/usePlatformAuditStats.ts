@@ -37,7 +37,7 @@ export function usePlatformAuditStats(from = '', to = ''): UsePlatformAuditStats
       const json: AuditStats = await res.json();
       setStats(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error desconocido');
+      extractApiErrorMessage(err, 'Error desconocido');
       setStats(EMPTY);
     } finally {
       setLoading(false);

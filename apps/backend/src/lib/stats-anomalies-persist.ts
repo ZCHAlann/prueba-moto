@@ -3,12 +3,16 @@
 // Persiste el resultado de `detectAllAnomalies` en la tabla
 // `company_stats_anomalies`.
 //
-// Estrategia: por cada (companyId, modulo, tipo, dimension, dimensionId)
-// solo guardamos la anomalía "activa" más reciente. Si el detector ya
-// no la detecta, la marcamos como resuelta (metadata.resolvedAt).
+// Estrategia (jul 2026 v2.1): la key única lógica es ahora
+// (companyId, modulo, tipo, dimension, dimensionId, periodo). Una
+// anomalía "Vehículo X consumió $5000 en Enero" tiene periodo='2026-01'
+// y se considera DISTINTA de "Vehículo X consumió $5000 en Febrero".
+// Esto evita que el cron acumule rows antiguas indefinidamente:
+// cuando el sweep de Febrero ya no detecta la anomalía de Enero
+// (porque ese mes pasó), se marca como resuelta naturalmente.
 //
-// En la implementación actual sólo hacemos UPSERT de las anomalías nuevas
-// + marcamos como resueltas las que ya no aparecen (en los últimos 60 min).
+// Si el detector ya no la detecta dentro de RESOLUTION_WINDOW_MIN,
+// la marcamos como resuelta (metadata.resolvedAt).
 // ─────────────────────────────────────────────────────────────────────
 
 import { and, eq, gte, sql, inArray } from "drizzle-orm";
@@ -46,9 +50,11 @@ export async function persistAnomalies(
       //  porque esas probablemente ya se limpiaron)
     ));
 
-  // Indexar por (modulo, tipo, dimension, dimensionId)
+  // Indexar por (modulo, tipo, dimension, dimensionId, periodo)
+  // jul 2026 v2.1 — antes solo usaba (modulo, tipo, dimension, dimensionId).
+  // Ahora incluye `periodo` para que anomalías mensuales no se acumulen.
   const activeKey = (a: typeof active[number]) =>
-    `${a.modulo}|${a.tipo}|${a.dimension}|${a.dimensionId ?? "null"}`;
+    `${a.modulo}|${a.tipo}|${a.dimension}|${a.dimensionId ?? "null"}|${a.periodo ?? "null"}`;
 
   const activeMap = new Map<string, typeof active[number]>();
   for (const a of active) activeMap.set(activeKey(a), a);
@@ -57,7 +63,8 @@ export async function persistAnomalies(
 
   // 2) Upsert cada anomalía detectada
   for (const d of detected) {
-    const key = `${d.modulo}|${d.tipo}|${d.dimension}|${d.dimensionId ?? "null"}`;
+    const periodo = d.periodo ?? null;
+    const key = `${d.modulo}|${d.tipo}|${d.dimension}|${d.dimensionId ?? "null"}|${periodo ?? "null"}`;
     detectedKeys.add(key);
     const existing = activeMap.get(key);
     if (existing) {
@@ -82,6 +89,7 @@ export async function persistAnomalies(
         dimension:      d.dimension,
         dimensionId:    d.dimensionId,
         dimensionLabel: d.dimensionLabel,
+        periodo,
         severidad:      d.severidad,
         descripcion:    d.descripcion,
         metadata:       { ...d.metadata, sweepId } as any,

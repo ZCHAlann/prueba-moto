@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -136,7 +137,7 @@ export function useChecklists() {
       const raw: Array<Record<string, unknown>> = Array.isArray(json) ? json : (json.data ?? []);
       setChecklists(raw.map(mapApi));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }
@@ -264,7 +265,7 @@ export function useChecklistAnomalies() {
         const json = await res.json();
         setAnomalies(Array.isArray(json.data) ? json.data : []);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error desconocido");
+        setError(extractApiErrorMessage(err, "Error desconocido"));
       } finally {
         setLoading(false);
       }

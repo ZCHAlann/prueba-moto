@@ -515,15 +515,30 @@ function DayModal({
   // /gestion/conductores usa useDrivers() que mantiene estado propio;
   // para el modal del horario es más simple un useQuery directo contra
   // el endpoint.
+  // jul 2026 v6 — Mandamos `?date=YYYY-MM-DD` para que el backend
+  // devuelva `currentAssetPlate` (placa del auto que el conductor
+  // tiene ASIGNADO en esa fecha). Así en lugar de mostrar el código
+  // del conductor (`COND-373`) mostramos la placa del auto
+  // (`ABM-4662`), que es lo que el usuario quiere ver al agendar.
   const { data: driversData } = useQuery({
-    queryKey: ["drivers-list", companyId],
+    queryKey: ["drivers-list", companyId, date],
     queryFn: async () => {
       const params = new URLSearchParams({ pageSize: "200" });
+      if (date) params.set("date", date);
       const res = await fetch(`/api/company/${companyId}/drivers?${params}`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json() as Promise<{ data: Array<{ id: string; firstName: string; lastName: string; code: string; status: string }> }>;
+      return res.json() as Promise<{
+        data: Array<{
+          id: string;
+          firstName: string;
+          lastName: string;
+          code: string;
+          status: string;
+          currentAssetPlate?: string | null;
+        }>;
+      }>;
     },
     enabled: !!companyId,
   });
@@ -654,7 +669,9 @@ function DayModal({
                       )}
                     </div>
                     <span className="text-[11px] text-gray-500 dark:text-gray-400">
-                      {e.driver.code}
+                      {e.driver.currentAssetPlate
+                        ? <>· {e.driver.currentAssetPlate}</>
+                        : e.driver.code}
                     </span>
                   </div>
                   {canEdit && (
@@ -722,7 +739,11 @@ function DayModal({
                           />
                           <span className="flex-1 truncate">
                             {d.firstName} {d.lastName}{" "}
-                            <span className="text-xs text-gray-500">({d.code})</span>
+                            <span className="text-xs text-gray-500">
+                              {d.currentAssetPlate
+                                ? <>· {d.currentAssetPlate}</>
+                                : `(${d.code})`}
+                            </span>
                           </span>
                           <Plus size={12} className="shrink-0 text-violet-700 dark:text-violet-300" />
                         </button>

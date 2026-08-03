@@ -28,14 +28,21 @@ export const logAudit = async (
   params: LogAuditParams,
 ) => {
   try {
+    // jul 2026 v7 — BigInt() reventaba cuando actorId era `system-cron`
+    // u otros strings no-numéricos (cron jobs llaman a logAudit sin
+    // un user real). Extraer el sufijo numérico de forma segura.
+    let actorIdNum: number | null = null;
+    if (params.actorId) {
+      const m = params.actorId.match(/^[a-z-]+-(\d+)$/i);
+      const n = m ? Number(m[1]) : Number(params.actorId);
+      actorIdNum = Number.isFinite(n) && n > 0 ? n : null;
+    }
     await db.insert(companyAuditEntries).values({
       companyId,
       entity: params.entity,
       entityId: params.entityId,
       action: params.action,
-      actorId: params.actorId
-        ? BigInt(params.actorId.replace(/^[a-z-]+-(\d+)$/, '$1'))
-        : null,
+      actorId: actorIdNum,
       actorName: params.actorName,
       description: params.description,
       metadata: scrubMetadata(params.metadata) as any,

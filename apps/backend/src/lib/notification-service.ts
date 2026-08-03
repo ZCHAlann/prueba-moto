@@ -99,6 +99,12 @@ export interface NotifyArgs {
   title:       string;
   body?:       string;
   payload?:    Record<string, unknown>;
+  // jul 2026 v9 — Default true. Si `false`, NO se persiste fila en
+  // `company_notifications` (la campanita + "sin leer"). El WS y el
+  // push igual salen. Sirve para recordatorios que solo quieren avisar
+  // en el momento sin contaminar la bandeja de notificaciones — un
+  // recordatorio cada 5 min durante 24h = 288 filas, insostenible.
+  persist?:    boolean;
 }
 
 /** Args "compartibles" (sin companyId/userId) — para fan-out. */
@@ -181,7 +187,7 @@ function isExpoPushToken(token: string): boolean {
  * - Push (Expo o FCM según el formato del token guardado).
  */
 export async function notify(args: NotifyArgs): Promise<InferSelectModel<typeof companyNotifications> | null> {
-  const { companyId, userId, kind, title, body, payload = {} } = args;
+  const { companyId, userId, kind, title, body, payload = {}, persist = true } = args;
 
   // Guard: si nos llega algo raro, logueamos y salimos sin romper el request.
   if (!companyId || !userId) {
@@ -190,41 +196,57 @@ export async function notify(args: NotifyArgs): Promise<InferSelectModel<typeof 
   }
 
   // 1) In-app
-  // jul 2026 v4 — Usamos client.unsafe() directo con placeholders $N. El
-  // problema con Drizzle tagged templates: cuando `body` es null, el driver
-  // postgres-js a veces lo infiere como undefined y el binary protocol
-  // rechaza la query. Con client.unsafe + placeholders, el driver manda
-  // los valores por separado al binary protocol, sin inferencia.
-  //
-  // jul 2026 v4-b — la columna `kind` es del enum `notification_kind_enum`.
-  // Si mandamos el bind como $3::text Postgres tira 42804 ("column kind is
-  // of type notification_kind_enum but expression is of type text").
-  // Si mandamos directo $3::notification_kind_enum y la conexión pooled
-  // tiene la versión vieja del enum cacheada, tira 22P02 (invalid input
-  // value for enum). El casteo cascada $3::text::notification_kind_enum
-  // resuelve AMBOS: el primer cast ::text satisface el tipo, el segundo
-  // ::notification_kind_enum valida contra el enum (latest value).
-  const insertSql = `
-    INSERT INTO company_notifications (company_id, user_id, kind, title, body, payload)
-    VALUES ($1::integer, $2::integer, $3::text::notification_kind_enum, $4::text, $5::text, $6::jsonb)
-    RETURNING id, company_id, user_id, kind, title, body, payload, read_at, created_at
-  `;
-  const insertResult = await client.unsafe(insertSql, [
-    companyId,
-    userId,
-    kind,
-    title ?? '',
-    body ?? null,    // explícitamente null si no hay body
-    JSON.stringify(payload ?? {}),
-  ]);
-  const row = (Array.isArray(insertResult) ? insertResult[0] : (insertResult as any)) as InferSelectModel<typeof companyNotifications> | undefined;
-  if (!row) return null;
+  // jul 2026 v9 — Si `persist=false` (recordatorios, ping efímeros),
+  // NO insertamos en `company_notifications`. Saltamos directo a WS + push.
+  // El user recibe el aviso en el celular y en el browser (si está
+  // conectado), pero la campanita no se llena con filas fantasma.
+  let row: InferSelectModel<typeof companyNotifications> | null = null;
+  if (persist) {
+    // jul 2026 v4 — Usamos client.unsafe() directo con placeholders $N. El
+    // problema con Drizzle tagged templates: cuando `body` es null, el driver
+    // postgres-js a veces lo infiere como undefined y el binary protocol
+    // rechaza la query. Con client.unsafe + placeholders, el driver manda
+    // los valores por separado al binary protocol, sin inferencia.
+    //
+    // jul 2026 v4-b — la columna `kind` es del enum `notification_kind_enum`.
+    // Si mandamos el bind como $3::text Postgres tira 42804 ("column kind is
+    // of type notification_kind_enum but expression is of type text").
+    // Si mandamos directo $3::notification_kind_enum y la conexión pooled
+    // tiene la versión vieja del enum cacheada, tira 22P02 (invalid input
+    // value for enum). El casteo cascada $3::text::notification_kind_enum
+    // resuelve AMBOS: el primer cast ::text satisface el tipo, el segundo
+    // ::notification_kind_enum valida contra el enum (latest value).
+    const insertSql = `
+      INSERT INTO company_notifications (company_id, user_id, kind, title, body, payload)
+      VALUES ($1::integer, $2::integer, $3::text::notification_kind_enum, $4::text, $5::text, $6::jsonb)
+      RETURNING id, company_id, user_id, kind, title, body, payload, read_at, created_at
+    `;
+    const insertResult = await client.unsafe(insertSql, [
+      companyId,
+      userId,
+      kind,
+      title ?? '',
+      body ?? null,    // explícitamente null si no hay body
+      JSON.stringify(payload ?? {}),
+    ]);
+    row = (Array.isArray(insertResult) ? insertResult[0] : (insertResult as any)) as InferSelectModel<typeof companyNotifications> | null;
+  } else {
+    // jul 2026 v9 — Log corto para auditoría. NO loguear el body porque
+    // puede tener PII (placa, nodo, etc).
+    console.log(`[notifications] ping efímero a user=${userId} kind=${kind} (no persistido)`);
+  }
 
   // 2) WebSocket (en tiempo real, sin esperar el push)
   try {
+    // jul 2026 v9 — Si persist=false, `row` es null. Construimos un
+    // payload sintético con `ephemeral: true` para que el frontend
+    // sepa que es un ping de un solo uso (no persistir en UI ni
+    // marcar como leído). El WS igual lo entrega al user conectado
+    // para que vea el toast.
+    const now = new Date();
     wsBroadcast(companyId, {
       type: 'notification',
-      data: {
+      data: row ? {
         id:        row.id,
         kind:      row.kind,
         title:     row.title,
@@ -232,6 +254,15 @@ export async function notify(args: NotifyArgs): Promise<InferSelectModel<typeof 
         payload:   row.payload,
         readAt:    row.readAt,
         createdAt: row.createdAt,
+      } : {
+        id:        -Date.now(),  // id negativo y sintético
+        kind,
+        title:     title ?? '',
+        body:      body ?? null,
+        payload:   payload ?? {},
+        readAt:    null,
+        createdAt: now,
+        ephemeral: true,         // flag para el frontend
       },
     }, { targetUserId: userId });
   } catch { /* noop */ }
@@ -299,7 +330,7 @@ export async function notify(args: NotifyArgs): Promise<InferSelectModel<typeof 
     console.warn('[notifications] Push send falló (no crítico):', (err as Error).message);
   }
 
-  return row;
+  return row;  // null si persist=false (ping efímero)
 }
 
 /**

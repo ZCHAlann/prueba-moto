@@ -100,7 +100,17 @@ export async function runAlertRemindersOnce(): Promise<number> {
         assetInfo = r ?? null;
       }
 
-      // 4) Enviar notificación.
+      // 4) Enviar recordatorio.
+      //
+      // jul 2026 v9 — CAMBIO: `persist: false`. Los recordatorios son
+      // efímeros: solo quieren avisar en el momento, no deben sumarse
+      // a la bandeja de Notificaciones ni contar en "sin leer". Si
+      // persist=true, con un recordatorio cada 30 min × 24h × N alertas
+      // se acumulan 288×N filas basura. El WS y push siguen saliendo,
+      // asi que el user recibe el aviso en su celular y en el browser
+      // si está conectado. La alerta original sigue contando como
+      // "abierta/sin resolver" — eso es lo que se debe trackear, no
+      // cada recordatorio.
       const title = `Recordatorio (${a.severity}): ${a.title}`;
       const body  = assetInfo
         ? `Vehículo: ${assetInfo.name}${assetInfo.plate ? ` (${assetInfo.plate})` : ''}`
@@ -117,6 +127,7 @@ export async function runAlertRemindersOnce(): Promise<number> {
           assetId:         a.assetId,
           reminderCount:   true,  // marca explícita para el frontend
         },
+        persist: false,  // jul 2026 v9: NO persistir como notificación
       });
 
       // 5) Actualizar `last_reminded_at` y `next_reminder_at`.

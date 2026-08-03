@@ -64,7 +64,7 @@ export function usePlatformAudit(): UsePlatformAuditResult {
       setEntries(json.data);
       setTotal(json.total);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error desconocido');
+      extractApiErrorMessage(err, 'Error desconocido');
     } finally {
       setLoading(false);
     }

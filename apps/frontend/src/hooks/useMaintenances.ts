@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
@@ -99,7 +100,7 @@ export function useMaintenances() {
       const json = await res.json();
       setMaintenances((json.data ?? json).map(mapApi));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al cargar mantenimientos");
+      setError(extractApiErrorMessage(err, "Error al cargar mantenimientos"));
     } finally {
       setLoading(false);
     }
@@ -244,7 +245,7 @@ export function useMaintenancesListLegacy(filters: LegacyMaintenanceListFilters 
       setPageSize(Number(json.pageSize ?? filters.pageSize ?? 20));
       setTotalPages(Number(json.totalPages ?? 1));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al cargar mantenimientos");
+      setError(extractApiErrorMessage(err, "Error al cargar mantenimientos"));
     } finally {
       setLoading(false);
     }

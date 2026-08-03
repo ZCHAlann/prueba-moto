@@ -100,18 +100,42 @@ export async function apiFetch<T = unknown>(
   }
 
   if (!res.ok) {
-    // Otros errores: leer body si se puede
+    // Otros errores: leer body si se puede.
+    // jul 2026 v6 — Soporte para el envelope uniforme del backend:
+    //   { ok: false, error: { codigo, mensaje, campos, requestId } }
+    // Si el body viene en ese formato, extraemos `mensaje` (NO el
+    // `message` legacy). Si viene en el formato viejo { error: "..." }
+    // o { message: "..." }, también lo soportamos.
     let errBody: unknown = null;
     try { errBody = await res.json(); } catch { /* ignore */ }
-    const message =
-      (errBody && typeof errBody === "object" && "message" in errBody && typeof (errBody as { message: unknown }).message === "string")
-        ? (errBody as { message: string }).message
-        : `Error ${res.status}`;
-    const code =
-      (errBody && typeof errBody === "object" && "code" in errBody && typeof (errBody as { code: unknown }).code === "string")
-        ? (errBody as { code: string }).code
+
+    const obj = (errBody && typeof errBody === "object") ? errBody as Record<string, unknown> : null;
+
+    // Envelope nuevo: { ok:false, error:{codigo, mensaje, campos, requestId} }
+    const newErr = (obj && typeof obj.error === "object" && obj.error !== null)
+      ? (obj.error as Record<string, unknown>)
+      : null;
+    const newMsg = typeof newErr?.mensaje === "string" ? (newErr!.mensaje as string) : null;
+    const newCode = typeof newErr?.codigo === "string" ? (newErr!.codigo as string) : null;
+    const campos = Array.isArray(newErr?.campos) ? (newErr!.campos as unknown[]) : undefined;
+    const requestId = typeof newErr?.requestId === "string" ? (newErr!.requestId as string) : undefined;
+
+    // Legacy: { error: "mensaje" } o { message: "mensaje" }
+    const legacyMsg = (!newMsg && obj && typeof obj.message === "string")
+      ? (obj.message as string)
+      : (!newMsg && obj && typeof obj.error === "string")
+        ? (obj.error as string)
         : null;
-    throw new ApiError(message, res.status, code, errBody);
+    const legacyCode = (!newCode && obj && typeof obj.code === "string")
+      ? (obj.code as string)
+      : null;
+
+    const message = newMsg ?? legacyMsg ?? `Error ${res.status}`;
+    const code = newCode ?? legacyCode;
+    // Si tenemos campos (errores de validación zod), los pegamos al
+    // body para que los hooks puedan formatearlos a su gusto.
+    const finalBody = campos ? { ...(obj ?? {}), __campos: campos, __requestId: requestId } : errBody;
+    throw new ApiError(message, res.status, code, finalBody);
   }
 
   // 2xx: parsear JSON si aplica

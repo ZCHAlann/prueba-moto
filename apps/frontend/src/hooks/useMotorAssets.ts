@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -95,7 +96,7 @@ export function useMotorAssets(): UseMotorAssetsReturn {
         setMotors((body.data ?? []).map((item) => mapApiToAsset(item, companyId)));
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Error cargando motores");
+        setError(extractApiErrorMessage(err, "Error cargando motores"));
       })
       .finally(() => setLoading(false));
   }, [companyId, tick]);
@@ -123,7 +124,7 @@ export function useMotorAssets(): UseMotorAssetsReturn {
         setMotors((current) => [...current, newMotor]);
         return String(data.id);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error creando motor");
+        setError(extractApiErrorMessage(err, "Error creando motor"));
         return null;
       }
     },
@@ -148,7 +149,7 @@ export function useMotorAssets(): UseMotorAssetsReturn {
         setMotors((current) => current.map((m) => (m.id === id ? updated : m)));
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error actualizando motor");
+        setError(extractApiErrorMessage(err, "Error actualizando motor"));
         return false;
       }
     },
@@ -169,7 +170,7 @@ export function useMotorAssets(): UseMotorAssetsReturn {
         setMotors((current) => current.filter((m) => m.id !== id));
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error eliminando motor");
+        setError(extractApiErrorMessage(err, "Error eliminando motor"));
         return false;
       }
     },

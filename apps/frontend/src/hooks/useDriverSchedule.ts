@@ -38,7 +38,12 @@ export interface DriverTimeOffEntry {
   createdBy:  string | null;
   createdAt:  string;
   updatedAt:  string;
-  driver:     DriverRef;
+  driver:     DriverRef & {
+    // jul 2026 v6 — Placa del vehículo que el conductor tiene ASIGNADO
+    // en la fecha de este time-off. Viene del backend via subquery
+    // sobre `company_assignments`. Null si no tiene asignación activa.
+    currentAssetPlate?: string | null;
+  };
 }
 
 export interface DriverTimeOffListResponse {

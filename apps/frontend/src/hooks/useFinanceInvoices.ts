@@ -319,7 +319,7 @@ export function useFinanceInvoicesQuery() {
           rows:     mapped,
         };
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Error al cargar facturas";
+        const message = extractApiErrorMessage(err, "Error al cargar facturas");
         setError(message);
         return null;
       } finally {
@@ -344,7 +344,7 @@ export function useFinanceInvoicesQuery() {
         const json = (await res.json()) as Record<string, unknown>;
         return mapApi(json);
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Error al cargar la factura";
+        const message = extractApiErrorMessage(err, "Error al cargar la factura");
         setError(message);
         return null;
       }
@@ -385,7 +385,7 @@ export function useUpdateFinanceInvoiceNotes() {
         const json = (await res.json()) as Record<string, unknown>;
         return mapApi(json);
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Error al guardar notas";
+        const message = extractApiErrorMessage(err, "Error al guardar notas");
         setError(message);
         return null;
       } finally {
@@ -433,7 +433,7 @@ export function useDownloadInvoicePdf() {
         URL.revokeObjectURL(url);
         return true;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Error al descargar PDF";
+        const message = extractApiErrorMessage(err, "Error al descargar PDF");
         setError(message);
         return false;
       } finally {
@@ -472,7 +472,7 @@ export function useInvoiceTypesQuery() {
       setTypes(json.rows ?? []);
       return json.rows ?? [];
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Error al cargar tipos";
+      const message = extractApiErrorMessage(err, "Error al cargar tipos");
       setError(message);
       return null;
     } finally {
@@ -510,7 +510,7 @@ export function useManageInvoiceTypes() {
         }
         return (await res.json()) as FinanceInvoiceType;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Error al crear tipo";
+        const message = extractApiErrorMessage(err, "Error al crear tipo");
         setError(message);
         return null;
       } finally {
@@ -541,7 +541,7 @@ export function useManageInvoiceTypes() {
         }
         return (await res.json()) as FinanceInvoiceType;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Error al actualizar tipo";
+        const message = extractApiErrorMessage(err, "Error al actualizar tipo");
         setError(message);
         return null;
       } finally {
@@ -567,7 +567,7 @@ export function useManageInvoiceTypes() {
         }
         return true;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Error al desactivar tipo";
+        const message = extractApiErrorMessage(err, "Error al desactivar tipo");
         setError(message);
         return false;
       } finally {
@@ -645,7 +645,7 @@ export function useFinanceStats(opts: {
     })
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((body: FinanceStatsResponse) => setData(body))
-      .catch((err) => setError(err instanceof Error ? err.message : 'Error'))
+      extractApiErrorMessage(err, 'Error')
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, opts.year, opts.assetId, opts.category, tick]);
@@ -698,7 +698,7 @@ export function useFinanceDrill(opts: {
         setPageSize(body.pageSize ?? 50);
         setTotalPages(body.totalPages ?? 1);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Error'))
+      extractApiErrorMessage(err, 'Error')
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, opts.year, opts.month, opts.assetId, opts.category, opts.page, opts.pageSize, opts.enabled, tick]);

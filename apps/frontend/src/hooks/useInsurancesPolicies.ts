@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
+import { extractApiErrorMessage } from "../lib/form-validation";
 
 export type InsuranceStatus = "Vigente" | "Por vencer" | "Vencido";
 
@@ -90,7 +91,7 @@ export function useAssetCenter(): UseInsurancePoliciesReturn {
       .then((body: { data: Record<string, unknown>[] }) => {
         setPolicies((body.data ?? []).map(mapApiToPolicy));
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Error cargando pólizas"))
+      .catch((err: unknown) => setError(extractApiErrorMessage(err, "Error cargando pólizas")))
       .finally(() => setLoading(false));
   }, [companyId, tick]);
 
@@ -131,7 +132,7 @@ export function useAssetCenter(): UseInsurancePoliciesReturn {
       setPolicies((prev) => [...prev, created]);
       return created.id;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error creando póliza");
+      setError(extractApiErrorMessage(err, "Error creando póliza"));
       return null;
     }
   }, [companyId]);
@@ -153,7 +154,7 @@ export function useAssetCenter(): UseInsurancePoliciesReturn {
       setPolicies((prev) => prev.map((p) => (p.id === id ? updated : p)));
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error actualizando póliza");
+      setError(extractApiErrorMessage(err, "Error actualizando póliza"));
       return false;
     }
   }, [companyId]);
@@ -169,7 +170,7 @@ export function useAssetCenter(): UseInsurancePoliciesReturn {
       setPolicies((prev) => prev.filter((p) => p.id !== id));
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error eliminando póliza");
+      setError(extractApiErrorMessage(err, "Error eliminando póliza"));
       return false;
     }
   }, [companyId]);

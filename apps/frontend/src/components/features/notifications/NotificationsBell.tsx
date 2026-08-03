@@ -224,16 +224,33 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
           try {
             const msg = JSON.parse(ev.data);
             if (msg?.type === 'notification') {
-              // ── jun 2026 — sonido corto vía WebAudio (no depende
-              //    de un archivo .mp3). Funciona aunque el browser no
-              //    tenga la Notification API nativa concedida. ──
-              playBeep();
+              // jul 2026 v9 — Detectar ping efímero (recordatorios de
+              // alerta). El backend los manda vía WS pero NO los
+              // persiste en la tabla. Acá en el front:
+              //   - SONIDO: si (es un recordatorio y se reproduce cada
+              //     5 min, vuelve insoportable. No suena.
+              //   - Notif nativa del SO: sí, le avisa al user que mire
+              //     la alerta.
+              //   - Panel y counter: NO se refetchean (no hay fila
+              //     nueva en la BD, no hay "sin leer" nuevo).
+              //   - Toast in-page: sí, muestra el aviso como breve
+              //     recordatorio visual.
+              const isEphemeral = msg.data?.ephemeral === true;
+
+              if (!isEphemeral) {
+                // ── jun 2026 — sonido corto vía WebAudio (no depende
+                //    de un archivo .mp3). Funciona aunque el browser no
+                //    tenga la Notification API nativa concedida. ──
+                playBeep();
+              }
 
               // ── Notificación NATIVA del browser ──
               // Si el usuario concedió permiso, sale en el SO aunque
               // la pestaña esté en background. Al hacer click,
               // llevamos foco a la pestaña y navegamos al destino
               // calculado en el backend (routeForKind).
+              // (Para los pings efímeros también mandamos la nativa —
+              // es justo el recordatorio que el user quiere ver).
               if (permissionState() === 'granted') {
                 const where = msg.data?.payload?.route
                   || msg.data?.href
@@ -241,16 +258,18 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
                 nativeNotify({
                   title: msg.data?.title ?? 'Notificación',
                   body: msg.data?.body ?? undefined,
-                  tag: msg.data?.id ? `aplismart-${msg.data.id}` : undefined,
+                  tag: msg.data?.id ? `aplismart-${msg.data.id}` : `aplismart-ephemeral-${Date.now()}`,
                   url: where,
                 });
               }
 
-              // Refetch de la lista y del contador.
-              refetch();
-              qc?.invalidateQueries?.({ queryKey: ['notifications-unread'] });
+              if (!isEphemeral) {
+                // Refetch de la lista y del contador.
+                refetch();
+                qc?.invalidateQueries?.({ queryKey: ['notifications-unread'] });
+              }
 
-              // Toast in-page (siempre, adicional a la nativa).
+              // Toast in-page (siempre, incluyendo efímeros).
               const label = KIND_META[msg.data?.kind]?.label ?? 'Notificación';
               toast(`${label}: ${msg.data?.title ?? ''}`, {
                 description: msg.data?.body,
@@ -261,6 +280,10 @@ export function NotificationsBell({ companyId, isAdmin = false }: Props) {
               // páginas (ej. Alertas) refresquen su feed en tiempo real
               // SIN recargar. Solo lo emitimos si la notificación es de
               // tipo alerta (created/closed/reminder).
+              // Para pings efímeros, SÍ queremos que Alertas refresque
+              // (porque la alerta original sigue "Abierta" — el recordatorio
+              // es un re-aviso, no un cambio de estado, pero el panel
+              // de alertas se beneficia de saber que hubo re-envío).
               const k = msg.data?.kind;
               if (k === 'alert_created' || k === 'alert_closed' || k === 'alert_reminder') {
                 try {

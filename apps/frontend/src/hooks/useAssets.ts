@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import type { Asset, AssetCategory, AssetFuelType, AssetStatus, AssetType } from "../types/activo";
@@ -124,7 +125,7 @@ export function useAssets(): UseAssetsReturn {
         setTotalPages(typeof body.totalPages === "number" ? body.totalPages : 1);
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Error cargando activos");
+        setError(extractApiErrorMessage(err, "Error cargando activos"));
       })
       .finally(() => setLoading(false));
   }, [companyId, tick]);
@@ -155,7 +156,7 @@ export function useAssets(): UseAssetsReturn {
         setAssets((current) => [...current, newAsset]); setTotal((t) => t + 1);
         return String(data.id);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error creando activo");
+        setError(extractApiErrorMessage(err, "Error creando activo"));
         return null;
       }
     },
@@ -183,7 +184,7 @@ export function useAssets(): UseAssetsReturn {
         setAssets((current) => current.map((asset) => (asset.id === id ? updated : asset)));
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error actualizando activo");
+        setError(extractApiErrorMessage(err, "Error actualizando activo"));
         return false;
       }
     },
@@ -207,7 +208,7 @@ export function useAssets(): UseAssetsReturn {
         setAssets((current) => current.filter((asset) => asset.id !== id)); setTotal((t) => Math.max(0, t - 1));
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error eliminando activo");
+        setError(extractApiErrorMessage(err, "Error eliminando activo"));
         return false;
       }
     },

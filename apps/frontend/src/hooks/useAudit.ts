@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 import { useState, useEffect, useCallback } from "react";
 
 export interface AuditEntry {
@@ -60,7 +61,7 @@ export function useAudit(companyId: string | null, filters: AuditFilters = {}) {
       const json: AuditResponse = await res.json();
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }

@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 import { useState, useEffect, useCallback } from "react";
 import type { PlatformPlan, PlatformPlanInput, PlatformModule, PublicPlan } from "../types/platform";
 
@@ -26,7 +27,7 @@ export function usePlatformPlans(): UsePlatformPlansResult {
       const json: { data: PlatformPlan[]; total: number } = await res.json();
       setPlans(json.data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }
@@ -115,7 +116,7 @@ export function usePlatformModules(): { modules: PlatformModule[]; loading: bool
       const json: { data: PlatformModule[] } = await res.json();
       setModules(json.data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }
@@ -142,7 +143,7 @@ export function usePublicPlans(): { plans: PublicPlan[]; loading: boolean; error
         setPlans(json.data);
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
-          setError(err instanceof Error ? err.message : "Error desconocido");
+          setError(extractApiErrorMessage(err, "Error desconocido"));
         }
       } finally {
         setLoading(false);

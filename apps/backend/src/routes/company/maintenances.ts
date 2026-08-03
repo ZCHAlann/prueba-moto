@@ -1664,6 +1664,43 @@ router.post(
       // jul 2026 v5 — resuelve categoría (customId manda sobre `category`).
       const resolvedCategory = await resolveCategory(companyId, body);
 
+      // jul 2026 v9 — Anti-duplicado por vehiculo+día. Si ya existe un
+      // mantenimiento NO completado y NO cancelado del mismo vehículo
+      // en la misma fecha (mismo YYYY-MM-DD en America/Guayaquil),
+      // rechazamos el POST con 409 MAINTENANCE_DUPLICATE_DAY.
+      // Esto evita que arrastrar el mismo vehículo al calendario
+      // dos veces (o doble submit) cree dos mantenimientos superpuestos.
+      // El frontend puede usar el id devuelto para abrir el existente.
+      if (body.scheduledFor) {
+        const schedDate = new Date(body.scheduledFor);
+        // dayKey YYYY-MM-DD en UTC (el frontend ya manda YYYY-MM-DD o ISO
+        // con la zona del user; tomamos la parte de fecha del ISO).
+        const dayKey = (typeof body.scheduledFor === 'string' ? body.scheduledFor : String(body.scheduledFor)).slice(0, 10);
+        const dayStart = new Date(`${dayKey}T00:00:00.000Z`);
+        const dayEnd   = new Date(`${dayKey}T23:59:59.999Z`);
+        if (!isNaN(schedDate.getTime())) {
+          const [existing] = await db
+            .select({ id: companyMaintenanceRecords.id, status: companyMaintenanceRecords.status, title: companyMaintenanceRecords.title })
+            .from(companyMaintenanceRecords)
+            .where(and(
+              eq(companyMaintenanceRecords.companyId, companyId),
+              eq(companyMaintenanceRecords.assetId, assetId),
+              gte(companyMaintenanceRecords.scheduledFor, dayStart),
+              lte(companyMaintenanceRecords.scheduledFor, dayEnd),
+              ne(companyMaintenanceRecords.status, 'Completado'),
+              ne(companyMaintenanceRecords.status, 'Cancelado'),
+            ))
+            .limit(1);
+          if (existing) {
+            throw new AppError(409,
+              `Ya existe el mantenimiento #${existing.id} ("${existing.title ?? 'sin titulo'}") para este vehiculo en ${dayKey} (estado: ${existing.status}). ` +
+              `Usa modificar(mantenimientos, editar, id) para editarlo o cancelalo antes de crear uno nuevo.`,
+              'MAINTENANCE_DUPLICATE_DAY',
+            );
+          }
+        }
+      }
+
       let assignedUserId: number | null = null;
       if (body.assignedUserId) {
         const targetId = parseId('company-user', body.assignedUserId);

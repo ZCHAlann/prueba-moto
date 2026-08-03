@@ -126,6 +126,12 @@ router.get('/', requireModule('gestion', 'conductores'), async (req, res, next) 
   try {
     const companyId = req.companyId!;
     const { status, siteId, search } = req.query;
+    // jul 2026 v6 — Si el front manda `?date=YYYY-MM-DD`, devolvemos
+    // la placa del activo que el conductor tiene ASIGNADO en esa fecha
+    // (status='Activa', startDate<=date, endDate null o >=date). Si no
+    // viene date, el campo `currentAssetPlate` es null y el front hace
+    // fallback al `code` del conductor.
+    const dateQ = typeof req.query.date === 'string' ? req.query.date : null;
     const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>);
 
     // WHERE compartido entre SELECT paginado y COUNT(*).
@@ -141,7 +147,7 @@ router.get('/', requireModule('gestion', 'conductores'), async (req, res, next) 
         conds.push(eq(companyDrivers.id, -1));
       }
     }
-    if (search && typeof search === 'string' && search.trim().length > 0) {
+    if (search && typeof search === 'string') {
       const q = `%${search.trim().toLowerCase()}%`;
       conds.push(sql`(
         lower(${companyDrivers.firstName}) like ${q}
@@ -154,6 +160,23 @@ router.get('/', requireModule('gestion', 'conductores'), async (req, res, next) 
       )`);
     }
     const where = and(...conds);
+
+    // Subquery reutilizable: devuelve la placa del activo asignado al
+    // conductor en `dateQ` (o NULL si no viene date o no hay asignación).
+    const currentAssetPlateSql = dateQ
+      ? sql<string | null>`(
+          SELECT a.plate
+          FROM ${companyAssignments} asg
+          INNER JOIN ${companyAssets} a ON a.id = asg.asset_id
+          WHERE asg.company_id = ${companyId}
+            AND asg.driver_id = ${companyDrivers.id}
+            AND asg.status = 'Activa'
+            AND asg.start_date <= ${dateQ}
+            AND (asg.end_date IS NULL OR asg.end_date >= ${dateQ})
+          ORDER BY asg.start_date DESC
+          LIMIT 1
+        )`
+      : sql<string | null>`NULL::text`;
 
     const [rows, countRow, sitesRows] = await Promise.all([
       db
@@ -178,6 +201,8 @@ router.get('/', requireModule('gestion', 'conductores'), async (req, res, next) 
           // JOIN a companySites para poder calcular el estado efectivo
           // (status del conductor + status de la sede).
           siteStatus: companySites.status,
+          // jul 2026 v6 — ver helper `currentAssetPlateSql` arriba.
+          currentAssetPlate: currentAssetPlateSql.as('current_asset_plate'),
         })
         .from(companyDrivers)
         .leftJoin(
@@ -218,13 +243,19 @@ router.get('/', requireModule('gestion', 'conductores'), async (req, res, next) 
 
     res.json({
       ...buildPageResponse(
-        rows.map(r => serializeDriver(
-          r.driver,
-          siteMap.get(r.driver.siteId) ?? null,
-          r.user,
-          null, // currentAssignment solo en GET /:driverId
-          r.siteStatus, // pasamos siteStatus para calcular effectivelyActive
-        )),
+        rows.map(r => {
+          const out = serializeDriver(
+            r.driver,
+            siteMap.get(r.driver.siteId) ?? null,
+            r.user,
+            null, // currentAssignment solo en GET /:driverId
+            r.siteStatus, // pasamos siteStatus para calcular effectivelyActive
+          ) as Record<string, unknown>;
+          // jul 2026 v6 — patch del serializer. Como `serializeDriver`
+          // no sabe del campo, lo agregamos a mano. Viene de la subquery.
+          out.currentAssetPlate = r.currentAssetPlate ?? null;
+          return out;
+        }),
         total,
         page,
         pageSize,

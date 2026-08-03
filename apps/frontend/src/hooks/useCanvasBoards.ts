@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -133,7 +134,7 @@ export function useCanvasBoards() {
       const raw: Array<Record<string, unknown>> = Array.isArray(json) ? json : (json.data ?? []);
       setBoards(raw.map(mapBoard));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }
@@ -170,7 +171,7 @@ export function useCanvasBoard(boardId: string | null) {
         widgets: Array.isArray(json.widgets) ? (json.widgets as Array<Record<string, unknown>>).map(mapWidget) : [],
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }
@@ -420,7 +421,7 @@ export function useCanvasWidgetRows(
       })
       .then((body: CanvasRowsPayload) => setData(body))
       .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : "Error cargando filas"),
+        setError(extractApiErrorMessage(err, "Error cargando filas")),
       )
       .finally(() => setLoading(false));
   }, [companyId, boardId, widgetId, tick]);
@@ -494,7 +495,7 @@ export function useCombinedWidgetData(
       })
       .then((body: CombinedWidgetPayload) => setData(body))
       .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : "Error cargando datos combinados"),
+        setError(extractApiErrorMessage(err, "Error cargando datos combinados")),
       )
       .finally(() => setLoading(false));
   }, [companyId, boardId, widgetId, hasSecondary]);

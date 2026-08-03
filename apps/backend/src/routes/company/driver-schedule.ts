@@ -219,6 +219,24 @@ router.get(
           driverLastName:  companyDrivers.lastName,
           driverCode:      companyDrivers.code,
           driverStatus:    companyDrivers.status,
+          // jul 2026 v6 — Placa del activo que el conductor tiene
+          // ASIGNADO en la fecha del time-off. Se calcula con un
+          // LEFT JOIN LATERAL contra `company_assignments` filtrado
+          // por (driverId, status=Activa, startDate<=fecha, endDate null o >= fecha).
+          // Si el conductor no tiene asignación activa en esa fecha,
+          // `currentAssetPlate` queda NULL.
+          currentAssetPlate: sql<string | null>`(
+            SELECT a.plate
+            FROM ${companyAssignments} asg
+            INNER JOIN ${companyAssets} a ON a.id = asg.asset_id
+            WHERE asg.company_id = ${companyId}
+              AND asg.driver_id = ${driverTimeOff.driverId}
+              AND asg.status = 'Activa'
+              AND asg.start_date <= ${driverTimeOff.date}
+              AND (asg.end_date IS NULL OR asg.end_date >= ${driverTimeOff.date})
+            ORDER BY asg.start_date DESC
+            LIMIT 1
+          )`,
         })
         .from(driverTimeOff)
         .innerJoin(companyDrivers, eq(companyDrivers.id, driverTimeOff.driverId))
@@ -247,6 +265,10 @@ router.get(
           lastName:  r.driverLastName,
           code:      r.driverCode,
           status:    r.driverStatus,
+          // jul 2026 v6 — Placa del auto que el conductor tiene
+          // asignado en la fecha de este time-off. Null si no tiene
+          // asignación activa ese día.
+          currentAssetPlate: r.currentAssetPlate ?? null,
         },
       }));
 
@@ -598,21 +620,20 @@ router.get(
         })
         .from(driverTimeOff)
         .innerJoin(companyDrivers, eq(companyDrivers.id, driverTimeOff.driverId))
-        .innerJoin(
+        // jul 2026 v6 — Era INNER JOIN contra `company_assignments`, lo
+        // cual descartaba los time-offs de conductores SIN asignación
+        // activa o con asignación que no cubre el día del time-off.
+        // El admin veía "este conductor está libre hoy" pero el
+        // vehículo de ese conductor no se pintaba de verde, y tampoco
+        // los demás. Ahora: LEFT JOIN para no perder el row del
+        // conductor libre. Si tiene asignación activa, marcamos ese
+        // asset. Si no tiene, marcamos TODOS los assets activos de la
+        // empresa (porque "cualquiera puede tomar este vehículo hoy").
+        .leftJoin(
           companyAssignments,
           and(
             eq(companyAssignments.driverId, companyDrivers.id),
             eq(companyAssignments.status, 'Activa'),
-            // La asignación cubre el día: startDate <= date AND (endDate IS NULL OR endDate >= date)
-            //
-            // jul 2026 — BUG FIX: antes, `lte(startDate, ${driverTimeOff.date}::text)`
-            // y `gte(endDate::text, ${driverTimeOff.date}::text)` mezclaban tipos
-            // `date` y `text` — Postgres rechaza con `operator does not exist:
-            // date <= text` (SQLSTATE 42883). El cast tiene que ser
-            // **consistente** entre los dos lados. Acá casteamos
-            // `driver_time_off.date` a `date` (no `text`) y dejamos
-            // `startDate`/`endDate` como `date` nativas — la comparación
-            // es a nivel de fecha, que es lo semánticamente correcto.
             lte(companyAssignments.startDate, sql`${driverTimeOff.date}::date`),
             or(
               isNull(companyAssignments.endDate),
@@ -620,33 +641,63 @@ router.get(
             )!,
           ),
         )
-        .innerJoin(companyAssets, eq(companyAssets.id, companyAssignments.assetId))
+        .leftJoin(companyAssets, eq(companyAssets.id, companyAssignments.assetId))
         .where(
           and(
             eq(driverTimeOff.companyId, companyId),
-            // Solo días futuros/pasados dentro del rango.
             gte(sql`${driverTimeOff.date}::text`, fromIso),
             lt(sql`${driverTimeOff.date}::text`, toExclusiveIso),
-            // Defensive: conductor y vehículo activos al momento de la consulta.
             eq(companyDrivers.status, 'Activo'),
-            // status del asset: "Operativo" o "En mantenimiento" (igual
-            // puede tener un mantenimiento agendado). Excluimos
-            // "Fuera de servicio" para no sugerir que se puede llevar
-            // a mantenimiento.
-            sql`${companyAssets.status} IN ('Operativo', 'En mantenimiento')`,
           ),
         )
         .orderBy(asc(companyAssets.id), asc(driverTimeOff.date));
+
+      // jul 2026 v6 — Si el conductor NO tiene asignación activa en la
+      // fecha, queremos marcar TODOS los assets Operativos/En mantenimiento
+      // de la empresa como "cualquiera los puede tomar este día" (no
+      // del conductor X específicamente, pero sí disponibles).
+      const driversWithoutAssignment: Array<{ date: string }> = [];
+      for (const r of rows) {
+        if (r.assetId == null) {
+          driversWithoutAssignment.push({ date: dateToYmd(r.date) });
+        }
+      }
 
       // Agrupar a Map<assetId, Set<date>>. Dedupe por si un conductor
       // tiene 2 assignments activas al mismo asset en la misma fecha
       // (improbable pero defensivo).
       const map: Record<string, string[]> = {};
       for (const r of rows) {
+        if (r.assetId == null) continue; // conductor sin asignación: se procesa abajo
         const dateStr = dateToYmd(r.date);
         const key = toId('asset', r.assetId);
         if (!map[key]) map[key] = [];
         if (!map[key].includes(dateStr)) map[key].push(dateStr);
+      }
+
+      // jul 2026 v6 — Para cada (date) donde hay al menos UN conductor
+      // libre SIN asignación activa, marcamos TODOS los assets activos
+      // de la empresa como disponibles ese día. Razón: si un conductor
+      // está libre y no está atado a un vehículo, en la práctica
+      // CUALQUIER vehículo puede ser agendado para ese día (alguien
+      // lo va a tomar). El admin ve "todo verde" cuando hay un libre
+      // sin asignación, que es lo más útil.
+      if (driversWithoutAssignment.length > 0) {
+        const freeDates = new Set(driversWithoutAssignment.map((d) => d.date));
+        const allAssets = await db
+          .select({ id: companyAssets.id })
+          .from(companyAssets)
+          .where(and(
+            eq(companyAssets.companyId, companyId),
+            sql`${companyAssets.status} IN ('Operativo', 'En mantenimiento')`,
+          ));
+        for (const a of allAssets) {
+          const key = toId('asset', a.id);
+          if (!map[key]) map[key] = [];
+          for (const d of freeDates) {
+            if (!map[key].includes(d)) map[key].push(d);
+          }
+        }
       }
 
       res.json({ byAsset: map, from: fromIso, toExclusive: toExclusiveIso });

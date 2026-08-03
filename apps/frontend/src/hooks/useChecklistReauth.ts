@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -104,7 +105,7 @@ export function useChecklistReauth() {
       setPageSize(typeof json.pageSize === "number" ? json.pageSize : 20);
       setTotalPages(typeof json.totalPages === "number" ? json.totalPages : 1);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }

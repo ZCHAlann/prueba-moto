@@ -1510,6 +1510,9 @@ export const companyStatsAnomalies = pgTable('company_stats_anomalies', {
   dimension:       varchar('dimension', { length: 40 }),                        // 'asset' | 'driver' | 'category' | 'general'
   dimensionId:     integer('dimension_id'),
   dimensionLabel:  varchar('dimension_label', { length: 200 }),
+  // jul 2026 v2.1 — Dedupe mensual. 'YYYY-MM' o NULL para anomalías
+  // "generales" que no aplican a un período (ej. configuración incorrecta).
+  periodo:         varchar('periodo', { length: 7 }),
   severidad:       varchar('severidad', { length: 10 }).notNull(),              // 'baja' | 'media' | 'alta'
   descripcion:     text('descripcion').notNull(),
   metadata:        jsonb('metadata').notNull().default({}),

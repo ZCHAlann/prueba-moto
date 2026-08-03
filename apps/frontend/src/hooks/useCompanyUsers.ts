@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import type { PlatformRole } from "@/types/platform";
 import type { PermissionMap } from "../lib/module-tree";
+import { extractApiErrorMessage } from "../lib/form-validation";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -162,7 +163,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
         setTotalPages(typeof body.totalPages === "number" ? body.totalPages : 1);
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Error cargando usuarios");
+        setError(extractApiErrorMessage(err, "Error cargando usuarios"));
       })
       .finally(() => setLoading(false));
   }, [companyId, tick]);
@@ -202,7 +203,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
         setUsers((current) => [newUser, ...current]); setTotal((t) => t + 1);
         return newUser.id;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error creando usuario");
+        setError(extractApiErrorMessage(err, "Error creando usuario"));
         return null;
       }
     },
@@ -256,7 +257,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
         }
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error actualizando usuario");
+        setError(extractApiErrorMessage(err, "Error actualizando usuario"));
         return false;
       }
     },
@@ -291,7 +292,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
         }
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error actualizando permisos");
+        setError(extractApiErrorMessage(err, "Error actualizando permisos"));
         return false;
       }
     },
@@ -316,7 +317,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
         setUsers((current) => current.filter((u) => u.id !== id)); setTotal((t) => Math.max(0, t - 1));
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error eliminando usuario");
+        setError(extractApiErrorMessage(err, "Error eliminando usuario"));
         return false;
       }
     },

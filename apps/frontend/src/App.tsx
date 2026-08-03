@@ -205,6 +205,106 @@ function GuestLanding({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// ─── Título de pestaña (jul 2026 v6) ──────────────────────────────────────────
+//
+// Por defecto el <title> del HTML es el nombre del proyecto ("ApliSmart
+// Motors"). Eso se ve feo en la pestaña del browser cuando uno navega
+// entre módulos: "ApliSmart Motors" para todos. Este componente escucha
+// useLocation y setea el título según la ruta.
+//
+// Formato: "ApliSmart Motors  ·  {Nombre del módulo}" (separador punto
+// medio para que sea fácil de escanear cuando hay varias pestañas
+// abiertas del mismo sitio).
+//
+// Las rutas se matchean en orden: las más específicas primero
+// (ej `/mantenimiento/data` antes de `/mantenimiento`). Si no hay
+// match, se usa un fallback con el primer segmento de la URL.
+const ROUTE_TITLES: Array<{ prefix: string; title: string }> = [
+  // ── Plataformas (superadmin) ──
+  { prefix: '/panel/dashboard',      title: 'Panel · Dashboard' },
+  { prefix: '/panel/plans',         title: 'Panel · Planes' },
+  { prefix: '/panel/companies',     title: 'Panel · Empresas' },
+  { prefix: '/panel/companies/.*/ai-api-keys', title: 'Panel · API Keys IA' },
+  { prefix: '/panel/companies/.*/ai', title: 'Panel · IA de empresa' },
+  { prefix: '/panel/modules',       title: 'Panel · Módulos' },
+  { prefix: '/panel/users',         title: 'Panel · Usuarios' },
+  { prefix: '/panel/audit',         title: 'Panel · Auditoría' },
+  { prefix: '/panel/settings',      title: 'Panel · Configuración' },
+  { prefix: '/panel/fleet',         title: 'Panel · Salud de flota' },
+  { prefix: '/panel/tickets',       title: 'Panel · Tickets' },
+  { prefix: '/panel/geolocalizacion', title: 'Panel · Geolocalización' },
+  // ── Operación (admin/supervisor/técnico) ──
+  { prefix: '/dashboard',           title: 'Dashboard' },
+  { prefix: '/perfil',              title: 'Mi perfil' },
+  { prefix: '/configuracion',       title: 'Configuración' },
+  { prefix: '/accesos/usuarios',    title: 'Configuración · Usuarios' },
+  { prefix: '/accesos/roles',       title: 'Configuración · Roles' },
+  { prefix: '/mantenimiento/data',  title: 'Mantenimiento · Datos' },
+  { prefix: '/mantenimiento/reportes/reautorizaciones', title: 'Mantenimiento · Reautorizaciones' },
+  { prefix: '/mantenimiento',       title: 'Mantenimiento' },
+  { prefix: '/checklist',           title: 'Inspecciones' },
+  { prefix: '/alertas',             title: 'Alertas' },
+  { prefix: '/reportes',            title: 'Reportes' },
+  { prefix: '/lienzo',              title: 'Lienzo de reportes' },
+  { prefix: '/combustible',         title: 'Combustible' },
+  { prefix: '/peajes',              title: 'Peajes' },
+  { prefix: '/finanzas/facturas',   title: 'Finanzas · Facturas' },
+  { prefix: '/finanzas/caja-chica', title: 'Finanzas · Caja chica' },
+  { prefix: '/finanzas/transacciones', title: 'Finanzas · Transacciones' },
+  { prefix: '/finanzas/estadisticas', title: 'Finanzas · Estadísticas' },
+  { prefix: '/flotas',              title: 'Flotas' },
+  { prefix: '/operaciones/conductores', title: 'Operaciones · Conductores' },
+  { prefix: '/operaciones/asignaciones', title: 'Operaciones · Asignaciones' },
+  { prefix: '/gestion/garajes',     title: 'Gestión · Garajes' },
+  { prefix: '/gestion/sedes',       title: 'Gestión · Sedes' },
+  { prefix: '/gestion/seguros',     title: 'Gestión · Seguros' },
+  { prefix: '/gestion/talleres',    title: 'Gestión · Talleres' },
+  { prefix: '/gestion/proveedores', title: 'Gestión · Proveedores' },
+  { prefix: '/autorizaciones',      title: 'Autorizaciones de salida' },
+  { prefix: '/soporte',             title: 'Soporte' },
+  { prefix: '/geolocalizacion',     title: 'Geolocalización' },
+  { prefix: '/aires-acondicionados/mantenimientos', title: 'Aires acondicionados · Mantenimientos' },
+  { prefix: '/aires-acondicionados', title: 'Aires acondicionados' },
+  // ── Públicas ──
+  { prefix: '/solicitar-demo',      title: 'Solicitar demo' },
+  { prefix: '/signin',              title: 'Iniciar sesión' },
+  { prefix: '/panel/signin',        title: 'Panel · Iniciar sesión' },
+  { prefix: '/verify/',             title: 'Verificar carnet' },
+  { prefix: '/politica-privacidad', title: 'Política de privacidad' },
+];
+
+const PRODUCT_NAME = 'ApliSmart Motors';
+
+/**
+ * Devuelve el título a mostrar en la pestaña según el pathname.
+ * Si no hay match, devuelve "ApliSmart Motors · {primer segmento}".
+ */
+function titleForPath(pathname: string): string {
+  for (const r of ROUTE_TITLES) {
+    if (r.prefix.includes('.*')) {
+      // regex prefix
+      const re = new RegExp('^' + r.prefix.replace(/\*/g, '[^/]+') + '$');
+      if (re.test(pathname)) return `${PRODUCT_NAME} · ${r.title}`;
+    } else if (pathname === r.prefix || pathname.startsWith(r.prefix + '/')) {
+      return `${PRODUCT_NAME} · ${r.title}`;
+    }
+  }
+  // Fallback: primer segmento
+  const seg = pathname.split('/').filter(Boolean)[0] ?? '';
+  const pretty = seg
+    ? seg.charAt(0).toUpperCase() + seg.slice(1).replace(/-/g, ' ')
+    : 'Inicio';
+  return `${PRODUCT_NAME} · ${pretty}`;
+}
+
+function DocumentTitle() {
+  const location = useLocation();
+  useEffect(() => {
+    document.title = titleForPath(location.pathname);
+  }, [location.pathname]);
+  return null;
+}
+
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -213,6 +313,7 @@ export default function App() {
       <ScrollToTop />
       <Toaster position="top-right" richColors closeButton toastOptions={{ duration: 4000 }} />
       <SessionRefresher />
+      <DocumentTitle />
       <Routes>
 
         {/* ── Publico (no autenticado) ── */}

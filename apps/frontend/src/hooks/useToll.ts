@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
+import { extractApiErrorMessage } from "../lib/form-validation";
 
 export type ApiTollEntry = {
   id: string;
@@ -144,7 +145,7 @@ export function useToll() {
       });
       if (Array.isArray(json.assets)) setAssets(json.assets);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al cargar peajes");
+      setError(extractApiErrorMessage(err, "Error al cargar peajes"));
     } finally {
       setLoading(false);
     }

@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 // hooks/useEstadisticas.ts
 
 import { useCallback, useEffect, useState } from "react";
@@ -147,7 +148,7 @@ export function useEstadisticas(params: UseEstadisticasParams) {
       const json = (await res.json()) as EstadisticasData;
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }
@@ -227,7 +228,7 @@ export function useRedetectarAnomalias(companyId: string | null) {
       });
       return json;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error");
+      setError(extractApiErrorMessage(err, "Error"));
       return null;
     } finally {
       setLoading(false);
@@ -341,7 +342,7 @@ export function useAnalisisIA(params: UseAnalisisIAParams) {
       const json = (await res.json()) as AnalisisIAResult;
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }
@@ -447,7 +448,7 @@ export function useEstadisticasMulti(params: UseEstadisticasMultiParams) {
       const json = (await res.json()) as EstadisticasMultiData;
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
     } finally {
       setLoading(false);
     }
@@ -516,7 +517,7 @@ export function useExportarPDF() {
       setUltimoArchivo(filename);
       return filename;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al generar PDF");
+      setError(extractApiErrorMessage(err, "Error al generar PDF"));
       return null;
     } finally {
       setLoading(false);
@@ -622,7 +623,7 @@ export function useEstadisticasMultiEntity(params: UseEstadisticasMultiEntityPar
       const json = (await res.json()) as MultiEntityDataFE;
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error desconocido");
+      setError(extractApiErrorMessage(err, "Error desconocido"));
       setData(null);
     } finally {
       setLoading(false);

@@ -41,6 +41,12 @@ export interface AiApiContext {
   keyId: number;
   keyName: string;       // para logs
   keyPrefix: string;     // para logs (NO la key completa)
+  // jul 2026 v2.3 — modulo+operacion del request actual, seteados por
+  // el router unificado. Sirve para que withAudit pueda formatear
+  // errores didacticos incluso cuando un handler hace su propio
+  // schema.parse(input) interno.
+  modulo?: string;
+  operacion?: string;
 }
 
 declare global {

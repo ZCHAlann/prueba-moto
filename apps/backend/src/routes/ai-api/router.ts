@@ -33,6 +33,7 @@ import { authAiApiKey, requireAiApiScope, type AiApiContext } from '../../middle
 import { withAudit, requireCtx, parseBody } from './shared';
 import { AppError, NotFoundError } from '../../lib/errors';
 import { toId } from '../../lib/ids';
+import { toDidacticError } from './error-format';
 
 // ── Tipos ─────────────────────────────────────────────────────────────
 
@@ -133,6 +134,103 @@ function parsePathId(raw: unknown, modulo: string): number {
 
 const router = Router();
 
+// ── Envelope helpers (Fase 1) ───────────────────────────────────────
+// jul 2026 v2.1 — Respuesta uniforme {ok, data, meta, resumenTexto}.
+// El LLM recibe SIEMPRE el mismo shape, sin importar la operación.
+// Si el handler ya devolvió {resumenTexto, ...resto}, lo subimos al
+// top-level (meta) y "resto" va a data. Si no, lo generamos a partir
+// del resultado y dejamos data=result.
+//
+// Esto evita que el LLM tenga que aprender el shape específico de
+// cada operación (a veces un array, a veces un objeto, a veces
+// paginado). Con el envelope, `data` siempre es "lo útil" y
+// `resumenTexto` siempre es una frase en español.
+function wrapOk(result: unknown, meta: Record<string, unknown> = {}): {
+  ok: true;
+  data: unknown;
+  meta: { requestId: string; timestamp: string; [k: string]: unknown };
+  resumenTexto: string;
+} {
+  const requestId = (meta.requestId as string) ?? `req-${Date.now()}`;
+  let data = result;
+  let resumenTexto = '';
+
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    const obj = result as Record<string, unknown>;
+    if (typeof obj.resumenTexto === 'string' && obj.resumenTexto.length > 0) {
+      resumenTexto = obj.resumenTexto;
+      const { resumenTexto: _r, ...rest } = obj;
+      data = rest;
+    }
+  }
+  if (!resumenTexto) {
+    resumenTexto = autoResumen(data);
+  }
+  // jul 2026 v2.2 — Si meta trae calidad con score<90, lo agregamos al
+  // resumen para que el LLM lo destaque al usuario. Si es >=90, no
+  // estorba (los datos son buenos, no hace falta decir nada).
+  if (meta.calidad && typeof meta.calidad === 'object') {
+    const c = meta.calidad as any;
+    if (typeof c.score === 'number' && c.score < 90) {
+      const cR = c.resumen ?? c.detalle?.[0]?.mensaje;
+      if (cR && resumenTexto && !resumenTexto.includes(cR)) {
+        resumenTexto = `${resumenTexto} ⚠️ ${cR}`;
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    data,
+    meta: {
+      requestId,
+      timestamp: new Date().toISOString(),
+      ...meta,
+    },
+    resumenTexto,
+  };
+}
+
+/** Genera un resumen automático en español si el handler no lo proveyó. */
+function autoResumen(data: unknown): string {
+  if (data === null || data === undefined) {
+    return 'Operación completada (sin datos).';
+  }
+  if (Array.isArray(data)) {
+    return `${data.length} resultado${data.length !== 1 ? 's' : ''}.`;
+  }
+  if (typeof data === 'object') {
+    const o = data as Record<string, unknown>;
+    if (typeof o.total === 'number' || typeof o.registros === 'number') {
+      const n = o.registros ?? o.total ?? 0;
+      return `${n} registro${Number(n) !== 1 ? 's' : ''}.`;
+    }
+    if (typeof o.id !== 'undefined' || typeof o.code !== 'undefined') {
+      const label = o.name ?? o.code ?? o.title ?? o.id ?? 'registro';
+      return `Registro "${label}" procesado.`;
+    }
+  }
+  return 'Operación completada.';
+}
+
+/** Envelope de error uniforme. */
+function wrapError(err: AppError | { status: number; message: string; code?: string; detalles?: any }): {
+  ok: false;
+  error: { codigo: string; mensaje: string; detalles?: unknown; requestId: string };
+} {
+  const status = err.status ?? 500;
+  const codigo = (err as any).code ?? (status === 400 ? 'BAD_REQUEST' : status === 404 ? 'NOT_FOUND' : status === 403 ? 'FORBIDDEN' : 'INTERNAL_ERROR');
+  return {
+    ok: false,
+    error: {
+      codigo,
+      mensaje: err.message,
+      detalles: (err as any).detalles,
+      requestId: `req-${Date.now()}`,
+    },
+  };
+}
+
 /**
  * Los 4 endpoints que el LLM ve en el OpenAPI. Cada uno acepta un
  * body uniforme con `modulo` + `operacion` + input específico.
@@ -232,20 +330,44 @@ router.post(
       );
     }
 
+    // Setear modulo+operacion en el context para que withAudit pueda
+    // formatear errores didacticos aunque el handler haga su propio
+    // schema.parse() interno.
+    if (req.aiContext) {
+      req.aiContext.modulo = body.modulo;
+      req.aiContext.operacion = body.operacion;
+    }
+
     // Validar filtros (si los hay) contra el schema de la operación.
     // El input final es: { ...filtros, ... } — el handler sabe qué
     // esperar de cada operación.
     const input = { ...(body.filtros ?? {}) };
     const parsed = op.inputSchema.safeParse(input);
     if (!parsed.success) {
-      const issues = parsed.error.issues
-        .map((i) => `${i.path.join('.') || 'filtros'}: ${i.message}`)
-        .join('; ');
-      throw new AppError(400, `Input inválido para ${body.modulo}/${body.operacion}: ${issues}`);
+      throw toDidacticError(parsed.error, body.modulo, body.operacion, input);
     }
 
     const result = await op.handler(ctx, parsed.data);
-    res.json(result);
+
+    // jul 2026 v2.2 — Calidad de datos: cuando el LLM pide el detalle
+    // de un vehículo, calculamos un score 0-100 y lo inyectamos en
+    // `meta.calidad`. Asi el LLM puede avisar al usuario cuando los
+    // datos son incompletos (ej. odómetro nunca registrado).
+    const meta: Record<string, unknown> = {};
+    if (body.modulo === 'vehiculos' && body.operacion === 'detalle' && result && typeof result === 'object') {
+      try {
+        const assetId = Number((result as any).id);
+        if (Number.isInteger(assetId) && assetId > 0) {
+          const { calidadVehiculo } = await import('./calidad-datos');
+          meta.calidad = await calidadVehiculo(ctx.companyId, assetId);
+        }
+      } catch (err) {
+        // No crítico: si falla el calculo de calidad, seguimos.
+        console.warn('[ai-api] calidadVehiculo failed (non-critical):', (err as Error).message);
+      }
+    }
+
+    res.json(wrapOk(result, meta));
   }),
 );
 
@@ -274,16 +396,18 @@ router.post(
       );
     }
 
+    if (req.aiContext) {
+      req.aiContext.modulo = body.modulo;
+      req.aiContext.operacion = body.operacion;
+    }
+
     const parsed = op.inputSchema.safeParse(body.datos);
     if (!parsed.success) {
-      const issues = parsed.error.issues
-        .map((i) => `${i.path.join('.') || 'datos'}: ${i.message}`)
-        .join('; ');
-      throw new AppError(400, `Datos inválidos para ${body.modulo}/${body.operacion}: ${issues}`);
+      throw toDidacticError(parsed.error, body.modulo, body.operacion, body.datos);
     }
 
     const result = await op.handler(ctx, parsed.data);
-    res.status(201).json(result);
+    res.status(201).json(wrapOk(result, { created: true }));
   }),
 );
 
@@ -312,17 +436,19 @@ router.post(
       );
     }
 
+    if (req.aiContext) {
+      req.aiContext.modulo = body.modulo;
+      req.aiContext.operacion = body.operacion;
+    }
+
     const id = parsePathId(body.id, body.modulo);
     const parsed = op.inputSchema.safeParse({ ...body.datos, id });
     if (!parsed.success) {
-      const issues = parsed.error.issues
-        .map((i) => `${i.path.join('.') || 'datos'}: ${i.message}`)
-        .join('; ');
-      throw new AppError(400, `Datos inválidos para ${body.modulo}/${body.operacion}: ${issues}`);
+      throw toDidacticError(parsed.error, body.modulo, body.operacion, body.datos);
     }
 
     const result = await op.handler(ctx, parsed.data);
-    res.json(result);
+    res.json(wrapOk(result, { updated: true }));
   }),
 );
 
@@ -364,9 +490,14 @@ router.post(
       );
     }
 
+    if (req.aiContext) {
+      req.aiContext.modulo = body.modulo;
+      req.aiContext.operacion = body.operacion;
+    }
+
     const id = parsePathId(body.id, body.modulo);
     const result = await op.handler(ctx, { id, confirmar: true });
-    res.json(result);
+    res.json(wrapOk(result, { deleted: true }));
   }),
 );
 
@@ -386,10 +517,10 @@ router.get(
       scope: op.scope,
       summary: op.summary,
     }));
-    res.json({
+    res.json(wrapOk({
       total: list.length,
       operaciones: list,
-    });
+    }, { total: list.length }));
   }),
 );
 

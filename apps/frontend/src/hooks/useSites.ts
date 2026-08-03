@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -119,7 +120,7 @@ export function useSites(): UseSitesReturn {
         setSites((body.data ?? []).map((item) => mapApiToSite(item, companyId)));
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Error cargando sedes");
+        setError(extractApiErrorMessage(err, "Error cargando sedes"));
       })
       .finally(() => setLoading(false));
   }, [companyId, tick]);
@@ -145,7 +146,7 @@ export function useSites(): UseSitesReturn {
         setSites((current) => [...current, newSite]);
         return String(data.id);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error creando sede");
+        setError(extractApiErrorMessage(err, "Error creando sede"));
         return null;
       }
     },
@@ -181,7 +182,7 @@ export function useSites(): UseSitesReturn {
         );
         return true;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error actualizando sede");
+        setError(extractApiErrorMessage(err, "Error actualizando sede"));
         return false;
       }
     },

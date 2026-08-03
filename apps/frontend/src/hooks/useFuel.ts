@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
+import { extractApiErrorMessage } from "../lib/form-validation";
 
 // ─── Validación client-side de uploads ──────────────────────────────────────
 // Defense in depth: el servidor valida (mimetype + extensión + companyId),
@@ -215,7 +216,7 @@ export function useFuel() {
       });
       if (Array.isArray(json.assets)) setAssets(json.assets);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al cargar combustible");
+      setError(extractApiErrorMessage(err, "Error al cargar combustible"));
     } finally {
       setLoading(false);
     }
@@ -414,7 +415,7 @@ export function useFuelInsights(from?: string, to?: string) {
       const json = await res.json();
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al cargar insights");
+      setError(extractApiErrorMessage(err, "Error al cargar insights"));
     } finally {
       setLoading(false);
     }

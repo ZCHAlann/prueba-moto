@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 "use client";
 
 import { useCallback, useRef, useState } from "react";
@@ -192,7 +193,7 @@ export function useExitAuthorizations() {
         setPageSize(typeof json.pageSize === "number" ? json.pageSize : 7);
         setTotalPages(typeof json.totalPages === "number" ? json.totalPages : 1);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error desconocido");
+        setError(extractApiErrorMessage(err, "Error desconocido"));
       } finally {
         setLoading(false);
       }

@@ -41,7 +41,7 @@ export function usePlatformUsers(): UsePlatformUsersResult {
       const json: { data: PlatformUser[] } = await res.json();
       setUsers(json.data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error desconocido');
+      extractApiErrorMessage(err, 'Error desconocido');
     } finally {
       setLoading(false);
     }

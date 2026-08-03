@@ -1,3 +1,4 @@
+import { extractApiErrorMessage } from "../lib/form-validation";
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -39,7 +40,7 @@ export function useGarages() {
           longitude: (g.longitude as number | null) ?? null,
         })));
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Error cargando garajes"))
+      .catch((err: unknown) => setError(extractApiErrorMessage(err, "Error cargando garajes")))
       .finally(() => setLoading(false));
   }, [companyId, tick]);
 
@@ -58,7 +59,7 @@ export function useGarages() {
       refresh();
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error creando garaje");
+      setError(extractApiErrorMessage(err, "Error creando garaje"));
       return false;
     }
   }, [companyId, refresh]);
@@ -78,7 +79,7 @@ export function useGarages() {
       refresh();
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error actualizando garaje");
+      setError(extractApiErrorMessage(err, "Error actualizando garaje"));
       return false;
     }
   }, [companyId, refresh]);
@@ -94,7 +95,7 @@ export function useGarages() {
       setGarages((current) => current.filter((g) => g.id !== id));
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error eliminando garaje");
+      setError(extractApiErrorMessage(err, "Error eliminando garaje"));
       return false;
     }
   }, [companyId]);

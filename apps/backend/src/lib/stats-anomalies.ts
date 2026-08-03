@@ -36,6 +36,13 @@ export type DetectedAnomalia = {
   dimension: string;
   dimensionId: number | null;
   dimensionLabel: string;
+  // jul 2026 v2.1 — Periodo (YYYY-MM) al que aplica la anomalía. Una
+  // anomalía "Vehículo X consumió $5000 en Enero" tiene periodo='2026-01'.
+  // Se usa como parte de la key única del dedupe: cuando llega Febrero,
+  // el cron resuelve automáticamente la anomalía de Enero y crea la
+  // nueva de Febrero si corresponde. null = anomalía general (no
+  // asociada a un mes, ej. configuración incorrecta).
+  periodo?: string | null;
   severidad: AnomaliaSeverity;
   descripcion: string;
   metadata: Record<string, unknown>;

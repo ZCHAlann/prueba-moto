@@ -58,7 +58,7 @@ export function useFleetHealth() {
       }
       setGeneratedAt(json.generatedAt);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error desconocido');
+      extractApiErrorMessage(err, 'Error desconocido');
     } finally {
       setLoading(false);
     }

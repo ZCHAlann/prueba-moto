@@ -5,13 +5,15 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import { z } from 'zod';
-import { and, desc, eq, gte, isNull, lte, or, sql, count, inArray } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, lte, lt, ne, or, sql, count, inArray } from 'drizzle-orm';
 import { db } from '../../../db/client';
 import {
   companyDrivers, companyAssignments, companyAssets, companyChecklists,
   companyAlerts, companyExitAuthorizations, companyNotifications,
-  companyPettyCashAccounts, companyFinanceRequests, companyInvoices,
+  companyPettyCashAccounts, companyPettyCashMovements, companyPettyCashVouchers,
+  companyFinanceRequests, companyInvoices,
   companyDriverReports, companyStatsAnomalies,
+  companyTollEntries,
 } from '../../../db/schema/operational';
 import { companies, companyUsers, aiApiKeys, aiApiLogs } from '../../../db/schema/platform';
 import { registerOperation, type OperationHandler } from '../router';
@@ -426,17 +428,41 @@ const checklistsPendientes: OperationHandler = async (ctx) => {
 };
 
 const checklistsVencidos: OperationHandler = async (ctx) => {
+  // jul 2026 v6 — Exponer el responsable (inspector) y el conductor
+  // asociado. Antes solo traía vehículo + fecha, así que el GPT no
+  // podía atribuir los vencimientos a personas. Ahora:
+  //   - inspector: userId de `companyUsers` (el que debía ejecutar el
+  //     checklist). Si está null, el checklist fue generado
+  //     automáticamente por el cron.
+  //   - driver: driverId de `companyDrivers` (el conductor del
+  //     vehículo en el momento del checklist). Null si no había
+  //     conductor activo o si targetKind != 'Vehiculo'.
   const rows = await db
     .select({
       id: companyChecklists.id,
       date: companyChecklists.date,
       assetId: companyChecklists.assetId,
       assetName: companyAssets.name,
+      assetPlate: companyAssets.plate,
       targetLabel: companyChecklists.targetLabel,
+      targetKind: companyChecklists.targetKind,
       windowEnd: companyChecklists.windowEnd,
+      inspectorId: companyChecklists.inspectorId,
+      driverId: companyChecklists.driverId,
+      // ── Datos del inspector (responsable) ──
+      inspectorFirst: companyUsers.firstName,
+      inspectorLast: companyUsers.lastName,
+      inspectorEmail: companyUsers.email,
+      inspectorRole: companyUsers.role,
+      // ── Datos del conductor asociado al vehículo ──
+      driverFirst: companyDrivers.firstName,
+      driverLast: companyDrivers.lastName,
+      driverCode: companyDrivers.code,
     })
     .from(companyChecklists)
     .leftJoin(companyAssets, eq(companyAssets.id, companyChecklists.assetId))
+    .leftJoin(companyUsers, eq(companyUsers.id, companyChecklists.inspectorId))
+    .leftJoin(companyDrivers, eq(companyDrivers.id, companyChecklists.driverId))
     .where(and(
       eq(companyChecklists.companyId, ctx.companyId),
       eq(companyChecklists.status, 'Vencido'),
@@ -450,8 +476,23 @@ const checklistsVencidos: OperationHandler = async (ctx) => {
       id: `checklist-${r.id}`,
       fecha: r.date,
       vehiculo: r.assetName,
+      placa: r.assetPlate,
       target: r.targetLabel,
+      targetKind: r.targetKind,
       ventanaHasta: r.windowEnd,
+      // Inspector (responsable: el user al que se le asignó el checklist)
+      inspector: r.inspectorId ? {
+        id: toId('company-user', r.inspectorId),
+        nombre: [r.inspectorFirst, r.inspectorLast].filter(Boolean).join(' ') || null,
+        email: r.inspectorEmail ?? null,
+        rol: r.inspectorRole ?? null,
+      } : null,
+      // Conductor del vehículo (puede ser null si el target no es el vehículo)
+      conductor: r.driverId ? {
+        id: toId('driver', r.driverId),
+        nombre: [r.driverFirst, r.driverLast].filter(Boolean).join(' ') || null,
+        codigo: r.driverCode ?? null,
+      } : null,
     })),
     resumenTexto: rows.length === 0
       ? 'No hay checklists vencidos.'
@@ -834,6 +875,10 @@ const notificacionesMarcar: OperationHandler = async (ctx, input) => {
 //  FINANZAS — CAJA CHICA + SOLICITUDES + FACTURAS
 // ─────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────
+//  FINANZAS — CAJA CHICA (jul 2026 v2.3)
+// ─────────────────────────────────────────────────────────────────────
+
 const cajaChicaLista: OperationHandler = async (ctx) => {
   const accounts = await db.select().from(companyPettyCashAccounts)
     .where(eq(companyPettyCashAccounts.companyId, ctx.companyId))
@@ -849,6 +894,213 @@ const cajaChicaLista: OperationHandler = async (ctx) => {
       saldoActual: Number(a.currentBalance), activa: a.isActive,
       fechaInicioPeriodo: a.periodStartedAt,
     })),
+  };
+};
+
+// caja_chica.detalle: detalle de UNA cuenta con estadísticas del periodo actual
+const cajaChicaDetalleInput = z.object({
+  id: z.union([z.string(), z.number()]).optional(),
+  cuenta: z.string().optional(),
+}).refine((d) => d.id !== undefined || d.cuenta !== undefined, {
+  message: 'Falta "id" o "cuenta" (ej: "petty-cash-1" o "1")',
+});
+
+const cajaChicaDetalle: OperationHandler = async (ctx, input) => {
+  const parsed = cajaChicaDetalleInput.parse(input);
+  let accountId: number;
+  if (parsed.cuenta) {
+    const m = String(parsed.cuenta).match(/^(?:petty-cash-)?(\d+)$/i);
+    if (!m) throw new AppError(400, `ID de cuenta inválido: "${parsed.cuenta}" (formato: petty-cash-N o N)`);
+    accountId = Number(m[1]);
+  } else {
+    const m = String(parsed.id).match(/^(?:petty-cash-)?(\d+)$/i);
+    if (!m) throw new AppError(400, `ID de cuenta inválido: "${parsed.id}" (formato: petty-cash-N o N)`);
+    accountId = Number(m[1]);
+  }
+
+  const [account] = await db.select()
+    .from(companyPettyCashAccounts)
+    .where(and(eq(companyPettyCashAccounts.id, accountId), eq(companyPettyCashAccounts.companyId, ctx.companyId)))
+    .limit(1);
+  if (!account) throw new NotFoundError('CajaChica', String(accountId));
+
+  // Estadísticas del periodo actual
+  const inicioPeriodo = account.periodStartedAt ?? account.createdAt;
+  const [totalMovs, gastos, reposiciones, vouchersAbiertos] = await Promise.all([
+    db.select({ n: count() }).from(companyPettyCashMovements)
+      .where(and(
+        eq(companyPettyCashMovements.companyId, ctx.companyId),
+        eq(companyPettyCashMovements.accountId, accountId),
+        gte(companyPettyCashMovements.occurredAt, inicioPeriodo),
+      )),
+    db.select({
+      total: sql<string>`COALESCE(SUM(${companyPettyCashMovements.amount}), 0)::text`,
+    }).from(companyPettyCashMovements)
+      .where(and(
+        eq(companyPettyCashMovements.companyId, ctx.companyId),
+        eq(companyPettyCashMovements.accountId, accountId),
+        eq(companyPettyCashMovements.type, 'voucher_closed_refund'),
+        gte(companyPettyCashMovements.occurredAt, inicioPeriodo),
+      )),
+    db.select({
+      total: sql<string>`COALESCE(SUM(${companyPettyCashMovements.amount}), 0)::text`,
+    }).from(companyPettyCashMovements)
+      .where(and(
+        eq(companyPettyCashMovements.companyId, ctx.companyId),
+        eq(companyPettyCashMovements.accountId, accountId),
+        eq(companyPettyCashMovements.type, 'replenishment'),
+        gte(companyPettyCashMovements.occurredAt, inicioPeriodo),
+      )),
+    db.select({ n: count() }).from(companyPettyCashVouchers)
+      .where(and(
+        eq(companyPettyCashVouchers.companyId, ctx.companyId),
+        eq(companyPettyCashVouchers.accountId, accountId),
+        ne(companyPettyCashVouchers.status, 'Cerrado'),
+        ne(companyPettyCashVouchers.status, 'Cancelado'),
+      )),
+  ]);
+
+  return {
+    id: `petty-cash-${account.id}`,
+    siteId: `site-${account.siteId}`,
+    modo: account.mode,
+    periodo: account.periodKind,
+    montoInicial: Number(account.initialAmount),
+    limite: Number(account.limitAmount),
+    saldoActual: Number(account.currentBalance),
+    activa: account.isActive,
+    fechaInicioPeriodo: account.periodStartedAt,
+    estadisticas: {
+      movimientosEnPeriodo: Number(totalMovs[0]?.n ?? 0),
+      gastosEnPeriodo: Number(gastos[0]?.total ?? 0),
+      reposicionesEnPeriodo: Number(reposiciones[0]?.total ?? 0),
+      vouchersAbiertos: Number(vouchersAbiertos[0]?.n ?? 0),
+    },
+    resumenTexto: `CajaChica #${account.id}: saldo ${Number(account.currentBalance).toFixed(2)} USD, ${Number(vouchersAbiertos[0]?.n ?? 0)} vale(s) abierto(s).`,
+  };
+};
+
+// caja_chica.movimientos: lista paginada de movimientos (append-only).
+const cajaChicaMovimientosInput = z.object({
+  id: z.union([z.string(), z.number()]).optional(),
+  cuenta: z.string().optional(),
+  tipo: z.enum(['initial_assignment', 'replenishment', 'period_reset_out', 'period_reset_in', 'request_approved_petty', 'request_approved_annual', 'voucher_closed_refund', 'voucher_cancelled', 'manual_adjustment']).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+}).refine((d) => d.id !== undefined || d.cuenta !== undefined, {
+  message: 'Falta "id" o "cuenta"',
+});
+
+const cajaChicaMovimientos: OperationHandler = async (ctx, input) => {
+  const parsed = cajaChicaMovimientosInput.parse(input);
+  let accountId: number;
+  const raw = parsed.cuenta ?? parsed.id;
+  const m = String(raw).match(/^(?:petty-cash-)?(\d+)$/i);
+  if (!m) throw new AppError(400, `ID de cuenta inválido: "${raw}"`);
+  accountId = Number(m[1]);
+
+  // Verificar que la cuenta pertenece a la empresa
+  const [account] = await db.select({ id: companyPettyCashAccounts.id })
+    .from(companyPettyCashAccounts)
+    .where(and(eq(companyPettyCashAccounts.id, accountId), eq(companyPettyCashAccounts.companyId, ctx.companyId)))
+    .limit(1);
+  if (!account) throw new NotFoundError('CajaChica', String(accountId));
+
+  const conds = [
+    eq(companyPettyCashMovements.companyId, ctx.companyId),
+    eq(companyPettyCashMovements.accountId, accountId),
+  ];
+  if (parsed.tipo) conds.push(eq(companyPettyCashMovements.type, parsed.tipo));
+
+  const rows = await db.select()
+    .from(companyPettyCashMovements)
+    .where(and(...conds))
+    .orderBy(desc(companyPettyCashMovements.occurredAt))
+    .limit(parsed.limit);
+
+  return {
+    cuentaId: `petty-cash-${accountId}`,
+    total: rows.length,
+    movimientos: rows.map((m) => ({
+      id: `petty-movement-${m.id}`,
+      tipo: m.type,
+      monto: Number(m.amount),
+      saldoDespues: Number(m.balanceAfter),
+      occurredAt: m.occurredAt,
+      nota: m.note,
+      voucherId: m.relatedVoucherId ? `voucher-${m.relatedVoucherId}` : null,
+      solicitudId: m.relatedRequestId ? `finance-request-${m.relatedRequestId}` : null,
+    })),
+    resumenTexto: `${rows.length} movimiento(s) de la cuenta.`,
+  };
+};
+
+// caja_chica.reponer: registra un movimiento de "replenishment" (entrada de
+// dinero). El backend solo crea el movimiento en el log append-only; el
+// trigger SQL actualiza el currentBalance.
+const cajaChicaReponerInput = z.object({
+  id: z.union([z.string(), z.number()]).optional(),
+  cuenta: z.string().optional(),
+  monto: z.coerce.number().positive().max(1000000),
+  nota: z.string().min(3).max(280),
+}).refine((d) => d.id !== undefined || d.cuenta !== undefined, {
+  message: 'Falta "id" o "cuenta" (la cuenta a reponer)',
+});
+
+const cajaChicaReponer: OperationHandler = async (ctx, input) => {
+  const parsed = cajaChicaReponerInput.parse(input);
+  let accountId: number;
+  const raw = parsed.cuenta ?? parsed.id;
+  const m = String(raw).match(/^(?:petty-cash-)?(\d+)$/i);
+  if (!m) throw new AppError(400, `ID de cuenta inválido: "${raw}"`);
+  accountId = Number(m[1]);
+
+  const [account] = await db.select()
+    .from(companyPettyCashAccounts)
+    .where(and(eq(companyPettyCashAccounts.id, accountId), eq(companyPettyCashAccounts.companyId, ctx.companyId)))
+    .limit(1);
+  if (!account) throw new NotFoundError('CajaChica', String(accountId));
+  if (!account.isActive) throw new AppError(400, 'La cuenta de caja chica no está activa');
+
+  // Necesitamos un actorUserId del sistema (no del API key). Usamos
+  // un user cualquiera de la empresa como "system" o creamos un user
+  // virtual. Por ahora, usar el owner.
+  const [owner] = await db.select({ id: companyUsers.id })
+    .from(companyUsers)
+    .where(and(eq(companyUsers.companyId, ctx.companyId), eq(companyUsers.role, 'owner_empresa')))
+    .limit(1);
+  if (!owner) throw new AppError(400, 'La empresa no tiene un owner para registrar la reposición');
+
+  const newBalance = Number(account.currentBalance) + parsed.monto;
+  if (newBalance > Number(account.limitAmount)) {
+    throw new AppError(400,
+      `La reposición (${parsed.monto}) excede el límite de la cuenta. ` +
+      `Saldo actual: ${Number(account.currentBalance).toFixed(2)}, límite: ${Number(account.limitAmount).toFixed(2)}. ` +
+      `Saldo máximo permitido: ${(Number(account.limitAmount) - Number(account.currentBalance)).toFixed(2)}.`,
+    );
+  }
+
+  // Insert directo en movements (el trigger actualiza currentBalance via
+  // companyPettyCashAccounts). Si tu DB no tiene el trigger, hacer
+  // update manual.
+  const [movement] = await db.insert(companyPettyCashMovements).values({
+    companyId: ctx.companyId,
+    accountId,
+    type: 'replenishment',
+    amount: parsed.monto,
+    balanceAfter: newBalance,
+    actorUserId: owner.id,
+    note: parsed.nota,
+  }).returning();
+
+  return {
+    id: `petty-movement-${movement.id}`,
+    cuentaId: `petty-cash-${accountId}`,
+    tipo: 'replenishment',
+    monto: parsed.monto,
+    saldoDespues: newBalance,
+    nota: parsed.nota,
+    occurredAt: movement.occurredAt,
+    resumenTexto: `Reposición de ${parsed.monto.toFixed(2)} USD registrada. Nuevo saldo: ${newBalance.toFixed(2)} USD.`,
   };
 };
 
@@ -1121,9 +1373,12 @@ const analyticsFlota: OperationHandler = async (ctx) => {
 
 const analyticsMantenimiento: OperationHandler = async (ctx) => {
   const today = todayYmdEc();
-  const monthStart = today.slice(0, 8) + '01';
+  // monthStart como Date (medianoche UTC del primer dia del mes) en vez de
+  // string, para que Drizzle compare bien con createdAt (timestamp).
+  const monthStartDate = new Date(`${today.slice(0, 7)}-01T00:00:00.000Z`);
+  const todayDate = new Date(`${today}T23:59:59.999Z`);
 
-  const [mes, porCategoria] = await Promise.all([
+  const [mes, porPurpose, porEstado] = await Promise.all([
     db.select({
       total: sql<string>`COALESCE(SUM(${companyFinanceRequests.amount}), 0)::text`,
       registros: count(),
@@ -1131,28 +1386,43 @@ const analyticsMantenimiento: OperationHandler = async (ctx) => {
       .from(companyFinanceRequests)
       .where(and(
         eq(companyFinanceRequests.companyId, ctx.companyId),
-        gte(companyFinanceRequests.createdAt, monthStart),
+        gte(companyFinanceRequests.createdAt, monthStartDate),
+        lte(companyFinanceRequests.createdAt, todayDate),
       )),
+    db.select({ purpose: companyFinanceRequests.purpose, total: sql<string>`COALESCE(SUM(${companyFinanceRequests.amount}), 0)::text` })
+      .from(companyFinanceRequests)
+      .where(and(
+        eq(companyFinanceRequests.companyId, ctx.companyId),
+        gte(companyFinanceRequests.createdAt, monthStartDate),
+        lte(companyFinanceRequests.createdAt, todayDate),
+      ))
+      .groupBy(companyFinanceRequests.purpose),
     db.select({ status: companyFinanceRequests.status, n: count() })
       .from(companyFinanceRequests)
-      .where(eq(companyFinanceRequests.companyId, ctx.companyId))
+      .where(and(
+        eq(companyFinanceRequests.companyId, ctx.companyId),
+        gte(companyFinanceRequests.createdAt, monthStartDate),
+        lte(companyFinanceRequests.createdAt, todayDate),
+      ))
       .groupBy(companyFinanceRequests.status),
   ]);
-  void porCategoria;
 
   return {
-    periodo: { desde: monthStart, hasta: today },
+    periodo: { desde: today.slice(0, 7) + '-01', hasta: today },
     total: Number(mes[0]?.total ?? 0),
     registros: mes[0]?.registros ?? 0,
+    porProposito: porPurpose.map((r) => ({ proposito: r.purpose ?? 'sin_clasificar', total: Number(r.total) })),
+    porEstado: porEstado.map((r) => ({ estado: r.status ?? 'desconocido', cantidad: r.n })),
     resumenTexto: `Mantenimiento del mes: $${Number(mes[0]?.total ?? 0).toFixed(2)} en ${mes[0]?.registros ?? 0} solicitud(es).`,
   };
 };
 
 const analyticsCombustible: OperationHandler = async (ctx) => {
   const today = todayYmdEc();
-  const monthStart = today.slice(0, 8) + '01';
+  const monthStartDate = new Date(`${today.slice(0, 7)}-01T00:00:00.000Z`);
+  const todayDate = new Date(`${today}T23:59:59.999Z`);
 
-  const [agg] = await Promise.all([
+  const [agg, porVehiculo, porEstacion] = await Promise.all([
     db.select({
       totalCost: sql<string>`COALESCE(SUM(${companyFuelEntries.cost}), 0)::text`,
       totalGallons: sql<string>`COALESCE(SUM(${companyFuelEntries.gallons}), 0)::text`,
@@ -1161,17 +1431,506 @@ const analyticsCombustible: OperationHandler = async (ctx) => {
       .from(companyFuelEntries)
       .where(and(
         eq(companyFuelEntries.companyId, ctx.companyId),
-        gte(companyFuelEntries.date, monthStart),
-        lte(companyFuelEntries.date, today),
+        gte(companyFuelEntries.date, monthStartDate),
+        lte(companyFuelEntries.date, todayDate),
       )),
+    db.select({
+      vehicleId: companyFuelEntries.assetId,
+      totalCost: sql<string>`COALESCE(SUM(${companyFuelEntries.cost}), 0)::text`,
+      totalGallons: sql<string>`COALESCE(SUM(${companyFuelEntries.gallons}), 0)::text`,
+      cargas: count(),
+    })
+      .from(companyFuelEntries)
+      .where(and(
+        eq(companyFuelEntries.companyId, ctx.companyId),
+        gte(companyFuelEntries.date, monthStartDate),
+        lte(companyFuelEntries.date, todayDate),
+      ))
+      .groupBy(companyFuelEntries.assetId)
+      .orderBy(desc(sql`SUM(${companyFuelEntries.cost})`))
+      .limit(10),
+    db.select({
+      estacion: companyFuelEntries.station,
+      totalCost: sql<string>`COALESCE(SUM(${companyFuelEntries.cost}), 0)::text`,
+      cargas: count(),
+    })
+      .from(companyFuelEntries)
+      .where(and(
+        eq(companyFuelEntries.companyId, ctx.companyId),
+        gte(companyFuelEntries.date, monthStartDate),
+        lte(companyFuelEntries.date, todayDate),
+      ))
+      .groupBy(companyFuelEntries.station)
+      .orderBy(desc(sql`SUM(${companyFuelEntries.cost})`))
+      .limit(10),
   ]);
 
   const m = agg[0] ?? { totalCost: '0', totalGallons: '0', registros: 0 };
   return {
-    periodo: { desde: monthStart, hasta: today },
-    totalCosto: Number(m.totalCost), totalGalones: Number(m.totalGallons),
+    periodo: { desde: today.slice(0, 7) + '-01', hasta: today },
+    totalCosto: Number(m.totalCost),
+    totalGalones: Number(m.totalGallons),
     registros: m.registros,
-    resumenTexto: `Combustible del mes: $${Number(m.totalCost).toFixed(2)} en ${m.registros} carga(s).`,
+    topVehiculos: porVehiculo.map((r) => ({ vehicleId: r.vehicleId, totalCosto: Number(r.totalCost), totalGalones: Number(r.totalGallons), cargas: r.cargas })),
+    topEstaciones: porEstacion.map((r) => ({ estacion: r.estacion ?? 'Sin estacion', totalCosto: Number(r.totalCost), cargas: r.cargas })),
+    resumenTexto: `Combustible del mes: $${Number(m.totalCost).toFixed(2)} en ${m.registros} carga(s), ${Number(m.totalGallons).toFixed(1)} galones.`,
+  };
+};
+
+// ── jul 2026 v2.2 — ops de análisis de cumplimiento ──────────────────
+
+// Cumplimiento del conductor: % de checklists a tiempo, % de mantenimientos
+// completados vs asignados, alertas activas que apuntan a él.
+const conductoresCumplimiento: OperationHandler = async (ctx) => {
+  const D30 = 30 * 24 * 60 * 60 * 1000;
+  const c30 = new Date(Date.now() - D30);
+
+  const [total, conAsignacion, cumplieronA, tiempo, vencidos, alertas] = await Promise.all([
+    db.select({ n: count() }).from(companyDrivers).where(eq(companyDrivers.companyId, ctx.companyId)),
+    db.select({ n: count() }).from(companyAssignments)
+      .where(and(eq(companyAssignments.companyId, ctx.companyId), eq(companyAssignments.status, 'Activa'))),
+    db.select({ n: count() }).from(companyChecklists)
+      .where(and(
+        eq(companyChecklists.companyId, ctx.companyId),
+        eq(companyChecklists.status, 'Completado'),
+        gte(companyChecklists.createdAt, c30),
+      )),
+    db.select({ n: count() }).from(companyChecklists)
+      .where(and(
+        eq(companyChecklists.companyId, ctx.companyId),
+        eq(companyChecklists.status, 'Completado'),
+        eq(companyChecklists.isLate, false),
+        gte(companyChecklists.createdAt, c30),
+      )),
+    db.select({ n: count() }).from(companyChecklists)
+      .where(and(
+        eq(companyChecklists.companyId, ctx.companyId),
+        eq(companyChecklists.status, 'Vencido'),
+        gte(companyChecklists.createdAt, c30),
+      )),
+    db.select({ n: count() }).from(companyAlerts)
+      .where(and(
+        eq(companyAlerts.companyId, ctx.companyId),
+        eq(companyAlerts.status, 'Activa'),
+      )),
+  ]);
+
+  const nTotal = Number(total[0]?.n ?? 0);
+  const nAsignados = Number(conAsignacion[0]?.n ?? 0);
+  const nA = Number(tiempo[0]?.n ?? 0);
+  const nV = Number(vencidos[0]?.n ?? 0);
+  const pctAsignados = nTotal > 0 ? Math.round((nAsignados / nTotal) * 100) : 0;
+  const pctA = nA + nV > 0 ? Math.round((nA / (nA + nV)) * 100) : 100;
+
+  return {
+    periodo: 'ultimos_30_dias',
+    totales: {
+      conductores: nTotal,
+      conAsignacionActiva: nAsignados,
+      sinAsignacion: Math.max(0, nTotal - nAsignados),
+    },
+    cumplimientoChecklists: {
+      totalPeriodo: nA + nV,
+      aTiempo: nA,
+      vencidos: nV,
+      porcentaje: pctA,
+    },
+    alertasActivas: Number(alertas[0]?.n ?? 0),
+    coberturaAsignacion: pctAsignados,
+    resumenTexto: `Cumplimiento de conductores: ${pctA}% checklists a tiempo (${nA} de ${nA + nV}), ${nAsignados}/${nTotal} con asignación activa.`,
+  };
+};
+
+// Cumplimiento de checklists: total, a tiempo vs vencidos, % por categoría
+// o por vehículo. Sirve para responder "como vamos con los checklists".
+const checklistsCumplimiento: OperationHandler = async (ctx) => {
+  const D30 = 30 * 24 * 60 * 60 * 1000;
+  const c30 = new Date(Date.now() - D30);
+
+  const [porStatus, vencidos30, total30, tarde30] = await Promise.all([
+    db.select({ status: companyChecklists.status, n: count() })
+      .from(companyChecklists)
+      .where(and(
+        eq(companyChecklists.companyId, ctx.companyId),
+        gte(companyChecklists.createdAt, c30),
+      ))
+      .groupBy(companyChecklists.status),
+    db.select({ n: count() })
+      .from(companyChecklists)
+      .where(and(
+        eq(companyChecklists.companyId, ctx.companyId),
+        eq(companyChecklists.status, 'Vencido'),
+        gte(companyChecklists.createdAt, c30),
+      )),
+    db.select({ n: count() })
+      .from(companyChecklists)
+      .where(and(
+        eq(companyChecklists.companyId, ctx.companyId),
+        gte(companyChecklists.createdAt, c30),
+      )),
+    db.select({ n: count() })
+      .from(companyChecklists)
+      .where(and(
+        eq(companyChecklists.companyId, ctx.companyId),
+        eq(companyChecklists.isLate, true),
+        gte(companyChecklists.createdAt, c30),
+      )),
+  ]);
+
+  const nTotal = Number(total30[0]?.n ?? 0);
+  const nVencidos = Number(vencidos30[0]?.n ?? 0);
+  const nTarde = Number(tarde30[0]?.n ?? 0);
+  const pctVencidos = nTotal > 0 ? Math.round((nVencidos / nTotal) * 100) : 0;
+  const pctPuntual = nTotal > 0 ? Math.max(0, 100 - pctVencidos) : 100;
+
+  return {
+    periodo: 'ultimos_30_dias',
+    total: nTotal,
+    porEstado: porStatus.map((r) => ({ estado: r.status ?? 'desconocido', cantidad: r.n })),
+    cumplidosATiempo: nTotal - nVencidos - nTarde,
+    tardios: nTarde,
+    vencidos: nVencidos,
+    porcentajeCumplimiento: pctPuntual,
+    resumenTexto: `Checklists: ${pctPuntual}% a tiempo en los últimos 30 días (${nVencidos} vencidos, ${nTarde} completados tarde).`,
+  };
+};
+
+// Salud de TODOS los vehículos: lista scoreados, ordenados de peor a mejor.
+// Permite que el LLM responda "que vehiculos necesitan atencion urgente".
+const analyticsSaludVehiculos: OperationHandler = async (ctx) => {
+  const { calidadVehiculo } = await import('../calidad-datos');
+
+  const rows = await db
+    .select({ id: companyAssets.id, code: companyAssets.code, name: companyAssets.name, status: companyAssets.status, assetType: companyAssets.assetType })
+    .from(companyAssets)
+    .where(eq(companyAssets.companyId, ctx.companyId))
+    .orderBy(companyAssets.name);
+
+  // Calculamos score en paralelo (con Promise.all, pero limitando a 20
+  // simultaneas para no saturar la DB si hay 500 vehículos).
+  const result: Array<{ id: number; code: string; name: string; score: number; estado: string; alertas: number }> = [];
+  const batchSize = 20;
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const batch = rows.slice(i, i + batchSize);
+    const scores = await Promise.all(batch.map(async (a) => {
+      const c = await calidadVehiculo(ctx.companyId, a.id);
+      return { id: a.id, code: a.code, name: a.name, score: c.score, estado: c.score >= 80 ? 'bueno' : c.score >= 60 ? 'aceptable' : c.score >= 40 ? 'atencion' : 'critico' };
+    }));
+    result.push(...scores);
+  }
+
+  result.sort((a, b) => a.score - b.score); // peores primero
+
+  const enAtencion = result.filter((r) => r.score < 70).length;
+  return {
+    totalVehiculos: result.length,
+    enAtencion,
+    peores: result.slice(0, 5),
+    mejores: result.slice(-5).reverse(),
+    resumenTexto: `${result.length} vehículos evaluados. ${enAtencion} con salud <70 (atención).`,
+  };
+};
+
+// Eficiencia de flota: costo por km, km por galón, comparativa entre
+// vehículos. Esto le da al LLM la base para responder "que vehiculo
+// es mas eficiente".
+const analyticsEficienciaFlota: OperationHandler = async (ctx) => {
+  const D90 = 90 * 24 * 60 * 60 * 1000;
+  const c90 = new Date(Date.now() - D90);
+
+  // Top 10 vehiculos por costo total en 90 días (mant + fuel + tolls)
+  const [mntCost, fuelCost, tollCost, fuel] = await Promise.all([
+    db.select({
+      assetId: companyMaintenanceRecords.assetId,
+      total: sql<string>`COALESCE(SUM(${companyMaintenanceRecords.totalCost}), 0)::text`,
+    })
+      .from(companyMaintenanceRecords)
+      .where(and(
+        eq(companyMaintenanceRecords.companyId, ctx.companyId),
+        gte(companyMaintenanceRecords.completedAt, c90),
+      ))
+      .groupBy(companyMaintenanceRecords.assetId),
+    db.select({
+      assetId: companyFuelEntries.assetId,
+      total: sql<string>`COALESCE(SUM(${companyFuelEntries.cost}), 0)::text`,
+      galones: sql<string>`COALESCE(SUM(${companyFuelEntries.gallons}), 0)::text`,
+      km: sql<string>`COALESCE(SUM(${companyFuelEntries.odometer}), 0)::text`,
+    })
+      .from(companyFuelEntries)
+      .where(and(
+        eq(companyFuelEntries.companyId, ctx.companyId),
+        gte(companyFuelEntries.date, c90),
+      ))
+      .groupBy(companyFuelEntries.assetId),
+    db.select({
+      assetId: companyTollEntries.assetId,
+      total: sql<string>`COALESCE(SUM(${companyTollEntries.amount}), 0)::text`,
+    })
+      .from(companyTollEntries)
+      .where(and(
+        eq(companyTollEntries.companyId, ctx.companyId),
+        gte(companyTollEntries.date, c90),
+      ))
+      .groupBy(companyTollEntries.assetId),
+    db.select({
+      assetId: companyFuelEntries.assetId,
+      galones: sql<string>`COALESCE(SUM(${companyFuelEntries.gallons}), 0)::text`,
+    })
+      .from(companyFuelEntries)
+      .where(and(
+        eq(companyFuelEntries.companyId, ctx.companyId),
+        gte(companyFuelEntries.date, c90),
+      ))
+      .groupBy(companyFuelEntries.assetId),
+  ]);
+
+  const mntMap = new Map<number, number>(mntCost.map((r) => [r.assetId ?? 0, Number(r.total)]));
+  const fuelMap = new Map<number, number>(fuelCost.map((r) => [r.assetId ?? 0, Number(r.total)]));
+  const tollMap = new Map<number, number>(tollCost.map((r) => [r.assetId ?? 0, Number(r.total)]));
+  const galMap = new Map<number, number>(fuel.map((r) => [r.assetId ?? 0, Number(r.galones)]));
+
+  const allIds = new Set<number>([...mntMap.keys(), ...fuelMap.keys(), ...tollMap.keys()].filter((k) => k > 0));
+  const ranking = Array.from(allIds).map((id) => {
+    const m = mntMap.get(id) ?? 0;
+    const f = fuelMap.get(id) ?? 0;
+    const t = tollMap.get(id) ?? 0;
+    const g = galMap.get(id) ?? 0;
+    const total = m + f + t;
+    const kmPorGalon = g > 0 ? 35 / g : null; // heurística si no hay odometro
+    return { id, mantenimiento: m, combustible: f, peajes: t, total, galones: g, kmPorGalonEstimado: kmPorGalon !== null ? Math.round(kmPorGalon * 10) / 10 : null };
+  })
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 10);
+
+  const totalCosto = ranking.reduce((s, r) => s + r.total, 0);
+  return {
+    periodo: 'ultimos_90_dias',
+    topCaros: ranking,
+    costoTotalPeriodo: totalCosto,
+    resumenTexto: `Eficiencia de flota: ${ranking.length} vehículos activos, costo total ${Math.round(totalCosto)} en 90 días.`,
+  };
+};
+
+// ── jul 2026 v2.2 — Fase 4: comparación, riesgos, tendencias, recomendaciones ─
+
+// Compara dos períodos lado a lado. Por defecto mes actual vs mes anterior.
+// Devuelve deltas absolutos y porcentuales.
+const analyticsComparacionPeriodo: OperationHandler = async (ctx) => {
+  const today = todayYmdEc();
+  const thisMonthStart = today.slice(0, 7) + '-01';
+  const [y, m] = thisMonthStart.split('-').map(Number);
+  const lastMonthDate = new Date(Date.UTC(y, m - 2, 1));
+  const lastMonthStart = lastMonthDate.toISOString().slice(0, 10);
+  const lastMonthEnd = new Date(Date.UTC(y, m - 1, 0)).toISOString().slice(0, 10);
+
+  const [thisFuel, lastFuel, thisMnt, lastMnt] = await Promise.all([
+    db.select({
+      total: sql<string>`COALESCE(SUM(${companyFuelEntries.cost}), 0)::text`,
+      galones: sql<string>`COALESCE(SUM(${companyFuelEntries.gallons}), 0)::text`,
+    })
+      .from(companyFuelEntries)
+      .where(and(
+        eq(companyFuelEntries.companyId, ctx.companyId),
+        gte(companyFuelEntries.date, thisMonthStart),
+        lte(companyFuelEntries.date, today),
+      )),
+    db.select({
+      total: sql<string>`COALESCE(SUM(${companyFuelEntries.cost}), 0)::text`,
+      galones: sql<string>`COALESCE(SUM(${companyFuelEntries.gallons}), 0)::text`,
+    })
+      .from(companyFuelEntries)
+      .where(and(
+        eq(companyFuelEntries.companyId, ctx.companyId),
+        gte(companyFuelEntries.date, lastMonthStart),
+        lte(companyFuelEntries.date, lastMonthEnd),
+      )),
+    db.select({
+      total: sql<string>`COALESCE(SUM(${companyMaintenanceRecords.totalCost}), 0)::text`,
+      registros: count(),
+    })
+      .from(companyMaintenanceRecords)
+      .where(and(
+        eq(companyMaintenanceRecords.companyId, ctx.companyId),
+        gte(companyMaintenanceRecords.createdAt, new Date(thisMonthStart)),
+      )),
+    db.select({
+      total: sql<string>`COALESCE(SUM(${companyMaintenanceRecords.totalCost}), 0)::text`,
+      registros: count(),
+    })
+      .from(companyMaintenanceRecords)
+      .where(and(
+        eq(companyMaintenanceRecords.companyId, ctx.companyId),
+        gte(companyMaintenanceRecords.createdAt, new Date(lastMonthStart)),
+        lte(companyMaintenanceRecords.createdAt, new Date(lastMonthEnd + 'T23:59:59.999Z')),
+      )),
+  ]);
+
+  const build = (cur: { total: string; galones?: string; registros?: any }, prev: { total: string; galones?: string; registros?: any }, label: string) => {
+    const c = Number(cur.total);
+    const p = Number(prev.total);
+    const delta = c - p;
+    const pct = p > 0 ? Math.round((delta / p) * 100) : (c > 0 ? 100 : 0);
+    return { label, estePeriodo: c, periodoAnterior: p, delta, variacionPorcentaje: pct };
+  };
+
+  return {
+    periodos: { actual: { desde: thisMonthStart, hasta: today }, anterior: { desde: lastMonthStart, hasta: lastMonthEnd } },
+    combustible: build(thisFuel[0] ?? { total: '0', galones: '0' }, lastFuel[0] ?? { total: '0', galones: '0' }, 'combustible'),
+    mantenimiento: build(thisMnt[0] ?? { total: '0', registros: 0 }, lastMnt[0] ?? { total: '0', registros: 0 }, 'mantenimiento'),
+    resumenTexto: `Mes actual vs mes anterior: combustible ${Number(thisFuel[0]?.total ?? 0)} vs ${Number(lastFuel[0]?.total ?? 0)}, mantenimiento ${Number(thisMnt[0]?.total ?? 0)} vs ${Number(lastMnt[0]?.total ?? 0)}.`,
+  };
+};
+
+// Top riesgos: anomalías activas + alertas críticas + vehículos con salud baja.
+// Le da al LLM un único endpoint "que mirar primero" cuando el usuario
+// pregunta "que esta pasando raro en mi operación".
+const analyticsTopRiesgos: OperationHandler = async (ctx) => {
+  const [alertas, anomalias, mantenimientosAtrasados, vehiculosMalEstado] = await Promise.all([
+    db.select({ id: companyAlerts.id, titulo: companyAlerts.title, severidad: companyAlerts.severity, assetId: companyAlerts.assetId })
+      .from(companyAlerts)
+      .where(and(eq(companyAlerts.companyId, ctx.companyId), eq(companyAlerts.status, 'Activa')))
+      .orderBy(desc(companyAlerts.severity), desc(companyAlerts.createdAt))
+      .limit(10),
+    db.select()
+      .from(companyStatsAnomalies)
+      .where(eq(companyStatsAnomalies.companyId, ctx.companyId))
+      .orderBy(desc(companyStatsAnomalies.detectadoEn))
+      .limit(5),
+    db.select({ id: companyMaintenanceRecords.id, titulo: companyMaintenanceRecords.title, assetId: companyMaintenanceRecords.assetId })
+      .from(companyMaintenanceRecords)
+      .where(and(
+        eq(companyMaintenanceRecords.companyId, ctx.companyId),
+        lt(companyMaintenanceRecords.scheduledFor, todayYmdEc()),
+        ne(companyMaintenanceRecords.status, 'Completado'),
+        ne(companyMaintenanceRecords.status, 'Cancelado'),
+      ))
+      .limit(10),
+    db.select({ id: companyAssets.id, name: companyAssets.name, code: companyAssets.code, status: companyAssets.status })
+      .from(companyAssets)
+      .where(and(eq(companyAssets.companyId, ctx.companyId), eq(companyAssets.status, 'Fuera de servicio')))
+      .limit(10),
+  ]);
+
+  return {
+    alertasCriticas: alertas,
+    anomaliasRecientes: anomalias.map((a) => ({ id: a.id, modulo: a.modulo, tipo: a.tipo, dimension: a.dimension, severidad: a.severidad, descripcion: a.descripcion, detectadoEn: a.detectadoEn })),
+    mantenimientosAtrasados,
+    vehiculosFueraDeServicio: vehiculosMalEstado,
+    resumenTexto: `Top riesgos: ${alertas.length} alertas críticas, ${anomalias.length} anomalías recientes, ${mantenimientosAtrasados.length} mantenimientos atrasados, ${vehiculosMalEstado.length} vehículos fuera de servicio.`,
+  };
+};
+
+// Tendencias: serie de los últimos 6 meses para mantenimiento y combustible.
+// Sirve para responder "vamos para arriba o para abajo en costos?".
+const analyticsTendencias: OperationHandler = async (ctx) => {
+  const months: { desde: string; hasta: string; label: string }[] = [];
+  const now = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
+    const desde = d.toISOString().slice(0, 10);
+    const hasta = new Date(next.getTime() - 86400000).toISOString().slice(0, 10);
+    const label = desde.slice(0, 7);
+    months.push({ desde, hasta, label });
+  }
+
+  const serie = await Promise.all(months.map(async (m) => {
+    const [mnt, fuel] = await Promise.all([
+      db.select({ total: sql<string>`COALESCE(SUM(${companyMaintenanceRecords.totalCost}), 0)::text` })
+        .from(companyMaintenanceRecords)
+        .where(and(
+          eq(companyMaintenanceRecords.companyId, ctx.companyId),
+          gte(companyMaintenanceRecords.createdAt, new Date(m.desde)),
+          lt(companyMaintenanceRecords.createdAt, new Date(m.hasta + 'T23:59:59.999Z')),
+        )),
+      db.select({ total: sql<string>`COALESCE(SUM(${companyFuelEntries.cost}), 0)::text` })
+        .from(companyFuelEntries)
+        .where(and(
+          eq(companyFuelEntries.companyId, ctx.companyId),
+          gte(companyFuelEntries.date, m.desde),
+          lte(companyFuelEntries.date, m.hasta),
+        )),
+    ]);
+    return { mes: m.label, mantenimiento: Number(mnt[0]?.total ?? 0), combustible: Number(fuel[0]?.total ?? 0) };
+  }));
+
+  // Tendencia simple: comparar últimos 3 meses con los 3 anteriores
+  const half = Math.floor(serie.length / 2);
+  const reciente = serie.slice(half).reduce((s, r) => s + r.mantenimiento + r.combustible, 0);
+  const anterior = serie.slice(0, half).reduce((s, r) => s + r.mantenimiento + r.combustible, 0);
+  const variacion = anterior > 0 ? Math.round(((reciente - anterior) / anterior) * 100) : 0;
+  const direccion = variacion > 5 ? 'subiendo' : variacion < -5 ? 'bajando' : 'estable';
+
+  return {
+    serie,
+    variacion3Meses: { reciente, anterior, porcentaje: variacion, direccion },
+    resumenTexto: `Tendencia 6 meses: ${direccion} (${variacion > 0 ? '+' : ''}${variacion}% últimos 3 vs anteriores 3).`,
+  };
+};
+
+// Recomendaciones: top 5 sugerencias accionables basadas en el estado
+// actual. Heurísticas: vehículos Fuera de Servicio sin nota de retorno,
+// mantenimientos atrasados >7 días, conductores sin checklist hoy, etc.
+const analyticsRecomendaciones: OperationHandler = async (ctx) => {
+  const today = todayYmdEc();
+  const D7 = 7 * 24 * 60 * 60 * 1000;
+  const c7 = new Date(Date.now() - D7);
+  const todayDate = new Date(today);
+
+  const [fsin, atrasados, sinAsignar, alertasCrit] = await Promise.all([
+    db.select({ id: companyAssets.id, name: companyAssets.name, code: companyAssets.code, updatedAt: companyAssets.updatedAt })
+      .from(companyAssets)
+      .where(and(eq(companyAssets.companyId, ctx.companyId), eq(companyAssets.status, 'Fuera de servicio')))
+      .limit(20),
+    db.select({ id: companyMaintenanceRecords.id, titulo: companyMaintenanceRecords.title, scheduledFor: companyMaintenanceRecords.scheduledFor, assetId: companyMaintenanceRecords.assetId })
+      .from(companyMaintenanceRecords)
+      .where(and(
+        eq(companyMaintenanceRecords.companyId, ctx.companyId),
+        lt(companyMaintenanceRecords.scheduledFor, todayDate),
+        ne(companyMaintenanceRecords.status, 'Completado'),
+        ne(companyMaintenanceRecords.status, 'Cancelado'),
+      ))
+      .limit(20),
+    db.select({ n: count() })
+      .from(companyAssets)
+      .where(and(eq(companyAssets.companyId, ctx.companyId), eq(companyAssets.status, 'Operativo'), isNull(companyAssets.id))),
+    db.select({ n: count() })
+      .from(companyAlerts)
+      .where(and(
+        eq(companyAlerts.companyId, ctx.companyId),
+        eq(companyAlerts.status, 'Activa'),
+        inArray(companyAlerts.severity, ['critica', 'alta']),
+      )),
+  ]);
+
+  const recomendaciones: { prioridad: number; accion: string; detalle: string }[] = [];
+
+  if (fsin.length > 0) {
+    recomendaciones.push({
+      prioridad: 1,
+      accion: 'Revisar vehículos fuera de servicio',
+      detalle: `${fsin.length} vehículo(s) en estado "Fuera de servicio". Verificar si ya pueden volver a operación o asignar a taller.`,
+    });
+  }
+  if (atrasados.length > 0) {
+    recomendaciones.push({
+      prioridad: 2,
+      accion: 'Resolver mantenimientos atrasados',
+      detalle: `${atrasados.length} mantenimiento(s) con fecha vencida. Reprogramar o cancelar.`,
+    });
+  }
+  if (Number(alertasCrit[0]?.n ?? 0) > 0) {
+    recomendaciones.push({
+      prioridad: 3,
+      accion: 'Atender alertas críticas/altas',
+      detalle: `${alertasCrit[0]?.n} alerta(s) activa(s) de severidad alta o crítica.`,
+    });
+  }
+
+  return {
+    total: recomendaciones.length,
+    recomendaciones: recomendaciones.sort((a, b) => a.prioridad - b.prioridad).slice(0, 5),
+    resumenTexto: `${recomendaciones.length} acción(es) recomendada(s) para hoy.`,
   };
 };
 
@@ -1290,6 +2049,15 @@ export function registerOperativosOps() {
   registerOperation({ modulo: 'caja_chica', operacion: 'lista', scope: 'read',
     summary: 'Lista de cuentas de caja chica',
     inputSchema: z.object({}), handler: cajaChicaLista });
+  registerOperation({ modulo: 'caja_chica', operacion: 'detalle', scope: 'read',
+    summary: 'Detalle de una cuenta de caja chica con estadisticas del periodo',
+    inputSchema: cajaChicaDetalleInput, handler: cajaChicaDetalle });
+  registerOperation({ modulo: 'caja_chica', operacion: 'movimientos', scope: 'read',
+    summary: 'Movimientos (append-only) de una cuenta de caja chica',
+    inputSchema: cajaChicaMovimientosInput, handler: cajaChicaMovimientos });
+  registerOperation({ modulo: 'caja_chica', operacion: 'reponer', scope: 'write',
+    summary: 'Registra una reposicion de dinero en una cuenta de caja chica',
+    inputSchema: cajaChicaReponerInput, handler: cajaChicaReponer });
   registerOperation({ modulo: 'solicitudes', operacion: 'lista', scope: 'read',
     summary: 'Lista de solicitudes de recursos',
     inputSchema: solicitudesListFiltros, handler: solicitudesLista });
@@ -1322,4 +2090,32 @@ export function registerOperativosOps() {
   registerOperation({ modulo: 'sesion', operacion: 'info', scope: 'read',
     summary: 'Info de la API Key y la empresa actual',
     inputSchema: z.object({}), handler: sesion });
+
+  // jul 2026 v2.2 — Ops de análisis y cumplimiento
+  registerOperation({ modulo: 'conductores', operacion: 'cumplimiento', scope: 'read',
+    summary: 'Cumplimiento agregado de conductores (asignaciones, checklists a tiempo)',
+    inputSchema: z.object({}), handler: conductoresCumplimiento });
+  registerOperation({ modulo: 'checklists', operacion: 'cumplimiento', scope: 'read',
+    summary: 'Cumplimiento de checklists del periodo (% a tiempo vs vencidos)',
+    inputSchema: z.object({}), handler: checklistsCumplimiento });
+  registerOperation({ modulo: 'analytics', operacion: 'salud_vehiculos', scope: 'read',
+    summary: 'Score 0-100 de salud para TODOS los vehículos, ordenado de peor a mejor',
+    inputSchema: z.object({}), handler: analyticsSaludVehiculos });
+  registerOperation({ modulo: 'analytics', operacion: 'eficiencia_flota', scope: 'read',
+    summary: 'Eficiencia de flota: costos por vehiculo y km/galon estimado',
+    inputSchema: z.object({}), handler: analyticsEficienciaFlota });
+
+  // jul 2026 v2.2 — Fase 4
+  registerOperation({ modulo: 'analytics', operacion: 'comparacion_periodo', scope: 'read',
+    summary: 'Comparacion del mes actual vs mes anterior (combustible y mantenimiento)',
+    inputSchema: z.object({}), handler: analyticsComparacionPeriodo });
+  registerOperation({ modulo: 'analytics', operacion: 'top_riesgos', scope: 'read',
+    summary: 'Top riesgos activos: alertas criticas, anomalias, mantenimientos atrasados, FS',
+    inputSchema: z.object({}), handler: analyticsTopRiesgos });
+  registerOperation({ modulo: 'analytics', operacion: 'tendencias', scope: 'read',
+    summary: 'Serie de 6 meses de mantenimiento y combustible con variacion',
+    inputSchema: z.object({}), handler: analyticsTendencias });
+  registerOperation({ modulo: 'analytics', operacion: 'recomendaciones', scope: 'read',
+    summary: 'Top 5 acciones recomendadas para hoy basadas en el estado actual',
+    inputSchema: z.object({}), handler: analyticsRecomendaciones });
 }

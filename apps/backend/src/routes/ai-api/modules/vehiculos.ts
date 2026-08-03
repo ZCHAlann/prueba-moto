@@ -159,7 +159,7 @@ router.get(
       color: asset.color,
       kmActual: ultCarga[0] ? Number(ultCarga[0].odometer ?? 0) : null,
       alertasActivas: alertas.map((a) => ({
-        id: `alert-${a.id}`, titulo: a.title, severidad: a.severidad, status: a.status,
+        id: `alert-${a.id}`, titulo: a.title, severidad: a.severity, status: a.status,
       })),
       proximoMantenimiento: proxMaint[0] ? {
         id: `maintenance-${proxMaint[0].id}`,

@@ -74,6 +74,17 @@ type CreateAssignmentPayload = {
   startDate: string;
   endDate?: string | null;
   notes?: string;
+  // jul 2026 — Campos opcionales del acta que se mandan en el POST
+  // inicial (antes iban en un PUT adicional que reventaba con 400).
+  // El backend los acepta en createAssignmentSchema.
+  handoverUrl?:      string | null;
+  actaDate?:         string | null;
+  actaTime?:         string | null;
+  actaPlace?:        string | null;
+  driverDni?:        string | null;
+  signatureLogUrl?:  string | null;
+  signatureRespUrl?: string | null;
+  vehiclePhotoUrls?: string[];
 };
 
 function mapApi(raw: Record<string, unknown>): ApiAssignment {
@@ -202,13 +213,19 @@ export function useAssignments() {
     }
   }, [companyId]);
 
-  // Fetch inicial: slot activas (la página de historial es opcional y la
-  // dispara el componente con sus filtros).
-  useEffect(() => { void fetchPage("active", { status: "Activa", pageSize: 6 }); }, [fetchPage]);
+  // Fetch inicial: slot activas. La página padre controla la
+  // paginación (`activePage`/`pageSize`) en su propio useEffect;
+  // no pisar acá. El selector del wizard usa el endpoint dedicado
+  // `available-assets`, ya NO depende de esta lista.
+  // (Antes pedíamos 50 acá para que el filtro client-side
+  // `availableAssets` viera todas las activas — bug de escala
+  // que reventaba con flotas grandes. Ahora viene del server.)
+  useEffect(() => { /* la página de Asignaciones dispara su propio fetchPage */ }, [fetchPage]);
 
-  // Compatibilidad: `assignments` apunta al slot "active" (lo que la mayoría
-  // de call sites asume), y `refresh` recarga el slot activo.
-  const refresh = useCallback(() => fetchPage("active", { status: "Activa", pageSize: 6 }), [fetchPage]);
+  // Compatibilidad: `assignments` apunta al slot "active" (lo que la
+  // mayoría de call sites asume), y `refresh` recarga el slot activo.
+  // `refresh` no aplica paginación — el caller decide.
+  const refresh = useCallback(() => fetchPage("active", { status: "Activa" }), [fetchPage]);
 
   const createAssignment = useCallback(
     async (payload: CreateAssignmentPayload): Promise<ApiAssignment> => {
@@ -216,16 +233,39 @@ export function useAssignments() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          assetId:   payload.assetId,
-          driverId:  payload.driverId,
-          startDate: payload.startDate,
-          endDate:   payload.endDate ?? null,
-          notes:     payload.notes ?? "",
+          assetId:          payload.assetId,
+          driverId:         payload.driverId,
+          startDate:        payload.startDate,
+          endDate:          payload.endDate ?? null,
+          notes:            payload.notes ?? "",
+          // Solo mandamos cada campo si viene (no mandamos nulls
+          // explícitos para no pisar defaults del backend). El schema
+          // del backend acepta todos como opcional/null.
+          handoverUrl:      payload.handoverUrl,
+          actaDate:         payload.actaDate,
+          actaTime:         payload.actaTime,
+          actaPlace:        payload.actaPlace,
+          driverDni:        payload.driverDni,
+          signatureLogUrl:  payload.signatureLogUrl,
+          signatureRespUrl: payload.signatureRespUrl,
+          vehiclePhotoUrls: payload.vehiclePhotoUrls,
         }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message ?? `Error ${res.status}`);
+        const body = await res.json().catch(() => null);
+        // El backend usa el envelope en ESPAÑOL: {ok:false, error:{codigo,
+        // mensaje, requestId}}. Buscamos `mensaje` primero, después
+        // `message` por compat con APIs viejas, después el body crudo.
+        // El fallback final es stringify del body para no mostrar
+        // "[object Object]" en el toast.
+        const backendMsg =
+          body?.error?.mensaje
+          ?? body?.error?.message
+          ?? body?.error
+          ?? body?.message
+          ?? (body ? JSON.stringify(body) : null)
+          ?? `Error ${res.status} al crear la asignación`;
+        throw new Error(backendMsg);
       }
       const created = mapApi(await res.json());
       // Optimistic: aparece al inicio de la lista de activas.
@@ -285,9 +325,96 @@ export function useAssignments() {
     [companyId],
   );
 
+  // jul 2026 — Vehículos disponibles para el selector del wizard
+  // de asignación. Llama al endpoint dedicado del backend
+  // (`/assignments/available-assets`) que filtra en el server
+  // (Operativo + sin asignación activa), con paginación y búsqueda.
+  // Es la fuente de verdad del server: escala a cualquier tamaño de
+  // flota porque NO trae todos los assets y filtra en el cliente.
+  type AvailableAsset = {
+    id: string;
+    plate: string | null;
+    code: string | null;
+    name: string | null;
+    brand: string | null;
+    model: string | null;
+    year: string | null;
+    color: string | null;
+    assetType: string | null;
+    fuelType: string | null;
+    vin: string | null;
+    status: string | null;
+    odometerKm: string | null;
+    updatedAt: string | null;
+  };
+  const [availableAssets, setAvailableAssets] = useState<AvailableAsset[]>([]);
+  const [availableLoading, setAvailableLoading] = useState(false);
+  const [availableTotal, setAvailableTotal] = useState(0);
+  const fetchAvailableAssets = useCallback(
+    async (opts: { q?: string; page?: number; pageSize?: number } = {}) => {
+      if (!companyId) return;
+      setAvailableLoading(true);
+      try {
+        const qs = new URLSearchParams();
+        if (opts.q) qs.set("q", opts.q);
+        if (opts.page) qs.set("page", String(opts.page));
+        if (opts.pageSize) qs.set("pageSize", String(opts.pageSize));
+        const url = `/api/company/${companyId}/assignments/available-assets?${qs}`;
+        const res = await fetch(url, { credentials: "include" });
+        if (!res.ok) throw new Error(`Error ${res.status}`);
+        const json = await res.json();
+        setAvailableAssets(Array.isArray(json.data) ? json.data : []);
+        setAvailableTotal(Number(json.total ?? 0));
+      } finally {
+        setAvailableLoading(false);
+      }
+    },
+    [companyId],
+  );
+
+  // jul 2026 v2 — Espejo del fetchAvailableAssets pero para
+  // conductores. Mismo problema: antes el selector del wizard
+  // mostraba TODOS los conductores de la empresa, y los ya
+  // asignados aparecían como disponibles. El user podía elegirlos
+  // y al hacer POST reventaba con 409 (o peor, asignaba dos
+  // vehículos al mismo conductor). Ahora el server devuelve solo
+  // los Activos + sin asignación activa.
+  type AvailableDriver = {
+    id: string;
+    code: string | null;
+    firstName: string | null;
+    lastName: string | null;
+    dni: string | null;
+    phone: string | null;
+    status: string | null;
+    updatedAt: string | null;
+  };
+  const [availableDrivers, setAvailableDrivers] = useState<AvailableDriver[]>([]);
+  const [availableDriversLoading, setAvailableDriversLoading] = useState(false);
+  const [availableDriversTotal, setAvailableDriversTotal] = useState(0);
+  const fetchAvailableDrivers = useCallback(
+    async (opts: { q?: string; page?: number; pageSize?: number } = {}) => {
+      if (!companyId) return;
+      setAvailableDriversLoading(true);
+      try {
+        const qs = new URLSearchParams();
+        if (opts.q) qs.set("q", opts.q);
+        if (opts.page) qs.set("page", String(opts.page));
+        if (opts.pageSize) qs.set("pageSize", String(opts.pageSize));
+        const url = `/api/company/${companyId}/assignments/available-drivers?${qs}`;
+        const res = await fetch(url, { credentials: "include" });
+        if (!res.ok) throw new Error(`Error ${res.status}`);
+        const json = await res.json();
+        setAvailableDrivers(Array.isArray(json.data) ? json.data : []);
+        setAvailableDriversTotal(Number(json.total ?? 0));
+      } finally {
+        setAvailableDriversLoading(false);
+      }
+    },
+    [companyId],
+  );
+
   return {
-    // Compatibilidad: `assignments` = activas (lo que la mayoría asume).
-    assignments: active.data,
     active,
     history,
     assets,
@@ -299,5 +426,20 @@ export function useAssignments() {
     createAssignment,
     updateHandover,
     finalizeAssignment,
+    // jul 2026 — Vehículos disponibles para el selector del wizard.
+    // Endpoint dedicado del backend: `/assignments/available-assets`.
+    // Escala porque el server filtra (Operativo + sin asignación
+    // activa) y pagina. NO se traen todos los assets para filtrar
+    // en el cliente (eso era la solución de mierda anterior).
+    availableAssets,
+    availableLoading,
+    availableTotal,
+    fetchAvailableAssets,
+    // jul 2026 v2 — Conductores disponibles. Mismo patrón que
+    // availableAssets. Solo Activos + sin asignación activa.
+    availableDrivers,
+    availableDriversLoading,
+    availableDriversTotal,
+    fetchAvailableDrivers,
   };
 }

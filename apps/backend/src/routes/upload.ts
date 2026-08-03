@@ -162,9 +162,20 @@ router.post('/assignment-photos', (req: Request, res: Response, next: NextFuncti
   const companyId = req.query.companyId as string | undefined;
   const folder = companyId ? `assignments/${companyId}` : 'assignments';
 
+  // Límite: hasta 50 fotos por acta (las de vehículo y las novedades
+  // juntas). 8 MB por foto = 400 MB de techo teórico, pero en la
+  // práctica el frontend comprime a 1280px @ 0.78 y la mayoría de las
+  // fotos quedan en 200-400 KB, así que el request total rara vez
+  // supera los 30 MB. Si llegan a tirar 50 fotos sin comprimir se
+  // cortan las primeras que mande multer (orden de llegada).
+  const MAX_ASSIGNMENT_PHOTOS = 50;
+
   const upload = multer({
     storage: buildStorage(folder),
-    limits: { fileSize: MAX_FILE_SIZE },
+    limits: {
+      fileSize: MAX_FILE_SIZE,
+      files: MAX_ASSIGNMENT_PHOTOS,
+    },
     fileFilter: imageFilter,
   }).any();
 
@@ -172,6 +183,11 @@ router.post('/assignment-photos', (req: Request, res: Response, next: NextFuncti
     if (err) return next(err);
     const files = req.files as Express.Multer.File[];
     if (!files?.length) return next(new AppError(400, 'No se recibieron archivos.'));
+    if (files.length > MAX_ASSIGNMENT_PHOTOS) {
+      // multer ya cortó el resto, pero avisamos para que el frontend
+      // sepa el límite real.
+      return next(new AppError(400, `Máximo ${MAX_ASSIGNMENT_PHOTOS} fotos por acta.`));
+    }
     await Promise.allSettled(files.map((f) => optimizeImageIfNeeded(f)));
     res.json({ urls: files.map((f) => `/uploads/${folder}/${f.filename}`) });
   });

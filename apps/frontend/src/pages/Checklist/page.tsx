@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, ClipboardCheck, ListChecks, AlertTriangle, ClipboardList, Inbox } from "lucide-react";
+import { toast } from "sonner";
 import { useChecklistCategories, type ChecklistCategory } from "../../hooks/useChecklistCategories";
 import { useChecklists, type Checklist } from "../../hooks/useChecklists";
 import { usePermissions } from "../../hooks/usePermissions";
@@ -36,7 +37,7 @@ function StatCard({ label, value, sub, colorCls, icon }: {
 
 export function ChecklistPage() {
   const { categories, refetch: refetchCategories } = useChecklistCategories();
-  const { checklists, refetch: refetchChecklists } = useChecklists();
+  const { checklists, loading: checklistsLoading, refetch: refetchChecklists } = useChecklists();
   const { can } = usePermissions();
   const session = (typeof window !== "undefined") ? JSON.parse(localStorage.getItem("aplismart_session") ?? "null") : null;
   const role = (session?.role ?? "") as string;
@@ -71,7 +72,7 @@ export function ChecklistPage() {
   // y vuelve a forzar "pendientes" — el usuario no puede cambiar de tab
   // mientras el `?assetId=` siga en la URL. Hacemos el setTab solo cuando
   // el deep-link aparece por primera vez (o cambia a un valor distinto).
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const deepLinkedAssetId = searchParams.get("assetId");
   const handledDeepLink = useRef<string | null>(null);
   useEffect(() => {
@@ -83,6 +84,58 @@ export function ChecklistPage() {
     }
     handledDeepLink.current = deepLinkedAssetId;
   }, [deepLinkedAssetId, canSeeInspecciones, tab]);
+
+  // Deep-link desde el GlobalSearch: `?checklistId=checklist-123&open=1`.
+  // El header lo usa para abrir el detalle de un checklist (inspección)
+  // sin tener que buscarlo en la lista. Saltamos a la pestaña correcta
+  // (pendientes si es Pendiente, historial si ya está cerrado) y abrimos
+  // el drawer. Si el id no matchea, no hacemos nada (probablemente el
+  // usuario llegó con un link viejo).
+  const deepLinkedChecklistId = searchParams.get("checklistId");
+  const openFromLink = searchParams.get("open") === "1";
+  const handledChecklistLink = useRef<string | null>(null);
+  const [historySubForLink, setHistorySubForLink] = useState<HistorialSub>("todos");
+  useEffect(() => {
+    if (!deepLinkedChecklistId || !openFromLink) return;
+    if (checklistsLoading) return;
+    if (handledChecklistLink.current === deepLinkedChecklistId) return;
+
+    // El id puede venir como "checklist-123" o como "123" crudo. Buscamos
+    // match por igualdad exacta y por número.
+    const numId = Number(String(deepLinkedChecklistId).replace(/^[a-z-]+-/i, ""));
+    const found = checklists.find(
+      (c) => c.id === deepLinkedChecklistId ||
+        Number(c.id) === numId ||
+        c.id === `checklist-${numId}`,
+    );
+
+    if (!found) {
+      handledChecklistLink.current = deepLinkedChecklistId;
+      // Si ya terminó de cargar y no aparece, le avisamos al user que
+      // ese id no existe (o no es visible para él).
+      if (checklists.length > 0) {
+        toast.error("No se encontró la inspección solicitada");
+      }
+      return;
+    }
+
+    if (found.status === "Pendiente") {
+      if (canSeeInspecciones) setTab("pendientes");
+    } else {
+      if (canSeeHistorial) {
+        setTab("historial");
+        setHistorySubForLink("todos");
+      }
+    }
+    setDetail(found);
+    handledChecklistLink.current = deepLinkedChecklistId;
+    // Limpiamos los params de la URL para que un back del navegador no
+    // reabra el modal. Mantenemos la URL "limpia" para compartir.
+    const next = new URLSearchParams(searchParams);
+    next.delete("checklistId");
+    next.delete("open");
+    setSearchParams(next, { replace: true });
+  }, [deepLinkedChecklistId, openFromLink, checklistsLoading, checklists, canSeeInspecciones, canSeeHistorial, searchParams, setSearchParams]);
 
   // Wizard: controlamos apertura + plantilla preseleccionada
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -182,7 +235,7 @@ export function ChecklistPage() {
             initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.18 }}
             className="space-y-4">
-            <HistorialTabs />
+            <HistorialTabs initialSub={historySubForLink} onOpenDetail={setDetail} />
           </motion.div>
         )}
 
@@ -231,9 +284,13 @@ function TabButton({ active, onClick, children }: {
   );
 }
 
-function HistorialTabs() {
-  const [sub, setSub] = useState<HistorialSub>("anomalias");
+function HistorialTabs({ initialSub, onOpenDetail }: { initialSub?: HistorialSub; onOpenDetail?: (c: Checklist) => void }) {
+  const [sub, setSub] = useState<HistorialSub>(initialSub ?? "anomalias");
   const [detail, setDetail] = useState<Checklist | null>(null);
+  // Si el padre nos cambia el initialSub (deep-link), lo aplicamos.
+  useEffect(() => {
+    if (initialSub) setSub(initialSub);
+  }, [initialSub]);
   return (
     <>
       <div className="flex items-center gap-1">
@@ -247,11 +304,11 @@ function HistorialTabs() {
       <AnimatePresence mode="wait">
         {sub === "anomalias" ? (
           <motion.div key="anom" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.16 }}>
-            <ChecklistAnomalias onOpenChecklist={setDetail} pageSize={7} />
+            <ChecklistAnomalias onOpenChecklist={onOpenDetail ?? setDetail} pageSize={7} />
           </motion.div>
         ) : (
           <motion.div key="all" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.16 }}>
-            <ChecklistHistorial onOpenDetail={setDetail} pageSize={7} />
+            <ChecklistHistorial onOpenDetail={onOpenDetail ?? setDetail} pageSize={7} />
           </motion.div>
         )}
       </AnimatePresence>

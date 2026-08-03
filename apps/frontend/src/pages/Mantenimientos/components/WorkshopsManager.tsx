@@ -1,6 +1,7 @@
 // pages/Mantenimientos/components/WorkshopsManager.tsx
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Pencil, Trash2, Search, Save, Building2, Loader2, Warehouse } from "lucide-react";
 import { toast } from "sonner";
@@ -75,6 +76,37 @@ export function WorkshopsManager() {
   const [editing, setEditing]       = useState<Workshop | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving]         = useState(false);
+
+  // Deep-link desde el GlobalSearch: `?workshopId=workshop-1&open=1`.
+  // Forzamos vista lista y abrimos el drawer de detalle. Limpiamos los
+  // params para que un back no re-abre el modal.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkedWorkshopId = searchParams.get("workshopId");
+  const openFromLink = searchParams.get("open") === "1";
+  const handledWorkshopLink = useRef<string | null>(null);
+  useEffect(() => {
+    if (!deepLinkedWorkshopId || !openFromLink) return;
+    if (loading) return;
+    if (handledWorkshopLink.current === deepLinkedWorkshopId) return;
+
+    const numId = Number(String(deepLinkedWorkshopId).replace(/^[a-z-]+-/i, ""));
+    const found = workshops.find(
+      (w) => w.id === deepLinkedWorkshopId ||
+        Number(w.id) === numId ||
+        w.id === `workshop-${numId}`,
+    );
+    handledWorkshopLink.current = deepLinkedWorkshopId;
+    if (!found) {
+      if (workshops.length > 0) toast.error("No se encontró el taller solicitado");
+      return;
+    }
+    setView("list");
+    setSelectedId(found.id);
+    const next = new URLSearchParams(searchParams);
+    next.delete("workshopId");
+    next.delete("open");
+    setSearchParams(next, { replace: true });
+  }, [deepLinkedWorkshopId, openFromLink, loading, workshops, searchParams, setSearchParams]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();

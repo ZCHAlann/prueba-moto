@@ -23,6 +23,15 @@ import { useCallback, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
 
+// jul 2026 — Las fotos del acta se imprimen en el PDF, así que las
+// guardamos con más resolución que las fotos de "evidencia" (1280px).
+// Usamos el preset STANDARD (1600px, quality 0.82) para que cuando se
+// rendereen a 220pt de alto en el PDF se vean nítidas y no borrosas.
+const COMPRESS_OPTS_ACTA = {
+  maxImageWidth: 1920,
+  imageQuality: 0.88,
+} as const;
+
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
 /** Tipo de acta que se va a generar. */
@@ -223,20 +232,42 @@ export function useHandoverWizard(
     setData((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  // jul 2026 — Límite del backend = 50 fotos por acta. Lo validamos
+  // acá también para no pegar al server si ya sabemos que va a tirar 400.
+  // El toast lo dispara el caller (HandoerWizard) porque acá no usamos
+  // sonner para mantener el hook genérico.
+  const MAX_ASSIGNMENT_PHOTOS = 50;
+
   const uploadPhotos = useCallback(async (): Promise<string[]> => {
     if (!data.vehiclePhotos.length) return [];
+    if (data.vehiclePhotos.length > MAX_ASSIGNMENT_PHOTOS) {
+      throw new Error(
+        `Máximo ${MAX_ASSIGNMENT_PHOTOS} fotos por acta. Tenés ${data.vehiclePhotos.length}. ` +
+        `Quitá ${data.vehiclePhotos.length - MAX_ASSIGNMENT_PHOTOS} antes de continuar.`,
+      );
+    }
     setUploading(true);
     try {
       const form = new FormData();
       const compressed = await Promise.all(
-        data.vehiclePhotos.map((f) => compressIfImage(f, COMPRESS_OPTS_EVIDENCE))
+        data.vehiclePhotos.map((f) => compressIfImage(f, COMPRESS_OPTS_ACTA))
       );
       compressed.forEach((f) => form.append("photos", f));
       const res = await fetch(
         `/api/upload/assignment-photos?companyId=${companyId}`,
         { method: "POST", body: form },
       );
-      if (!res.ok) throw new Error("Error al subir fotos");
+      if (!res.ok) {
+        // Intentamos leer el mensaje real del backend (cualquiera de
+        // los formatos que el server use: {message}, {error}, {error:{message}}).
+        const body = await res.json().catch(() => null);
+        const backendMsg =
+          body?.message
+          ?? body?.error?.message
+          ?? body?.error
+          ?? `Error ${res.status} al subir fotos`;
+        throw new Error(backendMsg);
+      }
       const { urls } = await res.json();
       setData((prev) => ({ ...prev, vehiclePhotoUrls: urls }));
       return urls as string[];

@@ -8,7 +8,8 @@ import { and, desc, eq, gte, lte, or, sql, count } from 'drizzle-orm';
 import { db } from '../../../db/client';
 import {
   companyMaintenanceRecords, companyMaintenanceEvents,
-  companyMaintenanceItems, companyAssets,
+  companyMaintenanceItems,
+  companyAssets,
 } from '../../../db/schema/operational';
 import { registerOperation, type OperationHandler } from '../router';
 import { resolveAsset, todayYmdEc, parseEntityId } from '../shared';
@@ -706,4 +707,79 @@ export function registerMantenimientosOps() {
   registerOperation({ modulo: 'mantenimientos', operacion: 'nota', scope: 'write',
     summary: 'Agrega una nota al mantenimiento',
     inputSchema: notaInput, handler: nota });
+
+  // jul 2026 — ELIMINAR (hard delete). El GPT ahora puede borrar
+  // mantenimientos que se crearon por error. A diferencia de
+  // `cancelar` (que deja el registro en estado "Cancelado"),
+  // `eliminar` borra la fila y TODOS los items/notas asociados.
+  //
+  // IMPORTANTE: requiere `confirmar: true` en el body (mismo patrón
+  // que /router/eliminar del router unificado, así el GPT no borra
+  // por accidente). Si el mantenimiento está Completado, lo
+  // bloqueamos para no romper reportes/auditoría.
+  // jul 2026 v2 — `motivo` ahora es OPCIONAL. El GPT no siempre
+  // lo manda en la primera llamada (a veces solo tiene el id y
+  // `confirmar=true`). Si no viene, usamos 'Sin motivo especificado'
+  // como default y lo dejamos registrado igual para auditoría.
+  // Antes era required (z.string().min(3)) y rompía con 400 antes
+  // de poder eliminar nada.
+  const eliminarInput = z.object({
+    id: z.union([z.string(), z.number()]),
+    motivo: z.string().min(3).max(500).optional(),
+    confirmar: z.literal(true, {
+      errorMap: () => ({ message: 'Debe confirmar=true literal' }),
+    }),
+  });
+
+  const eliminar: OperationHandler = async (ctx, input) => {
+    const body = eliminarInput.parse(input);
+    const idNum = parseEntityId(body.id, 'maintenance');
+    const motivoFinal = body.motivo?.trim() || 'Sin motivo especificado';
+
+    const [m] = await db.select().from(companyMaintenanceRecords)
+      .where(and(eq(companyMaintenanceRecords.id, idNum), eq(companyMaintenanceRecords.companyId, ctx.companyId)))
+      .limit(1);
+    if (!m) throw new NotFoundError('Mantenimiento', String(body.id));
+    if (m.status === 'Completado') {
+      throw new AppError(409, 'No se puede eliminar un mantenimiento completado. Cancelalo en su lugar.');
+    }
+
+    // Borramos en cascada: primero items (tienen FK al mantenimiento),
+    // después el record. Las "notas" están como COLUMNA `notes` en
+    // companyMaintenanceRecords (no hay tabla separada), así que se
+    // borran junto al record. Lo hacemos en una transacción para que
+    // sea atómico — si algo falla, no quedan items huérfanos.
+    //
+    // jul 2026 v2 — Antes también se hacía delete de
+    // `companyMaintenanceNotes` (tabla inexistente en el schema)
+    // y rompía con "Cannot read properties of undefined (reading
+    // 'maintenanceId')". Eliminado.
+    await db.transaction(async (tx) => {
+      await tx.delete(companyMaintenanceItems).where(eq(companyMaintenanceItems.maintenanceId, idNum));
+      await tx.delete(companyMaintenanceRecords).where(eq(companyMaintenanceRecords.id, idNum));
+    });
+
+    // Si el vehículo estaba "En mantenimiento" por este registro,
+    // lo devolvemos a "Operativo".
+    if (m.assetId) {
+      const [asset] = await db.select({ status: companyAssets.status })
+        .from(companyAssets).where(eq(companyAssets.id, m.assetId)).limit(1);
+      if (asset?.status === 'En mantenimiento') {
+        await db.update(companyAssets)
+          .set({ status: 'Operativo', updatedAt: new Date() })
+          .where(eq(companyAssets.id, m.assetId));
+      }
+    }
+
+    return {
+      id: `maintenance-${idNum}`,
+      titulo: m.title,
+      motivo: motivoFinal,
+      resumenTexto: `Mantenimiento "${m.title}" eliminado. Motivo: ${motivoFinal}.`,
+    };
+  };
+
+  registerOperation({ modulo: 'mantenimientos', operacion: 'eliminar', scope: 'write',
+    summary: 'Elimina un mantenimiento NO completado (requiere confirmar=true).',
+    inputSchema: eliminarInput, handler: eliminar });
 }

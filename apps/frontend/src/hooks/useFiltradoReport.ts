@@ -8,7 +8,7 @@
 //
 // Auto-reset: si el padre cambia de vehículo, los niveles siguientes
 // (módulo, categoría, año, mes, semana, día) se resetean. Mismo si
-// cambia el módulo (categoría/año/mes/semana/día se resetean), etc.
+// cambia el módulo (categoría/año/mes/semana/día se resetean), etc
 //
 // jul 2026 v8 — FIX (reportado por el user): al elegir un vehículo,
 // la columna "Vehículo" desaparecía ("Sin opciones"). Causa:

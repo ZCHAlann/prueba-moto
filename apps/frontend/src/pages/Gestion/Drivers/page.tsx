@@ -1338,7 +1338,7 @@ export default function DriversPage() {
   const [search, setSearch]             = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [page, setPage]                 = useState(1);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // KPI click from EstadisticasTab: read ?kpi= param
   useEffect(() => {
@@ -1377,6 +1377,36 @@ export default function DriversPage() {
   // en el avatar de la fila. Si el driver no tiene user atado
   // (driver.user === null), el IDCardModal no se renderiza.
   const [cardDriver, setCardDriver]               = useState<ApiDriver | null>(null);
+
+  // Deep-link desde el GlobalSearch: `?driverId=driver-1&open=1`.
+  // Forzamos tab "conductores" (no "horario") y abrimos el drawer de
+  // detalle del conductor. Limpiamos params para evitar re-apertura con back.
+  const deepLinkedDriverId = searchParams.get("driverId");
+  const openDriverFromLink = searchParams.get("open") === "1";
+  const handledDriverLink = useRef<string | null>(null);
+  useEffect(() => {
+    if (!deepLinkedDriverId || !openDriverFromLink) return;
+    if (loading) return;
+    if (handledDriverLink.current === deepLinkedDriverId) return;
+
+    const numId = Number(String(deepLinkedDriverId).replace(/^[a-z-]+-/i, ""));
+    const found = drivers.find(
+      (d) => d.id === deepLinkedDriverId ||
+        Number(d.id) === numId ||
+        d.id === `driver-${numId}`,
+    );
+    handledDriverLink.current = deepLinkedDriverId;
+    if (!found) {
+      if (drivers.length > 0) toast.error("No se encontró el conductor solicitado");
+      return;
+    }
+    setActiveTab("conductores");
+    setDrawerDriver(found);
+    const next = new URLSearchParams(searchParams);
+    next.delete("driverId");
+    next.delete("open");
+    setSearchParams(next, { replace: true });
+  }, [deepLinkedDriverId, openDriverFromLink, loading, drivers, searchParams, setSearchParams]);
 
   const { allReports, loadingAll, fetchAll } = useDriverReports(null);
   useEffect(() => { fetchAll(); }, [fetchAll]);

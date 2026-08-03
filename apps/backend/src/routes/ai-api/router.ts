@@ -304,6 +304,10 @@ const eliminarBody = baseBody.extend({
   confirmar: z.literal(true, {
     errorMap: () => ({ message: 'Debe ser true literal' }),
   }),
+  // jul 2026 — motivo es OBLIGATORIO para `mantenimientos/eliminar`
+  // (lo exige el handler para registrar en el log de auditoría).
+  // Para el resto de módulos es opcional pero recomendado.
+  motivo: z.string().min(3).max(500).optional(),
 });
 
 // ── /router/consultar ───────────────────────────────────────────────
@@ -367,9 +371,19 @@ router.post(
       }
     }
 
-    res.json(wrapOk(result, meta));
+    res.json(safeJson(wrapOk(result, meta)));
   }),
 );
+
+// jul 2026 v3 — Helper defensivo: pre-serializa un payload con
+// JSON.stringify/parse para bypassear cualquier `toJSON` custom que
+// dispare `value.toISOString is not a function` (típico cuando
+// drizzle o algún driver mete un proxy o un objeto con `toJSON` que
+// asume Date real). Llamar este helper al final del handler evita
+// que el error se propague al errorHandler como 500 confuso.
+function safeJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value));
+}
 
 // ── /router/crear ────────────────────────────────────────────────────
 router.post(
@@ -496,7 +510,10 @@ router.post(
     }
 
     const id = parsePathId(body.id, body.modulo);
-    const result = await op.handler(ctx, { id, confirmar: true });
+    // jul 2026 — Pasamos `motivo` también (opcional) para que los
+    // handlers que lo exijan (ej. mantenimientos.eliminar) lo reciban
+    // en su `input`.
+    const result = await op.handler(ctx, { id, confirmar: true, motivo: body.motivo });
     res.json(wrapOk(result, { deleted: true }));
   }),
 );

@@ -86,7 +86,8 @@ router.get(
     const today = todayYmdEc();
     const [yStr, mStr] = today.split('-');
     const limit = new Date(Number(yStr), Number(mStr) + 2, 0); // ~60 días
-    const limitStr = limit.toISOString().slice(0, 10);
+    // jul 2026 v7 — endDate es `date` → string YYYY-MM-DD.
+    const limitDate = limit.toISOString().slice(0, 10);
 
     const rows = await db
       .select({
@@ -102,7 +103,7 @@ router.get(
       .where(and(
         eq(companyInsurancePolicies.companyId, companyId),
         gte(companyInsurancePolicies.endDate, today),
-        lte(companyInsurancePolicies.endDate, limitStr),
+        lte(companyInsurancePolicies.endDate, limitDate),
       ))
       .orderBy(companyInsurancePolicies.endDate)
       .limit(50);

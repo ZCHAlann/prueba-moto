@@ -14,11 +14,14 @@ import {
   companyFinanceRequests, companyInvoices,
   companyDriverReports, companyStatsAnomalies,
   companyTollEntries,
+  companyFuelEntries,
+  companyMaintenanceRecords,
 } from '../../../db/schema/operational';
 import { companies, companyUsers, aiApiKeys, aiApiLogs } from '../../../db/schema/platform';
 import { registerOperation, type OperationHandler } from '../router';
 import { resolveAsset, resolveDriver, todayYmdEc, parseEntityId } from '../shared';
 import { AppError, NotFoundError } from '../../../lib/errors';
+import { toId } from '../../../lib/ids';
 
 // ─────────────────────────────────────────────────────────────────────
 //  CONDUCTORES
@@ -470,33 +473,63 @@ const checklistsVencidos: OperationHandler = async (ctx) => {
     .orderBy(companyChecklists.date)
     .limit(100);
 
+  // jul 2026 — Filtramos filas con id null ANTES de mapear, para
+  // evitar el "Cannot convert undefined or null to object" que tira
+  // el wrapper de OpenAI cuando le pasamos un row con id=null.
+  // jul 2026 v2 — También casteamos todas las columnas a string|null
+  // para que el wrapper del OpenAI Actions no se queje cuando venga
+  // un `Date` (windowEnd/scheduledFor) que se serialice raro en
+  // algunos drivers. Y `inspector/driver` ya estaba null-safe.
+  const validRows = rows.filter((r) => r && r.id != null);
+
   return {
-    total: rows.length,
-    checklists: rows.map((r) => ({
-      id: `checklist-${r.id}`,
-      fecha: r.date,
-      vehiculo: r.assetName,
-      placa: r.assetPlate,
-      target: r.targetLabel,
-      targetKind: r.targetKind,
-      ventanaHasta: r.windowEnd,
-      // Inspector (responsable: el user al que se le asignó el checklist)
-      inspector: r.inspectorId ? {
-        id: toId('company-user', r.inspectorId),
-        nombre: [r.inspectorFirst, r.inspectorLast].filter(Boolean).join(' ') || null,
-        email: r.inspectorEmail ?? null,
-        rol: r.inspectorRole ?? null,
-      } : null,
-      // Conductor del vehículo (puede ser null si el target no es el vehículo)
-      conductor: r.driverId ? {
-        id: toId('driver', r.driverId),
-        nombre: [r.driverFirst, r.driverLast].filter(Boolean).join(' ') || null,
-        codigo: r.driverCode ?? null,
-      } : null,
-    })),
-    resumenTexto: rows.length === 0
+    total: validRows.length,
+    checklists: validRows.map((r) => {
+      // Defensivo: `windowEnd` puede venir como Date (driver postgres
+      // mapea `date` a JS Date), string YYYY-MM-DD, string ISO 8601, o
+      // null. Lo normalizamos a string YYYY-MM-DD o null. Si viene
+      // como Date, .toISOString() funciona; si viene como string,
+      // .slice(0,10) alcanza; si es cualquier otra cosa (número,
+      // booleano), caemos al String().
+      let ventanaHastaStr: string | null = null;
+      if (r.windowEnd instanceof Date) {
+        ventanaHastaStr = r.windowEnd.toISOString().slice(0, 10);
+      } else if (typeof r.windowEnd === 'string') {
+        ventanaHastaStr = r.windowEnd.slice(0, 10);
+      } else if (r.windowEnd != null) {
+        ventanaHastaStr = String(r.windowEnd).slice(0, 10);
+      }
+      return {
+        id: `checklist-${r.id}`,
+        // Forzamos strings para que el JSON.stringify del wrapper de
+        // OpenAI no reciba Date objects (algunos drivers de V8 + Node 24
+        // convierten Date a `Tue May 05 2026 20:43:33 GMT+0000` y el
+        // cliente Actions del GPT tira "Cannot convert undefined or null
+        // to object" cuando hace Object.keys sobre el payload).
+        fecha:    r.date    ? String(r.date).slice(0, 10)  : null,
+        ventanaHasta: ventanaHastaStr,
+        vehiculo: r.assetName ?? null,
+        placa: r.assetPlate,
+        target: r.targetLabel,
+        targetKind: r.targetKind,
+        // Inspector (responsable: el user al que se le asignó el checklist)
+        inspector: r.inspectorId ? {
+          id: toId('company-user', r.inspectorId),
+          nombre: [r.inspectorFirst, r.inspectorLast].filter(Boolean).join(' ') || null,
+          email: r.inspectorEmail ?? null,
+          rol: r.inspectorRole ?? null,
+        } : null,
+        // Conductor del vehículo (puede ser null si el target no es el vehículo)
+        conductor: r.driverId ? {
+          id: toId('driver', r.driverId),
+          nombre: [r.driverFirst, r.driverLast].filter(Boolean).join(' ') || null,
+          codigo: r.driverCode ?? null,
+        } : null,
+      };
+    }),
+    resumenTexto: validRows.length === 0
       ? 'No hay checklists vencidos.'
-      : `Hay ${rows.length} checklist(s) vencido(s) que requieren reautorización.`,
+      : `Hay ${validRows.length} checklist(s) vencido(s) que requieren reautorización.`,
   };
 };
 
@@ -1038,11 +1071,22 @@ const cajaChicaMovimientos: OperationHandler = async (ctx, input) => {
 // dinero). El backend solo crea el movimiento en el log append-only; el
 // trigger SQL actualiza el currentBalance.
 const cajaChicaReponerInput = z.object({
-  id: z.union([z.string(), z.number()]).optional(),
-  cuenta: z.string().optional(),
+  id:           z.union([z.string(), z.number()]).optional(),
+  cuenta:       z.string().optional(),
+  // jul 2026 — Aceptamos aliases por si el GPT manda "cuentaId" o
+  // "pettyCashId" (campos más semánticos). El backend los unifica
+  // con `id`/`cuenta` antes de buscar la cuenta.
+  cuentaId:     z.union([z.string(), z.number()]).optional(),
+  pettyCashId:  z.union([z.string(), z.number()]).optional(),
   monto: z.coerce.number().positive().max(1000000),
   nota: z.string().min(3).max(280),
-}).refine((d) => d.id !== undefined || d.cuenta !== undefined, {
+}).transform((d) => ({
+  // Normalizamos: cuentaId/pettyCashId → id.
+  id:     d.id     ?? d.cuentaId ?? d.pettyCashId,
+  cuenta: d.cuenta ?? d.cuentaId ?? d.pettyCashId,
+  monto:  d.monto,
+  nota:   d.nota,
+})).refine((d) => d.id !== undefined || d.cuenta !== undefined, {
   message: 'Falta "id" o "cuenta" (la cuenta a reponer)',
 });
 
@@ -1285,12 +1329,22 @@ const facturasStats: OperationHandler = async (ctx) => {
 
 const dashboard: OperationHandler = async (ctx) => {
   const today = todayYmdEc();
+  // Wrappeamos cada query en try/catch para que un fallo de UNA no rompa
+  // el dashboard entero (ej. columna null en una fila legacy). Cada una
+  // devuelve su default (array vacio) si falla, y el handler sigue.
+  async function safe<T>(label: string, fn: () => Promise<T>, def: T): Promise<T> {
+    try { return await fn(); } catch (err) {
+      console.warn(`[dashboard] ${label} falló:`, (err as Error).message);
+      return def;
+    }
+  }
+
   const [assetCounts, alertsOpen, maintToday, maintOverdue] = await Promise.all([
-    db.select({ status: companyAssets.status, n: count() })
+    safe('assetCounts', () => db.select({ status: companyAssets.status, n: count() })
       .from(companyAssets)
       .where(eq(companyAssets.companyId, ctx.companyId))
-      .groupBy(companyAssets.status),
-    db.select({ n: count() })
+      .groupBy(companyAssets.status), []),
+    safe('alertsOpen', () => db.select({ n: count() })
       .from(companyAlerts)
       .where(and(
         eq(companyAlerts.companyId, ctx.companyId),
@@ -1300,28 +1354,26 @@ const dashboard: OperationHandler = async (ctx) => {
           eq(companyAlerts.status, 'En progreso'),
           isNull(companyAlerts.status),
         )!,
-      )),
-    db.select({ n: count() })
+      )), []),
+    // checklists PENDIENTES con fecha <= hoy -> son los "vencidos" del
+    // dia. Usamos `lte` en vez de template SQL DATE() para evitar
+    // problemas de coerce entre drizzle y postgres cuando la columna
+    // ya es tipo `date`.
+    safe('maintToday', () => db.select({ n: count() })
       .from(companyChecklists)
       .where(and(
         eq(companyChecklists.companyId, ctx.companyId),
         eq(companyChecklists.status, 'Pendiente'),
-        sql`DATE(${companyChecklists.date}) = ${today}::date`,
-      )),
-    db.select({ n: count() })
+        lte(companyChecklists.date, today),
+      )), []),
+    safe('maintOverdue', () => db.select({ n: count() })
       .from(companyChecklists)
       .where(and(
         eq(companyChecklists.companyId, ctx.companyId),
-        eq(companyChecklists.status, 'Vencido'),
-      )),
+        eq(companyChecklists.status, 'Pendiente'),
+        lt(companyChecklists.date, today),
+      )), []),
   ]);
-
-  // El "mantenimientos atrasados" se calcula en el módulo mantenimientos
-  // pero el dashboard lo necesita. Lo hacemos en línea.
-  const maintOverdueRows = await db.select({ n: count() })
-    .from(companyInvoices) // placeholder, no se usa; lo sobreescribimos
-    .where(eq(companyInvoices.companyId, ctx.companyId));
-  void maintOverdueRows;
 
   const vehOp = assetCounts.find((r) => r.status === 'Operativo')?.n ?? 0;
   const vehMant = assetCounts.find((r) => r.status === 'En mantenimiento')?.n ?? 0;
@@ -1335,7 +1387,7 @@ const dashboard: OperationHandler = async (ctx) => {
     `${vehMant} en mantenimiento`,
     `${vehFuera} fuera de servicio.`,
     alertasCriticas > 0 ? ` Hay ${alertasCriticas} alertas críticas abiertas.` : ' Sin alertas críticas.',
-    checklistsVenc > 0 ? `${checklistsVenc} checklists vencidos requieren atención.` : ' Sin checklists vencidos.',
+    checklistsVenc > 0 ? `${checklistsVenc} checklists pendientes con fecha pasada.` : ' Sin checklists atrasados.',
   ].join(',');
 
   return {
@@ -1343,8 +1395,8 @@ const dashboard: OperationHandler = async (ctx) => {
     vehiculosEnMantenimiento: vehMant,
     vehiculosFueraDeServicio: vehFuera,
     alertasCriticasAbiertas: alertasCriticas,
-    mantenimientosPendientesHoy: 0,    // simplificado
-    mantenimientosAtrasados: 0,        // simplificado
+    mantenimientosPendientesHoy: checklistsHoy,
+    mantenimientosAtrasados: checklistsVenc,
     checklistsVencidos: checklistsVenc,
     resumenTexto,
   };
@@ -1373,8 +1425,11 @@ const analyticsFlota: OperationHandler = async (ctx) => {
 
 const analyticsMantenimiento: OperationHandler = async (ctx) => {
   const today = todayYmdEc();
-  // monthStart como Date (medianoche UTC del primer dia del mes) en vez de
-  // string, para que Drizzle compare bien con createdAt (timestamp).
+  // jul 2026 v7 — companyFinanceRequests.createdAt es `timestamp`.
+  // Pasamos Date object (drizzle llama .toISOString() internamente
+  // y postgres.js NO acepta Date directo al wire, pero drizzle
+  // formatea antes). Si pasaramos un string pelado, drizzle tira
+  // "value.toISOString is not a function".
   const monthStartDate = new Date(`${today.slice(0, 7)}-01T00:00:00.000Z`);
   const todayDate = new Date(`${today}T23:59:59.999Z`);
 
@@ -1419,8 +1474,13 @@ const analyticsMantenimiento: OperationHandler = async (ctx) => {
 
 const analyticsCombustible: OperationHandler = async (ctx) => {
   const today = todayYmdEc();
-  const monthStartDate = new Date(`${today.slice(0, 7)}-01T00:00:00.000Z`);
-  const todayDate = new Date(`${today}T23:59:59.999Z`);
+  // jul 2026 v7 — companyFuelEntries.date es `date` (NO `timestamp`).
+  // Drizzle espera string YYYY-MM-DD en columnas `date`. Si pasamos
+  // Date, drizzle llama .toISOString() → ISO 8601 → postgres lo
+  // interpreta bien, pero no es lo más limpio. Para `date` usamos
+  // string YYYY-MM-DD.
+  const monthStartDate = `${today.slice(0, 7)}-01`;
+  const todayDate = today;
 
   const [agg, porVehiculo, porEstacion] = await Promise.all([
     db.select({
@@ -1483,9 +1543,11 @@ const analyticsCombustible: OperationHandler = async (ctx) => {
 // completados vs asignados, alertas activas que apuntan a él.
 const conductoresCumplimiento: OperationHandler = async (ctx) => {
   const D30 = 30 * 24 * 60 * 60 * 1000;
+  // jul 2026 v7 — companyChecklists.createdAt es `timestamp`.
+  // Pasamos Date object (drizzle lo formatea a ISO antes del wire).
   const c30 = new Date(Date.now() - D30);
 
-  const [total, conAsignacion, cumplieronA, tiempo, vencidos, alertas] = await Promise.all([
+  const [total, conAsignacion, cumplieronA, tiempo, vencidos, alertas, porConductor] = await Promise.all([
     db.select({ n: count() }).from(companyDrivers).where(eq(companyDrivers.companyId, ctx.companyId)),
     db.select({ n: count() }).from(companyAssignments)
       .where(and(eq(companyAssignments.companyId, ctx.companyId), eq(companyAssignments.status, 'Activa'))),
@@ -1513,6 +1575,30 @@ const conductoresCumplimiento: OperationHandler = async (ctx) => {
         eq(companyAlerts.companyId, ctx.companyId),
         eq(companyAlerts.status, 'Activa'),
       )),
+    // jul 2026 — Detalle por conductor. LEFT JOIN a companyChecklists
+    // agrupado por driverId. Si el conductor no tiene checklists en el
+    // período, lo listamos igual con totales en 0 para que el GPT
+    // pueda presentar la tabla completa.
+    db.select({
+      driverId:        companyDrivers.id,
+      driverFirst:     companyDrivers.firstName,
+      driverLast:      companyDrivers.lastName,
+      driverCode:      companyDrivers.code,
+      driverStatus:    companyDrivers.status,
+      total:           sql<number>`COUNT(${companyChecklists.id})::int`,
+      aTiempo:         sql<number>`COUNT(${companyChecklists.id}) FILTER (WHERE ${companyChecklists.isLate} = false OR ${companyChecklists.isLate} IS NULL)::int`,
+      vencidos:        sql<number>`COUNT(${companyChecklists.id}) FILTER (WHERE ${companyChecklists.status} = 'Vencido')::int`,
+    })
+    .from(companyDrivers)
+    .leftJoin(companyChecklists, and(
+      eq(companyChecklists.driverId, companyDrivers.id),
+      eq(companyChecklists.companyId, ctx.companyId),
+      gte(companyChecklists.createdAt, c30),
+    ))
+    .where(eq(companyDrivers.companyId, ctx.companyId))
+    .groupBy(companyDrivers.id, companyDrivers.firstName, companyDrivers.lastName, companyDrivers.code, companyDrivers.status)
+    .orderBy(sql`COUNT(${companyChecklists.id}) FILTER (WHERE ${companyChecklists.status} = 'Vencido') DESC NULLS LAST`)
+    .limit(50),
   ]);
 
   const nTotal = Number(total[0]?.n ?? 0);
@@ -1522,7 +1608,27 @@ const conductoresCumplimiento: OperationHandler = async (ctx) => {
   const pctAsignados = nTotal > 0 ? Math.round((nAsignados / nTotal) * 100) : 0;
   const pctA = nA + nV > 0 ? Math.round((nA / (nA + nV)) * 100) : 100;
 
-  return {
+  // jul 2026 v3 — Pre-serializamos con JSON.stringify para que cualquier
+  // valor no-string (Date, BigInt, NaN, Infinity) se convierta a string
+  // ANTES de salir al wire. Sin esto, el wrapper de OpenAI Actions tira
+  // "value.toISOString is not a function" o "Cannot convert undefined or
+  // null to object" en algunos drivers de Node 24.
+  const detallePorConductor = JSON.parse(JSON.stringify(
+    porConductor.map((d) => ({
+      id: toId('driver', d.driverId),
+      nombre: [d.driverFirst, d.driverLast].filter(Boolean).join(' ') || '(sin nombre)',
+      codigo: d.driverCode ?? null,
+      estado: d.driverStatus ?? null,
+      checklistsTotal:    Number(d.total)    || 0,
+      checklistsATiempo:  Number(d.aTiempo)  || 0,
+      checklistsVencidos: Number(d.vencidos) || 0,
+      porcentajeCumplimiento: (Number(d.total) || 0) > 0
+        ? Math.round((Number(d.aTiempo) / Number(d.total)) * 100)
+        : null,
+    })),
+  ));
+
+  const payload = {
     periodo: 'ultimos_30_dias',
     totales: {
       conductores: nTotal,
@@ -1535,16 +1641,22 @@ const conductoresCumplimiento: OperationHandler = async (ctx) => {
       vencidos: nV,
       porcentaje: pctA,
     },
+    detallePorConductor,
     alertasActivas: Number(alertas[0]?.n ?? 0),
     coberturaAsignacion: pctAsignados,
     resumenTexto: `Cumplimiento de conductores: ${pctA}% checklists a tiempo (${nA} de ${nA + nV}), ${nAsignados}/${nTotal} con asignación activa.`,
   };
+
+  // Pre-serializamos TODO el payload para forzar la conversión de
+  // cualquier Date/BigInt raro a string antes de salir al wire.
+  return JSON.parse(JSON.stringify(payload));
 };
 
 // Cumplimiento de checklists: total, a tiempo vs vencidos, % por categoría
 // o por vehículo. Sirve para responder "como vamos con los checklists".
 const checklistsCumplimiento: OperationHandler = async (ctx) => {
   const D30 = 30 * 24 * 60 * 60 * 1000;
+  // jul 2026 v7 — companyChecklists.createdAt es `timestamp`.
   const c30 = new Date(Date.now() - D30);
 
   const [porStatus, vencidos30, total30, tarde30] = await Promise.all([
@@ -1613,8 +1725,18 @@ const analyticsSaludVehiculos: OperationHandler = async (ctx) => {
   for (let i = 0; i < rows.length; i += batchSize) {
     const batch = rows.slice(i, i + batchSize);
     const scores = await Promise.all(batch.map(async (a) => {
-      const c = await calidadVehiculo(ctx.companyId, a.id);
-      return { id: a.id, code: a.code, name: a.name, score: c.score, estado: c.score >= 80 ? 'bueno' : c.score >= 60 ? 'aceptable' : c.score >= 40 ? 'atencion' : 'critico' };
+      try {
+        const c = await calidadVehiculo(ctx.companyId, a.id);
+        const score = Number(c?.score ?? 0);
+        const estado = score >= 80 ? 'bueno' : score >= 60 ? 'aceptable' : score >= 40 ? 'atencion' : 'critico';
+        return { id: a.id, code: a.code ?? '', name: a.name ?? '', score, estado, alertas: 0 };
+      } catch (innerErr) {
+        // Si calidadVehiculo falla para UN vehiculo (ej. columna null en
+        // una fila legacy), seguimos con los demas en vez de romper el
+        // batch entero. Logueamos para que el operador lo vea.
+        console.warn(`[analytics.salud_vehiculos] calidadVehiculo falló para asset ${a.id}:`, (innerErr as Error).message);
+        return { id: a.id, code: a.code ?? '', name: a.name ?? '', score: 0, estado: 'critico' as const, alertas: 1 };
+      }
     }));
     result.push(...scores);
   }
@@ -1636,7 +1758,16 @@ const analyticsSaludVehiculos: OperationHandler = async (ctx) => {
 // es mas eficiente".
 const analyticsEficienciaFlota: OperationHandler = async (ctx) => {
   const D90 = 90 * 24 * 60 * 60 * 1000;
-  const c90 = new Date(Date.now() - D90);
+  // jul 2026 v7 — Regla de tipos en drizzle:
+  //   - Columna `timestamp`: Date object (drizzle llama .toISOString()
+  //     internamente y manda ISO 8601 al wire de postgres.js).
+  //   - Columna `date`: string YYYY-MM-DD (drizzle espera string,
+  //     no Date — para esas columnas, mapToDriverValue NO llama
+  //     .toISOString() sino que parsea el string).
+  // Pasamos un Date base y derivamos los dos formatos.
+  const c90Base = new Date(Date.now() - D90);
+  const c90Ts   = c90Base;  // companyMaintenanceRecords.completedAt (timestamp)
+  const c90Date = c90Base.toISOString().slice(0, 10); // companyFuelEntries.date / companyTollEntries.date (date)
 
   // Top 10 vehiculos por costo total en 90 días (mant + fuel + tolls)
   const [mntCost, fuelCost, tollCost, fuel] = await Promise.all([
@@ -1647,7 +1778,7 @@ const analyticsEficienciaFlota: OperationHandler = async (ctx) => {
       .from(companyMaintenanceRecords)
       .where(and(
         eq(companyMaintenanceRecords.companyId, ctx.companyId),
-        gte(companyMaintenanceRecords.completedAt, c90),
+        gte(companyMaintenanceRecords.completedAt, c90Ts),
       ))
       .groupBy(companyMaintenanceRecords.assetId),
     db.select({
@@ -1659,7 +1790,7 @@ const analyticsEficienciaFlota: OperationHandler = async (ctx) => {
       .from(companyFuelEntries)
       .where(and(
         eq(companyFuelEntries.companyId, ctx.companyId),
-        gte(companyFuelEntries.date, c90),
+        gte(companyFuelEntries.date, c90Date),
       ))
       .groupBy(companyFuelEntries.assetId),
     db.select({
@@ -1669,7 +1800,7 @@ const analyticsEficienciaFlota: OperationHandler = async (ctx) => {
       .from(companyTollEntries)
       .where(and(
         eq(companyTollEntries.companyId, ctx.companyId),
-        gte(companyTollEntries.date, c90),
+        gte(companyTollEntries.date, c90Date),
       ))
       .groupBy(companyTollEntries.assetId),
     db.select({
@@ -1679,7 +1810,7 @@ const analyticsEficienciaFlota: OperationHandler = async (ctx) => {
       .from(companyFuelEntries)
       .where(and(
         eq(companyFuelEntries.companyId, ctx.companyId),
-        gte(companyFuelEntries.date, c90),
+        gte(companyFuelEntries.date, c90Date),
       ))
       .groupBy(companyFuelEntries.assetId),
   ]);
@@ -1716,12 +1847,23 @@ const analyticsEficienciaFlota: OperationHandler = async (ctx) => {
 // Compara dos períodos lado a lado. Por defecto mes actual vs mes anterior.
 // Devuelve deltas absolutos y porcentuales.
 const analyticsComparacionPeriodo: OperationHandler = async (ctx) => {
-  const today = todayYmdEc();
-  const thisMonthStart = today.slice(0, 7) + '-01';
-  const [y, m] = thisMonthStart.split('-').map(Number);
-  const lastMonthDate = new Date(Date.UTC(y, m - 2, 1));
-  const lastMonthStart = lastMonthDate.toISOString().slice(0, 10);
-  const lastMonthEnd = new Date(Date.UTC(y, m - 1, 0)).toISOString().slice(0, 10);
+  const today = todayYmdEc(); // "YYYY-MM-DD" string (para la respuesta)
+  const [y, m] = today.split('-').map(Number);
+  // jul 2026 v7 — drizzle: `date` cols = string YYYY-MM-DD,
+  // `timestamp` cols = Date object.
+  // companyFuelEntries.date → `date` → string
+  // companyMaintenanceRecords.createdAt → `timestamp` → Date
+  const prevMonth = m === 1 ? 12 : m - 1;
+  const prevYear  = m === 1 ? y - 1 : y;
+  const thisMonthStartDate = `${y}-${String(m).padStart(2, '0')}-01`;
+  const lastMonthStartDate = `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`;
+  // último día del mes anterior = día 0 del mes actual
+  const lastDayPrev = new Date(Date.UTC(y, m - 1, 0)).getUTCDate();
+  const lastMonthEndDate   = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(lastDayPrev).padStart(2, '0')}`;
+  // Versiones Date para columnas `timestamp`:
+  const thisMonthStartTs   = new Date(`${thisMonthStartDate}T00:00:00.000Z`);
+  const lastMonthStartTs   = new Date(`${lastMonthStartDate}T00:00:00.000Z`);
+  const lastMonthEndTs     = new Date(`${lastMonthEndDate}T23:59:59.999Z`);
 
   const [thisFuel, lastFuel, thisMnt, lastMnt] = await Promise.all([
     db.select({
@@ -1731,7 +1873,7 @@ const analyticsComparacionPeriodo: OperationHandler = async (ctx) => {
       .from(companyFuelEntries)
       .where(and(
         eq(companyFuelEntries.companyId, ctx.companyId),
-        gte(companyFuelEntries.date, thisMonthStart),
+        gte(companyFuelEntries.date, thisMonthStartDate),
         lte(companyFuelEntries.date, today),
       )),
     db.select({
@@ -1741,8 +1883,8 @@ const analyticsComparacionPeriodo: OperationHandler = async (ctx) => {
       .from(companyFuelEntries)
       .where(and(
         eq(companyFuelEntries.companyId, ctx.companyId),
-        gte(companyFuelEntries.date, lastMonthStart),
-        lte(companyFuelEntries.date, lastMonthEnd),
+        gte(companyFuelEntries.date, lastMonthStartDate),
+        lte(companyFuelEntries.date, lastMonthEndDate),
       )),
     db.select({
       total: sql<string>`COALESCE(SUM(${companyMaintenanceRecords.totalCost}), 0)::text`,
@@ -1751,7 +1893,8 @@ const analyticsComparacionPeriodo: OperationHandler = async (ctx) => {
       .from(companyMaintenanceRecords)
       .where(and(
         eq(companyMaintenanceRecords.companyId, ctx.companyId),
-        gte(companyMaintenanceRecords.createdAt, new Date(thisMonthStart)),
+        // `createdAt` es `timestamp`: ISO 8601.
+        gte(companyMaintenanceRecords.createdAt, thisMonthStartTs),
       )),
     db.select({
       total: sql<string>`COALESCE(SUM(${companyMaintenanceRecords.totalCost}), 0)::text`,
@@ -1760,8 +1903,9 @@ const analyticsComparacionPeriodo: OperationHandler = async (ctx) => {
       .from(companyMaintenanceRecords)
       .where(and(
         eq(companyMaintenanceRecords.companyId, ctx.companyId),
-        gte(companyMaintenanceRecords.createdAt, new Date(lastMonthStart)),
-        lte(companyMaintenanceRecords.createdAt, new Date(lastMonthEnd + 'T23:59:59.999Z')),
+        // `createdAt` es `timestamp`: ISO 8601.
+        gte(companyMaintenanceRecords.createdAt, lastMonthStartTs),
+        lte(companyMaintenanceRecords.createdAt, lastMonthEndTs),
       )),
   ]);
 
@@ -1774,7 +1918,7 @@ const analyticsComparacionPeriodo: OperationHandler = async (ctx) => {
   };
 
   return {
-    periodos: { actual: { desde: thisMonthStart, hasta: today }, anterior: { desde: lastMonthStart, hasta: lastMonthEnd } },
+    periodos: { actual: { desde: thisMonthStartDate, hasta: today }, anterior: { desde: lastMonthStartDate, hasta: lastMonthEndDate } },
     combustible: build(thisFuel[0] ?? { total: '0', galones: '0' }, lastFuel[0] ?? { total: '0', galones: '0' }, 'combustible'),
     mantenimiento: build(thisMnt[0] ?? { total: '0', registros: 0 }, lastMnt[0] ?? { total: '0', registros: 0 }, 'mantenimiento'),
     resumenTexto: `Mes actual vs mes anterior: combustible ${Number(thisFuel[0]?.total ?? 0)} vs ${Number(lastFuel[0]?.total ?? 0)}, mantenimiento ${Number(thisMnt[0]?.total ?? 0)} vs ${Number(lastMnt[0]?.total ?? 0)}.`,
@@ -1823,15 +1967,21 @@ const analyticsTopRiesgos: OperationHandler = async (ctx) => {
 // Tendencias: serie de los últimos 6 meses para mantenimiento y combustible.
 // Sirve para responder "vamos para arriba o para abajo en costos?".
 const analyticsTendencias: OperationHandler = async (ctx) => {
-  const months: { desde: string; hasta: string; label: string }[] = [];
+  // jul 2026 v7 — drizzle: `date` cols = string YYYY-MM-DD,
+  // `timestamp` cols = Date object.
+  const months: { desdeTs: Date; hastaTs: Date; desdeDate: string; hastaDate: string; label: string }[] = [];
   const now = new Date();
   for (let i = 5; i >= 0; i--) {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
     const next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
-    const desde = d.toISOString().slice(0, 10);
-    const hasta = new Date(next.getTime() - 86400000).toISOString().slice(0, 10);
-    const label = desde.slice(0, 7);
-    months.push({ desde, hasta, label });
+    const lastDay = new Date(next.getTime() - 86400000);
+    months.push({
+      desdeTs:   d,                                                    // Date para timestamp
+      hastaTs:   new Date(Date.UTC(lastDay.getUTCFullYear(), lastDay.getUTCMonth(), lastDay.getUTCDate(), 23, 59, 59, 999)),
+      desdeDate: d.toISOString().slice(0, 10),                          // YYYY-MM-DD para date
+      hastaDate: lastDay.toISOString().slice(0, 10),
+      label:     d.toISOString().slice(0, 7),
+    });
   }
 
   const serie = await Promise.all(months.map(async (m) => {
@@ -1840,15 +1990,15 @@ const analyticsTendencias: OperationHandler = async (ctx) => {
         .from(companyMaintenanceRecords)
         .where(and(
           eq(companyMaintenanceRecords.companyId, ctx.companyId),
-          gte(companyMaintenanceRecords.createdAt, new Date(m.desde)),
-          lt(companyMaintenanceRecords.createdAt, new Date(m.hasta + 'T23:59:59.999Z')),
+          gte(companyMaintenanceRecords.createdAt, m.desdeTs),
+          lte(companyMaintenanceRecords.createdAt, m.hastaTs),
         )),
       db.select({ total: sql<string>`COALESCE(SUM(${companyFuelEntries.cost}), 0)::text` })
         .from(companyFuelEntries)
         .where(and(
           eq(companyFuelEntries.companyId, ctx.companyId),
-          gte(companyFuelEntries.date, m.desde),
-          lte(companyFuelEntries.date, m.hasta),
+          gte(companyFuelEntries.date, m.desdeDate),
+          lte(companyFuelEntries.date, m.hastaDate),
         )),
     ]);
     return { mes: m.label, mantenimiento: Number(mnt[0]?.total ?? 0), combustible: Number(fuel[0]?.total ?? 0) };
@@ -1874,8 +2024,9 @@ const analyticsTendencias: OperationHandler = async (ctx) => {
 const analyticsRecomendaciones: OperationHandler = async (ctx) => {
   const today = todayYmdEc();
   const D7 = 7 * 24 * 60 * 60 * 1000;
+  // jul 2026 v7 — companyMaintenanceRecords.scheduledFor es `timestamp` → Date object.
   const c7 = new Date(Date.now() - D7);
-  const todayDate = new Date(today);
+  const todayDate = new Date(today + 'T00:00:00.000Z');
 
   const [fsin, atrasados, sinAsignar, alertasCrit] = await Promise.all([
     db.select({ id: companyAssets.id, name: companyAssets.name, code: companyAssets.code, updatedAt: companyAssets.updatedAt })
@@ -1898,8 +2049,15 @@ const analyticsRecomendaciones: OperationHandler = async (ctx) => {
       .from(companyAlerts)
       .where(and(
         eq(companyAlerts.companyId, ctx.companyId),
-        eq(companyAlerts.status, 'Activa'),
-        inArray(companyAlerts.severity, ['critica', 'alta']),
+        or(
+          eq(companyAlerts.status, 'Abierta'),
+          eq(companyAlerts.status, 'En progreso'),
+          isNull(companyAlerts.status),
+        )!,
+        or(
+          eq(companyAlerts.severity, 'Alta'),
+          eq(companyAlerts.severity, 'Critica'),
+        )!,
       )),
   ]);
 
@@ -1947,6 +2105,7 @@ const sesion: OperationHandler = async (ctx) => {
 
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
+  // jul 2026 v7 — aiApiLogs.createdAt es `timestamp` → Date object.
   const [todayCount] = await db.select({ n: sql<number>`COUNT(*)::int` })
     .from(aiApiLogs)
     .where(and(eq(aiApiLogs.keyId, ctx.keyId), gte(aiApiLogs.createdAt, today)));

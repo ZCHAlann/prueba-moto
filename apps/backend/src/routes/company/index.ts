@@ -56,6 +56,7 @@ import financeInvoiceReviewsRouter from './finance-invoice-reviews';
 import companyAiSettingsRouter from './ai-settings';
 import whatsappSettingsRouter from './whatsapp-settings';
 import chatRouter from './chat';
+import searchRouter from './search';
 
 const router = Router({ mergeParams: true });
 
@@ -168,6 +169,11 @@ router.use('/finance', financeInvoiceReviewsRouter);
 //   - POST /agent/proposals/expire-stale
 // router.use('/agent', agentRouter);  ← jul 2026 v6: borrado, era selfhosted
 router.use('/chat', chatRouter);
+
+// jul 2026 v6 — Buscador global. El frontend (header) lo consume
+// para el input "Search or type command...". Devuelve hits en
+// múltiples módulos con un href que navega al detalle correspondiente.
+router.use('/search', searchRouter);
 
 // ── IA multi-tenant (jul 2026 v6) ────────────────────────────────────────────
 // IMPORTANTE: este router se monta SIN prefijo, lo que hace que Express

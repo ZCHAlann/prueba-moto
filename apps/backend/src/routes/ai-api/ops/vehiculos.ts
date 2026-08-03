@@ -9,7 +9,7 @@ import { db } from '../../../db/client';
 import {
   companyAssets, companyAlerts, companyMaintenanceRecords,
   companyFuelEntries, companyTollEntries, assetNotes,
-  companyOdometerReadings,
+  companyOdometerReadings, companyChecklists,
 } from '../../../db/schema/operational';
 import {
   registerOperation, type OperationHandler,
@@ -123,7 +123,7 @@ const detalle: OperationHandler = async (ctx, input) => {
     color: asset.color,
     kmActual: ultCarga[0] ? Number(ultCarga[0].odometer ?? 0) : null,
     alertasActivas: alertas.map((a) => ({
-      id: `alert-${a.id}`, titulo: a.title, severidad: a.severidad, status: a.status,
+      id: `alert-${a.id}`, titulo: a.title, severidad: a.severity, status: a.status,
     })),
     proximoMantenimiento: proxMaint[0] ? {
       id: `maintenance-${proxMaint[0].id}`,
@@ -140,18 +140,42 @@ const detalle: OperationHandler = async (ctx, input) => {
 };
 
 // ── CREAR ─────────────────────────────────────────────────────────────
+// jul 2026 — Aceptamos aliases de los campos porque el GPT usa
+// INSTRUCCIONES que hablan de "titulo/code/placa" pero el schema
+// interno de la DB usa "nombre/codigo/placa". Si llega `titulo`,
+// lo tratamos como `nombre`. Si llega `code`, como `codigo`.
 const crearInput = z.object({
-  nombre: z.string().min(2).max(160),
-  codigo: z.string().min(1).max(40),
-  placa: z.string().max(40).optional(),
-  anio: z.string().max(10).optional(),
-  marca: z.string().max(120).optional(),
-  modelo: z.string().max(120).optional(),
-  color: z.string().max(60).optional(),
+  nombre:  z.string().min(2).max(160).optional(),
+  titulo:  z.string().min(2).max(160).optional(),
+  codigo:  z.string().min(1).max(40).optional(),
+  code:    z.string().min(1).max(40).optional(),
+  placa:   z.string().max(40).optional(),
+  plate:   z.string().max(40).optional(),
+  anio:    z.string().max(10).optional(),
+  year:    z.string().max(10).optional(),
+  marca:   z.string().max(120).optional(),
+  brand:   z.string().max(120).optional(),
+  modelo:  z.string().max(120).optional(),
+  model:   z.string().max(120).optional(),
+  color:   z.string().max(60).optional(),
+  vin:     z.string().max(40).optional(),
   assetType: z.enum(['Vehiculo', 'Maquinaria', 'Equipo']).default('Vehiculo'),
-  fuelType: z.enum(['Gasolina', 'Diesel', 'Electrico', 'Hibrido', 'Gas']).optional(),
+  fuelType:  z.enum(['Gasolina', 'Diesel', 'Electrico', 'Hibrido', 'Gas']).optional(),
   responsible: z.string().max(160).optional(),
-});
+}).transform((d) => ({
+  nombre:  d.nombre  ?? d.titulo  ?? '',
+  codigo:  d.codigo  ?? d.code    ?? '',
+  placa:   d.placa   ?? d.plate   ?? null,
+  anio:    d.anio    ?? d.year    ?? null,
+  marca:   d.marca   ?? d.brand   ?? null,
+  modelo:  d.modelo  ?? d.model   ?? null,
+  color:   d.color   ?? null,
+  vin:     d.vin     ?? null,
+  assetType: d.assetType,
+  fuelType:  d.fuelType ?? null,
+  responsible: d.responsible ?? null,
+})).refine((d) => d.nombre.length >= 2, { message: 'El nombre del vehiculo es requerido (o titulo como alias)', path: ['nombre'] })
+  .refine((d) => d.codigo.length >= 1,    { message: 'El codigo del vehiculo es requerido (o code como alias)', path: ['codigo'] });
 
 const crear: OperationHandler = async (ctx, input) => {
   const body = crearInput.parse(input);

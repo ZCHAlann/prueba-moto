@@ -114,6 +114,10 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
 
   console.error('[errorHandler]', req.method, req.originalUrl, '→', err?.message, err?.code);
   console.error('[errorHandler] cause:', err?.cause)
+  if (err?.stack) {
+    console.error('[errorHandler] stack:');
+    console.error(err.stack.split('\n').slice(0, 8).join('\n'));
+  }
 
   if (err instanceof ValidationError) {
     return res.status(err.status).json({

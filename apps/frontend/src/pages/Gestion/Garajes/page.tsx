@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import { useAssets } from "../../../hooks/useAssets";
@@ -313,6 +314,36 @@ export function GaragesPage() {
   const [drawerGarageId, setDrawerGarageId] = useState<string | null>(null);
   const [query, setQuery]           = useState("");
   const [view, setView]             = useState<"map" | "cards">("map");
+
+  // Deep-link desde el GlobalSearch: `?garageId=garage-1&open=1`.
+  // Abrimos el drawer del garaje y forzamos vista "cards" (no map).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkedGarageId = searchParams.get("garageId");
+  const openFromLink = searchParams.get("open") === "1";
+  const handledGarageLink = useRef<string | null>(null);
+  useEffect(() => {
+    if (!deepLinkedGarageId || !openFromLink) return;
+    if (loading) return;
+    if (handledGarageLink.current === deepLinkedGarageId) return;
+
+    const numId = Number(String(deepLinkedGarageId).replace(/^[a-z-]+-/i, ""));
+    const found = garages.find(
+      (g) => g.id === deepLinkedGarageId ||
+        Number(g.id) === numId ||
+        g.id === `garage-${numId}`,
+    );
+    handledGarageLink.current = deepLinkedGarageId;
+    if (!found) {
+      if (garages.length > 0) toast.error("No se encontró el garaje solicitado");
+      return;
+    }
+    setView("cards");
+    setDrawerGarageId(found.id);
+    const next = new URLSearchParams(searchParams);
+    next.delete("garageId");
+    next.delete("open");
+    setSearchParams(next, { replace: true });
+  }, [deepLinkedGarageId, openFromLink, loading, garages, searchParams, setSearchParams]);
 
   // ── Derived ─────────────────────────────────────────────────────────────────
   const supervisorOptions = users

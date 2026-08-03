@@ -767,10 +767,13 @@ function DetailsPanel({ details, loading, module, day, page, onPageChange }: {
 }
 
 function MantenimientoDetails({ rows }: { rows: any[] }) {
+  const [openInvoices, setOpenInvoices] = useState<any[] | null>(null);
+
   return (
     <div className="space-y-3">
       {rows.map((r) => {
         const items    = Array.isArray(r.items) ? r.items : [];
+        const invoices = Array.isArray(r.invoices) ? r.invoices : [];
         const laborCost = Number(r.laborCost  ?? 0);
         // jul 2026 v9.2 — Usar `aggregateTotals` (misma lib que el
         // form modal y el drawer) en vez de recalcular a mano. Esto
@@ -945,6 +948,25 @@ function MantenimientoDetails({ rows }: { rows: any[] }) {
               </div>
             )}
 
+            {/* ── Factura(s) — jul 2026 v10 ── */}
+            {invoices.length > 0 && (
+              <div className="mt-3 flex items-center justify-between rounded-md border border-blue-200/60 bg-blue-50/40 px-3 py-2 dark:border-blue-500/20 dark:bg-blue-500/[0.05]">
+                <div className="flex items-center gap-2">
+                  <Receipt size={12} className="text-blue-500" />
+                  <span className="text-[11px] font-semibold text-blue-700 dark:text-blue-300">
+                    {invoices.length === 1 ? "Factura" : `Facturas (${invoices.length})`}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOpenInvoices(invoices)}
+                  className="rounded-md border border-blue-300/60 bg-white px-2 py-1 text-[10.5px] font-semibold text-blue-700 transition hover:bg-blue-50 dark:border-blue-500/30 dark:bg-transparent dark:text-blue-300 dark:hover:bg-blue-500/10"
+                >
+                  Ver factura
+                </button>
+              </div>
+            )}
+
             {/* ── Footer de totales — Subtotal / Mano de obra / IVA / Total ──
                 Sale SIEMPRE, aunque no haya items ni mano de obra —
                 el header con la desagregación es parte de la
@@ -980,7 +1002,99 @@ function MantenimientoDetails({ rows }: { rows: any[] }) {
           </div>
         );
       })}
+
+      <InvoiceModal invoices={openInvoices} onClose={() => setOpenInvoices(null)} />
     </div>
+  );
+}
+
+function InvoiceModal({ invoices, onClose }: { invoices: any[] | null; onClose: () => void }) {
+  return (
+    <AnimatePresence>
+      {invoices && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 8 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-[#0f172a]"
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-[13px] font-bold text-gray-800 dark:text-white">
+                {invoices.length === 1 ? "Factura" : `Facturas (${invoices.length})`}
+              </h3>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.06] dark:hover:text-white"
+                aria-label="Cerrar"
+              >
+                <XCircle size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {invoices.map((inv) => (
+                <div key={inv.id} className="rounded-lg border border-gray-200 p-3 dark:border-white/[0.08]">
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-[11.5px]">
+                    <span className="font-semibold text-gray-800 dark:text-white">
+                      {inv.invoiceNumber || "Sin número"}
+                    </span>
+                    {inv.kind && (
+                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-gray-600 dark:bg-white/[0.06] dark:text-gray-300">
+                        {String(inv.kind).replace("_", " ")}
+                      </span>
+                    )}
+                    {inv.invoiceDate && (
+                      <span className="text-gray-500 dark:text-gray-400">
+                        {new Date(`${inv.invoiceDate}T00:00:00`).toLocaleDateString("es")}
+                      </span>
+                    )}
+                    <span className="ml-auto font-bold tabular-nums text-gray-900 dark:text-white">
+                      ${Number(inv.total ?? 0).toFixed(2)}
+                    </span>
+                  </div>
+                  {inv.supplierName && (
+                    <p className="mb-2 text-[11px] text-gray-500 dark:text-gray-400">{inv.supplierName}</p>
+                  )}
+                  {inv.fileUrl ? (
+                    inv.fileMimeType?.startsWith("image/") ? (
+                      <a href={inv.fileUrl} target="_blank" rel="noreferrer">
+                        <img
+                          src={inv.fileUrl}
+                          alt=""
+                          className="max-h-[400px] w-full rounded-md border border-gray-200 object-contain dark:border-white/[0.08]"
+                        />
+                      </a>
+                    ) : (
+                      <a
+                        href={inv.fileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-blue-300/60 bg-blue-50/40 px-3 py-2 text-[11.5px] font-semibold text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/[0.05] dark:text-blue-300"
+                      >
+                        <FileText size={13} />
+                        Abrir documento
+                      </a>
+                    )
+                  ) : (
+                    <p className="text-[11px] italic text-gray-400">Sin archivo adjunto.</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 

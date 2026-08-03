@@ -313,7 +313,7 @@ router.get(
         id: `maint-item-${it.id}`,
         nombre: it.name,
         cantidad: Number(it.quantity ?? 0),
-        costoUnitario: Number(it.unitPrice ?? 0),
+        costoUnitario: Number(it.unitCost ?? 0),
         subtotal: Number(it.subtotal ?? 0),
       })),
       eventos: events.map((e) => ({

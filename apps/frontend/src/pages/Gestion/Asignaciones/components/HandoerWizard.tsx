@@ -84,8 +84,8 @@ const STEPS = [
 const ACTA_KINDS: { key: ActaKind; label: string; description: string; Icon: typeof PackageOpen }[] = [
   {
     key: "recepcion",
-    label: "Recepción de vehículo",
-    description: "Cuando el vehículo llega nuevo o vuelve de un proveedor.",
+    label: "Recepción de vehículo al chofer",
+    description: "Cuando el vehículo se entrega al chofer.",
     Icon: PackageOpen,
   },
   {
@@ -247,9 +247,13 @@ export function HandoverWizard({
       }
       await Promise.all(sigTasks);
 
-      // 3. Generar el PDF final con las URLs YA subidas (las dataUrls
-      //    se reemplazaron con URLs en los pasos anteriores).
-      const finalBlob = pdfBlob ?? await generateActaPdf(data, data.vehiclePhotos);
+      // 3. Generar el PDF final con las URLs YA subidas. El helper
+      //    `generateActaPdf` convierte cada URL a dataURL base64
+      //    (react-pdf no soporta HTTP en <Image>). Si photoUrls está
+      //    vacío (no había fotos), pasamos los Files locales igual
+      //    por si quedaron del preview.
+      const dataWithRemotePhotos = { ...data, vehiclePhotoUrls: photoUrls };
+      const finalBlob = pdfBlob ?? await generateActaPdf(dataWithRemotePhotos, data.vehiclePhotos);
       const pdfUrl = await uploadPdf(finalBlob);
 
       // 4. Crear o actualizar la asignación
@@ -282,32 +286,33 @@ export function HandoverWizard({
         };
         assignment = await updateHandover(existingAssignmentId, payload);
       } else {
+        // jul 2026 — El PDF ya está subido (paso 3). Mandamos la URL
+        // en el POST inicial para no tener que hacer un PUT adicional.
+        // Si el POST falla, el PDF queda como huérfano en el storage
+        // — aceptable por simplicidad, se puede limpiar después.
+        // jul 2026 — En modo CREATE, todo va en el POST inicial. El
+        // backend acepta `handoverUrl`, `actaDate`, `signatureLogUrl`,
+        // etc directamente en el body del POST. No necesitamos un PUT
+        // adicional — antes lo hacíamos y reventaba con 400 porque
+        // el schema de `novedades` no aceptaba null.
+        //
+        // Si el POST falla, hacemos un rollback manual del PDF subido
+        // para no dejar huérfanos en /uploads/assignments/.
         const created = await createAssignment({
           assetId,
           driverId,
           startDate,
+          // Datos del acta que antes iban en el PUT:
+          actaDate:        data.actaDate,
+          actaTime:        data.actaTime || null,
+          actaPlace:       data.actaPlace,
+          driverDni:       data.driverDni || null,
+          signatureLogUrl: data.signatureEntregaUrl ?? data.signatureRecibeUrl ?? null,
+          signatureRespUrl:data.signatureRecibeUrl ?? null,
+          vehiclePhotoUrls:photoUrls,
+          handoverUrl:     pdfUrl,
         });
-        const payload: HandoverPayload = {
-          actaNumber:   null,
-          actaDate:     data.actaDate,
-          actaTime:     data.actaTime || null,
-          actaPlace:    data.actaPlace,
-          actaArea:     null,
-          driverDni:    data.driverDni || null,
-          driverPhone:  null,
-          driverRole:   null,
-          vehicleOdometer: null,
-          vehicleFuelLevel: null,
-          vehicleCondition: null,
-          novedades:    null,
-          accesorios:   null,
-          novedadesText: null,
-          signatureLogUrl:  data.signatureEntregaUrl ?? data.signatureRecibeUrl,
-          signatureRespUrl: data.signatureRecibeUrl,
-          vehiclePhotoUrls: photoUrls,
-          handoverUrl:  pdfUrl,
-        };
-        assignment = await updateHandover(created.id, payload);
+        assignment = created;
       }
       toast.success(`Acta de ${data.actaKind} generada y guardada`);
       onComplete(assignment);
@@ -798,9 +803,26 @@ function PhotoUploader({ data, setField }: {
   data: WizardData;
   setField: <K extends keyof WizardData>(k: K, v: WizardData[K]) => void;
 }) {
+  // Límite máximo de fotos por acta (debe matchear el backend en
+  // `apps/backend/src/routes/upload.ts → /assignment-photos`).
+  const MAX_ASSIGNMENT_PHOTOS = 50;
+
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     if (!files.length) return;
+    const totalAfter = data.vehiclePhotos.length + files.length;
+    if (totalAfter > MAX_ASSIGNMENT_PHOTOS) {
+      const overflow = totalAfter - MAX_ASSIGNMENT_PHOTOS;
+      const remaining = MAX_ASSIGNMENT_PHOTOS - data.vehiclePhotos.length;
+      toast.error(
+        `Máximo ${MAX_ASSIGNMENT_PHOTOS} fotos por acta. ` +
+        `Ya tenés ${data.vehiclePhotos.length} y querés sumar ${files.length}. ` +
+        `Podés sumar ${Math.max(0, remaining)} más (te pasás por ${overflow}). ` +
+        `Quitá algunas antes de continuar.`,
+      );
+      e.target.value = "";
+      return;
+    }
     setField("vehiclePhotos", [...data.vehiclePhotos, ...files]);
     e.target.value = "";
   }

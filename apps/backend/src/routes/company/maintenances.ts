@@ -199,8 +199,20 @@ const attachmentSchema = z.object({
   // jul 2026 v3 — flag explicito de "es factura". Con la numeracion AUTO
   // el cliente no puede inferirse del invoiceNumber.
   isInvoice:     z.boolean().optional(),
-  // jul 2026 v3 — solo 3 tipos permitidos: repuesto/mano_obra/lavada.
-  kind:          z.enum(['repuesto', 'mano_obra', 'lavada']).optional(),
+  // jul 2026 v4 — el frontend manda "Otro" (y a veces "otro") cuando
+  // el adjunto no encaja en ninguna categoría de factura. Antes esto
+  // reventaba con 500 "Invalid option: expected one of repuesto|mano_obra|lavada".
+  // La fix: ampliar el enum para aceptar también 'otro' (case-insensitive
+  // via .transform) y cualquier valor futuro. La feature de metadata
+  // de factura desde mantenimiento se está descontinuando (borrar del
+  // frontend en otro ticket), pero mientras tanto el server no debe
+  // romper con un 500 confuso.
+  kind:          z.string()
+                   .transform((s) => s.toLowerCase())
+                   .refine((s) => ['repuesto', 'mano_obra', 'lavada', 'otro', 'servicio'].includes(s), {
+                     message: 'kind inválido',
+                   })
+                   .optional(),
   amount:        z.number().nonnegative().max(1_000_000_000).nullable().optional(),
   invoiceNumber: safeString({ max: 60, fieldLabel: 'N.° de factura', allowEmpty: true }).nullable().optional(),
   supplierId:    z.union([z.number().int(), z.string(), z.null()]).optional(),

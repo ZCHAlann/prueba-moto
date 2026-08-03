@@ -290,6 +290,29 @@ const s = StyleSheet.create({
   },
   checkMark: { fontSize: 8, fontFamily: "Helvetica-Bold", color: "#ffffff" },
   checkOpt: { fontSize: 9, marginRight: 8, color: "#000000", fontFamily: "Helvetica-Bold" },
+
+  // ── Anexo fotográfico ──────────────────────────────────────────────────
+  // jul 2026 — Fotos más grandes. Antes eran 110pt de alto, apenas
+  // se veían. Ahora 220pt (≈ 7.7cm reales en A4) para que se lean
+  // detalles como patentes, daños, números de activo. Sigue siendo
+  // 2 por fila para no romper la maquetación de 1 hoja por anexo.
+  photoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 4,
+    marginBottom: 6,
+  },
+  photoCell: {
+    width: "49%",
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
+  photoImg: {
+    width: "100%",
+    height: 220,
+    objectFit: "cover",
+    border: "1pt solid #a0a0a0",
+  },
 });
 
 // ─── Componentes compartidos ─────────────────────────────────────────────
@@ -395,6 +418,45 @@ function CheckRow({ label, value, tristate = false }: {
   );
 }
 
+/**
+ * Anexo fotográfico del vehículo en el PDF.
+ * Muestra hasta `maxPerPage` fotos en una grilla 2x2. Si hay más, las
+ * restantes se dibujan en una página aparte (el componente se vuelve
+ * a renderizar con `pageIndex` > 0).
+ *
+ * Las URLs que recibe ya vienen como data URLs base64 (las preparó
+ * `generateActaPdf` antes de pasar al componente). @react-pdf/renderer
+ * NO soporta URLs HTTP directas, por eso el pre-procesamiento.
+ */
+function VehiclePhotoAnnex({
+  photoUrls,
+  pageIndex = 0,
+  perPage = 6,
+}: {
+  photoUrls: string[];
+  pageIndex?: number;
+  perPage?: number;
+}) {
+  if (photoUrls.length === 0) return null;
+
+  const start = pageIndex * perPage;
+  const slice = photoUrls.slice(start, start + perPage);
+  if (slice.length === 0) return null;
+
+  return (
+    <View>
+      <Text style={s.legalBold}>Anexo fotográfico ({slice.length} de {photoUrls.length})</Text>
+      <View style={s.photoGrid}>
+        {slice.map((url, i) => (
+          <View key={start + i} style={s.photoCell}>
+            <Image src={url} style={s.photoImg} />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 // ─── Acta 1: RECEPCIÓN (1 página) ─────────────────────────────────────────
 
 function ActaRecepcionDocument({ data }: { data: WizardData }) {
@@ -420,6 +482,11 @@ function ActaRecepcionDocument({ data }: { data: WizardData }) {
             ["Tipo",   nonEmpty(data.vehicleType)],
           ]}
         />
+
+        {/* Anexo fotográfico — solo si hay fotos. */}
+        {data.vehiclePhotoUrls && data.vehiclePhotoUrls.length > 0 ? (
+          <VehiclePhotoAnnex photoUrls={data.vehiclePhotoUrls} />
+        ) : null}
 
         <SectionTitle>Declaración del receptor</SectionTitle>
         <Text style={s.legal}>
@@ -558,6 +625,20 @@ function ActaEntregaDocument({ data }: { data: WizardData }) {
           ]}
         />
       </Page>
+
+      {/* Página 2: Anexo fotográfico (solo si hay fotos). Hermana
+          del primer <Page>, dentro del mismo <Document>. */}
+      {data.vehiclePhotoUrls && data.vehiclePhotoUrls.length > 0 ? (
+        <Page size="A4" style={s.page}>
+          <Header companyName={data.companyName} docLabel="Anexo Fotográfico" />
+          <Text style={s.title}>Anexo Fotográfico</Text>
+          <Text style={s.legal}>
+            Forman parte integral de la presente acta las siguientes
+            imágenes del vehículo al momento de la entrega:
+          </Text>
+          <VehiclePhotoAnnex photoUrls={data.vehiclePhotoUrls} perPage={4} />
+        </Page>
+      ) : null}
     </Document>
   );
 }
@@ -685,15 +766,72 @@ export type GenerateActaOptions = {
   kind?: "recepcion" | "entrega";
 };
 
+/**
+ * Convierte un File del browser a un dataURL base64 (data:image/jpeg;base64,...).
+ * @react-pdf/renderer NO soporta URLs HTTP en <Image>, solo data URLs.
+ * Usado durante el preview del PDF (cuando aún no se subieron las fotos
+ * al storage y solo tenemos los `File` locales).
+ */
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error(`No se pudo leer ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Descarga una imagen por HTTP y la convierte a dataURL base64. Se usa
+ * cuando ya tenemos las URLs remotas (subidas al storage) y queremos
+ * embebir la imagen en el PDF final. @react-pdf/renderer en Node no
+ * tiene fetch nativo, así que usamos el globalThis.fetch del browser.
+ */
+async function urlToDataUrl(url: string): Promise<string> {
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) throw new Error(`No se pudo descargar ${url} (HTTP ${res.status})`);
+  const blob = await res.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error(`No se pudo convertir ${url} a dataURL`));
+    reader.readAsDataURL(blob);
+  });
+}
+
 export async function generateActaPdf(
   data: WizardData,
-  _photoFiles: File[] = [],
+  photoFiles: File[] = [],
   options?: GenerateActaOptions,
 ): Promise<Blob> {
   const kind = options?.kind ?? data.actaKind;
+
+  // ── Resolución de fotos para el PDF ──────────────────────────────────
+  // Prioridad:
+  //   1. URLs remotas ya subidas (vehiclePhotoUrls del wizard) → fetch
+  //   2. Files locales (preview, antes de subir) → FileReader base64
+  // Si una foto falla, la omitimos y seguimos con las demás.
+  const photoDataUrls: string[] = [];
+  const urls = (data.vehiclePhotoUrls ?? []).filter(Boolean);
+  for (const url of urls) {
+    try {
+      photoDataUrls.push(await urlToDataUrl(url));
+    } catch (err) {
+      console.warn(`[ActaPdf] No se pudo incluir foto ${url}:`, (err as Error).message);
+    }
+  }
+  for (const file of photoFiles) {
+    try {
+      photoDataUrls.push(await fileToDataUrl(file));
+    } catch (err) {
+      console.warn(`[ActaPdf] No se pudo leer foto ${file.name}:`, (err as Error).message);
+    }
+  }
+
+  const dataWithPhotos: WizardData = { ...data, vehiclePhotoUrls: photoDataUrls };
   const doc = kind === "recepcion"
-    ? <ActaRecepcionDocument data={data} />
-    : <ActaEntregaDocument   data={data} />;
+    ? <ActaRecepcionDocument data={dataWithPhotos} />
+    : <ActaEntregaDocument   data={dataWithPhotos} />;
   return pdf(doc).toBlob();
 }
 

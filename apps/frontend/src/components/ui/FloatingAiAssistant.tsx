@@ -223,23 +223,6 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
     return stored == null ? true : stored === "1";
   });
   const [speaking, setSpeaking] = useState(false);
-  // jul 2026 v8.4 — El wake word se gestiona en JarvisWakeWordController
-  // (montado en AppLayout). Acá solo leemos el estado para mostrar el
-  // toggle visualmente, y escuchamos el CustomEvent para grabar.
-  const [wakeWordActive, setWakeWordActive] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    return localStorage.getItem("jarvis.wakeword.active") !== "0";
-  });
-  const [wakeWordTrigger] = useState<string>(() => {
-    if (typeof window === "undefined") return "jarvis";
-    return localStorage.getItem("jarvis.wakeword.trigger") || "jarvis";
-  });
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      localStorage.setItem("jarvis.wakeword.active", wakeWordActive ? "1" : "0");
-    } catch {}
-  }, [wakeWordActive]);
   const [convToDelete, setConvToDelete] = useState<Conversation | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<any>(null);
@@ -792,17 +775,6 @@ export function FloatingAiAssistant({ embedded = false }: { embedded?: boolean }
       cleanupVoiceRecording();
     }
   }
-
-  // ─── Wake word listener — DESACTIVADO en v8.6 ──────────────────────────
-  // A partir de v8.6 el wake word dispara el JarvisVoiceOverlay
-  // (esquina inferior derecha, estilo Siri). El chat normal sigue
-  // funcionando con el botón violeta del FloatingChatWidget (FAB) o
-  // con el atajo de teclado Space. NO se mezcla con el wake word.
-  //
-  // Si en el futuro queremos que el chat también reaccione al wake
-  // word (ej. abrir el thread con la conversación), reactivamos el
-  // handler acá. Por ahora: nada.
-  void sending; void listening; void isOpen; void embedded;
 
   // (jul 2026 v8.6) Reproduce el saludo TTS y, cuando termina, arranca
   // la grabación.

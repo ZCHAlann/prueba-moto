@@ -252,23 +252,6 @@ export function FloatingChatWidget() {
     }
   }, [activeTab, canUseAssistant]);
 
-  // jul 2026 v8.4 — Wake word global: el JarvisWakeWordController
-  // dispatcha este evento cuando detecta "Jarvis". Acá abrimos el
-  // chat en el tab "Asistente" para que el user vea la grabación.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    // jul 2026 v8.6 — Wake word flow nuevo. Ya NO abrimos el chat
-    // cuando se detecta "jarvis". El handler del evento vive en
-    // JarvisVoiceOverlay (que muestra el Siri-style overlay). El chat
-    // sigue funcionando con el botón tradicional (FAB), pero el wake
-    // word es 100% voz-first sin abrir el panel.
-    //
-    // Si en el futuro queremos que "jarvis" abra también el chat (ej.
-    // para mostrar el thread de la conversación), reactivamos esto.
-    // Por ahora: NO.
-    void canUseAssistant; // keep the dep estable para que el linter no se queje
-  }, [canUseAssistant]);
-
   // ── FAB draggable ────────────────────────────────────────────────────
   const constrainFabPos = (x: number, y: number): { x: number; y: number } => {
     if (typeof window === "undefined") return { x, y };
@@ -1158,12 +1141,8 @@ export function FloatingChatWidget() {
       </div>
 
       {/* Panel — SIEMPRE montado, solo se oculta con display:none cuando
-          está cerrado. Esto es crítico para que el <FloatingAiAssistant
-          embedded /> de adentro registre su listener de
-          `jarvis:wake-detected` apenas carga la app. Si lo
-          montáramos/desmontáramos con el phase, el primer "jarvis"
-          del user se perdería porque el listener no existía cuando
-          el Controller disparó el evento. (jul 2026 v8.6 bug) */}
+          está cerrado. Esto evita que el panel parpadee al abrir/cerrar
+          y mantiene el estado de scroll y foco. */}
       <div
         ref={panelRef}
           className={[

@@ -287,10 +287,12 @@ export function FiltradoTab() {
                   onPick={onPick}
                   module={state.module}
                   // jul 2026 v5.b — Grid solo en la primera columna
-                  // (vehículos) y solo cuando state.vehicleId es null
-                  // (estado "inicial" del cascada). Para los demás
-                  // niveles, layout vertical normal.
-                  gridMode={c.col.level === "vehicles" && state.vehicleId == null}
+                  // (vehículos). Para los demás niveles, layout
+                  // vertical normal. Aun con un vehículo seleccionado
+                  // el grid mode sigue activo: `visibleItems` se filtra
+                  // a solo el seleccionado y queda 1 chunk de 1 item,
+                  // manteniendo el contenedor con tamaño fijo.
+                  gridMode={c.col.level === "vehicles"}
                 />
               ))}
             </AnimatePresence>
@@ -367,11 +369,11 @@ function CascadeCol({ col, items, loading, selected, flashed, colIndex, isFirst,
 
   // ── gridMode: partir items en chunks de ITEMS_PER_COLUMN ──
   //
-  // jul 2026 v5.b.3 — Debug: el código ya estaba correcto en la
-  // última versión (useGrid && col.level === "vehicles", sin la
-  // condición de selected). Si los items siguen sin desaparecer al
-  // seleccionar, es un problema de caché del browser. Forzamos
-  // remontage con un key que cambia según el estado.
+  // jul 2026 v5.b — Sin vehículo seleccionado: muestra los items
+  // repartidos en N columnas de 10. Con un vehículo seleccionado:
+  // filtra visibleItems a solo el seleccionado y queda 1 chunk de
+  // 1 item. El contenedor mantiene el mismo layout (grid) en
+  // ambos casos para que la altura no "salte".
   const useGrid = gridMode && col.level === "vehicles";
   const hasSelection = selected != null;
   const visibleItems: CascadeItem[] = useGrid
@@ -389,21 +391,6 @@ function CascadeCol({ col, items, loading, selected, flashed, colIndex, isFirst,
         (_, i) => visibleItems.slice(i * ITEMS_PER_COLUMN, (i + 1) * ITEMS_PER_COLUMN),
       )
     : null;
-
-  // jul 2026 v5.b.3 — Log temporal de debug. Borrar después de
-  // confirmar que funciona. Ayuda a ver en la consola del browser
-  // (F12 → Console) que el filtrado se está aplicando.
-  if (process.env.NODE_ENV !== "production" && useGrid) {
-    // eslint-disable-next-line no-console
-    console.log("[CascadeCol]", {
-      col: col.level,
-      gridMode,
-      hasSelection,
-      itemsCount: items.length,
-      visibleCount: visibleItems.length,
-      chunksCount: chunks?.length,
-    });
-  }
 
   return (
     <>
@@ -427,14 +414,24 @@ function CascadeCol({ col, items, loading, selected, flashed, colIndex, isFirst,
       {/* ── Columna ── */}
       {/* jul 2026 v5 — `flex-1` para repartir el espacio disponible
           entre todas las columnas. Mínimo 120px (w-30) y máximo 200px
-          (w-52) para que ni queden muy apretadas ni muy anchas. */}
+          (w-52) para que ni queden muy apretadas ni muy anchas.
+          jul 2026 v5.b — En grid mode SIN selección, removemos el
+          `max-w-[200px]` para que múltiples chunks de 10 items quepan
+          por fila. El `min-w-[280px]` asegura que al menos 2 chunks
+          (de 120px + gap) se vean lado a lado. CON selección, la
+          columna vuelve al tamaño compacto original (1 solo item)
+          para que el módulo siguiente quede cerca, sin un hueco
+          gigante en el medio. */}
       <motion.div
         layout
         initial={{ opacity: 0, x: 32 }}
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: -16 }}
         transition={{ duration: 0.32, delay: colIndex * 0.06, ease: [0.16, 1, 0.3, 1] }}
-        className="flex-1 min-w-[120px] max-w-[200px]"
+        className={useGrid && !hasSelection
+          ? "flex-1 min-w-[280px] max-w-none"
+          : "flex-1 min-w-[120px] max-w-[200px]"
+        }
       >
         {/* Label del nivel */}
         <div className="mb-2 flex items-center gap-1.5">
@@ -469,12 +466,13 @@ function CascadeCol({ col, items, loading, selected, flashed, colIndex, isFirst,
             // 1 chunk de 1 item → los demás ejecutan `exit` con la
             // animación de framer-motion.
             //
-            // jul 2026 v5.b.3 — el `key` cambia cuando cambia la
-            // selección para forzar el remontage del contenedor y
-            // asegurar que AnimatePresence dispare las animaciones
-            // de los items cuando visibleItems se reduce.
+            // jul 2026 v5.b.3 — key estable para que AnimatePresence
+            // (en chunks y en items) anime la salida de los items en
+            // lugar de que el wrapper se re-monte de golpe. Antes el
+            // key cambiaba con la selección y eso destruía todo el
+            // contenedor, perdiendo la animación de exit.
             <motion.div
-              key={`grid-${hasSelection ? "selected" : "all"}-${visibleItems.length}`}
+              key="vehicles-grid"
               layout
               transition={{ layout: { duration: 0.32, ease: [0.16, 1, 0.3, 1] } }}
               className="flex flex-wrap gap-x-3 gap-y-1"

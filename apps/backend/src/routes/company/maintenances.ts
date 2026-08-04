@@ -2,7 +2,7 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, gte, lte, desc, ilike, or, inArray, sql, isNull, asc, lt } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, ilike, or, inArray, sql, isNull, asc, lt, ne } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db, client } from '../../db/client';
 import {
@@ -3441,11 +3441,16 @@ router.post(
       // Notificación al solicitante.
       try {
         if (reauth.requestedByUserId) {
+          const [existing] = await db
+            .select({ title: companyMaintenanceRecords.title })
+            .from(companyMaintenanceRecords)
+            .where(eq(companyMaintenanceRecords.id, id))
+            .limit(1);
           await notify({
             companyId,
             userId:  reauth.requestedByUserId,
             kind:    'maintenance_reauth_decided',
-            title:   `Reautorización rechazada: ${existing.title ?? 'Mantenimiento'}`,
+            title:   `Reautorización rechazada: ${existing?.title ?? 'Mantenimiento'}`,
             body:    `Rechazada por ${req.user!.name ?? 'un administrador'}.${body.decisionNotes ? ' Motivo: ' + body.decisionNotes : ''}`,
             payload: {
               maintenanceId: id,

@@ -13,7 +13,6 @@ import {
   companyTollEntries,
   companySuppliers,
   companyWorkshops,
-  companyInvoices,
 } from '../../db/schema/operational';
 import { requirePermission } from '../../middlewares/requirePermission';
 import { parseIdFlexible, toId } from '../../lib/ids';
@@ -901,38 +900,23 @@ router.get(
         
         
         const invoicesMap = new Map<number, any[]>();
-        if (ids.length) {
-          const invoiceRows = await db
-            .select({
-              id: companyInvoices.id,
-              sourceEntityId: companyInvoices.sourceEntityId,
-              kind: companyInvoices.kind,
-              invoiceNumber: companyInvoices.invoiceNumber,
-              invoiceDate: companyInvoices.invoiceDate,
-              total: companyInvoices.total,
-              supplierName: companyInvoices.supplierName,
-              workshopName: companyInvoices.workshopName,
-              fileUrl: companyInvoices.fileUrl,
-              fileMimeType: companyInvoices.fileMimeType,
-            })
-            .from(companyInvoices)
-            .where(and(
-              eq(companyInvoices.companyId, companyId),
-              eq(companyInvoices.sourceModule, 'mantenimiento'),
-              inArray(companyInvoices.sourceEntityId, ids),
-            ));
-          for (const inv of invoiceRows) {
-            if (!invoicesMap.has(inv.sourceEntityId)) invoicesMap.set(inv.sourceEntityId, []);
-            invoicesMap.get(inv.sourceEntityId)!.push({
-              id: toId('invoice', inv.id),
-              kind: inv.kind,
-              invoiceNumber: inv.invoiceNumber,
-              invoiceDate: inv.invoiceDate,
-              total: Number(inv.total),
-              supplierName: inv.supplierName ?? inv.workshopName ?? null,
-              fileUrl: inv.fileUrl,
-              fileMimeType: inv.fileMimeType,
-            });
+        for (const r of records) {
+          const maintenance = r.m;
+          const attachments = Array.isArray(maintenance.attachments) ? maintenance.attachments : [];
+          const invoiceAttachments = attachments.filter((att: any) => 
+            att && (att.kind === 'factura' || att.kind === 'invoice' || (att.label && String(att.label).toLowerCase().includes('factura')))
+          );
+          if (invoiceAttachments.length > 0) {
+            invoicesMap.set(maintenance.id, invoiceAttachments.map((att: any, idx: number) => ({
+              id: toId('invoice', `${maintenance.id}-${idx}`),
+              kind: att.kind || 'otro',
+              invoiceNumber: att.invoiceNumber || null,
+              invoiceDate: att.uploadedAt ? String(att.uploadedAt).slice(0, 10) : null,
+              total: att.amount ? Number(att.amount) : 0,
+              supplierName: null,
+              fileUrl: att.url || null,
+              fileMimeType: att.url ? (att.url.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg') : null,
+            })));
           }
         }
         return res.json({

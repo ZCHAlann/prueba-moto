@@ -13,7 +13,7 @@
 // Map<entityId, number> (suma de la métrica principal).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { and, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, desc } from "drizzle-orm";
 import { db } from "../db/client";
 import {
   companyAssets,
@@ -26,6 +26,7 @@ import {
   companyInsurancePolicies,
   companyAssignments,
   companyAcServices,
+  companyOdometerReadings,
 } from "../db/schema/operational";
 
 export type CombinedModulo = {
@@ -104,10 +105,11 @@ const aggregators: Record<string, AggFn> = {
   },
 
   mantenimiento: async (companyId, desde, hasta, ids) => {
+    // scheduledFor es `timestamp`: hay que pasar Date, no string "YYYY-MM-DD".
     const conds = [
       eq(companyMaintenanceRecords.companyId, companyId),
-      gte(companyMaintenanceRecords.scheduledFor, desde),
-      lte(companyMaintenanceRecords.scheduledFor, hasta),
+      gte(companyMaintenanceRecords.scheduledFor, new Date(`${desde}T00:00:00`)),
+      lte(companyMaintenanceRecords.scheduledFor, new Date(`${hasta}T23:59:59.999`)),
     ];
     if (ids && ids.length > 0) conds.push(inArray(companyMaintenanceRecords.assetId, ids));
     const rows = await db
@@ -143,10 +145,11 @@ const aggregators: Record<string, AggFn> = {
 
   alertas: async (companyId, desde, hasta, ids) => {
     // Alerts: usamos assetId cuando existe, sino null (no entra al ranking).
+    // createdAt es `timestamp`: pasar Date, no string.
     const conds = [
       eq(companyAlerts.companyId, companyId),
-      gte(companyAlerts.createdAt, desde as unknown as Date),
-      lte(companyAlerts.createdAt, hasta as unknown as Date),
+      gte(companyAlerts.createdAt, new Date(`${desde}T00:00:00`)),
+      lte(companyAlerts.createdAt, new Date(`${hasta}T23:59:59.999`)),
     ];
     const rows = await db
       .select({ assetId: companyAlerts.assetId })
@@ -181,15 +184,27 @@ const aggregators: Record<string, AggFn> = {
   },
 
   flotas: async (companyId, _desde, _hasta, ids) => {
-    // Para flotas: km actual del activo (no por período).
+    // Para flotas: km actual del activo (última lectura de odómetro, no por período).
     const conds = [eq(companyAssets.companyId, companyId)];
     if (ids && ids.length > 0) conds.push(inArray(companyAssets.id, ids));
     const rows = await db
-      .select({ id: companyAssets.id, km: companyAssets.km })
+      .select({ id: companyAssets.id })
       .from(companyAssets)
       .where(and(...conds));
+    const assetIds = rows.map((r) => r.id);
+    const odomRows = assetIds.length > 0
+      ? await db
+          .select({ assetId: companyOdometerReadings.assetId, km: companyOdometerReadings.km })
+          .from(companyOdometerReadings)
+          .where(inArray(companyOdometerReadings.assetId, assetIds))
+          .orderBy(desc(companyOdometerReadings.takenAt))
+      : [];
+    const kmByAsset = new Map<number, number>();
+    for (const o of odomRows) {
+      if (!kmByAsset.has(o.assetId)) kmByAsset.set(o.assetId, o.km);
+    }
     const m = new Map<number, number>();
-    for (const r of rows) m.set(r.id, r.km != null ? Number(r.km) : 0);
+    for (const r of rows) m.set(r.id, kmByAsset.get(r.id) ?? 0);
     return m;
   },
 

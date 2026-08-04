@@ -178,7 +178,7 @@ export async function calculateConductores(input: StatInput): Promise<StatResult
       const sev = classifySeverity(z);
       if (sev && z > 0) {
         const d = driverMap.get(Number(id));
-        out.push({
+        anomalias.push({
           tipo: "asignaciones_por_conductor",
           dimension: "driver",
           dimensionLabel: d ? `${d.firstName} ${d.lastName}`.trim() : `Conductor ${id}`,

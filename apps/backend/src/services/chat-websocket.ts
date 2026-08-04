@@ -44,7 +44,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { verifyToken } from './auth.service';
 import { db } from '../db/client';
 import { eq, and, inArray, sql } from 'drizzle-orm';
-import { conversaciones, participantes, mensajes, mensajesLeidos, mensajeReacciones } from '../db/schema';
+import { conversaciones, participantes, mensajes, mensajesLeidos, mensajeReacciones, companyUsers } from '../db/schema';
 import { notifyMany } from '../lib/notification-service';
 
 // ─── Types ──────────────────────────────────────────────────────────────────

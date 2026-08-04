@@ -100,7 +100,7 @@ const createWidgetSchema = z.object({
 });
 
 const updateWidgetSchema = z.object({
-  // Geometría
+  // Geometría - INT y dentro del rango válido
   posX:        z.number().int().min(-5000).max(20000).optional(),
   posY:        z.number().int().min(-5000).max(20000).optional(),
   width:       z.number().int().min(180).max(3000).optional(),

@@ -47,7 +47,14 @@ const createTollSchema = z.object({
   // (next_invoice_number(companyId, 'toll')). El cliente ya NO lo manda.
 });
 
-const updateTollSchema = createTollSchema.partial();
+// Para ACTUALIZAR, photoUrl DEBE ser OPCIONAL — el frontend puede querer actualizar
+// un registro sin cambiar su foto (la validación del frontend debería detenerlo,
+// pero el backend no debe exigir foto al editar). Extendemos createTollSchema
+// y hacemos photoUrl opcional (nullable + optional). Esto permite a una actualizacion
+// conservar la foto actual.
+const updateTollSchema = createTollSchema.extend({
+  photoUrl: z.string().max(2_000_000).optional().nullable(),
+});
 
 // ─── GET /company/:id/toll ────────────────────────────────────────────────────
 // Query: ?assetId=asset-1 &driverId=driver-1 &from=YYYY-MM-DD &to=YYYY-MM-DD

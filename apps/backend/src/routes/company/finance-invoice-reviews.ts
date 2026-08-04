@@ -585,20 +585,24 @@ router.post('/invoice-reviews/:id/send-to-correction', requirePermission('finanz
     });
 
     // Notificar al solicitante.
-    await notify({
-      companyId,
-      userId:    row.request.requesterUserId,
-      kind:      'finance_invoice_correction_requested',
-      title:     `Factura del vale #${row.voucher.id} requiere corrección`,
-      body:      note,
-      payload:   {
-        reviewId:    row.review.id,
-        voucherId:   row.voucher.id,
-        invoiceId:   row.review.invoiceId,
-        note,
-        failedChecks,
-      },
-    });
+    try {
+      await notify({
+        companyId,
+        userId:    row.request.requesterUserId,
+        kind:      'finance_invoice_correction_requested',
+        title:     `Factura del vale #${row.voucher.id} requiere corrección`,
+        body:      note,
+        payload:   {
+          reviewId:    row.review.id,
+          voucherId:   row.voucher.id,
+          invoiceId:   row.review.invoiceId,
+          note,
+          failedChecks,
+        },
+      });
+    } catch (notifErr) {
+      console.warn('[send-to-correction] notification skipped:', (notifErr as Error).message);
+    }
 
     return res.json({ ok: true, status: 'correction_requested' });
   } catch (err) {

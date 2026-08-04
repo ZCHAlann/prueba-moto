@@ -17,6 +17,7 @@ import {
   type JarvisRole,
 } from './tools/registry';
 import { incCounter, observeHistogram, incLabeledCounter } from './metrics';
+import { classifyToolsForQuestion, resolveToolsForLlm, buildLlmSchema } from './tools/intent-classifier';
 import { flattenArgs } from './schema-helpers';
 import { getClassifier as getClassifierModel, getModel as getActiveModel } from './model-config';
 import {

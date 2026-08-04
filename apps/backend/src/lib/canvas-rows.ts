@@ -30,6 +30,7 @@ import {
   companyAcServices,
   companyInsurancePolicies,
   companyAssignments,
+  companyOdometerReadings,
 } from "../db/schema/operational";
 
 export type RowColumnType = "string" | "number" | "currency" | "date";
@@ -171,10 +172,15 @@ async function fetchCombustible(input: CanvasRowsInput): Promise<CanvasRows> {
 // ─── Mantenimiento ─────────────────────────────────────────────────────────
 
 async function fetchMantenimiento(input: CanvasRowsInput): Promise<CanvasRows> {
+  // scheduledFor es columna `timestamp`, así que hay que pasarle Date (no el
+  // string "YYYY-MM-DD" que llega del widget) o drizzle llama toISOString()
+  // sobre el string y tira "value.toISOString is not a function".
+  const desde = new Date(`${input.fechaDesde}T00:00:00`);
+  const hasta = new Date(`${input.fechaHasta}T23:59:59.999`);
   const conds = [
     eq(companyMaintenanceRecords.companyId, input.companyId),
-    gte(companyMaintenanceRecords.scheduledFor, input.fechaDesde),
-    lte(companyMaintenanceRecords.scheduledFor, input.fechaHasta),
+    gte(companyMaintenanceRecords.scheduledFor, desde),
+    lte(companyMaintenanceRecords.scheduledFor, hasta),
   ];
   if (input.entityKind === "asset" && input.entityIds.length > 0) {
     conds.push(inArray(companyMaintenanceRecords.assetId, input.entityIds));
@@ -203,7 +209,9 @@ async function fetchMantenimiento(input: CanvasRowsInput): Promise<CanvasRows> {
 
   const rows = rowsRaw.map((r) => ({
     id:          toCanvasId("maintenance", r.id),
-    date:        r.scheduledFor ? String(r.scheduledFor).slice(0, 10) : null,
+    date:        r.scheduledFor instanceof Date
+                   ? r.scheduledFor.toISOString().slice(0, 10)
+                   : String(r.scheduledFor).slice(0, 10),
     plate:       r.plate ?? null,
     type:        r.type ?? null,
     status:      r.status ?? null,
@@ -249,13 +257,25 @@ async function fetchFlotas(input: CanvasRowsInput): Promise<CanvasRows> {
       model:  companyAssets.model,
       year:   companyAssets.year,
       status: companyAssets.status,
-      km:     companyAssets.km,
       fuelType: companyAssets.fuelType,
     })
     .from(companyAssets)
     .where(and(...conds))
     .orderBy(asc(companyAssets.plate))
     .limit(500);
+
+  const assetIds = rowsRaw.map((r) => r.id);
+  const odomRows = assetIds.length > 0
+    ? await db
+        .select({ assetId: companyOdometerReadings.assetId, km: companyOdometerReadings.km })
+        .from(companyOdometerReadings)
+        .where(inArray(companyOdometerReadings.assetId, assetIds))
+        .orderBy(desc(companyOdometerReadings.takenAt))
+    : [];
+  const kmByAsset = new Map<number, number>();
+  for (const o of odomRows) {
+    if (!kmByAsset.has(o.assetId)) kmByAsset.set(o.assetId, o.km);
+  }
 
   const rows = rowsRaw.map((r) => ({
     id:       toCanvasId("asset", r.id),
@@ -265,7 +285,7 @@ async function fetchFlotas(input: CanvasRowsInput): Promise<CanvasRows> {
     model:    r.model ?? null,
     year:     r.year ?? null,
     status:   r.status ?? null,
-    km:       num(r.km),
+    km:       num(kmByAsset.get(r.id)),
     fuelType: r.fuelType ?? null,
   }));
 

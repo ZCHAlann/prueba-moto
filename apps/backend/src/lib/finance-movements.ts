@@ -948,7 +948,7 @@ export async function recordVoucherReopenForCorrection(params: {
   // Notificar a admins (excepto el actor) y al aprobador original
   // para que tengan visibilidad en su inbox.
   await notifyAdminsExceptActor(voucher.companyId, actorUserId, {
-    kind: 'finance_invoice_correction_requested_admin',
+    kind: 'finance_invoice_correction_requested',
     title: `Vale #${voucher.id} reabierto por corrección`,
     body:  note.slice(0, 200),
     payload: { voucherId: voucher.id, reason: 'correction' },
@@ -964,7 +964,7 @@ export async function recordVoucherReopenForCorrection(params: {
       await notify({
         companyId: voucher.companyId,
         userId: approverId,
-        kind: 'finance_invoice_correction_requested_admin',
+        kind: 'finance_invoice_correction_requested',
         title: `Vale #${voucher.id} reabierto por corrección`,
         body:  note.slice(0, 200),
         payload: { voucherId: voucher.id, reason: 'correction' },

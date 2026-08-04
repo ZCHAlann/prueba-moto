@@ -721,7 +721,8 @@ function DetailDrawer({ vehicle, onClose, onEdit, onDelete, onMaintenance, canEd
 
   // A partir de aquí usamos `enriched` (que ya tiene el acta si existe)
   // en vez de `vehicle` directo.
-  const { assignments } = useAssignments();
+  const { active } = useAssignments();
+  const assignments = active.data;
   const { maintenances } = useMaintenances();
   const { garages } = useGarages();
   const { sites } = useSites();

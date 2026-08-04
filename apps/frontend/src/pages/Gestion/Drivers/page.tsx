@@ -601,7 +601,8 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driver.id, session?.companyId]);
 
-  const { assignments } = useAssignments();
+  const { active } = useAssignments();
+  const assignments = active.data;
   const { assets }      = useAssets();
 
   const activeAssignment = useMemo(
@@ -789,7 +790,8 @@ function DetailDrawer({ driver, canEdit, canDelete, onClose, onEdit, onReport, o
 
 function AssignModal({ driver, onClose }: { driver: ApiDriver; onClose: () => void }) {
   const { assets }      = useAssets();
-  const { assignments, createAssignment, updateHandover } = useAssignments();
+  const { active, createAssignment, updateHandover } = useAssignments();
+  const assignments = active.data;
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
 
   const activeIds  = useMemo(() => new Set(assignments.filter(a => a.status === "Activa").map(a => a.assetId)), [assignments]);

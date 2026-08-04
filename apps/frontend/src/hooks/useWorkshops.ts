@@ -1,4 +1,4 @@
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 // hooks/useWorkshops.ts
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
@@ -47,7 +47,7 @@ export function useWorkshops() {
     // jul 2026 v3 — nopage=true trae TODOS los talleres sin paginar
     // (necesario para dropdowns en modales de factura).
     fetch(`/api/company/${companyId}/workshops?nopage=true`, { cache: "no-store" })
-      .then((res) => { if (!res.ok) throw new Error(`Error ${res.status}`); return res.json(); })
+      .then(async (res) => { if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`)); return res.json(); })
       .then((body: { data: Workshop[]; total?: number }) => {
         setWorkshops(body.data ?? []);
         setTotal(typeof body.total === "number" ? body.total : (body.data?.length ?? 0));
@@ -66,7 +66,7 @@ export function useWorkshops() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+        throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
       }
       refresh();
       return true;
@@ -86,7 +86,7 @@ export function useWorkshops() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+        throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
       }
       refresh();
       return true;
@@ -102,7 +102,7 @@ export function useWorkshops() {
       const res = await fetch(`/api/company/${companyId}/workshops/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+        throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
       }
       setWorkshops((current) => current.filter((w) => w.id !== id));
       return true;

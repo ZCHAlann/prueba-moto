@@ -139,6 +139,10 @@ export function TollFormModal({ open, entry, assets, assetsLoading, companyId, s
     if (form.axes.trim() && (isNaN(Number(form.axes)) || Number(form.axes) < 1)) {
       e.axes = "Ejes inválido.";
     }
+    // La foto del comprobante es OBLIGATORIA al registrar (el backend la exige).
+    if (!entry && !form.photoUrl) {
+      e.photoUrl = "Subir foto del comprobante.";
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -352,7 +356,11 @@ export function TollFormModal({ open, entry, assets, assetsLoading, companyId, s
 
                     {/* Foto */}
                     <div className="sm:col-span-2">
-                      <label className={labelCls}><Camera size={10} className="inline mr-1" />Foto del tiquete (opcional)</label>
+                      <label className={labelCls}>
+                        <Camera size={10} className="inline mr-1" />
+                        Foto del comprobante
+                        <span className="text-rose-500"> *</span>
+                      </label>
                       <div className="flex items-center gap-3">
                         {form.photoUrl ? (
                           <img src={form.photoUrl} alt="tiquete" className="h-20 w-20 rounded-lg object-cover border border-gray-200 dark:border-white/[0.08]" />
@@ -395,6 +403,7 @@ export function TollFormModal({ open, entry, assets, assetsLoading, companyId, s
                           </button>
                         )}
                       </div>
+                      {errors.photoUrl && <p className={errorCls}><AlertCircle size={10} />{errors.photoUrl}</p>}
                     </div>
                   </div>
                 </div>

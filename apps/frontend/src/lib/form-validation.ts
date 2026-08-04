@@ -395,3 +395,17 @@ export function extractApiErrorDetails(err: unknown): {
     requestId: typeof inner?.requestId === 'string' ? inner.requestId as string : undefined,
   };
 }
+
+/**
+ * Lee el body de una Response del backend y devuelve el mensaje legible
+ * (parsea el envelope de error). Para usar en hooks que aún usan `fetch`
+ * directo y hoy tiran `Error ${res.status}` sin detalle.
+ */
+export async function apiErrorText(res: Response, fallback = 'Error del servidor'): Promise<string> {
+  try {
+    const body = (await res.json()) as unknown;
+    return extractApiErrorMessage({ body }, fallback);
+  } catch {
+    return fallback;
+  }
+}

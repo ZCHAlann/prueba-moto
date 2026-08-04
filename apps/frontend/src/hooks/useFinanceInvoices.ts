@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { extractApiErrorMessage } from "../lib/form-validation";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -645,7 +646,7 @@ export function useFinanceStats(opts: {
     })
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((body: FinanceStatsResponse) => setData(body))
-      extractApiErrorMessage(err, 'Error')
+      .catch((err) => setError(extractApiErrorMessage(err, 'Error')))
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, opts.year, opts.assetId, opts.category, tick]);
@@ -698,7 +699,7 @@ export function useFinanceDrill(opts: {
         setPageSize(body.pageSize ?? 50);
         setTotalPages(body.totalPages ?? 1);
       })
-      extractApiErrorMessage(err, 'Error')
+      .catch((err) => setError(extractApiErrorMessage(err, 'Error')))
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, opts.year, opts.month, opts.assetId, opts.category, opts.page, opts.pageSize, opts.enabled, tick]);

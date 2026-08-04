@@ -74,7 +74,7 @@ export function useChecklistReauth() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+        throw new Error(extractApiErrorMessage({ body }, `HTTP ${res.status}`));
       }
       const json = await res.json();
       const raw: Array<Record<string, unknown>> = Array.isArray(json) ? json : (json.data ?? []);
@@ -122,7 +122,7 @@ export function useChecklistReauth() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+        throw new Error(extractApiErrorMessage({ body }, `HTTP ${res.status}`));
       }
       await fetchRequests();
       return res.json();
@@ -142,12 +142,11 @@ export function useChecklistReauth() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+        throw new Error(extractApiErrorMessage({ body }, `HTTP ${res.status}`));
       }
-      await fetchRequests();
       return res.json();
     },
-    [companyId, fetchRequests]
+    [companyId]
   );
 
   return {

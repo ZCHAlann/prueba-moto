@@ -35,6 +35,16 @@ const PRIORITY_CFG: Record<TicketPriority, { bg: string; text: string; border: s
   critical: { bg: "bg-red-50 dark:bg-red-500/10",       text: "text-red-700 dark:text-red-300",     border: "border-red-200 dark:border-red-500/20"      },
 };
 
+// Categorías que acepta el backend (POST /company/:id/tickets).
+const TICKET_CATEGORIES = [
+  { value: "",             label: "Sin categoría" },
+  { value: "bug",          label: "Bug / Error"   },
+  { value: "consulta",     label: "Consulta"      },
+  { value: "facturacion",  label: "Facturación"   },
+  { value: "acceso",       label: "Acceso"        },
+  { value: "otro",         label: "Otro"          },
+];
+
 function StatusBadge({ status }: { status: TicketStatus }) {
   const c = STATUS_CFG[status];
   return (
@@ -175,7 +185,7 @@ function KpiStrip({ tickets }: { tickets: CompanyTicket[] }) {
 
 interface NewTicketModalProps {
   onClose: () => void;
-  onCreate: (input: CreateTicketInput) => Promise<CompanyTicket | null>;
+  onCreate: (input: CreateTicketInput) => Promise<CompanyTicket>;
 }
 
 function NewTicketModal({ onClose, onCreate }: NewTicketModalProps) {
@@ -186,10 +196,14 @@ function NewTicketModal({ onClose, onCreate }: NewTicketModalProps) {
   const handleSubmit = async () => {
     if (!form.title.trim() || !form.description.trim()) { setError("El título y la descripción son obligatorios."); return; }
     setSaving(true); setError(null);
-    const result = await onCreate({ ...form, category: form.category || undefined });
-    setSaving(false);
-    if (result) onClose();
-    else setError("No se pudo crear el ticket. Inténtalo de nuevo.");
+    try {
+      const result = await onCreate({ ...form, category: form.category || undefined });
+      if (result) onClose();
+    } catch (err: any) {
+      setError(err?.message ?? "No se pudo crear el ticket. Inténtalo de nuevo.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const inputCls = "w-full rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.05] px-4 py-2.5 text-sm text-gray-800 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:border-[#465fff] focus:outline-none focus:ring-2 focus:ring-[#465fff]/20 transition";
@@ -238,7 +252,12 @@ function NewTicketModal({ onClose, onCreate }: NewTicketModalProps) {
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-gray-400">Categoría</label>
-              <input className={inputCls} value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} placeholder="Ej: Facturación, Técnico…" />
+              <div className="relative">
+                <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} className={`${inputCls} appearance-none pr-8 cursor-pointer`}>
+                  {TICKET_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"><IconChevronDown /></span>
+              </div>
             </div>
           </div>
           {error && <p className="text-xs text-red-500 dark:text-red-400">{error}</p>}

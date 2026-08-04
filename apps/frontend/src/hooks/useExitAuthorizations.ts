@@ -349,7 +349,7 @@ export function useExitAuthorizations() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
+        throw new Error(extractApiErrorMessage(err, `HTTP ${res.status}`));
       }
       const created = mapRow(await res.json());
       setItems((prev) => {
@@ -377,7 +377,7 @@ export function useExitAuthorizations() {
       );
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
+        throw new Error(extractApiErrorMessage(err, `HTTP ${res.status}`));
       }
       const updated = mapRow(await res.json());
       setItems((prev) => prev.map((x) => (x.id === id ? updated : x)));
@@ -395,7 +395,7 @@ export function useExitAuthorizations() {
       );
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
+        throw new Error(extractApiErrorMessage(err, `HTTP ${res.status}`));
       }
       setItems((prev) => prev.filter((x) => x.id !== id));
     },

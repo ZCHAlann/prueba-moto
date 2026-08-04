@@ -665,6 +665,7 @@ function DetailsPanel({ details, loading, module, day, page, onPageChange }: {
   page: number;
   onPageChange: (p: number) => void;
 }) {
+
   const d = new Date(day + "T00:00:00");
   const dateLabel = d.toLocaleDateString("es", {
     weekday: "long", day: "2-digit", month: "long", year: "numeric",

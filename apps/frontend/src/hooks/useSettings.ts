@@ -1,4 +1,4 @@
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -53,8 +53,8 @@ export function useSettings(): UseSettingsReturn {
     setError(null);
 
     fetch(`/api/company/${companyId}/settings`, { cache: "no-store" })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Error ${res.status}`);
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         return res.json();
       })
       .then((data) => {
@@ -79,7 +79,7 @@ export function useSettings(): UseSettingsReturn {
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+          throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
         }
 
         const data = await res.json();

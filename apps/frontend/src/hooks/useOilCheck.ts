@@ -65,7 +65,7 @@ export function useOilCheck(companyId: string, assetId?: string): UseOilCheckRet
       const res = await fetch(`/api/oil-check?${params}`, { credentials: "include" });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error((err as { message?: string }).message ?? `Error ${res.status}`);
+        throw new Error(extractApiErrorMessage(err, `Error ${res.status}`));
       }
       const data = await res.json() as { data: OilCheckResult[]; total: number };
       setHistory(data.data);
@@ -98,7 +98,7 @@ export function useOilCheck(companyId: string, assetId?: string): UseOilCheckRet
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error((err as { message?: string }).message ?? `Error ${res.status}`);
+        throw new Error(extractApiErrorMessage(err, `Error ${res.status}`));
       }
       const result = await res.json() as OilCheckResult;
       setHistory(prev => [result, ...prev]);

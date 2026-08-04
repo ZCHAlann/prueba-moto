@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 import type {
   AirConditioningUnit,
   AirConditioningStatus,
@@ -162,7 +162,7 @@ export function useAcUnits() {
         const res = await fetch(`/api/company/${companyId}/ac-units/${id}`, {
           cache: "no-store",
         });
-        if (!res.ok) throw new Error(`Error ${res.status}`);
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         const raw = (await res.json()) as Record<string, unknown>;
         const unit = mapUnit(raw);
         return {
@@ -217,12 +217,7 @@ extractApiErrorMessage(err, "Error cargando detalle de A/C")
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({}));
-          throw new Error(
-            (errBody as { message?: string }).message ?? `Error ${res.status}`
-          );
-        }
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         const data = (await res.json()) as Record<string, unknown>;
         refresh();
         return String(data.id ?? null);
@@ -263,12 +258,7 @@ extractApiErrorMessage(err, "Error cargando detalle de A/C")
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({}));
-          throw new Error(
-            (errBody as { message?: string }).message ?? `Error ${res.status}`
-          );
-        }
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         refresh();
         return true;
       } catch (err) {
@@ -287,12 +277,7 @@ extractApiErrorMessage(err, "Error cargando detalle de A/C")
         const res = await fetch(`/api/company/${companyId}/ac-units/${id}`, {
           method: "DELETE",
         });
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({}));
-          throw new Error(
-            (errBody as { message?: string }).message ?? `Error ${res.status}`
-          );
-        }
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         setUnits((current) => current.filter((u) => u.id !== id));
         return true;
       } catch (err) {
@@ -325,12 +310,7 @@ extractApiErrorMessage(err, "Error cargando detalle de A/C")
             body: JSON.stringify(body),
           }
         );
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({}));
-          throw new Error(
-            (errBody as { message?: string }).message ?? `Error ${res.status}`
-          );
-        }
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         refresh();
         return true;
       } catch (err) {
@@ -371,12 +351,7 @@ extractApiErrorMessage(err, "Error cargando detalle de A/C")
             }),
           }
         );
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({}));
-          throw new Error(
-            (errBody as { message?: string }).message ?? `Error ${res.status}`
-          );
-        }
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         refresh();
         return true;
       } catch (err) {

@@ -931,7 +931,7 @@ export function useAddCarwashPhotos() {
         );
         if (!upRes.ok) {
           const body = await upRes.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error subiendo foto (${upRes.status})`);
+          throw new Error(extractApiErrorMessage({ body }, `Error subiendo foto (${upRes.status})`));
         }
         const upData = await upRes.json() as { urls?: string[] };
         const url = upData.urls?.[0];

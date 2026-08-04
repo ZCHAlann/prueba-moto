@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { apiErrorText } from '../lib/form-validation';
 
 export type CockpitData = {
   asset: {
@@ -35,7 +36,7 @@ export function useVehicleCockpit(assetId: string | null, companyId: string) {
         `/api/company/${companyId}/vehicle-cockpit/${assetId}?companyId=${companyId}`,
         { credentials: 'include' }
       );
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
       setData(await res.json());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al cargar');

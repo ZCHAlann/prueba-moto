@@ -80,7 +80,7 @@ export function useCompanyRoles() {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error((body as { error?: string }).error ?? `Error al crear rol (HTTP ${res.status})`);
+      throw new Error(extractApiErrorMessage({ body }, `Error al crear rol (HTTP ${res.status})`));
     }
     await fetchRoles();
   }, [companyId, fetchRoles]);
@@ -97,7 +97,7 @@ export function useCompanyRoles() {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error((body as { error?: string }).error ?? `Error al actualizar rol (HTTP ${res.status})`);
+      throw new Error(extractApiErrorMessage({ body }, `Error al actualizar rol (HTTP ${res.status})`));
     }
     await fetchRoles();
   }, [companyId, fetchRoles]);
@@ -110,7 +110,7 @@ export function useCompanyRoles() {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error((body as { error?: string }).error ?? `Error al eliminar rol (HTTP ${res.status})`);
+      throw new Error(extractApiErrorMessage({ body }, `Error al eliminar rol (HTTP ${res.status})`));
     }
     await fetchRoles();
   }, [companyId, fetchRoles]);

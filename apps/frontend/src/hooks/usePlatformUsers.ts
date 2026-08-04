@@ -1,5 +1,6 @@
 // src/hooks/usePlatformUsers.ts
 import { useState, useEffect, useCallback } from "react";
+import { apiErrorText } from "../lib/form-validation";
 
 const API = "/api/platform/users";
 
@@ -82,7 +83,7 @@ export function usePlatformUsers() {
     setError(null);
     try {
       const res = await fetch(API, { credentials: "include" });
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
       const data: UsersSnapshot = await res.json();
       applySnapshot(data);
     } catch (e) {

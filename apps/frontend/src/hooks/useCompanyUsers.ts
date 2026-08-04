@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import type { PlatformRole } from "@/types/platform";
 import type { PermissionMap } from "../lib/module-tree";
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ export async function requestStaffQrToken(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+    throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
   }
   const json = (await res.json()) as { token: string; ttlSeconds: number };
   if (!json.token) throw new Error("Backend no devolvió token");
@@ -151,8 +151,8 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
     setError(null);
 
     fetch(`/api/company/${companyId}/users?page=1&pageSize=100`, { cache: "no-store" })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Error ${res.status}`);
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         return res.json();
       })
       .then((body: { data: Record<string, unknown>[]; total?: number; page?: number; pageSize?: number; totalPages?: number }) => {
@@ -195,7 +195,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+          throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
         }
 
         const data = await res.json() as Record<string, unknown>;
@@ -242,7 +242,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
 
         if (!res.ok) {
           const resBody = await res.json().catch(() => ({}));
-          throw new Error((resBody as { error?: string }).error ?? `Error ${res.status}`);
+          throw new Error(extractApiErrorMessage({ body: resBody }, `Error ${res.status}`));
         }
 
         const data = await res.json() as Record<string, unknown>;
@@ -278,7 +278,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+          throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
         }
 
         setUsers((current) =>
@@ -311,7 +311,7 @@ export function useCompanyUsers(): UseCompanyUsersReturn {
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+          throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
         }
 
         setUsers((current) => current.filter((u) => u.id !== id)); setTotal((t) => Math.max(0, t - 1));

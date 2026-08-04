@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 
 /**
  * Subset del "acta de asignación" que llega del endpoint de detalle
@@ -229,7 +229,7 @@ export function useDrivers() {
       if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
       const qs = params.toString();
       const res = await fetch(`/api/company/${companyId}/drivers${qs ? `?${qs}` : ""}`);
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
       const json = await res.json();
       setPageState({
         data: (json.data ?? []).map(mapApi),
@@ -274,7 +274,7 @@ export function useDrivers() {
         photoUrl: payload.photoUrl ?? null,
       }),
     });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
     const created = mapApi(await res.json());
     setPageState((prev) => ({ ...prev, data: [created, ...prev.data], total: prev.total + 1 }));
     return created;
@@ -304,7 +304,7 @@ export function useDrivers() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
     const updated = mapApi(await res.json());
     setPageState((prev) => ({ ...prev, data: prev.data.map((d) => (d.id === id ? updated : d)) }));
     return updated;
@@ -312,7 +312,7 @@ export function useDrivers() {
 
   const deleteDriver = useCallback(async (id: string): Promise<void> => {
     const res = await fetch(`/api/company/${companyId}/drivers/${id}`, { method: "DELETE" });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
     setPageState((prev) => ({ ...prev, data: prev.data.filter((d) => d.id !== id), total: Math.max(0, prev.total - 1) }));
   }, [companyId]);
 

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 
 export type ApiTollEntry = {
   id: string;
@@ -134,7 +134,7 @@ export function useToll() {
       if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
       const qs = params.toString();
       const res = await fetch(`/api/company/${companyId}/toll${qs ? `?${qs}` : ""}`);
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
       const json = await res.json();
       setPageState({
         data: (json.data ?? []).map(mapApi),
@@ -200,7 +200,10 @@ export function useToll() {
         invoiceNumber: payload.invoiceNumber ?? null,
       }),
     });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
+    }
     const created = mapApi(await res.json());
     setPageState((prev) => ({ ...prev, data: [created, ...prev.data], total: prev.total + 1 }));
     setAllEntries((prev) => [created, ...prev]);
@@ -228,7 +231,10 @@ export function useToll() {
         ...(payload.photoUrl      !== undefined && { photoUrl:      payload.photoUrl }),
       }),
     });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
+    }
     const updated = mapApi(await res.json());
     setPageState((prev) => ({ ...prev, data: prev.data.map((t) => (t.id === id ? updated : t)) }));
     setAllEntries((prev) => prev.map((t) => (t.id === id ? updated : t)));
@@ -240,7 +246,7 @@ export function useToll() {
       method: "DELETE",
       credentials: "include",
     });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
     setPageState((prev) => ({ ...prev, data: prev.data.filter((t) => t.id !== id), total: Math.max(0, prev.total - 1) }));
     setAllEntries((prev) => prev.filter((t) => t.id !== id));
     setAllTotal((t) => Math.max(0, t - 1));

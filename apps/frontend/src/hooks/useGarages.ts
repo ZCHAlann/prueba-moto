@@ -1,4 +1,4 @@
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -24,7 +24,7 @@ export function useGarages() {
     setLoading(true);
     setError(null);
     fetch(`/api/company/${companyId}/garages`, { cache: "no-store" })
-      .then((res) => { if (!res.ok) throw new Error(`Error ${res.status}`); return res.json(); })
+      .then(async (res) => { if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`)); return res.json(); })
       .then((body: { data: Record<string, unknown>[] }) => {
         setGarages((body.data ?? []).map((g) => ({
           id: String(g.id),
@@ -54,7 +54,7 @@ export function useGarages() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+        throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
       }
       refresh();
       return true;
@@ -74,7 +74,7 @@ export function useGarages() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+        throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
       }
       refresh();
       return true;
@@ -90,7 +90,7 @@ export function useGarages() {
       const res = await fetch(`/api/company/${companyId}/garages/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+        throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
       }
       setGarages((current) => current.filter((g) => g.id !== id));
       return true;

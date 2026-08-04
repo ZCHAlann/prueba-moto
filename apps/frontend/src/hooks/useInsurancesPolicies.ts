@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { compressIfImage, COMPRESS_OPTS_EVIDENCE } from "../lib/mediaCompress";
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 
 export type InsuranceStatus = "Vigente" | "Por vencer" | "Vencido";
 
@@ -87,7 +87,7 @@ export function useAssetCenter(): UseInsurancePoliciesReturn {
     setLoading(true);
     setError(null);
     fetch(`/api/company/${companyId}/insurance`, { cache: "no-store" })
-      .then((res) => { if (!res.ok) throw new Error(`Error ${res.status}`); return res.json(); })
+      .then(async (res) => { if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`)); return res.json(); })
       .then((body: { data: Record<string, unknown>[] }) => {
         setPolicies((body.data ?? []).map(mapApiToPolicy));
       })
@@ -125,7 +125,7 @@ export function useAssetCenter(): UseInsurancePoliciesReturn {
       });
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
-        throw new Error((b as { error?: string }).error ?? `Error ${res.status}`);
+        throw new Error(extractApiErrorMessage({ b }, `Error ${res.status}`));
       }
       const data = await res.json() as Record<string, unknown>;
       const created = mapApiToPolicy(data);
@@ -147,7 +147,7 @@ export function useAssetCenter(): UseInsurancePoliciesReturn {
       });
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
-        throw new Error((b as { error?: string }).error ?? `Error ${res.status}`);
+        throw new Error(extractApiErrorMessage({ b }, `Error ${res.status}`));
       }
       const data = await res.json() as Record<string, unknown>;
       const updated = mapApiToPolicy(data);
@@ -165,7 +165,7 @@ export function useAssetCenter(): UseInsurancePoliciesReturn {
       const res = await fetch(`/api/company/${companyId}/insurance/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
-        throw new Error((b as { error?: string }).error ?? `Error ${res.status}`);
+        throw new Error(extractApiErrorMessage({ b }, `Error ${res.status}`));
       }
       setPolicies((prev) => prev.filter((p) => p.id !== id));
       return true;

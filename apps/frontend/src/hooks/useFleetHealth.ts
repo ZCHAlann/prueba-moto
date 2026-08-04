@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { apiErrorText } from '../lib/form-validation';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ export function useFleetHealth() {
       const res = await fetch('/api/platform/fleet-health', {
         credentials: 'include',
       });
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
       const json: FleetHealthResponse = await res.json();
       setData(json.data);
       if (Array.isArray(json.monthLabels) && json.monthLabels.length === 12) {

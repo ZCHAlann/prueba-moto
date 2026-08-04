@@ -1,4 +1,4 @@
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
@@ -96,7 +96,7 @@ export function useMaintenances() {
       // primeros 20. Cuando esos módulos se migren,，他们会换成
       // useMaintenancesListLegacy o useMaintenancesV2.
       const res = await fetch(`/api/company/${companyId}/maintenances?pageSize=100`);
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
       const json = await res.json();
       setMaintenances((json.data ?? json).map(mapApi));
     } catch (err) {
@@ -127,7 +127,7 @@ export function useMaintenances() {
         partsCost: payload.partsCost,
       }),
     });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
     const created = mapApi(await res.json());
     setMaintenances((prev) => [created, ...prev]);
     return created;
@@ -154,7 +154,7 @@ export function useMaintenances() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
     const updated = mapApi(await res.json());
     setMaintenances((prev) => prev.map((m) => (m.id === id ? updated : m)));
     return updated;
@@ -162,7 +162,7 @@ export function useMaintenances() {
 
   const deleteMaintenance = useCallback(async (id: string): Promise<void> => {
     const res = await fetch(`/api/company/${companyId}/maintenances/${id}`, { method: "DELETE" });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
     setMaintenances((prev) => prev.filter((m) => m.id !== id));
   }, [companyId]);
 
@@ -172,7 +172,7 @@ export function useMaintenances() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ completed_date: completedDate }),
     });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
     const updated = mapApi(await res.json());
     setMaintenances((prev) => prev.map((m) => (m.id === id ? updated : m)));
     return updated;
@@ -238,7 +238,7 @@ export function useMaintenancesListLegacy(filters: LegacyMaintenanceListFilters 
       if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
       const qs = params.toString();
       const res = await fetch(`/api/company/${companyId}/maintenances${qs ? `?${qs}` : ""}`);
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
       const json = await res.json();
       setMaintenances((json.data ?? []).map(mapApi));
       setTotal(Number(json.total ?? 0));

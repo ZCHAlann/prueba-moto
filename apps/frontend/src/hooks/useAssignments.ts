@@ -1,4 +1,4 @@
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
@@ -193,7 +193,7 @@ export function useAssignments() {
       if (filters.to)       params.set("to",       filters.to);
       const qs = params.toString();
       const res = await fetch(`/api/company/${companyId}/assignments${qs ? `?${qs}` : ""}`);
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
       const json = await res.json();
       const next: AssignmentsPage = {
         data: (json.data ?? []).map(mapApi),
@@ -311,7 +311,7 @@ export function useAssignments() {
           ...(handoverData ?? {}),
         }),
       });
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
       const updated = mapApi(await res.json());
       // Sale de activas (status cambió) y entra a historial.
       setActive((prev) => ({
@@ -361,7 +361,7 @@ export function useAssignments() {
         if (opts.pageSize) qs.set("pageSize", String(opts.pageSize));
         const url = `/api/company/${companyId}/assignments/available-assets?${qs}`;
         const res = await fetch(url, { credentials: "include" });
-        if (!res.ok) throw new Error(`Error ${res.status}`);
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         const json = await res.json();
         setAvailableAssets(Array.isArray(json.data) ? json.data : []);
         setAvailableTotal(Number(json.total ?? 0));
@@ -403,7 +403,7 @@ export function useAssignments() {
         if (opts.pageSize) qs.set("pageSize", String(opts.pageSize));
         const url = `/api/company/${companyId}/assignments/available-drivers?${qs}`;
         const res = await fetch(url, { credentials: "include" });
-        if (!res.ok) throw new Error(`Error ${res.status}`);
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         const json = await res.json();
         setAvailableDrivers(Array.isArray(json.data) ? json.data : []);
         setAvailableDriversTotal(Number(json.total ?? 0));

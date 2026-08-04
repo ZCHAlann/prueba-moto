@@ -129,8 +129,8 @@ export function CanvasBoardEditorPage() {
     // Posición del drop relativa al canvas (rect ya es del propio canvas,
     // así que el ancho dinámico del CanvasModulePanel con hover no afecta
     // este cálculo).
-    const x = Math.max(0, e.clientX - rect.left - 200); // 200 = ancho aprox del widget
-    const y = Math.max(0, e.clientY - rect.top  - 40);  // 40 = header aprox
+    const x = Math.round(Math.max(0, e.clientX - rect.left - 200)); // 200 = ancho aprox del widget
+    const y = Math.round(Math.max(0, e.clientY - rect.top  - 40));  // 40 = header aprox
     setDropPos({ x, y });
     setDropModulo(key);
   }

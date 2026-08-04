@@ -1,4 +1,4 @@
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
@@ -100,7 +100,7 @@ export function useAlerts() {
       if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
       const qs = params.toString();
       const res = await fetch(`/api/company/${companyId}/alerts${qs ? `?${qs}` : ""}`);
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
       const json = await res.json();
       setAlerts((json.data ?? []).map(mapApi));
       setTotal(typeof json.total === "number" ? json.total : 0);
@@ -131,7 +131,7 @@ export function useAlerts() {
         notes: payload.notes,
       }),
     });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
     const created = mapApi(await res.json());
     setAlerts((prev) => [created, ...prev]);
     setTotal((t) => t + 1);
@@ -153,7 +153,7 @@ export function useAlerts() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
     const updated = mapApi(await res.json());
     setAlerts((prev) => prev.map((a) => (a.id === id ? updated : a)));
     return updated;
@@ -165,7 +165,7 @@ export function useAlerts() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
     });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
     const updated = mapApi(await res.json());
     setAlerts((prev) => prev.map((a) => (a.id === id ? updated : a)));
     return updated;
@@ -173,7 +173,7 @@ export function useAlerts() {
 
   const deleteAlert = useCallback(async (id: string): Promise<void> => {
     const res = await fetch(`/api/company/${companyId}/alerts/${id}`, { method: "DELETE" });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
     setAlerts((prev) => prev.filter((a) => a.id !== id));
     setTotal((t) => Math.max(0, t - 1));
   }, [companyId]);

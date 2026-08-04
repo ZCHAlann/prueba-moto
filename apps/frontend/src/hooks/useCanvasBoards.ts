@@ -1,4 +1,4 @@
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -205,7 +205,7 @@ export async function createBoard(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    throw new Error(extractApiErrorMessage({ body }, `HTTP ${res.status}`));
   }
   return mapBoard(await res.json());
 }
@@ -224,7 +224,7 @@ export async function updateBoard(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    throw new Error(extractApiErrorMessage({ body }, `HTTP ${res.status}`));
   }
   return mapBoard(await res.json());
 }
@@ -237,7 +237,7 @@ export async function deleteBoard(companyId: string, boardId: string): Promise<v
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    throw new Error(extractApiErrorMessage({ body }, `HTTP ${res.status}`));
   }
 }
 
@@ -309,7 +309,7 @@ export async function createWidget(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    throw new Error(extractApiErrorMessage({ body }, `HTTP ${res.status}`));
   }
   return mapWidget(await res.json());
 }
@@ -330,7 +330,7 @@ export async function updateWidget(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    throw new Error(extractApiErrorMessage({ body }, `HTTP ${res.status}`));
   }
   return mapWidget(await res.json());
 }
@@ -348,7 +348,7 @@ export async function deleteWidget(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    throw new Error(extractApiErrorMessage({ body }, `HTTP ${res.status}`));
   }
 }
 
@@ -415,8 +415,8 @@ export function useCanvasWidgetRows(
       `/api/company/${companyId}/canvas-boards/canvas-board-${numericBoardId}/widgets/canvas-widget-${numericWidgetId}/rows`,
       { credentials: "include", cache: "no-store" },
     )
-      .then((res) => {
-        if (!res.ok) throw new Error(`Error ${res.status}`);
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         return res.json();
       })
       .then((body: CanvasRowsPayload) => setData(body))
@@ -489,8 +489,8 @@ export function useCombinedWidgetData(
       `/api/company/${companyId}/canvas-boards/canvas-board-${numericBoardId}/widgets/canvas-widget-${numericWidgetId}/combined-data`,
       { credentials: "include", cache: "no-store" },
     )
-      .then((res) => {
-        if (!res.ok) throw new Error(`Error ${res.status}`);
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         return res.json();
       })
       .then((body: CombinedWidgetPayload) => setData(body))

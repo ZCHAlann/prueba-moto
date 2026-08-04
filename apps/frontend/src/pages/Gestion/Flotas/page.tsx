@@ -28,6 +28,7 @@ import { useDrivers } from "@/hooks/useDrivers";
 import { useSites } from "@/hooks/useSites";
 import { useCompanyLimits } from "@/hooks/useCompanyLimits";
 import { fmtDateShortEc } from "@/lib/datetime";
+import { extractApiErrorMessage } from "../../../lib/form-validation";
 import { RowActionMenu } from "../../../components/ui/table/RowActionMenu";
 
 // Lazy-load del modal real de mantenimiento (same pattern as dashboard/maintenance-table.tsx)
@@ -381,6 +382,7 @@ function CreateVehicleModal({ onClose, onCreated }: { onClose: () => void; onCre
   const set = (field: keyof VehicleFormData, value: unknown) => setForm(f => ({ ...f, [field]: value }));
 
   const handleSubmit = async () => {
+    if (!form.code.trim()) { toast.error("El código es obligatorio", { description: "Ej: VH-001." }); return; }
     if (!form.plate.trim() && !form.name.trim()) { toast.error("Completá al menos la placa o el nombre"); return; }
     // Validación de placa (si está llena)
     if (form.plate.trim() && !/^[A-Z]{3}-?\d{3,4}$/.test(form.plate.trim().toUpperCase())) {
@@ -397,12 +399,18 @@ function CreateVehicleModal({ onClose, onCreated }: { onClose: () => void; onCre
       }
     }
     setSaving(true);
-    const id = await createAsset(form);
-    setSaving(false);
-    if (!id) { toast.error("No se pudo crear el vehículo"); return; }
-    toast.success("Vehículo creado", { description: `${form.plate || form.name} registrado correctamente.` });
-    onCreated();
-    onClose();
+    try {
+      await createAsset(form);
+      toast.success("Vehículo creado", { description: `${form.plate || form.name} registrado correctamente.` });
+      onCreated();
+      onClose();
+    } catch (err) {
+      toast.error("No se pudo crear el vehículo", {
+        description: extractApiErrorMessage(err, undefined),
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const inputCls  = "w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-500/10 dark:border-white/[0.08] dark:bg-gray-900 dark:text-white";

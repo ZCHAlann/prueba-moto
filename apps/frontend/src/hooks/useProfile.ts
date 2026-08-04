@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
+import { extractApiErrorDetails } from "@/lib/form-validation";
 
 // ─── Tipos públicos ───────────────────────────────────────────────────────────
 
@@ -62,10 +63,11 @@ async function apiFetch<T>(
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
+      const details = extractApiErrorDetails({ body });
       return {
         data: null,
-        error: (body as { error?: string }).error ?? "Error inesperado.",
-        field: (body as { field?: string }).field,
+        error: details.message,
+        field: details.campos[0]?.campo ?? (body as { field?: string }).field,
       };
     }
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { apiErrorText } from "../lib/form-validation";
 import type { ActaCardData } from "../components/features/drivers/DriverActa";
 
 /**
@@ -38,7 +39,7 @@ export function useMyDriverAssignment() {
         setNotFound(true);
         return;
       }
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
       const json = await res.json();
       setActa((json?.data?.acta as ActaCardData | null) ?? null);
     } catch {

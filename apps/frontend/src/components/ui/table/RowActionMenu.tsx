@@ -49,31 +49,6 @@ export function RowActionMenu({ items, ariaLabel = "Acciones", singleItemAsButto
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number; placement: "down" | "up" } | null>(null);
 
-  // Si solo hay 1 item y la prop lo permite, render directo
-  if (singleItemAsButton && visibleItems.length === 1) {
-    const it = visibleItems[0]!;
-    return (
-      <button
-        onClick={(e) => { e.stopPropagation(); it.onClick(); }}
-        className={`rounded-lg border px-2 py-1 text-[11px] font-semibold whitespace-nowrap transition-colors ${
-          it.tone === "danger"
-            ? "border-rose-200 text-rose-600 hover:bg-rose-50 dark:border-rose-500/20 dark:text-rose-400 dark:hover:bg-rose-500/10"
-            : it.tone === "warning"
-            ? "border-amber-200 text-amber-600 hover:bg-amber-50 dark:border-amber-500/20 dark:text-amber-400 dark:hover:bg-amber-500/10"
-            : it.tone === "success"
-            ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50 dark:border-emerald-500/20 dark:text-emerald-400 dark:hover:bg-emerald-500/10"
-            : "border-sky-200 text-sky-600 hover:bg-sky-50 dark:border-sky-500/20 dark:text-sky-400 dark:hover:bg-sky-500/10"
-        }`}
-      >
-        {it.label}
-      </button>
-    );
-  }
-
-  if (visibleItems.length === 0) {
-    return <span className="text-xs text-gray-400">—</span>;
-  }
-
   const updatePosition = useCallback(() => {
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
@@ -133,6 +108,31 @@ export function RowActionMenu({ items, ariaLabel = "Acciones", singleItemAsButto
       window.removeEventListener("keydown", handleKey);
     };
   }, [open, updatePosition]);
+
+  // Si solo hay 1 item y la prop lo permite, render directo
+  if (singleItemAsButton && visibleItems.length === 1) {
+    const it = visibleItems[0]!;
+    return (
+      <button
+        onClick={(e) => { e.stopPropagation(); it.onClick(); }}
+        className={`rounded-lg border px-2 py-1 text-[11px] font-semibold whitespace-nowrap transition-colors ${
+          it.tone === "danger"
+            ? "border-rose-200 text-rose-600 hover:bg-rose-50 dark:border-rose-500/20 dark:text-rose-400 dark:hover:bg-rose-500/10"
+            : it.tone === "warning"
+            ? "border-amber-200 text-amber-600 hover:bg-amber-50 dark:border-amber-500/20 dark:text-amber-400 dark:hover:bg-amber-500/10"
+            : it.tone === "success"
+            ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50 dark:border-emerald-500/20 dark:text-emerald-400 dark:hover:bg-emerald-500/10"
+            : "border-sky-200 text-sky-600 hover:bg-sky-50 dark:border-sky-500/20 dark:text-sky-400 dark:hover:bg-sky-500/10"
+        }`}
+      >
+        {it.label}
+      </button>
+    );
+  }
+
+  if (visibleItems.length === 0) {
+    return <span className="text-xs text-gray-400">—</span>;
+  }
 
   const toneCls = (tone?: RowActionItem["tone"]) => {
     switch (tone) {

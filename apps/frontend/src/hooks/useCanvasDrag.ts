@@ -55,12 +55,12 @@ export function useCanvasDrag(
     const dx = e.clientX - s.mx;
     const dy = e.clientY - s.my;
     if (mode.current === "move") {
-      setRect({ ...s.rect, x: s.rect.x + dx, y: s.rect.y + dy });
+      setRect({ ...s.rect, x: Math.round(s.rect.x + dx), y: Math.round(s.rect.y + dy) });
     } else if (mode.current === "resize-br") {
       setRect({
         ...s.rect,
-        w: Math.max(minW, s.rect.w + dx),
-        h: Math.max(minH, s.rect.h + dy),
+        w: Math.round(Math.max(minW, s.rect.w + dx)),
+        h: Math.round(Math.max(minH, s.rect.h + dy)),
       });
     }
   }, [minW, minH]);

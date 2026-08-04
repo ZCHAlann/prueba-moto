@@ -1,4 +1,4 @@
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -75,8 +75,8 @@ export function useMotors(): UseMotorsReturn {
     setError(null);
 
     fetch(`/api/company/${companyId}/assets?assetType=Vehiculo`, { cache: "no-store" })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Error ${res.status}`);
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         return res.json();
       })
       .then((body: { data: Record<string, unknown>[] }) => {
@@ -104,7 +104,7 @@ export function useMotors(): UseMotorsReturn {
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+          throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
         }
         const data = await res.json() as Record<string, unknown>;
         const newMotor = mapApiToMotor(data, companyId);
@@ -129,7 +129,7 @@ export function useMotors(): UseMotorsReturn {
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+          throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
         }
         const data = await res.json() as Record<string, unknown>;
         const updated = mapApiToMotor(data, companyId);
@@ -152,7 +152,7 @@ export function useMotors(): UseMotorsReturn {
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+          throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
         }
         setMotors((current) => current.filter((m) => m.id !== id));
         return true;

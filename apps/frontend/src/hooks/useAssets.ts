@@ -1,4 +1,4 @@
-import { extractApiErrorMessage } from "../lib/form-validation";
+import { apiErrorText, extractApiErrorMessage } from "../lib/form-validation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import type { Asset, AssetCategory, AssetFuelType, AssetStatus, AssetType } from "../types/activo";
@@ -12,7 +12,7 @@ type UseAssetsReturn = {
   error: string | null;
   refresh: () => void;
   getAsset: (id: string) => Asset | undefined;
-  createAsset: (input: CreateAssetInput) => Promise<string | null>;
+  createAsset: (input: CreateAssetInput) => Promise<string>;
   updateAsset: (id: string, input: UpdateAssetInput) => Promise<boolean>;
   deleteAsset: (id: string) => Promise<boolean>;
 };
@@ -113,8 +113,8 @@ export function useAssets(): UseAssetsReturn {
     setError(null);
 
     fetch(`/api/company/${companyId}/assets?pageSize=100`, { cache: "no-store" })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Error ${res.status}`);
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await apiErrorText(res, `Error ${res.status}`));
         return res.json();
       })
       .then((body: { data: Record<string, unknown>[]; total?: number; page?: number; pageSize?: number; totalPages?: number }) => {
@@ -136,8 +136,8 @@ export function useAssets(): UseAssetsReturn {
   );
 
   const createAsset = useCallback(
-    async (input: CreateAssetInput): Promise<string | null> => {
-      if (!companyId) return null;
+    async (input: CreateAssetInput): Promise<string> => {
+      if (!companyId) throw new Error("No hay empresa seleccionada");
 
       try {
         const res = await fetch(`/api/company/${companyId}/assets`, {
@@ -148,7 +148,7 @@ export function useAssets(): UseAssetsReturn {
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+          throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
         }
 
         const data = await res.json() as Record<string, unknown>;
@@ -156,8 +156,9 @@ export function useAssets(): UseAssetsReturn {
         setAssets((current) => [...current, newAsset]); setTotal((t) => t + 1);
         return String(data.id);
       } catch (err) {
-        setError(extractApiErrorMessage(err, "Error creando activo"));
-        return null;
+        const msg = extractApiErrorMessage(err, "Error creando activo");
+        setError(msg);
+        throw new Error(msg);
       }
     },
     [companyId]
@@ -176,7 +177,7 @@ export function useAssets(): UseAssetsReturn {
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+          throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
         }
 
         const data = await res.json() as Record<string, unknown>;
@@ -202,7 +203,7 @@ export function useAssets(): UseAssetsReturn {
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error((body as { error?: string }).error ?? `Error ${res.status}`);
+          throw new Error(extractApiErrorMessage({ body }, `Error ${res.status}`));
         }
 
         setAssets((current) => current.filter((asset) => asset.id !== id)); setTotal((t) => Math.max(0, t - 1));

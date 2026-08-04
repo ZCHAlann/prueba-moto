@@ -170,7 +170,7 @@ export function useChecklists() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error ?? `Error al crear checklist (HTTP ${res.status})`);
+        throw new Error(extractApiErrorMessage(err, `Error al crear checklist (HTTP ${res.status})`));
       }
       await fetchChecklists();
     },
@@ -210,7 +210,7 @@ export function useChecklists() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error ?? `Error al actualizar checklist (HTTP ${res.status})`);
+        throw new Error(extractApiErrorMessage(err, `Error al actualizar checklist (HTTP ${res.status})`));
       }
       await fetchChecklists();
     },

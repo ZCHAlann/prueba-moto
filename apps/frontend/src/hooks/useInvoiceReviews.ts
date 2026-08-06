@@ -149,14 +149,26 @@ export function useInvoiceReviews() {
 
   return useMemo(() => {
     // ─── LIST ────────────────────────────────────────────────────────────
+    // jul 2026 v7 — Respuesta paginada (mismo shape que finance.requests):
+    // { data, total, page, pageSize, totalPages }.
     const list = async (params: {
       tab?: InvoiceReviewStatus | "all";
       siteId?: number;
-    } = {}): Promise<InvoiceReviewRow[]> => {
-      if (!companyId) return [];
+      page?: number;
+      pageSize?: number;
+    } = {}): Promise<{
+      data: InvoiceReviewRow[];
+      total: number;
+      page: number;
+      pageSize: number;
+      totalPages: number;
+    }> => {
+      if (!companyId) return { data: [], total: 0, page: 1, pageSize: 10, totalPages: 1 };
       const qs = new URLSearchParams();
       if (params.tab) qs.set("tab", params.tab);
       if (params.siteId) qs.set("siteId", String(params.siteId));
+      if (params.page) qs.set("page", String(params.page));
+      if (params.pageSize) qs.set("pageSize", String(params.pageSize));
       const q = qs.toString();
       const res = await fetch(
         `/api/company/${companyId}/finance/invoice-reviews${q ? `?${q}` : ""}`,
@@ -166,7 +178,17 @@ export function useInvoiceReviews() {
         throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => "")}`);
       }
       const json = await res.json();
-      return (json.reviews ?? []) as InvoiceReviewRow[];
+      const rows = (json.reviews ?? []) as InvoiceReviewRow[];
+      const total = typeof json.total === "number" ? json.total : rows.length;
+      const pageSize = typeof json.pageSize === "number" ? json.pageSize : Math.max(10, rows.length);
+      const totalPages = typeof json.totalPages === "number" ? json.totalPages : 1;
+      return {
+        data: rows,
+        total,
+        page: typeof json.page === "number" ? json.page : 1,
+        pageSize,
+        totalPages,
+      };
     };
 
     // ─── DETAIL ──────────────────────────────────────────────────────────

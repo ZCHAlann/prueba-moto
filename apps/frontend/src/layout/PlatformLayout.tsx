@@ -6,6 +6,7 @@ import AppHeader from "./AppHeader";
 import Backdrop from "./Backdrop";
 import AppSidebar from "./AppSidebar";
 import { platformNavigationSections } from "../lib/platform-navigation";
+import { ImpersonateWidget } from "../components/platform/ImpersonateWidget";
 
 const PlatformLayoutContent: React.FC = () => {
   const { isExpanded, isHovered, isMobileOpen } = useSidebar();
@@ -15,7 +16,7 @@ const PlatformLayoutContent: React.FC = () => {
   useEffect(() => {
     if (!ready) return;
     if (!session || session.scope !== "plataforma") {
-      navigate("/panel/signin", { replace: true });
+      navigate("/panel", { replace: true });
     }
   }, [ready, session, navigate]);
 
@@ -40,6 +41,7 @@ const PlatformLayoutContent: React.FC = () => {
         <div className="pt-24 p-4 mx-auto max-w-(--breakpoint-2xl) md:p-6">
           <Outlet />
         </div>
+        <ImpersonateWidget />
       </div>
     </div>
   );

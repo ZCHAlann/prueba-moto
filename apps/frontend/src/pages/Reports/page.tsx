@@ -47,6 +47,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ExportToolbar } from "../../components/ui/export-toolbar/ExportToolbar";
+import { Pagination as UiPagination } from "../../components/ui/Pagination";
 import { GroupedExportButton } from "./GroupedExportButton";
 import { DatePicker } from "../../components/ui/date-picker/DatePicker";
 import { EstadisticasTab } from "./EstadisticasTab";
@@ -973,6 +974,11 @@ function GroupedReportTable({
     [columns, numericCols],
   );
 
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  useEffect(() => { setPage(1); }, [groups.length]);
+  const pagedGroups = groups.slice((page - 1) * pageSize, page * pageSize);
+
   if (groups.length === 0) return null;
 
   return (
@@ -999,7 +1005,7 @@ function GroupedReportTable({
 
           {/* ── Lista de grupos ── */}
           <div>
-            {groups.map(({ groupValue, rows: groupRows }) => {
+            {pagedGroups.map(({ groupValue, rows: groupRows }) => {
               const isOpen = openGroup === groupValue;
               const subtotals = sumNumericCols(groupRows, numericCols);
               const groupId = `group-${moduleId}-${groupValue.replace(/\s+/g, "_")}`;
@@ -1309,6 +1315,15 @@ function GroupedReportTable({
           </div>
         </div>
       </div>
+      <UiPagination
+        page={page}
+        totalPages={Math.max(1, Math.ceil(groups.length / pageSize))}
+        total={groups.length}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        itemLabel="grupo"
+        itemLabelPlural="grupos"
+      />
     </div>
   );
 }

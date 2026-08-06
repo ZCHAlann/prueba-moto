@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { eq, and, desc, sql, isNull } from 'drizzle-orm';
 import { db } from '../../db/client';
 import { companyAssignments, companyAssets, companyDrivers } from '../../db/schema/operational';
+import { companyUsers } from '../../db/schema/platform';
 import { validate } from '../../lib/validate';
 import { requireModule } from '../../middlewares/requireModule';
 import { requireSupervisor } from '../../middlewares/requireSupervisor';
@@ -151,6 +152,175 @@ router.get('/', requireModule('gestion', 'asignaciones'), async (req, res, next)
       assets: assetsRows,
       drivers: driversRows,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── GET /company/:id/assignments/available-assets ───────────────────────────
+// jul 2026 — Activos SIN asignación activa, para el tablero de conexión.
+//
+// El tablero de arriba de la página de Asignaciones solo debe mostrar
+// vehículos que NO tienen una asignación en curso. Antes se filtraba en
+// el cliente contra la PRIMERA página de asignaciones activas (pageSize=6),
+// así que un vehículo con asignación activa que caía en la página 2+
+// aparecía como "libre". Este endpoint filtra en el server con un
+// anti-join contra `company_assignments` (status='Activa'), así el tablero
+// es correcto sin importar la paginación de la tabla de abajo.
+
+router.get('/available-assets', requireModule('gestion', 'asignaciones'), async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>, { pageSize: 500, maxPageSize: 1000 });
+    const rawQ = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const q = rawQ ? `%${rawQ.toLowerCase()}%` : null;
+
+    const antiJoin = and(
+      eq(companyAssignments.assetId, companyAssets.id),
+      eq(companyAssignments.companyId, companyId),
+      eq(companyAssignments.status, 'Activa'),
+    );
+
+    const conds = [
+      eq(companyAssets.companyId, companyId),
+      isNull(companyAssignments.id),
+    ];
+    if (q) {
+      conds.push(sql`(
+        lower(${companyAssets.plate}) like ${q}
+        or lower(coalesce(${companyAssets.brand}, '')) like ${q}
+        or lower(coalesce(${companyAssets.model}, '')) like ${q}
+        or lower(${companyAssets.name}) like ${q}
+      )`);
+    }
+    const where = and(...conds);
+
+    const [rows, countRow] = await Promise.all([
+      db
+        .select({ asset: companyAssets })
+        .from(companyAssets)
+        .leftJoin(companyAssignments, antiJoin)
+        .where(where)
+        .orderBy(companyAssets.plate)
+        .limit(pageSize)
+        .offset(offset),
+      db
+        .select({ value: sql<number>`cast(count(*) as int)` })
+        .from(companyAssets)
+        .leftJoin(companyAssignments, antiJoin)
+        .where(where),
+    ]);
+
+    const total = countRow?.[0]?.value ?? 0;
+    res.json(buildPageResponse(
+      rows.map((r) => {
+        const a = r.asset;
+        return {
+          id:        toId('asset', a.id),
+          plate:     a.plate,
+          code:      a.code,
+          name:      a.name,
+          brand:     a.brand,
+          model:     a.model,
+          year:      a.year,
+          color:     a.color,
+          category:  a.category,
+          assetType: a.assetType,
+          fuelType:  a.fuelType,
+          status:    a.status,
+          updatedAt: a.updatedAt,
+        };
+      }),
+      total,
+      page,
+      pageSize,
+    ));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── GET /company/:id/assignments/available-drivers ──────────────────────────
+// jul 2026 — Conductores Activos SIN asignación activa, para el tablero
+// de conexión. Mismo motivo que `available-assets`: el server filtra,
+// el cliente no depende de la paginación de la tabla de abajo.
+
+router.get('/available-drivers', requireModule('gestion', 'asignaciones'), async (req, res, next) => {
+  try {
+    const companyId = req.companyId!;
+    const { page, pageSize, offset } = parsePageParams(req.query as Record<string, unknown>, { pageSize: 500, maxPageSize: 1000 });
+    const rawQ = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const q = rawQ ? `%${rawQ.toLowerCase()}%` : null;
+
+    const conds = [
+      eq(companyDrivers.companyId, companyId),
+      eq(companyDrivers.status, 'Activo'),
+      isNull(companyAssignments.id),
+    ];
+    if (q) {
+      conds.push(sql`(
+        lower(${companyDrivers.firstName}) like ${q}
+        or lower(${companyDrivers.lastName}) like ${q}
+        or lower(${companyDrivers.code}) like ${q}
+      )`);
+    }
+    const where = and(...conds);
+
+    const antiJoin = and(
+      eq(companyAssignments.driverId, companyDrivers.id),
+      eq(companyAssignments.companyId, companyId),
+      eq(companyAssignments.status, 'Activa'),
+    );
+
+    const [rows, countRow] = await Promise.all([
+      db
+        .select({
+          driver:       companyDrivers,
+          userPhotoUrl: companyUsers.photoUrl,
+          userDni:      companyUsers.dni,
+        })
+        .from(companyDrivers)
+        .leftJoin(
+          companyUsers,
+          and(
+            eq(companyUsers.id, companyDrivers.userId),
+            eq(companyUsers.companyId, companyId),
+          ),
+        )
+        .leftJoin(companyAssignments, antiJoin)
+        .where(where)
+        .orderBy(companyDrivers.lastName)
+        .limit(pageSize)
+        .offset(offset),
+      db
+        .select({ value: sql<number>`cast(count(*) as int)` })
+        .from(companyDrivers)
+        .leftJoin(companyAssignments, antiJoin)
+        .where(where),
+    ]);
+
+    const total = countRow?.[0]?.value ?? 0;
+    res.json(buildPageResponse(
+      rows.map((r) => {
+        const d = r.driver;
+        const name = `${d.firstName} ${d.lastName}`.trim();
+        return {
+          id:        toId('driver', d.id),
+          code:      d.code,
+          firstName: d.firstName,
+          lastName:  d.lastName,
+          name,
+          dni:       d.dni ?? r.userDni ?? null,
+          phone:     d.phone,
+          photoUrl:  r.userPhotoUrl ?? d.photoUrl,
+          status:    d.status,
+          updatedAt: d.updatedAt,
+        };
+      }),
+      total,
+      page,
+      pageSize,
+    ));
   } catch (err) {
     next(err);
   }

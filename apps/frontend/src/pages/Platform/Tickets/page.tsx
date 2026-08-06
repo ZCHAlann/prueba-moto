@@ -18,6 +18,7 @@ import {
   type UpdateTicketInput,
 } from "@/hooks/usePlatformTickets";
 import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
+import { Pagination } from "../../../components/ui/Pagination";
 
 // ─── Badge helpers ─────────────────────────────────────────────────────────────
 
@@ -292,6 +293,12 @@ export default function PlatformTicketsPage() {
   const [drawerMessages, setDrawerMessages] = useState<TicketMessage[]>([]);
   const [drawerLoading, setDrawerLoading] = useState(false);
 
+  // ── Paginación client-side ─────────────────────────────────────────────
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  useEffect(() => { setPage(1); }, [tickets.length]);
+  const paged = tickets.slice((page - 1) * pageSize, page * pageSize);
+
   const openDrawer = async (ticket: PlatformTicket) => {
     setDrawerTicket(ticket);
     setDrawerMessages([]);
@@ -429,7 +436,8 @@ export default function PlatformTicketsPage() {
             <p className="text-sm dark:text-slate-400 text-slate-500">No hay tickets con los filtros aplicados</p>
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <>
+            <table className="w-full text-sm">
             <thead>
               <tr className="border-b dark:border-white/[0.06] border-slate-200">
                 {["Nº Ticket", "Empresa", "Título", "Estado", "Prioridad", "Asignado", "Creado"].map((h) => (
@@ -443,7 +451,7 @@ export default function PlatformTicketsPage() {
               </tr>
             </thead>
             <tbody className="divide-y dark:divide-white/[0.04] divide-slate-100">
-              {tickets.map((ticket, i) => (
+              {paged.map((ticket, i) => (
                 <motion.tr
                   key={ticket.id}
                   initial={{ opacity: 0 }}
@@ -477,6 +485,15 @@ export default function PlatformTicketsPage() {
               ))}
             </tbody>
           </table>
+            <Pagination
+              page={page}
+              totalPages={Math.max(1, Math.ceil(tickets.length / pageSize))}
+              total={tickets.length}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              itemLabel="ticket"
+            />
+          </>
         )}
       </motion.div>
 

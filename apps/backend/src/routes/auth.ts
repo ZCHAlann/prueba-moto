@@ -2,16 +2,17 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { db } from '../db/client';
 import { platformUsers, companyUsers, platformSettings, companies } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { validate } from '../lib/validate';
 import { hashPassword, verifyPassword, signToken } from '../services/auth.service';
-import { UnauthorizedError, AppError } from '../lib/errors';
-import { toId } from '../lib/ids';
-import { authenticate, COOKIE_NAME, PermissionMap, ModulePermissionMap } from '../middlewares/authenticate';
+import { UnauthorizedError, AppError, ForbiddenError, NotFoundError } from '../lib/errors';
+import { toId, parseId, parseIdFlexible } from '../lib/ids';
+import { authenticate, COOKIE_NAME, PermissionMap, ModulePermissionMap, ImpersonatorInfo } from '../middlewares/authenticate';
 import { rateLimitLogin, rateLimitAuthGlobal } from '../middlewares/rateLimit';
 import { getFinalPermissionsForUser } from './company/roles';
 import { getUserEffectivelyActiveFromDb } from '../lib/userStatus.db';
 import { getInactiveMessage, getInactiveCode } from '../lib/userStatus';
+import { logPlatformAudit } from '../lib/audit';
 
 const router = Router();
 
@@ -251,9 +252,213 @@ router.post("/login", rateLimitLogin, validate(loginSchema), async (req, res, ne
   }
 });
 
+// ─── POST /auth/impersonate ────────────────────────────────────────────────────
+// Superadmin impersona a un admin (owner_empresa / admin_empresa) de una
+// empresa. Firmamos un token con scope 'operacion' + el claim `impersonator`
+// (los datos del superadmin original) para que el frontend pueda mostrar el
+// botón de "volver" y el endpoint /auth/impersonate/back pueda restaurar la
+// sesión de plataforma sin pedir credenciales otra vez.
+//
+// El token de empresa que sale de acá cumple con TODOS los guards del router
+// /company/* (requireCompany, requireActiveStatus, requireModule,
+// requirePermission, getJwtIdentity) porque usa el sub 'company-user-{N}',
+// companyId real y role de admin real.
+
+const impersonateSchema = z.object({
+  companyId: z.union([z.number().int().positive(), z.string().min(1)]),
+});
+
+router.post('/impersonate', authenticate, async (req, res, next) => {
+  try {
+    const actor = req.user!;
+
+    // Solo superadmin de plataforma puede impersonar. Validamos contra BD
+    // (no solo el claim) para que un superadmin degradado pierda el poder.
+    let platformUserId: number;
+    try {
+      platformUserId = parseId('platform-user', actor.sub);
+    } catch {
+      throw new ForbiddenError('Sesión de plataforma inválida.');
+    }
+    const [platformUser] = await db
+      .select()
+      .from(platformUsers)
+      .where(eq(platformUsers.id, platformUserId))
+      .limit(1);
+    if (!platformUser || platformUser.role !== 'superadmin' || platformUser.status !== 'active') {
+      throw new ForbiddenError('Solo un superadmin activo puede impersonar empresas.');
+    }
+
+    const parsed = impersonateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: 'companyId inválido.' });
+    }
+    const companyId = parseIdFlexible('company', parsed.data.companyId);
+
+    const [company] = await db
+      .select()
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .limit(1);
+    if (!company) throw new NotFoundError('Empresa', String(companyId));
+
+    if (company.status === 'inactive' || company.status === 'suspended') {
+      throw new AppError(409, `La empresa "${company.name}" no está activa (${company.status}).`);
+    }
+
+    // Elegir un admin activo de la empresa: primero el owner, después un admin.
+    let admin: typeof companyUsers.$inferSelect | null = null;
+    for (const role of ['owner_empresa', 'admin_empresa']) {
+      const [candidate] = await db
+        .select()
+        .from(companyUsers)
+        .where(and(
+          eq(companyUsers.companyId, companyId),
+          eq(companyUsers.role, role),
+          eq(companyUsers.status, 'active'),
+        ))
+        .limit(1);
+      if (candidate) { admin = candidate; break; }
+    }
+    if (!admin) {
+      throw new AppError(404, `La empresa "${company.name}" no tiene un administrador activo.`);
+    }
+
+    // Chequeo de estado efectivo (mismo criterio que /login): si el admin /
+    // su empresa quedó inactivo, bloqueamos con un mensaje claro.
+    const status = await getUserEffectivelyActiveFromDb(admin.id, companyId);
+    if (status && !status.effectivelyActive) {
+      throw new AppError(409, `El administrador de "${company.name}" no está activo.`);
+    }
+
+    const impersonator: ImpersonatorInfo = {
+      sub:   toId('platform-user', platformUser.id),
+      email: platformUser.email,
+      name:  platformUser.username,
+      role:  platformUser.role,
+    };
+
+    const companyModules = company.enabledModules ?? [];
+
+    const tokenPayload = {
+      sub:               toId('company-user', admin.id),
+      email:             admin.email,
+      name:              admin.username,
+      role:              admin.role,
+      scope:             'operacion' as const,
+      companyId,
+      companyModules,
+      modulePermissions: {} as ModulePermissionMap,
+      permissions:       {} as PermissionMap,
+      dni:               admin.dni ?? null,
+      impersonator,
+    };
+
+    const token = await signToken(tokenPayload);
+    res.cookie(COOKIE_NAME, token, COOKIE_OPTS);
+
+    await logPlatformAudit(db, {
+      actorId:     impersonator.sub,
+      actorEmail:  impersonator.email,
+      action:      'company.impersonate',
+      entity:      'company',
+      entityId:    toId('company', companyId),
+      description: `Superadmin impersonó a ${admin.username} en "${company.name}".`,
+      metadata:    { targetUser: toId('company-user', admin.id), targetRole: admin.role },
+    });
+
+    return res.json({
+      id:                toId('company-user', admin.id),
+      email:             admin.email,
+      name:              admin.username,
+      role:              admin.role,
+      scope:             'operacion',
+      companyId:         companyId,
+      companyName:       company.name,
+      companyModules,
+      modulePermissions: {},
+      permissions:       {},
+      photoUrl:          admin.photoUrl ?? null,
+      // Indica al frontend que esta sesión es una impersonación activa.
+      impersonating:     true,
+      impersonatorName:  platformUser.username,
+      impersonatorEmail: platformUser.email,
+      token,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── POST /auth/impersonate/back ────────────────────────────────────────────────
+// Termina la impersonación y restaura la sesión de plataforma del superadmin
+// original (leyendo el claim `impersonator` del JWT actual).
+
+router.post('/impersonate/back', authenticate, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const impersonator = user.impersonator;
+    if (!impersonator) {
+      throw new ForbiddenError('No hay una impersonación activa.');
+    }
+
+    // Releer el usuario de plataforma original desde BD para firmar con datos
+    // frescos y verificar que siga siendo superadmin activo.
+    const platformUserId = parseId('platform-user', impersonator.sub);
+    const [platformUser] = await db
+      .select()
+      .from(platformUsers)
+      .where(eq(platformUsers.id, platformUserId))
+      .limit(1);
+    if (!platformUser || platformUser.role !== 'superadmin' || platformUser.status !== 'active') {
+      throw new ForbiddenError('La cuenta de superadmin original ya no está activa.');
+    }
+
+    const token = await signToken({
+      sub:               toId('platform-user', platformUser.id),
+      email:             platformUser.email,
+      name:              platformUser.username,
+      role:              platformUser.role,
+      scope:             'plataforma',
+      companyId:         null,
+      companyModules:    [],
+      modulePermissions: {},
+      permissions:       {},
+      dni:               platformUser.dni ?? null,
+    });
+
+    res.cookie(COOKIE_NAME, token, COOKIE_OPTS);
+
+    await logPlatformAudit(db, {
+      actorId:     impersonator.sub,
+      actorEmail:  impersonator.email,
+      action:      'company.impersonate.end',
+      entity:      'company',
+      entityId:    user.companyId ? toId('company', user.companyId) : undefined,
+      description: `Superadmin terminó la impersonación de "${user.name}".`,
+    });
+
+    return res.json({
+      id:                toId('platform-user', platformUser.id),
+      email:             platformUser.email,
+      name:              platformUser.username,
+      role:              platformUser.role,
+      scope:             'plataforma',
+      companyId:         null,
+      companyModules:    [],
+      modulePermissions: [],
+      permissions:       {},
+      photoUrl:          platformUser.photoUrl ?? null,
+      impersonating:     false,
+      token,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ─── POST /auth/session ────────────────────────────────────────────────────────
 // (sin cambios relevantes — este endpoint no se usa para el flujo principal)
-
 router.post('/session', validate(sessionSchema), async (req, res, next) => {
   try {
     const { email, scope } = req.body;
@@ -374,6 +579,9 @@ router.post('/refresh', authenticate, async (req, res, next) => {
       // anterior no lo tenía (sesiones pre-migración 0040), queda null
       // hasta que el usuario vuelva a login/refresh con el nuevo payload.
       dni:               user.dni ?? null,
+      // Si es una sesión de impersonación, mantener el claim del actor
+      // original (si no, el "volver" se perdería al refrescar).
+      impersonator:      user.impersonator,
     });
 
     return res.json({ token });
@@ -496,6 +704,13 @@ router.get("/session", authenticate, async (req, res, next) => {
       // frontend para invalidar la sesión si quedó desincronizada
       // con BD (cambio de rol, de permisos, etc.).
       permissionsUpdatedAt: dbUpdatedAt?.toISOString() ?? null,
+      // ── Estado de impersonación ───────────────────────────────────────────
+      // Si el JWT tiene claim `impersonator`, la sesión actual es una
+      // impersonación del superadmin → el frontend muestra el banner y
+      // el botón de "volver".
+      impersonating:     !!user.impersonator,
+      impersonatorName:  user.impersonator?.name  ?? null,
+      impersonatorEmail: user.impersonator?.email ?? null,
     });
   } catch (err) {
     next(err);

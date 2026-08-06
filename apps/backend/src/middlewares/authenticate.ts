@@ -15,6 +15,18 @@ export type CrudAction = "create" | "read" | "update" | "delete";
 export type ModulePermissionMap = Record<string, Record<string, string[]>>;
 export type PermissionMap = Record<string, unknown>;
 
+/**
+ * Datos del usuario original (superadmin de plataforma) mientras está
+ * impersonando un admin de empresa. Solo existe en tokens de
+ * impersonación; se usa para volver al panel de plataforma.
+ */
+export interface ImpersonatorInfo {
+  sub: string;    // 'platform-user-{N}'
+  email: string;
+  name: string;
+  role: string;   // 'superadmin'
+}
+
 export interface JwtPayload {
   sub: string;
   email: string;
@@ -30,6 +42,8 @@ export interface JwtPayload {
   // El frontend lo usa para autorrellenar la firma del responsable en
   // el acta PDF de asignaciones.
   dni?: string | null;
+  /** Presente solo en tokens de impersonación (superadmin → admin de empresa). */
+  impersonator?: ImpersonatorInfo;
   iat: number;
   exp: number;
 }

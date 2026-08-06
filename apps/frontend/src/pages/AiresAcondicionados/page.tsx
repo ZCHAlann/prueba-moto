@@ -19,6 +19,7 @@ import {
   Wrench, MapPin, Image as ImageIcon,
 } from "lucide-react";
 import { RowActionMenu } from "../../components/ui/table/RowActionMenu";
+import { Pagination } from "../../components/ui/Pagination";
 
 /* ── Stat card ──────────────────────────────────────────────────────────── */
 function StatCard({
@@ -115,6 +116,8 @@ export default function AcPage() {
   const [serviceTarget, setServiceTarget] = useState<AirConditioningUnit | null>(null);
   const [toDelete, setToDelete] = useState<AirConditioningUnit | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const siteName = (id?: string | null) =>
     id ? sites.find((s) => s.id === id)?.name ?? "—" : "—";
@@ -133,6 +136,10 @@ export default function AcPage() {
       return matchQuery && matchStatus;
     });
   }, [units, query, status]);
+
+  const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => { setPage(1); }, [filtered.length]);
 
   const statusTone = (s: string) =>
     s === "Operativo" ? "success" :
@@ -262,7 +269,7 @@ export default function AcPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                  {filtered.map((unit) => (
+                  {paged.map((unit) => (
                     <tr
                       key={unit.id}
                       onClick={() => setToView(unit)}
@@ -326,7 +333,7 @@ export default function AcPage() {
 
             {/* Mobile */}
             <div className="divide-y divide-gray-100 dark:divide-white/[0.04] md:hidden">
-              {filtered.map((unit) => (
+              {paged.map((unit) => (
                 <div
                   key={unit.id}
                   onClick={() => setToView(unit)}
@@ -361,6 +368,15 @@ export default function AcPage() {
                 </div>
               ))}
             </div>
+            <Pagination
+              page={page}
+              totalPages={Math.max(1, Math.ceil(filtered.length / pageSize))}
+              total={filtered.length}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              itemLabel="unidad"
+              itemLabelPlural="unidades"
+            />
           </>
         )}
       </div>

@@ -100,7 +100,7 @@ function RequirePlatform() {
       <div className="h-6 w-6 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
     </div>
   );
-  if (!session || session.scope !== "plataforma") return <Navigate to="/panel/signin" replace />;
+  if (!session || session.scope !== "plataforma") return <Navigate to="/panel" replace />;
   return <PlatformLayout />;
 }
 
@@ -268,7 +268,7 @@ const ROUTE_TITLES: Array<{ prefix: string; title: string }> = [
   // ── Públicas ──
   { prefix: '/solicitar-demo',      title: 'Solicitar demo' },
   { prefix: '/signin',              title: 'Iniciar sesión' },
-  { prefix: '/panel/signin',        title: 'Panel · Iniciar sesión' },
+  { prefix: '/panel',             title: 'Panel · Iniciar sesión' },
   { prefix: '/verify/',             title: 'Verificar carnet' },
   { prefix: '/politica-privacidad', title: 'Política de privacidad' },
 ];
@@ -517,7 +517,7 @@ export default function App() {
 
         {/* ── Auth (público) ── */}
         <Route path="/signin" element={<GuestOperacion><SignIn /></GuestOperacion>} />
-        <Route path="/panel/signin" element={<GuestPlatform><PlatformSignIn /></GuestPlatform>} />
+        <Route path="/panel" element={<GuestPlatform><PlatformSignIn /></GuestPlatform>} />
 
         <Route path="*" element={<NotFound />} />
       </Routes>

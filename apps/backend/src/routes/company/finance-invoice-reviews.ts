@@ -50,6 +50,7 @@ import { requirePermission } from '../../middlewares/requirePermission';
 import { AppError, NotFoundError } from '../../lib/errors';
 import { parseIdFlexible, toId } from '../../lib/ids';
 import { validate } from '../../lib/validate';
+import { parsePageParams } from '../../lib/pagination';
 import { isAdminRole, hasPermOrAdmin } from '../../lib/finance-bypass';
 import { notify, notifyAdminsExceptActor } from '../../lib/notification-service';
 import {
@@ -188,6 +189,9 @@ async function transitionReview(
 const listQuerySchema = z.object({
   tab: z.enum(['pending_review', 'seen', 'under_review', 'correction_requested', 'approved', 'all']).default('pending_review'),
   siteId: z.string().regex(/^\d+$/).optional(),
+  // jul 2026 v7 — paginación canónica (default 10, cap 100).
+  page: z.string().regex(/^\d+$/).optional(),
+  pageSize: z.string().regex(/^\d+$/).optional(),
 }).strict();
 
 router.get('/invoice-reviews', requirePermission('finanzas', 'caja_chica', 'revisar_facturas'), async (req, res, next) => {
@@ -195,6 +199,13 @@ router.get('/invoice-reviews', requirePermission('finanzas', 'caja_chica', 'revi
     const companyId = ensureCompanyId(req.companyId);
     const q = listQuerySchema.parse(req.query);
     const siteIdNum = q.siteId ? parseInt(q.siteId, 10) : null;
+
+    // jul 2026 v7 — paginación canónica (default 10, cap 100), mismo
+    // shape que GET /requests y /vouchers.
+    const { page, pageSize, offset } = parsePageParams(
+      req.query as Record<string, unknown>,
+      { pageSize: 10, maxPageSize: 100 },
+    );
 
     // jul 2026 v6 — Mismo resync defensivo que en GET /vouchers:
     // si hay vales con review='correction_requested' pero
@@ -243,26 +254,38 @@ router.get('/invoice-reviews', requirePermission('finanzas', 'caja_chica', 'revi
       conditions.push(eq(companyPettyCashVouchers.siteId, siteIdNum));
     }
 
-    const rows = await db
-      .select({
-        review:        companyInvoiceReviews,
-        voucher:       companyPettyCashVouchers,
-        invoice:       companyInvoices,
-        siteName:      companySites.name,
-        requesterName: sql<string>`requester.profile_data->>'fullName'`,
-        requesterUsername: sql<string>`requester.username`,
-        reviewerName:  sql<string>`reviewer.profile_data->>'fullName'`,
-      })
-      .from(companyInvoiceReviews)
-      .innerJoin(companyPettyCashVouchers, eq(companyPettyCashVouchers.id, companyInvoiceReviews.voucherId))
-      .innerJoin(companyInvoices, eq(companyInvoices.id, companyInvoiceReviews.invoiceId))
-      .innerJoin(companySites, eq(companySites.id, companyPettyCashVouchers.siteId))
-      .leftJoin(companyFinanceRequests, eq(companyFinanceRequests.id, companyPettyCashVouchers.requestId))
-      .leftJoin(sql`${companyUsers} AS requester`, sql`requester.id = ${companyFinanceRequests.requesterUserId}`)
-      .leftJoin(sql`${companyUsers} AS reviewer`,  sql`reviewer.id = ${companyInvoiceReviews.currentReviewerId}`)
-      .where(and(...conditions))
-      .orderBy(desc(companyInvoiceReviews.updatedAt))
-      .limit(500);
+    const [rows, [countRow]] = await Promise.all([
+      db
+        .select({
+          review:        companyInvoiceReviews,
+          voucher:       companyPettyCashVouchers,
+          invoice:       companyInvoices,
+          siteName:      companySites.name,
+          requesterName: sql<string>`requester.profile_data->>'fullName'`,
+          requesterUsername: sql<string>`requester.username`,
+          reviewerName:  sql<string>`reviewer.profile_data->>'fullName'`,
+        })
+        .from(companyInvoiceReviews)
+        .innerJoin(companyPettyCashVouchers, eq(companyPettyCashVouchers.id, companyInvoiceReviews.voucherId))
+        .innerJoin(companyInvoices, eq(companyInvoices.id, companyInvoiceReviews.invoiceId))
+        .innerJoin(companySites, eq(companySites.id, companyPettyCashVouchers.siteId))
+        .leftJoin(companyFinanceRequests, eq(companyFinanceRequests.id, companyPettyCashVouchers.requestId))
+        .leftJoin(sql`${companyUsers} AS requester`, sql`requester.id = ${companyFinanceRequests.requesterUserId}`)
+        .leftJoin(sql`${companyUsers} AS reviewer`,  sql`reviewer.id = ${companyInvoiceReviews.currentReviewerId}`)
+        .where(and(...conditions))
+        .orderBy(desc(companyInvoiceReviews.updatedAt))
+        .limit(pageSize)
+        .offset(offset),
+      // Count del mismo universo (mismos joins mínimos que necesita el
+      // filtro de siteId) — NUNCA `rows.length`.
+      db
+        .select({ value: sql<number>`cast(count(*) as int)` })
+        .from(companyInvoiceReviews)
+        .innerJoin(companyPettyCashVouchers, eq(companyPettyCashVouchers.id, companyInvoiceReviews.voucherId))
+        .where(and(...conditions)),
+    ]);
+    const total      = countRow?.value ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
     return res.json({
       reviews: rows.map(r => ({
@@ -295,6 +318,11 @@ router.get('/invoice-reviews', requirePermission('finanzas', 'caja_chica', 'revi
         },
         requesterName: r.requesterName ?? r.requesterUsername ?? null,
       })),
+      // jul 2026 v7 — paginación canónica (mismo shape que /requests).
+      total,
+      page,
+      pageSize,
+      totalPages,
     });
   } catch (err) {
     next(err);

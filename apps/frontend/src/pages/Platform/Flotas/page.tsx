@@ -12,6 +12,7 @@ import {
   Treemap,
 } from "recharts";
 import { useFleetHealth, type FleetHealthItem, type FleetHealthTier } from "../../../hooks/useFleetHealth";
+import { Pagination } from "../../../components/ui/Pagination";
 import { fmtTimeEc } from "@/lib/datetime";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -511,6 +512,12 @@ function TableTab({ data, selected, onSelect }: {
     });
   }, [data, sortKey, sortDir]);
 
+  // ── Paginación client-side ─────────────────────────────────────────────
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  useEffect(() => { setPage(1); }, [sorted.length]);
+  const paged = sorted.slice((page - 1) * pageSize, page * pageSize);
+
   function SortIcon({ k }: { k: SortKey }) {
     if (sortKey !== k) return <ChevronsUpDown size={10} className="text-gray-300" />;
     return sortDir === "asc"
@@ -545,7 +552,7 @@ function TableTab({ data, selected, onSelect }: {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((item, i) => {
+            {paged.map((item, i) => {
               const isSelected = selected === item.companyId;
               const [bg, text] = avatarColor(item.name);
               const pct = item.saturation ?? 0;
@@ -642,6 +649,14 @@ function TableTab({ data, selected, onSelect }: {
           <p className="text-sm text-gray-400">Sin empresas registradas</p>
         </div>
       )}
+      <Pagination
+        page={page}
+        totalPages={Math.max(1, Math.ceil(sorted.length / pageSize))}
+        total={sorted.length}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        itemLabel="vehículo"
+      />
       <div className="border-t border-gray-100 px-4 py-2.5 dark:border-white/[0.05]">
         <p className="text-[11px] text-gray-400">{sorted.length} empresa{sorted.length !== 1 ? "s" : ""}</p>
       </div>

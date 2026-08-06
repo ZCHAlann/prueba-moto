@@ -9,6 +9,7 @@ import {
   type CreateTicketInput,
 } from "@/hooks/useCompanyTickets";
 import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
+import { Pagination } from "@/components/ui/Pagination";
 
 const STATUS_LABELS: Record<TicketStatus, string> = {
   open: "Abierto",
@@ -502,6 +503,12 @@ export default function SoportePage() {
   const [drawerTicket, setDrawerTicket] = useState<CompanyTicket | null>(null);
   const [drawerMessages, setDrawerMessages] = useState<TicketMessage[]>([]);
   const [drawerLoading, setDrawerLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+
+  const paged = tickets.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => { setPage(1); }, [tickets.length]);
 
   const openDrawer = async (ticket: CompanyTicket) => {
     setDrawerTicket(ticket);
@@ -566,8 +573,9 @@ export default function SoportePage() {
         ) : tickets.length === 0 ? (
           <EmptyState onNew={() => setShowNewModal(true)} />
         ) : (
-          <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px]">
+          <>
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px]">
             <thead>
               <tr className="border-b border-gray-100 dark:border-white/[0.06]">
                 {["Nº", "Título", "Estado", "Prioridad", "Asignado", "Creado", ""].map((h, i, arr) => {
@@ -588,12 +596,21 @@ export default function SoportePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-              {tickets.map((ticket, i) => (
+              {paged.map((ticket, i) => (
                 <TicketRow key={ticket.id} ticket={ticket} index={i} onClick={() => openDrawer(ticket)} />
               ))}
             </tbody>
           </table>
           </div>
+            <Pagination
+              page={page}
+              totalPages={Math.max(1, Math.ceil(tickets.length / pageSize))}
+              total={tickets.length}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              itemLabel="ticket"
+            />
+          </>
         )}
       </motion.div>
 

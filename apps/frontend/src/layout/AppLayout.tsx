@@ -7,6 +7,7 @@ import AppHeader from "./AppHeader";
 import Backdrop from "./Backdrop";
 import AppSidebar from "./AppSidebar";
 import { FloatingChatWidget } from "../components/ui/FloatingChatWidget";
+import { ImpersonateWidget } from "../components/platform/ImpersonateWidget";
 
 
 const LayoutContent: React.FC = () => {
@@ -77,6 +78,7 @@ const LayoutContent: React.FC = () => {
           El FloatingChatWidget es el ÚNICO FAB; el FloatingAiAssistant vive
           embebido dentro del tab "Asistente" cuando aplica. */}
       <FloatingChatWidget />
+      <ImpersonateWidget />
 
       {/* NOTA: <FloatingAiAssistant /> ya NO se monta standalone acá.
           Si en el futuro se quiere usar el FAB del Jarvis en una página

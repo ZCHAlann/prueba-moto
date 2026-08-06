@@ -4,6 +4,7 @@ import { useAcUnits, type AcService } from "../../../hooks/useAcUnits";
 import { usePermissions } from "../../../hooks/usePermissions";
 import { ModulePageHeader } from "../../../components/features/modules/ModulePageHeader";
 import { AcServiceModal } from "../../../components/ac/ac-service-modal";
+import { Pagination } from "../../../components/ui/Pagination";
 import type { AirConditioningUnit, AcServiceKind } from "../../../types/fleet";
 import { fmtDateShortEc } from "@/lib/datetime";
 import {
@@ -236,6 +237,8 @@ export default function AcMaintenancesPage() {
   const [target, setTarget] = useState<AirConditioningUnit | null>(null);
   const [selected, setSelected] = useState<(AcService & { unitCode: string; unitName: string; unitId: string }) | null>(null);
   const reloadRef = useRef(0);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   /* Carga todos los servicios recorriendo cada unidad */
   useEffect(() => {
@@ -284,6 +287,10 @@ export default function AcMaintenancesPage() {
       return matchQuery && matchKind && matchUnit;
     });
   }, [services, query, kindFilter, unitFilter]);
+
+  const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => { setPage(1); }, [filtered.length]);
 
   const totalCost = useMemo(
     () => services.reduce((acc, s) => acc + (s.cost ?? 0), 0),
@@ -428,7 +435,7 @@ export default function AcMaintenancesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                  {filtered.map((s) => (
+                  {paged.map((s) => (
                     <tr
                       key={`${s.unitId}-${s.id}`}
                       onClick={() => setSelected(s)}
@@ -480,7 +487,7 @@ export default function AcMaintenancesPage() {
 
             {/* Mobile */}
             <div className="divide-y divide-gray-100 dark:divide-white/[0.04] md:hidden">
-              {filtered.map((s) => (
+              {paged.map((s) => (
                 <div
                   key={`${s.unitId}-${s.id}`}
                   onClick={() => setSelected(s)}
@@ -510,6 +517,14 @@ export default function AcMaintenancesPage() {
                 </div>
               ))}
             </div>
+            <Pagination
+              page={page}
+              totalPages={Math.max(1, Math.ceil(filtered.length / pageSize))}
+              total={filtered.length}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              itemLabel="servicio"
+            />
           </>
         )}
       </div>

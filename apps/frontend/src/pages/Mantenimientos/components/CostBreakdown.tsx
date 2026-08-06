@@ -18,10 +18,11 @@
 // botones para exportar PDF / Excel / copiar en cualquier modo.
 // ─────────────────────────────────────────────────────────────────────
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronRight, FileText, FileDown, Sheet, Copy, Loader2, Image as ImageIcon, ExternalLink, X } from "lucide-react";
 import { toast } from "sonner";
 import { useCostBreakdown } from "../../../hooks/useCostBreakdown";
+import { Pagination } from "../../../components/ui/Pagination";
 import {
   exportMaintenanceBreakdownPdf,
   exportMaintenanceBreakdownExcel,
@@ -160,6 +161,11 @@ export function CostBreakdownPanel({
   const [openRow, setOpenRow]     = useState<number | null>(null);
   const [imgModal, setImgModal]   = useState<string | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const mantenancesRaw = data?.mantenances ?? [];
+  const paged = mantenancesRaw.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => { setPage(1); }, [mantenancesRaw.length]);
 
   if (!enabled) return null;
 
@@ -317,7 +323,7 @@ export function CostBreakdownPanel({
                   Ningún mantenimiento coincide con los filtros activos.
                 </td>
               </tr>
-            ) : data.mantenances.map((m) => {
+            ) : paged.map((m) => {
               const isOpen   = openRow === m.id;
               // Cuando supplierId está activo, mostrar solo lo de ese proveedor.
               const repuestosCell = supplierId != null
@@ -358,6 +364,15 @@ export function CostBreakdownPanel({
             )}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          totalPages={Math.max(1, Math.ceil(mantenancesRaw.length / pageSize))}
+          total={mantenancesRaw.length}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          itemLabel="OT"
+          itemLabelPlural="OTs"
+        />
       </div>
 
       {/* Modal de imagen */}

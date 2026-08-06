@@ -25,6 +25,7 @@ import { usePlatformUsers }    from "../../../hooks/usePlatformUsers";
 import type { PlatformSettings } from "../../../hooks/usePlatformSettings";
 import type { CreatePlatformUserInput } from "../../../hooks/usePlatformUsers";
 import { SettingsPage } from "@/pages/Settings/page";
+import { Pagination } from "../../../components/ui/Pagination";
 import { fmtDateShortEc } from "@/lib/datetime";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -280,6 +281,12 @@ export function PlatformSettingsPage() {
   }>({ open: false, initial: null });
   const [userActionLoading, setUserActionLoading] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  // ── Paginación client-side (tab Usuarios) ──────────────────────────────
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  useEffect(() => { setPage(1); }, [users.length]);
+  const pagedUsers = users.slice((page - 1) * pageSize, page * pageSize);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -757,7 +764,7 @@ export function PlatformSettingsPage() {
                         </td>
                       </tr>
                     ) : (
-                      users.map((user, i) => (
+                      pagedUsers.map((user, i) => (
                         <motion.tr
                           key={user.id}
                           initial={{ opacity: 0, y: 5 }}
@@ -825,6 +832,14 @@ export function PlatformSettingsPage() {
                   </tbody>
                 </table>
               </div>
+              <Pagination
+                page={page}
+                totalPages={Math.max(1, Math.ceil(users.length / pageSize))}
+                total={users.length}
+                pageSize={pageSize}
+                onPageChange={setPage}
+                itemLabel="usuario"
+              />
             </div>
           </motion.div>
         )}

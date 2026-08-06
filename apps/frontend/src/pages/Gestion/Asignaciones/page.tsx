@@ -13,8 +13,6 @@ import { useAuth } from "../../../context/AuthContext";
 import { useAssignments } from "../../../hooks/useAssignments";
 import { HandoverWizard } from "./components/HandoerWizard";
 import { FinalizeAssignmentWizard } from "./components/FinalizeAssignmentWizard";
-import type { ApiDriver } from "../../../hooks/useDrivers";
-import type { Asset } from "../../../types/activo";
 import type { ExistingHandoverData } from "../../../hooks/useHandoverWizard";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -139,7 +137,8 @@ function KpiCard({ label, value, detail, tone }: {
 }
 
 function DriverCard({ driver, selected, hasActiveAssignment, onClick }: {
-  driver: ApiDriver; selected: boolean; hasActiveAssignment: boolean; onClick: () => void;
+  driver: { id: string; name: string; code: string | null; photoUrl: string | null };
+  selected: boolean; hasActiveAssignment: boolean; onClick: () => void;
 }) {
   return (
     <button type="button" disabled={hasActiveAssignment} onClick={onClick}
@@ -171,7 +170,8 @@ function DriverCard({ driver, selected, hasActiveAssignment, onClick }: {
 }
 
 function AssetCard({ asset, selected, onClick }: {
-  asset: Asset; selected: boolean; onClick: () => void;
+  asset: { id: string; plate: string | null; brand: string | null; model: string | null };
+  selected: boolean; onClick: () => void;
 }) {
   return (
     <button type="button" onClick={onClick}
@@ -202,7 +202,8 @@ export function AssignmentsPage() {
 
   const { assets,   loading: assetsLoading  } = useAssets();
   const { drivers,  loading: driversLoading } = useDrivers();
-  const { active, history, loading: assignmentsLoading, fetchPage, createAssignment, updateHandover, finalizeAssignment } =
+  const { active, history, loading: assignmentsLoading, fetchPage, createAssignment, updateHandover, finalizeAssignment,
+    availableAssets, availableDrivers, availableLoading, availableDriversLoading, fetchAvailableAssets, fetchAvailableDrivers } =
     useAssignments();
   // jul 2026 v7 — Company name para el header del PDF. Lo levantamos
   // desde el AuthContext acá y se lo pasamos al wizard como prop, en
@@ -213,7 +214,7 @@ export function AssignmentsPage() {
   const { session } = useAuth();
   const companyName = session?.companyName ?? "";
 
-  const loading = assetsLoading || driversLoading || assignmentsLoading;
+  const loading = assetsLoading || driversLoading || assignmentsLoading || availableLoading || availableDriversLoading;
 
   // ── view mode ─────────────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState<"board" | "table">("board");
@@ -270,6 +271,18 @@ export function AssignmentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage]);
 
+  // ── Catálogos "disponibles" para el tablero de conexión ─────────────────────
+  // jul 2026 — El tablero de arriba (conductores/vehículos sin asignación)
+  // viene del server (`/assignments/available-assets` y `available-drivers`).
+  // NO se filtra en el cliente contra `active.data`, porque esa lista está
+  // paginada (pageSize=6) y un asignado de la página 2+ aparecería como
+  // "libre". El server filtra con anti-join contra asignaciones Activas.
+  useEffect(() => {
+    void fetchAvailableAssets();
+    void fetchAvailableDrivers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Slot "historial": filtros por status/búsqueda + page.
   useEffect(() => {
     const status = historyFilter === "all" ? "Finalizada" : historyFilter;
@@ -302,10 +315,9 @@ export function AssignmentsPage() {
     [activeAssignments, assets, drivers],
   );
 
-  const availableAssets = useMemo(
-    () => assets.filter((asset) => !activeAssignments.some((a) => a.assetId === asset.id)),
-    [assets, activeAssignments],
-  );
+  // jul 2026 — `availableAssets`/`availableDrivers` vienen del server
+  // (solo sin asignación activa), NO se derivan filtrando `active.data`
+  // (que está paginado). El tablero de conexión los usa directo.
 
   // `history.data` ya viene paginado del backend con los filtros aplicados.
   const filteredRows = useMemo(
@@ -345,9 +357,9 @@ export function AssignmentsPage() {
   const totalHistoryPages = history.totalPages;
   const paginatedRows     = filteredRows;
 
-  // Wizard create — objetos seleccionados
-  const wizardDriver = selectedDriverId ? drivers.find((d) => d.id === selectedDriverId) ?? null : null;
-  const wizardAsset  = selectedAssetId  ? assets.find((a) => a.id === selectedAssetId)   ?? null : null;
+  // Wizard create — objetos seleccionados (vienen del catálogo disponible).
+  const wizardDriver = selectedDriverId ? availableDrivers.find((d) => d.id === selectedDriverId) ?? null : null;
+  const wizardAsset  = selectedAssetId  ? availableAssets.find((a) => a.id === selectedAssetId)   ?? null : null;
 
   // Wizard edit — objetos de la asignación a editar
   const editWizardDriver = editWizardDriverId ? drivers.find((d) => d.id === editWizardDriverId) ?? null : null;
@@ -379,6 +391,10 @@ export function AssignmentsPage() {
     setSelectedDriverId(null);
     setSelectedAssetId(null);
     toast.success("Asignación y acta guardadas correctamente");
+    // Re-fetch de los catálogos disponibles: el conductor/vehículo recién
+    // asignados deben salir del tablero de conexión.
+    void fetchAvailableAssets();
+    void fetchAvailableDrivers();
   }
 
   // ── edit acta ─────────────────────────────────────────────────────────────
@@ -486,6 +502,9 @@ export function AssignmentsPage() {
     const plate = assignment.assetPlate as string | undefined;
     handleFinalizeWizardClose();
     toast.success(`Asignación de ${plate ?? "vehículo"} finalizada con acta de devolución`);
+    // Al finalizar, el vehículo y el conductor vuelven a estar disponibles.
+    void fetchAvailableAssets();
+    void fetchAvailableDrivers();
   }
 
   // ── loading ───────────────────────────────────────────────────────────────
@@ -539,7 +558,7 @@ export function AssignmentsPage() {
         <KpiCard label="Activas"          value={activeAssignments.length}                              detail="Relaciones en curso"       tone="brand"   />
         <KpiCard label="Finalizadas"      value={history.total}                                            detail="Historial cerrado"        tone="gray"    />
         <KpiCard label="Vehículos libres" value={availableAssets.length}                               detail="Sin asignación activa"    tone="success" />
-        <KpiCard label="Conductores libres" value={drivers.filter((d) => !activeAssignments.some((a) => a.driverId === d.id)).length} detail="Disponibles para asignar" tone="warning" />
+        <KpiCard label="Conductores libres" value={availableDrivers.length} detail="Disponibles para asignar" tone="warning" />
       </section>
 
       {/* ── BOARD VIEW ── */}
@@ -560,16 +579,16 @@ export function AssignmentsPage() {
               {/* drivers */}
               <div className="border-b border-gray-200 dark:border-white/[0.06] md:border-b-0 md:border-r p-5">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                  Conductores ({drivers.length})
+                  Conductores disponibles ({availableDrivers.length})
                 </p>
                 <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                  {drivers.length === 0 && <p className="text-sm text-gray-400">Sin conductores registrados.</p>}
-                  {drivers.map((driver) => (
+                  {availableDrivers.length === 0 && <p className="text-sm text-gray-400">Sin conductores disponibles.</p>}
+                  {availableDrivers.map((driver) => (
                     <DriverCard
                       key={driver.id}
                       driver={driver}
                       selected={selectedDriverId === driver.id}
-                      hasActiveAssignment={activeAssignments.some((a) => a.driverId === driver.id)}
+                      hasActiveAssignment={false}
                       onClick={() => handleDriverClick(driver.id)}
                     />
                   ))}
@@ -873,8 +892,8 @@ export function AssignmentsPage() {
           open={wizardOpen}
           driverId={selectedDriverId!}
           assetId={selectedAssetId!}
-          driver={wizardDriver}
-          asset={wizardAsset}
+          driver={wizardDriver ? { firstName: wizardDriver.firstName ?? "", lastName: wizardDriver.lastName ?? "", dni: wizardDriver.dni } : null}
+          asset={wizardAsset ? { plate: wizardAsset.plate, brand: wizardAsset.brand, model: wizardAsset.model, color: wizardAsset.color, year: wizardAsset.year, category: wizardAsset.category } : null}
           companyName={companyName}
           assignmentCount={active.total}
           onClose={handleWizardClose}

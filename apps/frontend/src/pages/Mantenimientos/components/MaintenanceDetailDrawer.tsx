@@ -57,6 +57,7 @@ import {
 } from "./AttachmentFacturaModal";
 import { FinancePanel } from "./FinancePanel";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
+import { Pagination } from "../../../components/ui/Pagination";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -447,6 +448,11 @@ export function MaintenanceDetailDrawer({
   }, [m?.items]);
 
   const item: Maintenance | null = m || null;
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const itemsRaw = item?.items ?? [];
+  const paged = itemsRaw.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => { setPage(1); }, [itemsRaw.length]);
   const events = (item?.events || []) as EventNode[];
 
   // Sync IVA% con el valor guardado cuando llegan los datos
@@ -1336,7 +1342,7 @@ export function MaintenanceDetailDrawer({
                                   aunque el backend no haya recalculado.
                                   El botón "Guardar" hace DELETE del viejo +
                                   POST del nuevo con los valores nuevos. */}
-                              {item.items && item.items.map((it) => {
+                              {paged.map((it) => {
                                 const draft: ItemDraft = editingItems[it.id] ?? {
                                   name: it.name, quantity: String(it.quantity), unitCost: String(it.unitCost),
                                   discountValue: String(it.discountValue ?? 0), discountType: (it.discountType as "amount" | "percent") ?? "amount",
@@ -1702,6 +1708,15 @@ export function MaintenanceDetailDrawer({
                               )}
                             </tbody>
                           </table>
+                          <Pagination
+                            page={page}
+                            totalPages={Math.max(1, Math.ceil(itemsRaw.length / pageSize))}
+                            total={itemsRaw.length}
+                            pageSize={pageSize}
+                            onPageChange={setPage}
+                            itemLabel="ítem"
+                            itemLabelPlural="ítems"
+                          />
                         </div>
                       )}
 

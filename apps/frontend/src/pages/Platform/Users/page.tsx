@@ -18,6 +18,7 @@ import {
   InputField, SelectField,
 } from "../../../components/platform";
 import { StatusPill } from "../../../components/common/StatusPill";
+import { Pagination } from "../../../components/ui/Pagination";
 import { MODULE_TREE, type ModuleKey } from "../../../lib/module-tree";
 import type {
   PlatformUserRow, CompanyUserRow,
@@ -595,6 +596,12 @@ function GroupedCompanyUsers<T extends CompanyUserRow>({
   const expandAll   = () => setExpanded(new Set(groups.map(g => g.id)));
   const collapseAll = () => setExpanded(new Set());
 
+  // ── Paginación client-side (grupos) ────────────────────────────────────
+  const [groupPage, setGroupPage] = useState(1);
+  const groupPageSize = 10;
+  useEffect(() => { setGroupPage(1); }, [groups.length]);
+  const pagedGroups = groups.slice((groupPage - 1) * groupPageSize, groupPage * groupPageSize);
+
   if (groups.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-16">
@@ -605,9 +612,9 @@ function GroupedCompanyUsers<T extends CompanyUserRow>({
   }
 
   return (
+    <>
     <div className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-      {/* Toolbar: expandir/colapsar todo. Útil cuando hay 10+ empresas. */}
-      {groups.length > 1 && (
+      {/* Toolbar: expandir/colapsar todo. Útil cuando hay 10+ empresas. */}      {groups.length > 1 && (
         <div className="flex items-center justify-end gap-2 px-5 py-2 text-xs">
           <button type="button" onClick={expandAll}
             className="rounded-md px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/[0.04]">
@@ -620,7 +627,7 @@ function GroupedCompanyUsers<T extends CompanyUserRow>({
         </div>
       )}
 
-      {groups.map(group => {
+      {pagedGroups.map(group => {
         const isOpen = expanded.has(group.id);
         return (
           <div key={group.id}>
@@ -673,7 +680,17 @@ function GroupedCompanyUsers<T extends CompanyUserRow>({
           </div>
         );
       })}
-    </div>
+      </div>
+
+      <Pagination
+        page={groupPage}
+        totalPages={Math.max(1, Math.ceil(groups.length / groupPageSize))}
+        total={groups.length}
+        pageSize={groupPageSize}
+        onPageChange={setGroupPage}
+        itemLabel="usuario"
+      />
+    </>
   );
 }
 
@@ -732,6 +749,12 @@ export function PlatformUsersPage() {
   }, [companyUsers, search, filterRole]);
 
   const activeRoles = tab === "platform" ? PLATFORM_ROLES : COMPANY_ROLES;
+
+  // ── Paginación client-side (tab Plataforma) ────────────────────────────
+  const [platformPage, setPlatformPage] = useState(1);
+  const platformPageSize = 10;
+  useEffect(() => { setPlatformPage(1); }, [filteredPlatform.length]);
+  const pagedPlatform = filteredPlatform.slice((platformPage - 1) * platformPageSize, platformPage * platformPageSize);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -930,14 +953,24 @@ export function PlatformUsersPage() {
               exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18 }}
             >
               {tab === "platform" ? (
-                <UserTable
-                  users={filteredPlatform}
-                  type="platform"
-                  onDetail={u => setDrawerPU(u as PlatformUserRow)}
-                  onEdit={openEdit}
-                  onDelete={u => { setDeletingUser(u); setDeleteOpen(true); }}
-                  isSuperadmin={isSuperadmin}
-                />
+                <>
+                  <UserTable
+                    users={pagedPlatform}
+                    type="platform"
+                    onDetail={u => setDrawerPU(u as PlatformUserRow)}
+                    onEdit={openEdit}
+                    onDelete={u => { setDeletingUser(u); setDeleteOpen(true); }}
+                    isSuperadmin={isSuperadmin}
+                  />
+                  <Pagination
+                    page={platformPage}
+                    totalPages={Math.max(1, Math.ceil(filteredPlatform.length / platformPageSize))}
+                    total={filteredPlatform.length}
+                    pageSize={platformPageSize}
+                    onPageChange={setPlatformPage}
+                    itemLabel="usuario"
+                  />
+                </>
               ) : (
                 // jul 2026 v6 — En la tab "Empresas", agrupamos por
                 // empresa (carpetitas colapsables) en vez de mostrar

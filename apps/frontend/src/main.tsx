@@ -8,6 +8,7 @@ import App from "./App.tsx";
 import { AppWrapper } from "./components/common/PageMeta.tsx";
 import { ThemeProvider } from "./context/ThemeContext.tsx";
 import { AuthProvider } from "./context/AuthContext.tsx";
+import { ScreenTransitionProvider } from "./context/ScreenTransitionContext.tsx";
 import 'leaflet/dist/leaflet.css'
 import "leaflet/dist/leaflet.css";
 
@@ -27,9 +28,11 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AuthProvider>
-          <AppWrapper>
-            <App />
-          </AppWrapper>
+          <ScreenTransitionProvider>
+            <AppWrapper>
+              <App />
+            </AppWrapper>
+          </ScreenTransitionProvider>
         </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>

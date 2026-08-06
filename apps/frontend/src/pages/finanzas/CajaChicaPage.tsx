@@ -220,7 +220,10 @@ function TabBodyRouter(props: {
     canSeeAllRequests, canSeeAllVouchers,
   } = props;
 
-  // Redirigir si la pestaña actual no tiene permiso.
+  // Redirigir si la pestaña actual no tiene permiso. Si la pestaña
+  // pedida no existe para este usuario, caemos a la PRIMERA permitida
+  // (no hardcodeamos "solicitudes": un revisor contable que solo tiene
+  // `revisar_facturas` debe aterrizar en "Facturas por revisar").
   useEffect(() => {
     const allowed =
       (tab === "solicitudes"    && canTabSolicitudes) ||
@@ -229,7 +232,15 @@ function TabBodyRouter(props: {
       (tab === "configuracion"  && canTabConfig) ||
       (tab === "facturas"       && canTabFacturas) ||
       (tab === "correcciones"   && canTabCorrecciones);
-    if (!allowed) setTab("solicitudes");
+    if (allowed) return;
+    const firstAllowed =
+      (canTabSolicitudes && "solicitudes") ||
+      (canTabVales && "vales") ||
+      (canTabHistorial && "historial") ||
+      (canTabFacturas && "facturas") ||
+      (canTabCorrecciones && "correcciones") ||
+      (canTabConfig && "configuracion");
+    if (firstAllowed) setTab(firstAllowed);
   }, [tab, canTabSolicitudes, canTabVales, canTabHistorial, canTabConfig, canTabFacturas, canTabCorrecciones, setTab]);
 
   if (tab === "solicitudes" && canTabSolicitudes) {
@@ -354,7 +365,10 @@ export function CajaChicaPage() {
     "solicitudes" | "vales" | "historial" | "configuracion" | "facturas" | "correcciones";
   const setTab = (t: typeof tab) => setSearchParams({ tab: t });
 
-  if (!canView) {
+  // jul 2026 v6 — Un usuario con `revisar_facturas` (pero sin `ver`)
+  // también puede entrar a la página: solo verá las pestañas de revisión
+  // contable (Facturas por revisar / Correcciones).
+  if (!canView && !canReviewInvoices) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-4">
         <Lock className="h-12 w-12 text-gray-300 dark:text-gray-600" />
@@ -373,6 +387,7 @@ export function CajaChicaPage() {
         canReplenish={canReplenish}
         activeTab={tab}
         onTabChange={setTab}
+        canTabSolicitudes={canTabSolicitudes}
         canTabVales={canTabVales}
         canTabHistorial={canTabHistorial}
         canTabConfig={canTabConfig}
@@ -410,7 +425,7 @@ export function CajaChicaPage() {
 
 function Header({
   canCreate, canReplenish, activeTab, onTabChange,
-  canTabVales, canTabHistorial, canTabConfig,
+  canTabSolicitudes, canTabVales, canTabHistorial, canTabConfig,
   canTabFacturas, canTabCorrecciones,
   canSeeTotalBalance, canSeeSiteBalance,
 }: {
@@ -424,6 +439,7 @@ function Header({
   // que coincidan con el gate del TabBodyRouter de abajo (si el tab
   // aparece acá pero está bloqueado allá, el usuario lo ve sin
   // contenido, que es peor UX).
+  canTabSolicitudes: boolean;
   canTabVales: boolean;
   canTabHistorial: boolean;
   canTabConfig: boolean;
@@ -584,7 +600,7 @@ function Header({
          Operadores puros (solo ver+crear) caen siempre en Solicitudes. */}
       <div className="flex flex-wrap border-b border-gray-200 dark:border-white/[0.08]">
         {([
-          { key: "solicitudes", label: "Solicitudes" },
+          ...(canTabSolicitudes ? [{ key: "solicitudes" as const, label: "Solicitudes" }] : []),
           ...(canTabVales          ? [{ key: "vales" as const,          label: "Vales" }]          : []),
           ...(canTabFacturas       ? [{ key: "facturas" as const,       label: "Facturas por revisar", icon: ClipboardCheck }]       : []),
           ...(canTabCorrecciones   ? [{ key: "correcciones" as const,   label: "Correcciones",     icon: AlertOctagon }]   : []),
@@ -3121,20 +3137,38 @@ function FacturasPorRevisarTab() {
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState<DetailModalState>({ kind: "none" });
   const [refreshKey, setRefreshKey] = useState(0);
+  // jul 2026 v7 — paginación canónica (10 por página, cap 100).
+  const [page, setPage]         = useState(1);
+  const [total, setTotal]       = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (pageToLoad: number) => {
     setLoading(true);
     try {
-      const data = await reviews.list({ tab: filter });
-      setRows(data);
+      const result = await reviews.list({ tab: filter, page: pageToLoad, pageSize });
+      setRows(result.data);
+      setTotal(result.total);
+      setPageSize(result.pageSize);
+      setTotalPages(result.totalPages);
+      setPage(result.page);
     } catch (err) {
       toast.error("Error al cargar facturas por revisar");
     } finally {
       setLoading(false);
     }
-  }, [reviews, filter, refreshKey]);
+  }, [reviews, filter, pageSize, refreshKey]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(1); }, [load]);
+
+  function handleFilterChange(next: typeof filter) {
+    setFilter(next);
+    setPage(1);
+  }
+
+  function handlePageChange(nextPage: number) {
+    void load(nextPage);
+  }
 
   return (
     <div className="space-y-4">
@@ -3150,7 +3184,7 @@ function FacturasPorRevisarTab() {
         </label>
         <select
           value={filter}
-          onChange={(e) => setFilter(e.target.value as typeof filter)}
+          onChange={(e) => handleFilterChange(e.target.value as typeof filter)}
           className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200"
         >
           <option value="all">Todas</option>
@@ -3222,6 +3256,15 @@ function FacturasPorRevisarTab() {
               ))}
             </tbody>
           </table>
+          {/* jul 2026 v7 — paginación canónica. */}
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            pageSize={pageSize}
+            onPageChange={handlePageChange}
+            itemLabel="factura"
+          />
         </div>
       )}
 
@@ -3336,6 +3379,11 @@ function CorreccionesTab() {
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState<DetailModalState>({ kind: "none" });
   const [refreshKey, setRefreshKey] = useState(0);
+  // jul 2026 v7 — paginación canónica (10 por página, cap 100).
+  const [page, setPage]         = useState(1);
+  const [total, setTotal]       = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
   // jul 2026 v5 — Tick para refrescar el countdown del plazo de 1 día.
   const [now, setNow] = useState<number>(Date.now());
   useEffect(() => {
@@ -3343,19 +3391,23 @@ function CorreccionesTab() {
     return () => clearInterval(id);
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (pageToLoad: number) => {
     setLoading(true);
     try {
-      const data = await reviews.list({ tab: "correction_requested" });
-      setRows(data);
+      const result = await reviews.list({ tab: "correction_requested", page: pageToLoad, pageSize });
+      setRows(result.data);
+      setTotal(result.total);
+      setPageSize(result.pageSize);
+      setTotalPages(result.totalPages);
+      setPage(result.page);
     } catch (err) {
       toast.error("Error al cargar correcciones");
     } finally {
       setLoading(false);
     }
-  }, [reviews, refreshKey]);
+  }, [reviews, pageSize, refreshKey]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(1); }, [load]);
 
   return (
     <div className="space-y-4">
@@ -3447,6 +3499,16 @@ function CorreccionesTab() {
               })}
             </tbody>
           </table>
+          {/* jul 2026 v7 — paginación canónica. */}
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            pageSize={pageSize}
+            onPageChange={(nextPage) => void load(nextPage)}
+            itemLabel="corrección"
+            itemLabelPlural="correcciones"
+          />
         </div>
       )}
 

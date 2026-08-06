@@ -7,6 +7,7 @@ import { useSites, type EnrichedOperationalSite, type SiteLinkedAsset, type Site
 import { usePermissions } from "@/hooks/usePermissions";
 import { LocationPickerModal } from "@/components/ui/map/LocationPicker";
 import { RowActionMenu } from "@/components/ui/table/RowActionMenu";
+import { Pagination } from "@/components/ui/Pagination";
 import type { OperationalSite, SiteStatus } from "@/types/fleet";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -643,6 +644,8 @@ export function SitesManagementPage() {
   const [modalOpen,   setModalOpen]   = useState(false);
   const [editingSite, setEditingSite] = useState<OperationalSite | null>(null);
   const [detailSite,  setDetailSite]  = useState<EnrichedSite | null>(null);
+  const [page,        setPage]        = useState(1);
+  const pageSize = 10;
 
   // ── Modal de confirmación de desactivación de sede (Fase 3.2) ─────
   // Cuando se quiere pasar una sede de 'Activa' a 'Inactiva', primero
@@ -677,6 +680,10 @@ export function SitesManagementPage() {
         s.contact.toLowerCase().includes(q),
     );
   }, [query, rows]);
+
+  const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => { setPage(1); }, [filtered.length]);
 
   const openCreate = () => { setEditingSite(null); setModalOpen(true); };
   const openEdit   = (site: OperationalSite) => { setEditingSite(site); setModalOpen(true); setDetailSite(null); };
@@ -819,7 +826,8 @@ export function SitesManagementPage() {
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+              <div className="overflow-x-auto">
               <table className="w-full min-w-[760px]">
                 <thead>
                   <tr className="border-b border-gray-200 dark:border-white/[0.06]">
@@ -831,7 +839,7 @@ export function SitesManagementPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                  {filtered.map((site) => (
+                  {paged.map((site) => (
                     <tr
                       key={site.id}
                       className="group hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors"
@@ -871,6 +879,16 @@ export function SitesManagementPage() {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              page={page}
+              totalPages={Math.max(1, Math.ceil(filtered.length / pageSize))}
+              total={filtered.length}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              itemLabel="sede"
+              itemLabelPlural="sedes"
+            />
+            </>
           )}
         </div>
 

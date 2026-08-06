@@ -8,6 +8,7 @@ import { useInsuranceFormOptions } from "@/hooks/useFormOptions";
 import { usePermissions } from "@/hooks/usePermissions";
 import { DatePicker } from "../../../components/ui/date-picker/DatePicker";
 import { RowActionMenu } from "../../../components/ui/table/RowActionMenu";
+import { Pagination } from "../../../components/ui/Pagination";
 import type { Asset } from "@/types/activo";
 import type { InsurancePolicy, InsuranceStatus } from "../../../hooks/useInsurancesPolicies";
 
@@ -804,6 +805,8 @@ export function InsuranceManagementPage() {
   const [editingPolicy, setEditingPolicy] = useState<(PolicyForm & { id: string }) | null>(null);
   const [detailPolicy, setDetailPolicy]   = useState<(PolicyForm & { id: string }) | null>(null);
   const [deleteTarget, setDeleteTarget]   = useState<(PolicyForm & { id: string }) | null>(null);
+  const [page, setPage]                 = useState(1);
+  const pageSize = 10;
 
   const toForm = (p: InsurancePolicy): PolicyForm & { id: string } => ({
     id: p.id, assetId: p.assetId, insurer: p.insurer,
@@ -830,6 +833,10 @@ export function InsuranceManagementPage() {
       r.status.toLowerCase().includes(q)
     );
   }, [rows, query]);
+
+  const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => { setPage(1); }, [filtered.length]);
 
   const openCreate = () => { setEditingPolicy(null); setModalOpen(true); };
   const openEdit   = (p: PolicyForm & { id: string }) => { setEditingPolicy(p); setModalOpen(true); setDetailPolicy(null); };
@@ -937,9 +944,9 @@ export function InsuranceManagementPage() {
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[780px]">
-                <thead>
+            <>
+              <div className="overflow-x-auto">
+              <table className="w-full min-w-[780px]"><thead>
                   <tr className="border-b border-gray-100 dark:border-white/[0.06]">
                     {["Vehículo", "Aseguradora / Póliza", "Cobertura", "Vencimiento", "Doc.", "Estado", ""].map((h, i, arr) => (
                       <th
@@ -950,7 +957,7 @@ export function InsuranceManagementPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                  {filtered.map((item, i) => {
+                  {paged.map((item, i) => {
                     const days  = daysRemaining(item.endDate);
                     const level = urgencyLevel(days);
                     const leftBorder =
@@ -1013,6 +1020,16 @@ export function InsuranceManagementPage() {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              page={page}
+              totalPages={Math.max(1, Math.ceil(filtered.length / pageSize))}
+              total={filtered.length}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              itemLabel="póliza"
+              itemLabelPlural="pólizas"
+            />
+            </>
           )}
         </motion.div>
       </div>

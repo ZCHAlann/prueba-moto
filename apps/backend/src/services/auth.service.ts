@@ -1,6 +1,6 @@
 import { hash, compare } from 'bcryptjs';
 import { sign, verify, type SignOptions } from 'jsonwebtoken';
-import { JwtPayload, ModulePermissionMap, PermissionMap } from '../middlewares/authenticate';
+import { JwtPayload, ModulePermissionMap, PermissionMap, ImpersonatorInfo } from '../middlewares/authenticate';
 import { db } from '../db/client';
 import { platformSettings } from '../db/schema/platform';
 import { eq } from 'drizzle-orm';
@@ -51,6 +51,10 @@ interface SignTokenParams {
   companyModules: string[];
   modulePermissions: ModulePermissionMap;  
   permissions?: PermissionMap;
+  /** jun 2026 — cédula/DNI del usuario. Se persiste en el JWT. */
+  dni?: string | null;
+  /** Solo en tokens de impersonación: quién es el superadmin original. */
+  impersonator?: ImpersonatorInfo;
 }
 
 export const signToken = async (payload: SignTokenParams): Promise<string> => {
@@ -74,6 +78,8 @@ export const signToken = async (payload: SignTokenParams): Promise<string> => {
     companyModules:    payload.companyModules,
     modulePermissions: payload.modulePermissions,
     permissions:       payload.permissions ?? {},
+    dni:               payload.dni ?? null,
+    impersonator:      payload.impersonator,
   };
 
   return sign(tokenPayload, secret, options);

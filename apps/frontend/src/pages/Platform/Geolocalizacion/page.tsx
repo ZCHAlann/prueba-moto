@@ -32,7 +32,7 @@ export default function PlatformGeolocationPage() {
         accent="sky"
         action={
           <button type="button"
-            onClick={() => navigate("/platform/dashboard")}
+            onClick={() => navigate("/panel/dashboard")}
             className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-sm font-medium text-gray-700 transition hover:border-brand-400 hover:text-brand-600 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200">
             <ArrowLeft size={14} /> Volver al dashboard
           </button>

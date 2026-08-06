@@ -33,7 +33,7 @@ export default function CompanyAIPage() {
     return (
       <div className="p-6">
         <p className="text-sm text-rose-600 dark:text-rose-400">{error ?? "No se pudo cargar."}</p>
-        <Link to="/platform/companies" className="mt-3 inline-flex items-center gap-1 text-xs text-sky-600 hover:underline">
+        <Link to="/panel/companies" className="mt-3 inline-flex items-center gap-1 text-xs text-sky-600 hover:underline">
           <ArrowLeft size={12} /> Volver
         </Link>
       </div>
@@ -49,7 +49,7 @@ export default function CompanyAIPage() {
     <div className="space-y-5 p-5">
       <div className="flex items-center justify-between">
         <div>
-          <Link to="/platform/companies" className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800 dark:hover:text-white">
+          <Link to="/panel/companies" className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800 dark:hover:text-white">
             <ArrowLeft size={12} /> Empresas
           </Link>
           <h1 className="mt-1 text-xl font-bold text-gray-900 dark:text-white">

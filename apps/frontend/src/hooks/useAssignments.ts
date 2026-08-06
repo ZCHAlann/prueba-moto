@@ -328,7 +328,7 @@ export function useAssignments() {
   // jul 2026 — Vehículos disponibles para el selector del wizard
   // de asignación. Llama al endpoint dedicado del backend
   // (`/assignments/available-assets`) que filtra en el server
-  // (Operativo + sin asignación activa), con paginación y búsqueda.
+  // (sin asignación activa), con paginación y búsqueda.
   // Es la fuente de verdad del server: escala a cualquier tamaño de
   // flota porque NO trae todos los assets y filtra en el cliente.
   type AvailableAsset = {
@@ -340,11 +340,10 @@ export function useAssignments() {
     model: string | null;
     year: string | null;
     color: string | null;
+    category: string | null;
     assetType: string | null;
     fuelType: string | null;
-    vin: string | null;
     status: string | null;
-    odometerKm: string | null;
     updatedAt: string | null;
   };
   const [availableAssets, setAvailableAssets] = useState<AvailableAsset[]>([]);
@@ -384,8 +383,10 @@ export function useAssignments() {
     code: string | null;
     firstName: string | null;
     lastName: string | null;
+    name: string;
     dni: string | null;
     phone: string | null;
+    photoUrl: string | null;
     status: string | null;
     updatedAt: string | null;
   };

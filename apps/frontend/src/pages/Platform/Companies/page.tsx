@@ -6,7 +6,6 @@
 // de creación/edición con wizard paso a paso.
 
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Plus, Building2, Users, ShieldAlert, Clock,
@@ -26,7 +25,6 @@ import { fmtDateShortEc } from "@/lib/datetime";
 import {
   PlatformKpiCard, PlatformModal, ModalActions,
   InputField, SelectField, TextareaField,
-  AiApiKeysSection,
 } from "../../../components/platform";
 import { StatusPill } from "../../../components/common/StatusPill";
 import type {
@@ -438,32 +436,6 @@ function CompanyDrawer({
                   </p>
                 </Section>
               )}
-
-              {/* jul 2026 v6 — link a la config de IA por empresa */}
-              <Section title="Asistente IA">
-                <Link
-                  to={`/panel/companies/${company.id}/ai`}
-                  className="inline-flex items-center gap-1.5 text-xs font-medium text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
-                >
-                  <Sparkles size={12} /> Ver config IA →
-                </Link>
-                <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
-                  Provider, API key, kill-switch y uso de tokens.
-                </p>
-              </Section>
-
-              {/* jul 2026 — Sección de API Keys para integraciones externas
-                  (Custom GPT, n8n, etc.). Vive en el drawer para acceso
-                  rápido. Para vista completa, ver /panel/companies/:id/ai-api-keys */}
-              <Section title="API Keys">
-                <Link
-                  to={`/panel/companies/${company.id}/ai-api-keys`}
-                  className="mb-2 inline-flex items-center gap-1.5 text-xs font-medium text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
-                >
-                  <KeyRound size={12} /> Ver página completa →
-                </Link>
-                <AiApiKeysSection companyId={company.id} compact />
-              </Section>
 
               <button type="button" onClick={onEdit}
                 className="w-full rounded-xl bg-brand-500 py-2.5 text-sm font-semibold text-white

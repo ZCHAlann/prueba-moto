@@ -70,6 +70,10 @@ export type ActaReturnData = {
   signatoryDni:  string;
   odometerReturnPhotoUrl: string | null;
   multasText:    string;
+  /** Fotos del vehículo al regreso. Durante el preview son dataURLs de los
+   *  Files locales; en el PDF final son dataURLs de las URLs remotas ya
+   *  subidas (las resolvió `generateReturnActaPdf`). */
+  photoUrls: string[];
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -756,6 +760,20 @@ function ActaDevolucionDocument({ data }: { data: ActaReturnData }) {
           ]}
         />
       </Page>
+
+      {/* Página 2: Anexo fotográfico (solo si hay fotos). Hermana del
+          primer <Page>, dentro del mismo <Document>. */}
+      {data.photoUrls && data.photoUrls.length > 0 ? (
+        <Page size="A4" style={s.page}>
+          <Header companyName={data.companyName} docLabel="Anexo Fotográfico" />
+          <Text style={s.title}>Anexo Fotográfico</Text>
+          <Text style={s.legal}>
+            Forman parte integral de la presente acta las siguientes
+            imágenes del vehículo al momento de la devolución:
+          </Text>
+          <VehiclePhotoAnnex photoUrls={data.photoUrls} perPage={4} />
+        </Page>
+      ) : null}
     </Document>
   );
 }
@@ -835,6 +853,31 @@ export async function generateActaPdf(
   return pdf(doc).toBlob();
 }
 
-export async function generateReturnActaPdf(data: ActaReturnData): Promise<Blob> {
-  return pdf(<ActaDevolucionDocument data={data} />).toBlob();
+export async function generateReturnActaPdf(
+  data: ActaReturnData,
+  photoFiles: File[] = [],
+): Promise<Blob> {
+  // ── Resolución de fotos para el PDF (mismo patrón que generateActaPdf):
+  //   1. URLs remotas ya subidas (photoUrls) → fetch → dataURL base64
+  //   2. Files locales (preview, antes de subir) → FileReader base64
+  // Si una foto falla, la omitimos y seguimos con las demás.
+  const photoDataUrls: string[] = [];
+  const urls = (data.photoUrls ?? []).filter(Boolean);
+  for (const url of urls) {
+    try {
+      photoDataUrls.push(await urlToDataUrl(url));
+    } catch (err) {
+      console.warn(`[ActaPdf] No se pudo incluir foto ${url}:`, (err as Error).message);
+    }
+  }
+  for (const file of photoFiles) {
+    try {
+      photoDataUrls.push(await fileToDataUrl(file));
+    } catch (err) {
+      console.warn(`[ActaPdf] No se pudo leer foto ${file.name}:`, (err as Error).message);
+    }
+  }
+
+  const dataWithPhotos: ActaReturnData = { ...data, photoUrls: photoDataUrls };
+  return pdf(<ActaDevolucionDocument data={dataWithPhotos} />).toBlob();
 }

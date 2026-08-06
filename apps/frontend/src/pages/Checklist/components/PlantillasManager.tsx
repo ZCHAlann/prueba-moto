@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import type { JSX } from "react";
 import type { ComponentType, ReactElement } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -18,6 +18,7 @@ import {
 import { useChecklistFormOptions } from "../../../hooks/useFormOptions";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { usePermissions } from "../../../hooks/usePermissions";
+import { Pagination } from "../../../components/ui/Pagination";
 
 const PLATFORM_ROLES: Array<{ key: string; label: string }> = [
   { key: "owner_empresa",  label: "Propietario" },
@@ -70,12 +71,16 @@ export function PlantillasManager({ onStartInspection }: Props) {
   const [pendingDelete, setPendingDelete] = useState<ChecklistCategory | null>(null);
   const [query, setQuery] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const filtered = categories.filter((c) => {
     if (!query.trim()) return true;
     const q = query.toLowerCase();
     return c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q);
   });
+  const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => { setPage(1); }, [filtered.length]);
 
   return (
     <div className="space-y-4">
@@ -134,7 +139,8 @@ export function PlantillasManager({ onStartInspection }: Props) {
               Sin resultados para "{query}"
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+              <div className="overflow-x-auto">
               <table className="w-full min-w-[640px] text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 dark:border-white/[0.06]">
@@ -146,7 +152,7 @@ export function PlantillasManager({ onStartInspection }: Props) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-white/[0.04]">
-                  {filtered.map((c) => (
+                  {paged.map((c) => (
                     <PlantillaRow
                       key={c.id}
                       plantilla={c}
@@ -164,6 +170,15 @@ export function PlantillasManager({ onStartInspection }: Props) {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              page={page}
+              totalPages={Math.max(1, Math.ceil(filtered.length / pageSize))}
+              total={filtered.length}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              itemLabel="plantilla"
+            />
+            </>
           )}
         </div>
       )}
@@ -386,8 +401,6 @@ const STEPS: Array<{ key: string; label: string; icon: React.ComponentType<{ siz
   { key: "periodicidad", label: "Periodicidad", icon: CalendarClock },
   { key: "items",        label: "Items",        icon: ListChecks },
 ];
-
-import { useEffect } from "react";
 
 function PlantillaEditorWizard({ target, onClose, onCreate, onUpdate }: PlantillaEditorModalProps): JSX.Element {
   const isOpen = !!target;

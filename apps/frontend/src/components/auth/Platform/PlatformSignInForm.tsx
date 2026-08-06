@@ -22,7 +22,7 @@ export function PlatformSignInForm() {
     const result = await loginPlatform({ email, password, remember });
     setLoading(false);
     if (result.ok) {
-      navigate("/platform/dashboard", { replace: true });
+      navigate("/panel/dashboard", { replace: true });
     } else {
       setError({ title: result.title, description: result.description });
     }

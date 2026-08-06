@@ -48,6 +48,13 @@ export type AuthSession = {
    *  campo para autoseccionar la sede del operador y NO darle a
    *  elegir entre varias. */
   siteId: number | null;
+  /** jul 2026 — Impersonación de superadmin. `impersonating` true cuando la
+   *  sesión actual es una impersonación (scope operacion firmada con el
+   *  claim `impersonator`). El frontend muestra el banner y el botón de
+   *  "volver" al panel de plataforma. */
+  impersonating: boolean;
+  impersonatorName: string | null;
+  impersonatorEmail: string | null;
   /** JWT crudo (no la cookie httpOnly, sino el valor que viene en el body
    *  del login). Se usa SOLO para el upgrade del WebSocket (los browsers
    *  no envían cookies en conexiones WS). NUNCA persistir en disco. */
@@ -83,6 +90,12 @@ type AuthContextValue = {
    * usuario para que los cambios se vean sin re-login.
    */
   refreshSession: () => Promise<void>;
+  /** Impersona a un admin de una empresa (solo superadmin). Devuelve la ruta
+   *  a la que debe navegarse (el panel de la empresa) si fue exitoso. */
+  impersonate: (companyId: string | number) => Promise<{ ok: boolean; redirectTo?: string; message?: string }>;
+  /** Termina la impersonación activa y restaura la sesión de plataforma.
+   *  Devuelve `true` si el backend respondió OK. */
+  stopImpersonation: () => Promise<boolean>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -102,6 +115,9 @@ function buildSession(data: Record<string, unknown>): AuthSession {
     // jul 2026 v5 — Sede principal del usuario. null = admin/plataforma
     // o usuario sin sede asignada.
     siteId:               (data.siteId as number | null) ?? null,
+    impersonating:        Boolean(data.impersonating),
+    impersonatorName:     (data.impersonatorName as string | null) ?? null,
+    impersonatorEmail:    (data.impersonatorEmail as string | null) ?? null,
     token:                (data.token as string | undefined) ?? null,
   };
 }
@@ -227,7 +243,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const built = buildSession(data);
       setSession(built);
       stashToken(built.token);
-      return { ok: true, redirectTo: "/platform/dashboard" };
+      return { ok: true, redirectTo: "/panel/dashboard" };
     } catch {
       return { ok: false, title: "Error de conexión", description: "No se pudo conectar con el servidor." };
     }
@@ -262,6 +278,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  /** Impersonación (solo superadmin): firma una sesión de empresa y navega
+   *  al panel de la empresa impersonada. El backend guarda el claim
+   *  `impersonator` en el JWT para poder "volver" luego. */
+  const impersonate = useCallback(async (companyId: string | number): Promise<{ ok: boolean; redirectTo?: string; message?: string }> => {
+    try {
+      const res = await fetch("/api/auth/impersonate", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return { ok: false, message: (err as { message?: string }).message ?? "No se pudo impersonar la empresa." };
+      }
+
+      const data = await res.json();
+      const built = buildSession(data);
+      setSession(built);
+      stashToken(built.token);
+      return {
+        ok: true,
+        redirectTo: getDefaultRouteForSession({
+          role: built.role,
+          modulePermissions: built.modulePermissions,
+          companyModules: built.companyModules,
+        }),
+      };
+    } catch {
+      return { ok: false, message: "Error de conexión con el servidor." };
+    }
+  }, []);
+
+  /** Termina la impersonación: vuelve a la sesión de plataforma del
+   *  superadmin original y navega a /panel/dashboard. */
+  const stopImpersonation = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/auth/impersonate/back", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      const built = buildSession(data);
+      setSession(built);
+      stashToken(built.token);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
   const canAccessCurrentPath = useCallback(
     (pathname: string) =>
       session
@@ -293,7 +363,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     getHomePath,
     refreshPhotoUrl,
     refreshSession,
-  }), [ready, session, login, loginPlatform, logout, canAccessCurrentPath, getHomePath, refreshPhotoUrl, refreshSession]);
+    impersonate,
+    stopImpersonation,
+  }), [ready, session, login, loginPlatform, logout, canAccessCurrentPath, getHomePath, refreshPhotoUrl, refreshSession, impersonate, stopImpersonation]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

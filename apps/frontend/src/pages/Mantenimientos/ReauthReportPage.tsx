@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Search, Download, ArrowUp } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
+import { Pagination } from "../../components/ui/Pagination";
 import { fmtDateTimeEc, fmtDateShortEc } from "@/lib/datetime";
 
 /**
@@ -42,6 +43,8 @@ export default function ReauthReportPage() {
   const [from, setFrom]     = useState("");
   const [to, setTo]         = useState("");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -76,6 +79,9 @@ export default function ReauthReportPage() {
       (r.reason ?? "").toLowerCase().includes(q),
     );
   }, [data, search]);
+
+  const paged = rows.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => { setPage(1); }, [rows.length]);
 
   const counts = useMemo(() => {
     const c = { Pendiente: 0, Aprobada: 0, Rechazada: 0 };
@@ -252,7 +258,7 @@ export default function ReauthReportPage() {
               {!isLoading && rows.length === 0 && (
                 <tr><td colSpan={9} className="px-3 py-6 text-center text-xs text-gray-500">Sin resultados para los filtros aplicados.</td></tr>
               )}
-              {rows.map((r) => (
+              {paged.map((r) => (
                 <tr key={r.id} className="hover:bg-gray-50/60 dark:hover:bg-white/[0.02]">
                   <td className="px-3 py-2 align-top">
                     <div className="text-xs text-gray-900 dark:text-white">
@@ -309,6 +315,15 @@ export default function ReauthReportPage() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={page}
+          totalPages={Math.max(1, Math.ceil(rows.length / pageSize))}
+          total={rows.length}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          itemLabel="reautorización"
+          itemLabelPlural="reautorizaciones"
+        />
       </div>
 
       {/* Botón back-to-top — jun 2026 */}

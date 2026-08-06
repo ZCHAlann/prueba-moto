@@ -6,6 +6,7 @@ import { ThemeToggleButton } from "../components/common/ThemeToggleButton";
 import UserDropdown from "../components/header/UserDropdown";
 import { NotificationsBell } from "../components/features/notifications/NotificationsBell";
 import { GlobalSearch } from "../components/layout/GlobalSearch";
+import { ImpersonationBanner } from "../components/platform/ImpersonationBanner";
 import { useAuth } from "../context/AuthContext";
 
 const AppHeader: React.FC = () => {
@@ -129,6 +130,8 @@ const AppHeader: React.FC = () => {
           <UserDropdown />
         </div>
       </div>
+      {/* Banner de impersonación activa (solo superadmin viendo otra empresa) */}
+      <ImpersonationBanner />
     </header>
   );
 };

@@ -257,7 +257,12 @@ export function HandoverWizard({
       const pdfUrl = await uploadPdf(finalBlob);
 
       // 4. Crear o actualizar la asignación
-      const startDate = `${data.actaDate}T${data.actaTime || "00:00"}:00`;
+      // jul 2026 — Bug fix: el backend espera `startDate` en formato
+      // `YYYY-MM-DD` (regex `/^\d{4}-\d{2}-\d{2}$/`). Antes mandábamos
+      // `${actaDate}T${actaTime}:00` y el Zod del POST reventaba con
+      // "Fecha inválida (YYYY-MM-DD)". La hora se manda aparte en
+      // `actaTime`, que es lo que necesita el acta.
+      const startDate = data.actaDate;
       let assignment: ApiAssignment;
       if (editMode && existingAssignmentId) {
         const payload: HandoverPayload = {

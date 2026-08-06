@@ -5,7 +5,7 @@
 //
 
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Truck, Tag, Calendar, CalendarDays, Hash, Sun,
@@ -32,6 +32,7 @@ import {
 // NO lleva IVA. Esto matchea exactamente con `liveTotalCost =
 // labor + partsAgg.grandTotal` del MaintenanceDetailDrawer.
 import { computeItemTotals, aggregateTotals } from "../../lib/maintenance-totals";
+import { Pagination } from "../../components/ui/Pagination";
 
 // ─── Constantes ─────────────────────────────────────────────────────
 
@@ -1257,6 +1258,10 @@ function ChecklistItemRow({ item }: { item: any }) {
 }
 
 function CombustibleDetails({ rows }: { rows: any[] }) {
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  useEffect(() => { setPage(1); }, [rows.length]);
+  const paged = rows.slice((page - 1) * pageSize, page * pageSize);
   const total = rows.reduce((acc, r) => acc + (r.cost ?? 0), 0);
   const totalGal = rows.reduce((acc, r) => acc + (r.gallons ?? 0), 0);
   return (
@@ -1277,7 +1282,7 @@ function CombustibleDetails({ rows }: { rows: any[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {paged.map((r) => (
             <tr key={r.id} className="border-b border-gray-100 dark:border-white/[0.04]">
               <td className="py-1.5 text-gray-800 dark:text-white">{r.station ?? "—"}</td>
               <td className="py-1.5 text-gray-600 dark:text-gray-300">{r.fuelType ?? "—"}</td>
@@ -1290,6 +1295,14 @@ function CombustibleDetails({ rows }: { rows: any[] }) {
           ))}
         </tbody>
       </table>
+      <Pagination
+        page={page}
+        totalPages={Math.max(1, Math.ceil(rows.length / pageSize))}
+        total={rows.length}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        itemLabel="registro"
+      />
     </div>
   );
 }

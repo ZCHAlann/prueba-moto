@@ -146,7 +146,7 @@ export function FinalizeAssignmentWizard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
-  const [pdfBlob, setPdfBlob]             = useState<Blob | null>(null);
+  const [, setPdfBlob]                    = useState<Blob | null>(null);
 
   const {
     data, setField, reset, uploading,
@@ -197,7 +197,8 @@ export function FinalizeAssignmentWizard({
           signatoryDni:    data.signatoryDni,
           odometerReturnPhotoUrl: null,
           multasText:      data.multasText,
-        } as never);  // type cast: el template solo usa un subset
+          photoUrls:       [],
+        } as never, data.photos);  // type cast: el template solo usa un subset
         if (cancelled) return;
         const url = URL.createObjectURL(blob);
         setPdfBlob(blob);
@@ -271,8 +272,9 @@ export function FinalizeAssignmentWizard({
       }
       await Promise.all(sigTasks);
 
-      // 3. Generar el PDF final y subirlo
-      const finalBlob = pdfBlob ?? await generateReturnActaPdf({
+      // 3. Generar el PDF final (con las fotos ya subidas, no reusar el
+      //    preview: ahí solo están los Files locales) y subirlo
+      const finalBlob = await generateReturnActaPdf({
         actaDate:        data.actaDate,
         actaTime:        data.actaTime,
         actaPlace:       data.actaPlace,
@@ -297,6 +299,7 @@ export function FinalizeAssignmentWizard({
         signatoryDni:    data.signatoryDni,
         odometerReturnPhotoUrl: null,
         multasText:      data.multasText,
+        photoUrls,       // URLs remotas recién subidas
       } as never);
       const pdfUrl = await uploadPdf(finalBlob);
 

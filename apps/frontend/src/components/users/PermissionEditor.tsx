@@ -26,6 +26,11 @@ const EXTRA_ACTIONS_BY_SUB: Record<string, ActionKey[]> = {
     "aprobar",
     "reponer",
     "ver_todos",
+    // jul 2026 v6 — Acceso a las pestañas "Facturas por revisar" y
+    // "Correcciones" + modales de revisión contable. Sin esto, solo
+    // admin/owner/superadmin pueden revisar (bypass por rol). El admin
+    // decide a quién se lo da desde este editor.
+    "revisar_facturas",
   ],
   // Checklists — mantener 'aprobar' como acción específica.
   "checklist.reautorizaciones": ["aprobar", "crear"],
@@ -154,6 +159,17 @@ const ACTION_STYLES: Record<ActionKey, {
     inactive: "bg-transparent text-gray-500 dark:text-gray-400 border-gray-200 dark:border-white/10 hover:border-pink-300 dark:hover:border-pink-500/40 hover:text-pink-600 dark:hover:text-pink-400",
     label: "Ver todos",
     description: "Bypass de filtro por dueño: ve todas las solicitudes/vales de la empresa",
+  },
+  // jul 2026 v6 — Revisión contable: pestañas "Facturas por revisar" y
+  // "Correcciones" + modales de revisión. Acento violeta para distinguirla
+  // (es la acción de contabilidad). Coincide con ACTION_COLORS del
+  // module-tree y con el backend (finance-invoice-reviews.ts).
+  revisar_facturas: {
+    Icon: CheckCircle2,
+    active: "bg-violet-600 text-white border-violet-600 shadow-sm shadow-violet-500/30",
+    inactive: "bg-transparent text-gray-500 dark:text-gray-400 border-gray-200 dark:border-white/10 hover:border-violet-300 dark:hover:border-violet-500/40 hover:text-violet-600 dark:hover:text-violet-400",
+    label: "Revisar facturas",
+    description: "Acceso a Facturas por revisar y Correcciones (revisión contable)",
   },
 };
 

@@ -17,9 +17,10 @@
 //   - Tabla de uso últimos 30 días.
 // ─────────────────────────────────────────────────────────────────────
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
+import { Pagination } from "../../components/ui/Pagination";
 import {
   Sparkles, KeyRound, ShieldAlert, Globe, Cpu, Eye, EyeOff,
   FlaskConical, RotateCcw, MessageSquare, Image as ImageIcon, Volume2,
@@ -139,6 +140,11 @@ export function AISettingsPanel() {
   const [testResult, setTestResult] = useState<
     Record<"groq" | "gemini", { ok: boolean; latencyMs?: number; error?: string } | null>
   >({ groq: null, gemini: null });
+
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  useEffect(() => { setPage(1); }, [usage.length]);
+  const paged = usage.slice((page - 1) * pageSize, page * pageSize);
 
   if (loading) {
     return (
@@ -376,7 +382,7 @@ export function AISettingsPanel() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-white/[0.05]">
-                {usage.map((r, i) => (
+                {paged.map((r, i) => (
                   <tr key={i} className="text-gray-700 dark:text-gray-200">
                     <td className="py-1.5 pr-3 font-mono">{r.periodDay}</td>
                     <td className="py-1.5 pr-3">{r.feature}</td>
@@ -389,6 +395,15 @@ export function AISettingsPanel() {
                 ))}
               </tbody>
             </table>
+            <Pagination
+              page={page}
+              totalPages={Math.max(1, Math.ceil(usage.length / pageSize))}
+              total={usage.length}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              itemLabel="consulta"
+              itemLabelPlural="consultas"
+            />
             <button
               type="button"
               onClick={() => void refreshUsage()}
